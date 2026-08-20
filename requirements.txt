@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+httpx
+python-multipart
+ddgs
+pypdf
+pillow
+sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@f36bd37c95bbb77482ece0caab33b8b936f90f29
