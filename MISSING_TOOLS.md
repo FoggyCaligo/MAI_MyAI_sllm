@@ -29,9 +29,7 @@
 
 `code_index`는 옛 MK4의 목적과 구조를 계승한다. imports, classes/methods, function signatures, routes, registered tool names, config constants, tests 같은 repository map 정보를 만든다.
 
-차이는 실패를 fallback으로 숨기지 않는 현재 runtime contract를 따른다는 점이다. index는 현재 Python process memory에만 존재하며 별도 persistent file/DB로 저장하지 않는다. source code 전체 본문도 별도 index storage에 복제하지 않는다.
-
-`code_search`는 index가 없거나 요청 root가 달라지면 현재 source로 index를 자동 생성한다. 같은 root의 source 변경은 자동 rebuild하지 않으므로, 최신 구조가 필요하면 모델이 `code_index`를 다시 호출한다. 실제 상세 source는 이후 `file_read`로 읽는다.
+index는 현재 Python process memory에만 존재하며 별도 persistent file/DB로 저장하지 않는다. source code 전체 본문도 별도 index storage에 복제하지 않는다.
 
 ### Documents and images
 - `document_read`
@@ -40,21 +38,24 @@
 ### Terminal / local machine
 - `terminal_command`
 
-## 아직 구현하지 않은 model-visible capability
-
 ### Web / current information
-- `latest_search`
-- `web_research`
-- `market_snapshot`
+- `latest_search` — 모델이 직접 작성한 query를 recent/news search provider에 전달
+- `web_research` — 모델이 직접 작성한 objective + queries를 실행하고 public pages를 읽어 evidence package 생성
+- `market_snapshot` — explicit `provider_scope`와 `operation=lookup|snapshot` 계약으로 market provider 실행
 
-이 세 이름은 MK4에서 가져온 후보이며, 새 runtime에서 그대로 유지할지/통합할지는 web tool 구현 단계의 contract에 따라 결정한다.
+세 web/market tool의 상세 계약은 `WEB_MARKET_CONTRACT.md`를 따른다.
 
-## MK4 runtime/internal 기능 중 직접 migration하지 않는 것
+`web_research`는 objective에서 query를 문자열 규칙으로 자동 생성하지 않는다. 모델이 `queries` 배열을 직접 제공한다.
+
+`market_snapshot`은 `삼성전자`, `005930`, `KOSPI` 같은 문자열을 Framework가 보고 asset 종류를 추론하지 않는다. 모델이 `provider_scope` (`kr_equity`, `global_equity`, `index`, `fx`)를 명시한다. Provider 선택은 `.env` 실행 설정이며 실패 시 다른 provider로 자동 fallback하지 않는다.
+
+## 현재 직접 migration하지 않는 MK4 내부 기능
 
 - `_begin_memory_commit` — 새 runtime의 phase orchestration으로 대체
 - `finish_memory_commit` — mutation 성공 이후 `done` action으로 대체
 - persistent code-index file/DB — 사용하지 않음; structural index는 process-local memory만 사용
-- `internet_search` / `web_page_read` — web capability 구현 전까지 미연결
+- model-visible `internet_search` — 노출하지 않음; search provider는 web tool 내부 실행 helper
+- model-visible `web_page_read` — 노출하지 않음; public page reader는 `web_research` 내부 실행 helper
 
 ## Guard/history events
 
@@ -67,6 +68,6 @@
 
 필요한 실행 제약은 문자열 guard가 아니라 현재 phase/schema/authorization/tool contract로 강제한다.
 
-## 다음 단계
+## 현재 상태
 
-현재 순서상 다음 구현 대상은 web/current-information capability다.
+기존 MK4에서 우선 복원 대상으로 정한 주요 model-visible capability는 현재 runtime에 모두 연결되어 있다. 이후 작업은 실제 로컬 실행 검증, UI/도구 사용성 조정, provider 확장, dead code 정리처럼 통합 품질을 높이는 단계로 진행한다.
