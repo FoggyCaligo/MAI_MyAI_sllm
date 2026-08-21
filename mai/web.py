@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
+from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
@@ -24,6 +25,7 @@ from .memory_discovery import MandatoryMemoryDiscovery
 from .memory_revise import ReviseMemoryTool
 from .memory_write import WriteMemoryTool
 from .model import OllamaModel
+from .vision import OllamaVisionModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +157,7 @@ def build_lifecycle(
     model: OllamaModel,
     owner_id: str,
     download_grants: DownloadGrantStore,
+    image_analyzer: ImageAnalyzer,
 ) -> AgentLifecycle:
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository)
@@ -165,6 +168,7 @@ def build_lifecycle(
     work_tools = [
         *build_file_tools(owner_id=owner_id),
         *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+        *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
     ]
     return AgentLifecycle(
         repository=repository,
@@ -182,18 +186,21 @@ def create_app(
     settings: RuntimeSettings | None = None,
     lifecycle: AgentLifecycle | None = None,
     model: OllamaModel | None = None,
+    image_analyzer: ImageAnalyzer | None = None,
     download_grants: DownloadGrantStore | None = None,
 ) -> FastAPI:
     resolved = settings or RuntimeSettings.from_env()
     resolved.upload_dir.mkdir(parents=True, exist_ok=True)
     repository = None if lifecycle is not None else GraphRepository(resolved.graph_db_path)
     resolved_model = model or OllamaModel.from_env()
+    resolved_image_analyzer = image_analyzer or OllamaVisionModel.from_env()
     grants = download_grants or DownloadGrantStore()
     resolved_lifecycle = lifecycle or build_lifecycle(
         repository=repository,
         model=resolved_model,
         owner_id=resolved.owner_id,
         download_grants=grants,
+        image_analyzer=resolved_image_analyzer,
     )
     history = ChatHistoryStore(resolved.chat_db_path)
     sessions = SessionStore()
@@ -210,6 +217,7 @@ def create_app(
     app.state.settings = resolved
     app.state.lifecycle = resolved_lifecycle
     app.state.model_name = resolved_model.model
+    app.state.image_model_name = resolved_image_analyzer.model
     app.state.download_grants = grants
 
     def require_user(request: Request) -> str:
@@ -231,6 +239,7 @@ def create_app(
         user_id = require_user(request)
         return {
             "model": app.state.model_name,
+            "image_model": app.state.image_model_name,
             "user_id": user_id,
             "role": "owner" if user_id == resolved.owner_id else "user",
         }
