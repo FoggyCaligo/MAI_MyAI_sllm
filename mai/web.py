@@ -186,7 +186,7 @@ def create_app(
         if repository is not None:
             repository.close()
 
-    app = FastAPI(title="MK5", lifespan=lifespan)
+    app = FastAPI(title="Mai", lifespan=lifespan)
     app.state.settings = resolved
     app.state.lifecycle = resolved_lifecycle
     app.state.model_name = resolved_model.model
