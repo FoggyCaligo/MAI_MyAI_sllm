@@ -2,17 +2,17 @@
 
 This list is based on the tool suites actually registered by `MACHI/MK4/app/pipeline.py` on current `main`.
 
-The minimal MAI rebuild currently implements only:
+The minimal MAI rebuild currently implements:
 
 - `recall_memory`
 - `write_memory`
+- `revise_memory` — replace one memory from the current recall scope with a new current-turn relation
 
 Everything below is intentionally deferred so each capability can be added and measured one layer at a time.
 
 ## Model-visible tools still missing
 
-### Memory
-- `revise_memory` — connect/update/replace in-scope semantic memory
+### Memory / tool metadata
 - `tool_manual` — lazy full tool description/schema lookup
 
 ### File and workspace
@@ -46,7 +46,7 @@ Everything below is intentionally deferred so each capability can be added and m
 These exist in MK4 but are not normal user-facing capabilities and should not be treated as equal priority with the model-visible tools above.
 
 - `_begin_memory_commit` — framework-only phase transition
-- `finish_memory_commit` — memory-commit completion transition (the new rebuild currently represents completion directly as `done`)
+- `finish_memory_commit` — memory-commit completion transition (the new rebuild represents completion directly as `done`)
 - `internet_search` — internal web-search primitive hidden from the model
 - `web_page_read` — internal page-reading primitive hidden from the model
 
@@ -61,13 +61,12 @@ MK4 also writes structural guard events into tool history. They are not tool cap
 
 ## Suggested restoration order
 
-1. `revise_memory`
-2. `tool_manual`
-3. file discovery/read (`file_tree`, `file_search`, `file_text_search`, `file_read`)
-4. file mutation (`file_create`, `file_update`, `file_delete`, `file_download_link`)
-5. `terminal_command`
-6. `document_read`, `image_analyze`
-7. `latest_search`, `web_research`, `market_snapshot`
-8. `code_index`, `code_search`
+1. `tool_manual`
+2. file discovery/read (`file_tree`, `file_search`, `file_text_search`, `file_read`)
+3. file mutation (`file_create`, `file_update`, `file_delete`, `file_download_link`)
+4. `terminal_command`
+5. `document_read`, `image_analyze`
+6. `latest_search`, `web_research`, `market_snapshot`
+7. `code_index`, `code_search`
 
 The order is intentionally conservative: keep the core measurable and add one capability family at a time.
