@@ -117,6 +117,16 @@ def _combined_schema(variants: list[dict[str, Any]]) -> dict[str, Any]:
     return {"oneOf": variants}
 
 
+def _progress_keys(tool: WorkTool, result: Any) -> set[str] | None:
+    extractor = getattr(tool, "progress_keys", None)
+    if not callable(extractor):
+        return None
+    keys = extractor(result)
+    if keys is None:
+        return None
+    return {str(key) for key in keys}
+
+
 @dataclass(slots=True)
 class AgentLifecycle:
     repository: GraphRepository
@@ -216,6 +226,8 @@ class AgentLifecycle:
         ]
         events: list[dict[str, Any]] = []
         allow_lookup = True
+        available_tools = set(tools)
+        seen_progress: dict[str, set[str]] = {}
 
         while True:
             variants = [_answer_schema()]
@@ -223,7 +235,7 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
-            variants.extend(tool.schema() for tool in self.work_tools)
+            variants.extend(tools[name].schema() for name in tools if name in available_tools)
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
@@ -256,7 +268,17 @@ class AgentLifecycle:
                 result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
                 recall_results.append(result)
             elif tool_name in tools:
-                result = tools[tool_name].execute(arguments=arguments, context=context)
+                if tool_name not in available_tools:
+                    raise ModelContractError(f"{tool_name} is unavailable after a no-progress result")
+                tool = tools[tool_name]
+                result = tool.execute(arguments=arguments, context=context)
+                keys = _progress_keys(tool, result)
+                if keys is not None:
+                    prior = seen_progress.setdefault(tool_name, set())
+                    new_keys = keys - prior
+                    prior.update(keys)
+                    if not new_keys:
+                        available_tools.discard(tool_name)
             else:
                 raise ModelContractError("unexpected tool in work phase")
             tool_completed(tool_name)
