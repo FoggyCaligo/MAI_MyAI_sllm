@@ -28,15 +28,15 @@ class MemoryService:
         object_ = object_.strip()
         if not subject or not relation or not object_:
             raise ValueError("subject, relation, and object must all be non-empty")
-        result = self.repository.upsert_memory(
+        # Deliberately keep Sentence_Breaker out of this path. If this call is slow,
+        # the latency belongs to SQLite/memory persistence rather than segmentation.
+        return self.repository.upsert_memory(
             user_id=user_id,
             subject=subject,
             relation=relation,
             object_=object_,
             source_text=source_text,
         )
-        result["segments"] = self.segment(source_text)
-        return result
 
     def recall(self, *, user_id: str, limit: int = 8) -> list[dict]:
         return self.repository.recent_memories(user_id=user_id, limit=limit)
