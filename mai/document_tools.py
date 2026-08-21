@@ -19,6 +19,7 @@ class ImageAnalyzer(Protocol):
 
 
 _DOCUMENT_PATH_PATTERN = r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
 
 @dataclass(slots=True)
@@ -26,8 +27,8 @@ class DocumentReadTool:
     access: FileToolAccess
     name: str = "document_read"
     description: str = (
-        "Read structured text from one existing PDF or DOCX whose path was established by an attachment or a "
-        "current-turn file/code discovery tool. Use file_read for ordinary text files."
+        "Read structured text from one existing PDF or DOCX whose path was established by an attachment, "
+        "file_create, or a current-turn file/code discovery tool. Use file_read for ordinary text files."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -35,6 +36,20 @@ class DocumentReadTool:
             self.name,
             {
                 "path": {"type": "string", "minLength": 1, "pattern": _DOCUMENT_PATH_PATTERN},
+                "start": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            ["path"],
+        )
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        documents = sorted(path for path in paths if Path(path).suffix.casefold() in {".pdf", ".docx"})
+        if not documents:
+            return None
+        return _tool_schema(
+            self.name,
+            {
+                "path": {"type": "string", "enum": documents},
                 "start": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
@@ -115,8 +130,8 @@ class ImageAnalyzeTool:
     analyzer: ImageAnalyzer
     name: str = "image_analyze"
     description: str = (
-        "Analyze one image whose path was established by an attachment or a current-turn file/code discovery tool, "
-        "using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL."
+        "Analyze one image whose path was established by an attachment, file_create, or a current-turn file/code "
+        "discovery result, using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -124,6 +139,19 @@ class ImageAnalyzeTool:
             self.name,
             {
                 "path": {"type": "string", "minLength": 1},
+                "prompt": {"type": "string", "minLength": 1},
+            },
+            ["path", "prompt"],
+        )
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        images = sorted(path for path in paths if Path(path).suffix.casefold() in _IMAGE_SUFFIXES)
+        if not images:
+            return None
+        return _tool_schema(
+            self.name,
+            {
+                "path": {"type": "string", "enum": images},
                 "prompt": {"type": "string", "minLength": 1},
             },
             ["path", "prompt"],
