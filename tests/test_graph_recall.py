@@ -5,6 +5,14 @@ import pytest
 from mai.graph import GraphRecallService, GraphRepository, GraphScopeError
 
 
+def _anchor(repo: GraphRepository, user_id: str) -> dict:
+    return repo.ensure_user_anchor(
+        user_id=user_id,
+        turn_id="anchor-init",
+        source_text="initialize canonical user anchor",
+    )
+
+
 def _node(repo: GraphRepository, user_id: str, name: str, turn: str) -> dict:
     return repo.create_node(
         user_id=user_id,
@@ -37,6 +45,7 @@ def _edge(
 def test_recall_returns_only_direct_neighbors(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
+        _anchor(repo, "owner")
         a = _node(repo, "owner", "A", "t1")
         b = _node(repo, "owner", "B", "t1")
         c = _node(repo, "owner", "C", "t1")
@@ -54,6 +63,7 @@ def test_recall_returns_only_direct_neighbors(tmp_path) -> None:
         assert {edge["edge_id"] for edge in recalled["edges"]} == {ab["edge_id"]}
         assert c["node_id"] not in {node["node_id"] for node in recalled["nodes"]}
         assert bc["edge_id"] not in {edge["edge_id"] for edge in recalled["edges"]}
+        assert recalled["origin_path"]["available"] is False
     finally:
         repo.close()
 
@@ -61,6 +71,7 @@ def test_recall_returns_only_direct_neighbors(tmp_path) -> None:
 def test_recall_includes_incoming_and_outgoing_edges(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
+        _anchor(repo, "owner")
         a = _node(repo, "owner", "A", "t1")
         b = _node(repo, "owner", "B", "t1")
         c = _node(repo, "owner", "C", "t1")
@@ -85,6 +96,7 @@ def test_recall_includes_incoming_and_outgoing_edges(tmp_path) -> None:
 def test_isolated_focus_returns_only_focus_node(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
+        _anchor(repo, "owner")
         focus = _node(repo, "owner", "isolated", "t1")
         recalled = GraphRecallService(repo).recall_one_depth(
             user_id="owner",
@@ -92,6 +104,7 @@ def test_isolated_focus_returns_only_focus_node(tmp_path) -> None:
         )
         assert recalled["nodes"] == [repo.get_node(user_id="owner", node_id=focus["node_id"])]
         assert recalled["edges"] == []
+        assert recalled["origin_path"]["available"] is False
     finally:
         repo.close()
 
@@ -99,6 +112,8 @@ def test_isolated_focus_returns_only_focus_node(tmp_path) -> None:
 def test_recall_rejects_foreign_focus_node(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
+        _anchor(repo, "owner")
+        _anchor(repo, "other")
         foreign = _node(repo, "other", "private", "t1")
         with pytest.raises(GraphScopeError):
             GraphRecallService(repo).recall_one_depth(
