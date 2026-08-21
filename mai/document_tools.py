@@ -18,42 +18,65 @@ class ImageAnalyzer(Protocol):
     def analyze(self, *, path: Path, prompt: str) -> str: ...
 
 
+_DOCUMENT_PATH_PATTERN = r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
+
+
 @dataclass(slots=True)
 class DocumentReadTool:
     access: FileToolAccess
     name: str = "document_read"
     description: str = (
-        "Read structured text from one PDF or DOCX file. PDF results are paginated by page; DOCX results "
-        "are paginated by paragraph. Unsupported document types fail explicitly."
+        "Read structured text from one existing PDF or DOCX whose path was established by an attachment, "
+        "file_create, or a current-turn file/code discovery tool. Use file_read for ordinary text files."
     )
 
     def schema(self) -> dict[str, Any]:
         return _tool_schema(
             self.name,
             {
-                "path": {"type": "string", "minLength": 1},
+                "path": {"type": "string", "minLength": 1, "pattern": _DOCUMENT_PATH_PATTERN},
                 "start": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
             ["path"],
         )
 
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        documents = sorted(path for path in paths if Path(path).suffix.casefold() in {".pdf", ".docx"})
+        if not documents:
+            return None
+        return _tool_schema(
+            self.name,
+            {
+                "path": {"type": "string", "enum": documents},
+                "start": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+            },
+            ["path"],
+        )
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
+
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
         path = self.access.resolve_path(str(arguments["path"]))
         start = int(arguments.get("start", 1))
         limit = int(arguments.get("limit", 20))
+
+        suffix = path.suffix.casefold()
+        if suffix not in {".pdf", ".docx"}:
+            raise ValueError(f"unsupported document type: {path.suffix or '<none>'}")
         if not path.exists():
             raise FileNotFoundError(path)
         if not path.is_file():
             raise IsADirectoryError(path)
 
-        suffix = path.suffix.casefold()
         if suffix == ".pdf":
             return self._read_pdf(path=path, start=start, limit=limit)
-        if suffix == ".docx":
-            return self._read_docx(path=path, start=start, limit=limit)
-        raise ValueError(f"unsupported document type: {path.suffix or '<none>'}")
+        return self._read_docx(path=path, start=start, limit=limit)
 
     @staticmethod
     def _read_pdf(*, path: Path, start: int, limit: int) -> dict[str, Any]:
@@ -107,8 +130,8 @@ class ImageAnalyzeTool:
     analyzer: ImageAnalyzer
     name: str = "image_analyze"
     description: str = (
-        "Analyze one concrete image file using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL. "
-        "The model receives the image and the caller-provided prompt without semantic routing by the framework."
+        "Analyze one image whose path was established by an attachment, file_create, or a current-turn file/code "
+        "discovery result, using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -120,6 +143,23 @@ class ImageAnalyzeTool:
             },
             ["path", "prompt"],
         )
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        images = sorted(path for path in paths if Path(path).suffix.casefold() in _IMAGE_SUFFIXES)
+        if not images:
+            return None
+        return _tool_schema(
+            self.name,
+            {
+                "path": {"type": "string", "enum": images},
+                "prompt": {"type": "string", "minLength": 1},
+            },
+            ["path", "prompt"],
+        )
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)

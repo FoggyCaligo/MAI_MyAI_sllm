@@ -47,13 +47,21 @@ class DownloadGrantStore:
             self._grants.pop(token, None)
 
 
+def _existing_path_schema(name: str, paths: set[str], extra: dict[str, Any], required: list[str]) -> dict[str, Any] | None:
+    if not paths:
+        return None
+    properties = {"path": {"type": "string", "enum": sorted(paths)}, **extra}
+    return _tool_schema(name, properties, ["path", *required])
+
+
 @dataclass(slots=True)
 class FileCreateTool:
     access: FileToolAccess
     name: str = "file_create"
     description: str = (
         "Create a new text file at an explicit path. Parent directories are created when requested. "
-        "Existing files are not overwritten and raise FileExistsError."
+        "Existing files are not overwritten and raise FileExistsError. A successfully created path becomes "
+        "available to current-turn read/update/delete/download tools."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -67,6 +75,10 @@ class FileCreateTool:
             },
             ["path", "content"],
         )
+
+    @staticmethod
+    def discovered_paths(result: dict[str, Any]) -> set[str]:
+        return {str(result["path"])} if result.get("path") else set()
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
@@ -85,8 +97,8 @@ class FileUpdateTool:
     access: FileToolAccess
     name: str = "file_update"
     description: str = (
-        "Atomically replace the complete contents of an existing text file at an explicit path. "
-        "The file must already exist; missing paths fail with FileNotFoundError."
+        "Atomically replace the complete contents of an existing text file whose path was established by a "
+        "current-turn attachment, discovery result, or file_create."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -99,6 +111,21 @@ class FileUpdateTool:
             },
             ["path", "content"],
         )
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        return _existing_path_schema(
+            self.name,
+            paths,
+            {
+                "content": {"type": "string"},
+                "encoding": {"type": "string", "minLength": 1},
+            },
+            ["content"],
+        )
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
@@ -127,11 +154,23 @@ class FileDeleteTool:
     access: FileToolAccess
     name: str = "file_delete"
     description: str = (
-        "Delete one explicit file. Directories are not deleted by this tool. Missing paths fail visibly."
+        "Delete one existing file whose path was established by a current-turn attachment, discovery result, "
+        "or file_create. Directories are not deleted."
     )
 
     def schema(self) -> dict[str, Any]:
         return _tool_schema(self.name, {"path": {"type": "string", "minLength": 1}}, ["path"])
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        return _existing_path_schema(self.name, paths, {}, [])
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
+
+    @staticmethod
+    def removed_paths(result: dict[str, Any]) -> set[str]:
+        return {str(result["path"])} if result.get("deleted") and result.get("path") else set()
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
@@ -151,12 +190,19 @@ class FileDownloadLinkTool:
     grants: DownloadGrantStore
     name: str = "file_download_link"
     description: str = (
-        "Create a temporary browser download URL for one existing file. The URL expires after one hour and "
-        "still requires the authenticated owner session."
+        "Create a temporary browser download URL for one existing file whose path was established in the current "
+        "turn. The URL expires after one hour and still requires the authenticated owner session."
     )
 
     def schema(self) -> dict[str, Any]:
         return _tool_schema(self.name, {"path": {"type": "string", "minLength": 1}}, ["path"])
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        return _existing_path_schema(self.name, paths, {}, [])
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)

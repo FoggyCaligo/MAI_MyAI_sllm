@@ -34,8 +34,7 @@ class CodeIndexTool:
     name: str = "code_index"
     description: str = (
         "Build a compact in-memory structural map of Python source under an explicit root. "
-        "The map contains imports, classes, function signatures, routes, registered tool names, "
-        "config constants, and tests. It is process-local only and is never persisted to disk."
+        "Key files returned by the index establish concrete paths for later file_read calls."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -81,6 +80,11 @@ class CodeIndexTool:
             "parse_errors": parse_errors,
         }
 
+    @staticmethod
+    def discovered_paths(result: dict[str, Any]) -> set[str]:
+        root = Path(str(result["indexed_root"]))
+        return {str((root / str(path)).resolve()) for path in result.get("key_files", [])}
+
 
 @dataclass(slots=True)
 class CodeSearchTool:
@@ -90,7 +94,7 @@ class CodeSearchTool:
     name: str = "code_search"
     description: str = (
         "Search the current in-memory structural Python code index and return relevant files and symbols. "
-        "If no index exists for the requested root, rebuild it from the current source first."
+        "Returned result files establish concrete paths for later file_read calls."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -151,6 +155,11 @@ class CodeSearchTool:
                 for score, record, matched in ranked[:limit]
             ],
         }
+
+    @staticmethod
+    def discovered_paths(result: dict[str, Any]) -> set[str]:
+        root = Path(str(result["indexed_root"]))
+        return {str((root / str(item["path"])).resolve()) for item in result.get("results", []) if item.get("path")}
 
 
 def build_code_tools(*, owner_id: str, default_root: Path | None = None) -> list[WorkTool]:

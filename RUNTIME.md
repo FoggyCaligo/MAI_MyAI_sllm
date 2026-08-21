@@ -101,7 +101,23 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 
 로그인 세션은 현재 Python 서버 메모리에 있으므로, 단순 앱 전환이나 페이지 재진입에는 유지되지만 Python 서버 자체를 재시작하면 다시 로그인해야 한다. 채팅 기록과 graph DB는 SQLite에 남는다.
 
-파일 도구는 owner에게만 열려 있다. owner에 대해서는 애플리케이션 수준의 workspace confinement를 두지 않으며, 절대 경로와 부모 경로를 그대로 사용할 수 있다. 실제 OS/filesystem 권한이 최종 경계다. `file_tree`, `file_search`, `file_text_search`, `file_read`는 큰 결과를 한 번에 문맥에 밀어 넣지 않도록 pagination을 제공하며, 다음 cursor/line을 통해 계속 읽을 수 있다.
+파일 도구는 owner에게만 열려 있다. owner에 대해서는 애플리케이션 수준의 workspace confinement를 두지 않으며, 절대 경로와 부모 경로를 탐색 root로 사용할 수 있다. 다만 기존 파일을 대상으로 하는 action은 모델이 임의 경로를 생성해서 바로 실행할 수 없고, 현재 turn에서 Framework가 실제로 확인한 concrete path만 사용할 수 있다.
+
+current-turn path provenance는 다음 경로에서 생성된다.
+
+- 현재 로그인 사용자의 실제 upload attachment
+- `file_tree`가 반환한 file entry
+- `file_search`가 반환한 file match
+- `file_text_search`가 반환한 matched file
+- `code_index`의 key file
+- `code_search`의 result file
+- 성공한 `file_create`의 새 path
+
+provenance가 없는 동안 `file_read`, `file_update`, `file_delete`, `file_download_link`, `document_read`, `image_analyze`는 model schema에 노출되지 않는다. provenance가 생기면 다음 model round부터 실제 확인된 path만 `enum`으로 노출된다. `document_read`는 그중 PDF/DOCX만, `image_analyze`는 이미지 확장자만 노출한다. 실행 직전에도 provenance scope를 다시 검사하므로 모델이 schema 밖 경로를 반환하면 계약 실패로 드러난다.
+
+`file_create`는 새 path를 만드는 역할이므로 provenance를 요구하지 않는다. 성공한 create path는 즉시 provenance에 등록되어 같은 turn의 후속 `file_read`/`file_update`/`file_delete`/`file_download_link`에서 사용할 수 있다. `file_delete` 성공 후 삭제된 path는 provenance에서 제거되어 다음 round의 기존-file action schema에서도 사라진다. 이 계약은 파일명 의미 추론이나 자연어 휴리스틱이 아니라 실제 tool/upload 결과의 normalized path identity로만 동작한다.
+
+`file_tree`, `file_search`, `file_text_search`, `file_read`는 큰 결과를 한 번에 문맥에 밀어 넣지 않도록 pagination을 제공하며, 다음 cursor/line을 통해 계속 읽을 수 있다.
 
 `file_text_search`는 의미 검색을 하지 않고 모델이 지정한 문자열을 literal substring으로만 찾는다. UTF-8 등 지정 인코딩으로 읽지 못한 파일은 성공으로 숨기지 않고 `decode_failures`에 명시한다.
 

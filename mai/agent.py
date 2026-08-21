@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from pathlib import Path
+from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
@@ -10,6 +11,35 @@ from .memory_discovery import MandatoryMemoryDiscovery
 from .memory_write import MemoryTurnScope
 from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
+
+
+class PathProvenanceError(PermissionError):
+    """Raised when a file action targets a path not established by this turn."""
+
+
+@dataclass(slots=True)
+class PathProvenance:
+    paths: set[str] = field(default_factory=set)
+
+    @staticmethod
+    def normalize(path: str | Path) -> str:
+        return str(Path(path).expanduser().resolve())
+
+    def add(self, path: str | Path) -> None:
+        self.paths.add(self.normalize(path))
+
+    def add_many(self, paths: Iterable[str | Path]) -> None:
+        for path in paths:
+            self.add(path)
+
+    def remove_many(self, paths: Iterable[str | Path]) -> None:
+        for path in paths:
+            self.paths.discard(self.normalize(path))
+
+    def require(self, path: str | Path) -> None:
+        normalized = self.normalize(path)
+        if normalized not in self.paths:
+            raise PathProvenanceError(f"path is outside current-turn discovered scope: {normalized}")
 
 
 class WorkTool(Protocol):
@@ -26,6 +56,7 @@ class WorkContext:
     user_id: str
     turn_id: str
     user_text: str
+    path_provenance: PathProvenance = field(default_factory=PathProvenance)
 
 
 @dataclass(slots=True)
@@ -127,6 +158,34 @@ def _progress_keys(tool: WorkTool, result: Any) -> set[str] | None:
     return {str(key) for key in keys}
 
 
+def _discovered_paths(tool: WorkTool, result: Any) -> set[str]:
+    extractor = getattr(tool, "discovered_paths", None)
+    if not callable(extractor):
+        return set()
+    return {PathProvenance.normalize(path) for path in extractor(result)}
+
+
+def _removed_paths(tool: WorkTool, result: Any) -> set[str]:
+    extractor = getattr(tool, "removed_paths", None)
+    if not callable(extractor):
+        return set()
+    return {PathProvenance.normalize(path) for path in extractor(result)}
+
+
+def _required_paths(tool: WorkTool, arguments: dict[str, Any]) -> set[str]:
+    extractor = getattr(tool, "required_paths", None)
+    if not callable(extractor):
+        return set()
+    return {PathProvenance.normalize(path) for path in extractor(arguments)}
+
+
+def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] | None:
+    builder = getattr(tool, "schema_for_paths", None)
+    if callable(builder):
+        return builder(set(context.path_provenance.paths))
+    return tool.schema()
+
+
 @dataclass(slots=True)
 class AgentLifecycle:
     repository: GraphRepository
@@ -137,11 +196,20 @@ class AgentLifecycle:
     memory_completion: MandatoryMemoryCompletion
     work_tools: list[WorkTool] = field(default_factory=list)
 
-    def run(self, *, user_id: str, user_text: str, turn_id: str | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        *,
+        user_id: str,
+        user_text: str,
+        turn_id: str | None = None,
+        attachment_paths: Iterable[str | Path] = (),
+    ) -> dict[str, Any]:
         clean_user = str(user_text).strip()
         if not clean_user:
             raise ValueError("user_text must be non-empty")
         resolved_turn_id = str(turn_id or uuid4())
+        path_provenance = PathProvenance()
+        path_provenance.add_many(attachment_paths)
         turn_started(resolved_turn_id)
 
         try:
@@ -167,7 +235,12 @@ class AgentLifecycle:
 
             with phase(resolved_turn_id, "work"):
                 fixed_answer, work_events = self._run_work_phase(
-                    context=WorkContext(user_id=user_id, turn_id=resolved_turn_id, user_text=clean_user),
+                    context=WorkContext(
+                        user_id=user_id,
+                        turn_id=resolved_turn_id,
+                        user_text=clean_user,
+                        path_provenance=path_provenance,
+                    ),
                     candidate_ids=candidate_ids,
                     recall_results=recall_results,
                 )
@@ -219,7 +292,8 @@ class AgentLifecycle:
                 "content": (
                     "Memory discovery is complete. Perform normal work using exactly one structured "
                     "action per round. You may use available tools, inspect more memory with node_lookup "
-                    "and recall_memory, or produce one final answer."
+                    "and recall_memory, or produce one final answer. Existing-file actions may only use paths "
+                    "established by current-turn attachments, file_create, or file/code discovery tool results."
                 ),
             },
             {"role": "user", "content": context.user_text},
@@ -235,7 +309,15 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
-            variants.extend(tools[name].schema() for name in tools if name in available_tools)
+            exposed_tools: set[str] = set()
+            for name, tool in tools.items():
+                if name not in available_tools:
+                    continue
+                tool_schema = _schema_for_context(tool, context)
+                if tool_schema is None:
+                    continue
+                variants.append(tool_schema)
+                exposed_tools.add(name)
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
@@ -268,10 +350,14 @@ class AgentLifecycle:
                 result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
                 recall_results.append(result)
             elif tool_name in tools:
-                if tool_name not in available_tools:
-                    raise ModelContractError(f"{tool_name} is unavailable after a no-progress result")
+                if tool_name not in exposed_tools:
+                    raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
                 tool = tools[tool_name]
+                for required_path in _required_paths(tool, arguments):
+                    context.path_provenance.require(required_path)
                 result = tool.execute(arguments=arguments, context=context)
+                context.path_provenance.add_many(_discovered_paths(tool, result))
+                context.path_provenance.remove_many(_removed_paths(tool, result))
                 keys = _progress_keys(tool, result)
                 if keys is not None:
                     prior = seen_progress.setdefault(tool_name, set())

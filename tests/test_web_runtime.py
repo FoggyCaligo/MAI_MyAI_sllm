@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,8 +16,22 @@ class FakeLifecycle:
     fail: bool = False
     calls: list[dict] = field(default_factory=list)
 
-    def run(self, *, user_id: str, user_text: str, turn_id: str | None = None) -> dict:
-        self.calls.append({"user_id": user_id, "user_text": user_text, "turn_id": turn_id})
+    def run(
+        self,
+        *,
+        user_id: str,
+        user_text: str,
+        turn_id: str | None = None,
+        attachment_paths: Iterable[str | Path] = (),
+    ) -> dict:
+        self.calls.append(
+            {
+                "user_id": user_id,
+                "user_text": user_text,
+                "turn_id": turn_id,
+                "attachment_paths": [str(Path(path).resolve()) for path in attachment_paths],
+            }
+        )
         if self.fail:
             raise RuntimeError("lifecycle failed")
         return {
@@ -100,12 +115,16 @@ def test_upload_limit_fails_and_partial_file_is_removed(tmp_path) -> None:
         assert list(upload_dir.glob("*")) == []
 
 
-def test_chat_calls_lifecycle_and_persists_history_after_success(tmp_path) -> None:
+def test_chat_seeds_lifecycle_with_validated_uploaded_attachment(tmp_path) -> None:
     lifecycle = FakeLifecycle(answer="완료")
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
     with TestClient(app) as client:
         login(client)
-        attachment = "C:/tmp/example.txt"
+        upload = client.post(
+            "/upload",
+            files={"files": ("example.txt", b"hello", "text/plain")},
+        )
+        attachment = upload.json()["files"][0]["path"]
         response = client.post(
             "/chat",
             json={"message": "파일을 봐줘", "attachments": [attachment]},
@@ -113,13 +132,29 @@ def test_chat_calls_lifecycle_and_persists_history_after_success(tmp_path) -> No
         assert response.status_code == 200
         assert response.json()["answer"] == "완료"
         assert "[attached files]" in lifecycle.calls[0]["user_text"]
-        assert str(Path(attachment)) in lifecycle.calls[0]["user_text"]
+        assert str(Path(attachment).resolve()) in lifecycle.calls[0]["user_text"]
+        assert lifecycle.calls[0]["attachment_paths"] == [str(Path(attachment).resolve())]
 
         history = client.get("/history").json()["messages"]
         assert [(item["role"], item["content"]) for item in history] == [
             ("user", "파일을 봐줘"),
             ("assistant", "완료"),
         ]
+
+
+def test_chat_rejects_attachment_path_outside_authenticated_upload_scope(tmp_path) -> None:
+    lifecycle = FakeLifecycle()
+    app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
+    outside = tmp_path / "outside.txt"
+    outside.write_text("real but not uploaded", encoding="utf-8")
+    with TestClient(app) as client:
+        login(client)
+        response = client.post(
+            "/chat",
+            json={"message": "읽어줘", "attachments": [str(outside)]},
+        )
+        assert response.status_code == 422
+        assert lifecycle.calls == []
 
 
 def test_session_and_history_survive_page_reentry_with_same_cookie(tmp_path) -> None:
@@ -129,7 +164,6 @@ def test_session_and_history_survive_page_reentry_with_same_cookie(tmp_path) -> 
         login(client)
         assert client.post("/chat", json={"message": "기억해", "attachments": []}).status_code == 200
 
-        # A browser returning to the page sends the same HttpOnly cookie again.
         assert client.get("/runtime").status_code == 200
         history = client.get("/history").json()["messages"]
         assert [(item["role"], item["content"]) for item in history] == [
