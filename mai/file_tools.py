@@ -72,6 +72,8 @@ class FileTreeTool(WorkTool):
             {
                 "root": {"type": "string", "minLength": 1},
                 "max_depth": {"type": "integer", "minimum": 0, "maximum": 20},
+                "cursor": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200},
             },
         )
 
@@ -79,6 +81,8 @@ class FileTreeTool(WorkTool):
         self.access.require_owner(context)
         root = self.access.resolve_root(arguments.get("root"))
         max_depth = int(arguments.get("max_depth", 2))
+        cursor = int(arguments.get("cursor", 0))
+        limit = int(arguments.get("limit", 50))
         if not root.exists():
             raise FileNotFoundError(root)
         if not root.is_dir():
@@ -101,7 +105,16 @@ class FileTreeTool(WorkTool):
                 }
             )
         entries.sort(key=lambda item: (item["relative_path"].casefold(), item["relative_path"]))
-        return {"root": str(root), "max_depth": max_depth, "entries": entries}
+        page = entries[cursor : cursor + limit]
+        next_cursor = cursor + len(page)
+        return {
+            "root": str(root),
+            "max_depth": max_depth,
+            "entries": page,
+            "has_more": next_cursor < len(entries),
+            "next_cursor": next_cursor if next_cursor < len(entries) else None,
+            "total_entries": len(entries),
+        }
 
 
 @dataclass(slots=True)
