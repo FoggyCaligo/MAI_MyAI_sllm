@@ -29,7 +29,7 @@ class FakeLifecycle:
 
 @dataclass
 class FakeModel:
-    model: str = "qwen3.5:9b"
+    model: str = "gemma4:e4b"
 
 
 def settings(tmp_path: Path) -> RuntimeSettings:
@@ -57,7 +57,7 @@ def test_runtime_requires_authentication_and_reports_env_model(tmp_path) -> None
         runtime = client.get("/runtime")
         assert runtime.status_code == 200
         assert runtime.json() == {
-            "model": "qwen3.5:9b",
+            "model": "gemma4:e4b",
             "user_id": "secret-owner",
             "role": "owner",
         }
@@ -105,14 +105,15 @@ def test_chat_calls_lifecycle_and_persists_history_after_success(tmp_path) -> No
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
     with TestClient(app) as client:
         login(client)
+        attachment = "C:/tmp/example.txt"
         response = client.post(
             "/chat",
-            json={"message": "파일을 봐줘", "attachments": ["C:/tmp/example.txt"]},
+            json={"message": "파일을 봐줘", "attachments": [attachment]},
         )
         assert response.status_code == 200
         assert response.json()["answer"] == "완료"
         assert "[attached files]" in lifecycle.calls[0]["user_text"]
-        assert "C:/tmp/example.txt" in lifecycle.calls[0]["user_text"]
+        assert str(Path(attachment)) in lifecycle.calls[0]["user_text"]
 
         history = client.get("/history").json()["messages"]
         assert [(item["role"], item["content"]) for item in history] == [
