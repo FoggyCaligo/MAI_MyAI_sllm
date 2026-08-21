@@ -38,10 +38,13 @@
    owner 계정의 파일 조회/CRUD에는 application-level workspace confinement를 두지 않는다. 절대경로와 상위 디렉터리 접근을 허용하며 실제 OS/filesystem 권한이 최종 경계다.
 
 5. **코드 도구**
-   - `code_search`만 유지한다.
-   - `code_index`는 모델 도구뿐 아니라 내부 구현에서도 만들지 않는다.
-   - persistent/in-memory 사전 코드 인덱스 계층을 두지 않는다.
-   - `code_search`는 필요할 때 직접 파일 구조와 소스를 탐색한다.
+   - `code_search`와 `code_index`를 모델용 도구로 둔다.
+   - `code_search`는 호출 시 실제 파일 구조와 현재 source를 직접 탐색한다.
+   - `code_index`는 모델이 명시적으로 선택한 코드 범위를 JSON 메타데이터 파일로 생성/교체한다.
+   - `code_index` entry는 최소 source `path`, `start_line`, `end_line`, `symbol`, `kind`를 가진다.
+   - `code_index` 파일에는 source code 본문을 복제하지 않는다.
+   - `code_search`는 `code_index`를 자동 검색 캐시로 사용하지 않는다.
+   - persistent/in-memory 사전 검색 인덱스, hidden cache, 자동 pre-index 계층은 두지 않는다.
 
 6. **터미널**
    - `terminal_command`는 owner 기준 application-level 인위적 권한 제한을 두지 않는다.
@@ -366,9 +369,38 @@ file_download_link
 
 Owner 계정에서는 application-level workspace confinement를 두지 않는다.
 
-## 15. Code Search Contract
+## 15. Code Tool Contract
 
-모델용 코드 도구는 `code_search` 하나만 둔다. `code_index`는 외부/내부 모두 금지한다. `code_search`는 필요할 때 직접 파일 tree/source를 탐색한다.
+모델용 코드 도구는 `code_search`와 `code_index`를 둔다.
+
+### code_search
+- 호출할 때마다 실제 filesystem/source를 직접 읽는다.
+- query는 literal text search로 실행한다.
+- framework가 확장자나 파일명을 보고 의미적으로 코드 범위를 자동 결정하지 않는다.
+- 모델이 필요하면 `glob`으로 명시적 파일 범위를 지정한다.
+- persistent/in-memory 검색 인덱스나 hidden cache에 의존하지 않는다.
+
+### code_index
+`code_index`는 검색 가속용 내부 인덱스가 아니라 **모델이 명시적으로 생성하는 코드 범위 메타데이터 파일**이다.
+
+각 entry는 최소 다음 필드를 가진다.
+
+```text
+path
+start_line
+end_line
+symbol
+kind
+```
+
+규칙:
+- source code 본문은 index 파일에 복제하지 않는다.
+- framework는 source 파일 존재 여부와 줄 범위 같은 구조 계약만 검증한다.
+- `symbol`과 `kind`의 의미는 모델이 결정한다.
+- index 파일은 일반 파일처럼 명시적 path에 생성/교체한다.
+- `code_search`는 이 파일을 자동으로 읽거나 검색 결과 ranking에 사용하지 않는다.
+- 모델이 index를 활용하려면 일반 file tool로 명시적으로 읽고, 필요한 source/tool 호출을 다시 결정한다.
+- hidden/persistent/in-memory pre-index 계층은 여전히 금지한다.
 
 ## 16. Document / Image Contract
 
@@ -459,7 +491,7 @@ Tailscale 실패    -> hosting failure
 11. file CRUD/download
 12. document/image
 13. terminal
-14. code_search
+14. code_search + explicit code_index range metadata file
 15. web/current-information tools
 ```
 
