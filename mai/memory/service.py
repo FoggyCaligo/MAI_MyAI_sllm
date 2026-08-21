@@ -28,10 +28,32 @@ class MemoryService:
         object_ = object_.strip()
         if not subject or not relation or not object_:
             raise ValueError("subject, relation, and object must all be non-empty")
-        # Deliberately keep Sentence_Breaker out of this path. If this call is slow,
-        # the latency belongs to SQLite/memory persistence rather than segmentation.
         return self.repository.upsert_memory(
             user_id=user_id,
+            subject=subject,
+            relation=relation,
+            object_=object_,
+            source_text=source_text,
+        )
+
+    def revise_relation(
+        self,
+        *,
+        user_id: str,
+        memory_id: int,
+        subject: str,
+        relation: str,
+        object_: str,
+        source_text: str,
+    ) -> dict:
+        subject = subject.strip()
+        relation = relation.strip()
+        object_ = object_.strip()
+        if not subject or not relation or not object_:
+            raise ValueError("subject, relation, and object must all be non-empty")
+        return self.repository.revise_memory(
+            user_id=user_id,
+            memory_id=memory_id,
             subject=subject,
             relation=relation,
             object_=object_,
