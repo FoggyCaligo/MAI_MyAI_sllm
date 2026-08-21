@@ -58,6 +58,7 @@ def _existing_path_schema(name: str, paths: set[str], extra: dict[str, Any], req
 class FileCreateTool:
     access: FileToolAccess
     name: str = "file_create"
+    work_kind: str = "action"
     description: str = (
         "Create a new text file at an explicit path. Parent directories are created when requested. "
         "Existing files are not overwritten and raise FileExistsError. A successfully created path becomes "
@@ -96,6 +97,7 @@ class FileCreateTool:
 class FileUpdateTool:
     access: FileToolAccess
     name: str = "file_update"
+    work_kind: str = "action"
     description: str = (
         "Atomically replace the complete contents of an existing text file whose path was established by a "
         "current-turn attachment, discovery result, or file_create."
@@ -153,6 +155,7 @@ class FileUpdateTool:
 class FileDeleteTool:
     access: FileToolAccess
     name: str = "file_delete"
+    work_kind: str = "action"
     description: str = (
         "Delete one existing file whose path was established by a current-turn attachment, discovery result, "
         "or file_create. Directories are not deleted."
@@ -189,6 +192,7 @@ class FileDownloadLinkTool:
     access: FileToolAccess
     grants: DownloadGrantStore
     name: str = "file_download_link"
+    work_kind: str = "action"
     description: str = (
         "Create a temporary browser download URL for one existing file whose path was established in the current "
         "turn. The URL expires after one hour and still requires the authenticated owner session."
