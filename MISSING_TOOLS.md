@@ -2,7 +2,7 @@
 
 이 문서는 기존 `MACHI/MK4`에서 출발한 기능 중 현재 `MAI_MyAI_sllm` runtime에 연결된 것과 아직 남은 것을 구분한다.
 
-현재 구현의 최상위 기준은 `CONTRACT.md`다. MK4 구현 방식 자체를 그대로 복제하지 않으며, 같은 tool 이름이라도 새 contract에 맞게 의미가 달라질 수 있다.
+현재 구현의 최상위 기준은 `CONTRACT.md`다. MK4 구현을 그대로 복제하는 것이 아니라 현재 runtime contract에 맞게 재구성하되, 코드 탐색에서는 옛 MK4의 compact in-memory structural index 방식을 다시 채택한다.
 
 ## 현재 모델-visible tool
 
@@ -24,22 +24,14 @@
 - `file_download_link`
 
 ### Code navigation
-- `code_search` — 현재 source/filesystem을 호출 시점에 직접 literal 검색
-- `code_index` — 모델이 선택한 코드 범위를 별도 JSON metadata file로 생성/교체
+- `code_index` — 요청 root의 Python source를 AST로 분석해 process-local compact structural index 생성
+- `code_search` — 현재 in-memory structural index에서 관련 file/symbol 검색
 
-현재 `code_index`는 옛 MK4의 in-memory Python repository search index와 동일한 구현이 아니다.
+`code_index`는 옛 MK4의 목적과 구조를 계승한다. imports, classes/methods, function signatures, routes, registered tool names, config constants, tests 같은 repository map 정보를 만든다.
 
-새 contract에서 `code_index`는 다음 정보만 저장한다.
+차이는 실패를 fallback으로 숨기지 않는 현재 runtime contract를 따른다는 점이다. index는 현재 Python process memory에만 존재하며 별도 persistent file/DB로 저장하지 않는다. source code 전체 본문도 별도 index storage에 복제하지 않는다.
 
-```text
-path
-start_line
-end_line
-symbol
-kind
-```
-
-source code 본문을 복제하지 않으며 `code_search`의 hidden cache/ranking source로도 사용하지 않는다. `code_search`는 index 유무와 상관없이 실제 현재 source를 직접 읽는다.
+`code_search`는 index가 없거나 요청 root가 달라지면 현재 source로 index를 자동 생성한다. 같은 root의 source 변경은 자동 rebuild하지 않으므로, 최신 구조가 필요하면 모델이 `code_index`를 다시 호출한다. 실제 상세 source는 이후 `file_read`로 읽는다.
 
 ### Documents and images
 - `document_read`
@@ -61,7 +53,7 @@ source code 본문을 복제하지 않으며 `code_search`의 hidden cache/ranki
 
 - `_begin_memory_commit` — 새 runtime의 phase orchestration으로 대체
 - `finish_memory_commit` — mutation 성공 이후 `done` action으로 대체
-- 옛 `code_index`의 hidden in-memory search records — 새 contract에서 사용하지 않음
+- persistent code-index file/DB — 사용하지 않음; structural index는 process-local memory만 사용
 - `internet_search` / `web_page_read` — web capability 구현 전까지 미연결
 
 ## Guard/history events
