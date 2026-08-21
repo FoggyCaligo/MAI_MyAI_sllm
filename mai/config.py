@@ -65,7 +65,8 @@ class Settings:
     server_port: int
     db_path: Path
     sentence_breaker_db_path: Path | None
-    require_sentence_breaker: bool
+    sentence_breaker_fallback: bool
+    session_cookie_secure: bool
     allowed_login_ids: tuple[str, ...]
 
 
@@ -78,7 +79,8 @@ def load_settings() -> Settings:
         server_port=int(os.getenv("MAI_SERVER_PORT", "8010")),
         db_path=_path_env("MAI_DB_PATH", data_dir / "memory.db") or (data_dir / "memory.db").resolve(),
         sentence_breaker_db_path=_first_path_env("MAI_SENTENCE_BREAKER_DB_PATH", "MK4_SENTENCE_BREAKER_DB_PATH"),
-        require_sentence_breaker=_bool_env("MAI_REQUIRE_SENTENCE_BREAKER", True),
+        sentence_breaker_fallback=_bool_env("MAI_SENTENCE_BREAKER_FALLBACK", True),
+        session_cookie_secure=_bool_env("MAI_SESSION_COOKIE_SECURE", False),
         allowed_login_ids=_csv_env("MAI_ALLOWED_LOGIN_IDS"),
     )
 
