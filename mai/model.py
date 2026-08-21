@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,7 @@ class ModelContractError(RuntimeError):
 class OllamaModel:
     timeout_seconds: float = 180.0
     num_predict: int = 2048
+    last_elapsed_ms: float = 0.0
 
     async def structured(
         self,
@@ -40,9 +42,13 @@ class OllamaModel:
             "format": schema,
             "options": {"num_predict": self.num_predict},
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post(f"{settings.ollama_host}/api/chat", json=payload)
-        response.raise_for_status()
+        started = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(f"{settings.ollama_host}/api/chat", json=payload)
+            response.raise_for_status()
+        finally:
+            self.last_elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
         body = response.json()
         message = body.get("message")
         raw = message.get("content") if isinstance(message, dict) else None
