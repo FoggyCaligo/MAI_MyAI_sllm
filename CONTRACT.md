@@ -51,7 +51,10 @@
 ## 2. 모델과 Framework 책임 분리
 
 ### 모델이 결정한다
-- 무엇을 recall할지
+- 어떤 개념을 memory에서 찾을지
+- `node_lookup`에 사용할 lexical query들
+- lookup 후보 중 어떤 node를 focus로 recall할지
+- 추가로 어떤 node를 recall할지
 - 어떤 tool을 사용할지
 - tool 결과를 어떻게 해석할지
 - 최종 답변 내용
@@ -70,6 +73,8 @@
 - mutation scope
 - DB transaction
 - tool 실제 실행
+- lexical lookup의 실제 DB 조회
+- focus node에서 사용자 anchor까지의 구조적 경로 계산
 - 성공/실패 상태
 - fixed answer 불변성
 
@@ -87,6 +92,8 @@ if answer contains correction phrase ...
 
 문자열 규칙으로 tool route, correction 의도, 사람/AI/정체성, 관계 의미, memory 의미를 결정하지 않는다. malformed model output도 의미적으로 자동 교정하지 않는다. Schema 위반은 contract failure로 드러낸다.
 
+단, 모델이 명시적으로 생성한 `node_lookup` query를 실제 `node.name`과 lexical partial match하는 것은 의미 routing이 아니라 검색 연산이므로 허용한다. Framework는 어떤 query를 만들지 결정하지 않는다.
+
 ## 4. Sentence_Breaker 제거
 
 Runtime에서 다음을 전부 사용하지 않는다.
@@ -103,7 +110,9 @@ sLLM이 직접 semantic node 이름과 relation을 만든다.
 ```text
 User Input
   ↓
-Mandatory Recall
+Mandatory Memory Discovery
+  ├─ node_lookup
+  └─ recall_memory(focus node)
   ↓
 Work / Tool Loop
   ↓
@@ -123,7 +132,13 @@ Fixed answer는 memory commit 성공 전에는 사용자에게 release하지 않
 각 model response는 정확히 하나의 action만 표현한다.
 
 ```json
-{"action":"tool","tool":"recall_memory","arguments":{}}
+{"action":"tool","tool":"node_lookup","arguments":{"queries":["MAI","MAI 프로젝트"]}}
+```
+
+또는
+
+```json
+{"action":"tool","tool":"recall_memory","arguments":{"focus_node_id":17}}
 ```
 
 또는
@@ -142,14 +157,109 @@ Fixed answer는 memory commit 성공 전에는 사용자에게 release하지 않
 
 Agent loop에는 임의의 global round cap을 두지 않는다. 모델이 terminal action을 내거나 실제 오류/취소/server shutdown이 발생할 때까지 필요한 만큼 반복할 수 있다.
 
-## 7. Recall Contract
+## 7. Memory Discovery / Recall Contract
 
-- 일반 작업 전에 `recall_memory`를 최소 1회 성공해야 한다.
-- 한 번의 recall은 focus 기준 **1 depth**만 반환한다.
-- recursive multi-depth expansion은 하지 않는다.
-- 더 먼 관계는 추가 `recall_memory` 호출로 확인한다.
-- recall 결과에는 실제 stable `node_id`, `edge_id`를 포함한다.
-- 기존 memory 수정은 현재 턴에서 recall되었거나 현재 턴에서 생성된 실제 ID만 사용할 수 있다.
+### 7.1 Mandatory memory discovery
+
+일반 작업 전에 memory discovery를 반드시 수행한다.
+
+최초 discovery는 다음 구조를 따른다.
+
+```text
+model -> node_lookup(queries <= 3)
+framework -> actual node candidates
+model -> recall_memory(focus_node_id)
+framework -> one-hop neighborhood + origin path
+```
+
+그래프가 비어 있거나 lookup 결과가 없으면 그 사실을 실제 결과로 반환한다. 성공처럼 보이는 guessed node나 fallback focus를 만들지 않는다.
+
+### 7.2 node_lookup
+
+`node_lookup`은 모델이 만든 최대 3개의 lexical query를 입력으로 받는다.
+
+Framework는 각 query를 user-owned `node.name`에 대해 lexical partial match하고 실제 존재하는 node 후보만 반환한다.
+
+Framework는:
+- query의 의미를 해석하지 않는다.
+- 동의어를 임의 생성하지 않는다.
+- embedding/semantic similarity를 자동 적용하지 않는다.
+- 없는 node를 추측해서 만들지 않는다.
+
+후보가 많을 수 있으므로 결과는 pagination/cursor 계약을 사용한다. 모델은 필요하면 추가 `node_lookup` 호출로 다음 page를 볼 수 있다.
+
+### 7.3 Focus selection
+
+lookup 결과의 실제 `node_id` 중 무엇을 focus로 선택할지는 모델이 결정한다.
+
+`recall_memory`는 실제 user-owned stable `focus_node_id`를 요구한다. 임의 ID나 foreign-user ID는 scope failure다.
+
+### 7.4 One-hop neighborhood
+
+한 번의 `recall_memory`는 focus 기준 **정확히 1 depth neighborhood**만 반환한다.
+
+- focus node
+- focus에 직접 들어오는 edge
+- focus에서 직접 나가는 edge
+- 위 edge들의 반대 endpoint node
+
+recursive multi-depth neighborhood 확장은 하지 않는다. 더 먼 관계는 모델이 추가 `recall_memory`를 호출해서 확인한다.
+
+### 7.5 Canonical user anchor
+
+각 user graph에는 framework가 보장하는 canonical **user anchor node**가 정확히 하나 존재한다.
+
+이 anchor는 mandatory first recall의 focus를 강제로 정하기 위한 root가 아니다. 오직:
+- user identity endpoint
+- origin/path anchor
+
+로 사용한다.
+
+모델이 일반 semantic node와 동일한 이름을 만들었다는 이유로 user anchor로 취급하지 않는다. anchor 여부는 문자열 이름이 아니라 framework-managed structural identity로 구분한다.
+
+### 7.6 Origin path
+
+`recall_memory(focus_node_id)` 결과에는 1-hop neighborhood와 별도로 **focus node에서 canonical user anchor까지 연결되는 하나의 origin path**를 함께 반환한다.
+
+목적은 모델이 선택한 기억의 기원/상위 문맥을 확인할 수 있게 하는 것이다.
+
+예:
+
+```text
+사용자 -> 프로젝트 -> sLLM -> MAI
+```
+
+MAI를 focus로 recall하면:
+
+```text
+one_hop:
+  MAI와 직접 연결된 node/edge만
+
+origin_path:
+  MAI -> sLLM -> 프로젝트 -> 사용자
+```
+
+을 함께 반환한다.
+
+Origin path 계산 규칙:
+- 같은 user graph 안에서만 탐색한다.
+- edge 방향은 path 탐색 가능 여부를 제한하지 않는다. 즉 구조적 연결성 기준으로 탐색한다.
+- 여러 경로가 존재하면 **edge 수가 가장 적은 shortest path 하나**만 반환한다.
+- 반환할 때는 각 edge의 실제 `subject_node_id`, `relation`, `object_node_id` 방향을 그대로 보존한다.
+- shortest path가 여러 개로 동률이면 stable ID 기반 deterministic ordering으로 하나를 선택한다. 의미 점수나 문자열 휴리스틱으로 고르지 않는다.
+- user anchor까지 연결된 경로가 없으면 `origin_path`는 명시적으로 unavailable/empty 상태를 반환하며, 임의 연결을 만들지 않는다.
+
+Origin path는 1-hop 제한의 예외가 아니라 **별도 provenance/navigation view**다. 따라서 모델이 일반 주변 관계를 재귀적으로 보는 수단으로 사용하지 않는다.
+
+### 7.7 Recall scope
+
+recall 결과에는 실제 stable `node_id`, `edge_id`를 포함한다.
+
+현재 턴에서 lookup으로 후보만 본 node는 mutation scope에 자동 포함하지 않는다. 기존 memory 수정 가능 scope는:
+- 실제 `recall_memory` 결과에 포함된 node/edge
+- 현재 턴에서 새로 생성된 node/edge
+
+로 제한한다.
 
 ## 8. Answer Contract
 
@@ -162,9 +272,12 @@ Agent loop에는 임의의 global round cap을 두지 않는다. 모델이 termi
 node_id       Framework-generated stable ID
 user_id       Framework-enforced owner
 name          model-authored semantic name
+is_user_anchor Framework-managed structural flag/identity
 created_at
 updated_at
 ```
+
+일반 node의 `name`은 모델이 정한다. Canonical user anchor의 구조적 identity는 Framework가 관리하며 이름 문자열 비교로 판별하지 않는다.
 
 ### Edge
 ```text
@@ -218,7 +331,7 @@ memory start
 }
 ```
 
-Framework는 의미의 옳고 그름을 문자열로 검증하지 않고 scope/ownership/transaction만 강제한다.
+`{"kind":"user"}`는 canonical user anchor를 구조적으로 가리킨다. Framework는 의미의 옳고 그름을 문자열로 검증하지 않고 scope/ownership/transaction만 강제한다.
 
 ## 12. revise_memory Contract
 
@@ -334,18 +447,20 @@ Tailscale 실패    -> hosting failure
 
 ```text
 1. semantic graph storage
-2. one-depth recall
-3. write_memory
-4. revise_memory
-5. memory completion contract
-6. work/tool agent loop
-7. MK4 UI + upload + Tailscale hosting
-8. file discovery/read
-9. file CRUD/download
-10. document/image
-11. terminal
-12. code_search
-13. web/current-information tools
+2. exact one-depth neighborhood recall primitive
+3. canonical user anchor + node_lookup + origin path
+4. mandatory memory discovery orchestration
+5. write_memory
+6. revise_memory
+7. memory completion contract
+8. work/tool agent loop
+9. MK4 UI + upload + Tailscale hosting
+10. file discovery/read
+11. file CRUD/download
+12. document/image
+13. terminal
+14. code_search
+15. web/current-information tools
 ```
 
 각 단계는 로컬 테스트와 실제 실행 검증 후 사용자가 수동으로 main에 merge한다.
