@@ -26,9 +26,8 @@ class DocumentReadTool:
     access: FileToolAccess
     name: str = "document_read"
     description: str = (
-        "Read structured text from one existing PDF or DOCX file only. Use file_read for ordinary text files. "
-        "PDF results are paginated by page; DOCX results are paginated by paragraph. Unsupported document types "
-        "fail explicitly."
+        "Read structured text from one existing PDF or DOCX whose path was established by an attachment or a "
+        "current-turn file/code discovery tool. Use file_read for ordinary text files."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -41,6 +40,10 @@ class DocumentReadTool:
             },
             ["path"],
         )
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
@@ -112,8 +115,8 @@ class ImageAnalyzeTool:
     analyzer: ImageAnalyzer
     name: str = "image_analyze"
     description: str = (
-        "Analyze one concrete image file using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL. "
-        "The model receives the image and the caller-provided prompt without semantic routing by the framework."
+        "Analyze one image whose path was established by an attachment or a current-turn file/code discovery tool, "
+        "using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -125,6 +128,10 @@ class ImageAnalyzeTool:
             },
             ["path", "prompt"],
         )
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
