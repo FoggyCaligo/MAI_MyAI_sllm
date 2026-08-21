@@ -28,6 +28,7 @@ from .memory_write import WriteMemoryTool
 from .model import OllamaModel
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
+from .web_tools import build_web_market_tools
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +174,7 @@ def build_lifecycle(
         *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
         *build_terminal_tools(owner_id=owner_id),
         *build_code_tools(owner_id=owner_id),
+        *build_web_market_tools(),
     ]
     return AgentLifecycle(
         repository=repository,
