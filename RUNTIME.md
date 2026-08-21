@@ -80,6 +80,8 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 - owner용 문서/이미지 도구:
   - `document_read`: PDF 페이지 또는 DOCX 문단 단위 읽기
   - `image_analyze`: 독립 이미지 모델로 이미지 분석
+- owner용 시스템 도구:
+  - `terminal_command`: 호스트 shell 명령 실행
 
 로그인 세션은 현재 Python 서버 메모리에 있으므로, 단순 앱 전환이나 페이지 재진입에는 유지되지만 Python 서버 자체를 재시작하면 다시 로그인해야 한다. 채팅 기록과 graph DB는 SQLite에 남는다.
 
@@ -95,4 +97,6 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 
 `image_analyze`는 일반 대화 모델과 분리된 `MAI_OLLAMA_IMAGE_MODEL`을 사용한다. 기본값은 `gemma4:12b`이며, 이미지 bytes를 Ollama `/api/chat`의 message `images` 입력으로 전달한다. framework는 분석 prompt의 의미를 재해석하거나 바꾸지 않는다.
 
-아직 이 단계에서는 터미널과 코드 검색은 연결하지 않았다. 후속 PR에서 각각 별도 work tool로 추가한다.
+`terminal_command`는 owner가 작성한 `command` 문자열을 의미적으로 검사하거나 재작성하지 않고 host shell에 그대로 전달한다. `cwd`, 선택적 `timeout_seconds`, 출력 `encoding`을 구조적으로 지정할 수 있다. 명령이 non-zero exit로 끝나면 `ok=false`, `returncode`, `stdout`, `stderr`를 그대로 반환하여 실패를 성공처럼 숨기지 않는다. 잘못된 cwd, timeout, shell/OS 실행 오류는 실제 예외로 드러난다. OS, shell, filesystem, registry, process, 계정 권한이 최종 실행 경계다.
+
+아직 이 단계에서는 코드 검색은 연결하지 않았다. 후속 PR에서 `code_search`를 별도 work tool로 추가한다.
