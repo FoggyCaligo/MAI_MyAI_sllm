@@ -63,7 +63,7 @@ class FileTreeTool:
     name: str = "file_tree"
     description: str = (
         "List filesystem structure from a concrete root path. Owner access is not workspace-confined; "
-        "absolute and parent paths are allowed. This tool does not search file contents."
+        "absolute and parent paths are allowed. Returned entries establish concrete paths for later read tools."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -97,7 +97,7 @@ class FileTreeTool:
             stat = path.stat()
             entries.append(
                 {
-                    "path": str(path),
+                    "path": str(path.resolve()),
                     "relative_path": str(relative),
                     "kind": "directory" if path.is_dir() else "file",
                     "size": None if path.is_dir() else stat.st_size,
@@ -116,6 +116,10 @@ class FileTreeTool:
             "total_entries": len(entries),
         }
 
+    @staticmethod
+    def discovered_paths(result: dict[str, Any]) -> set[str]:
+        return {str(item["path"]) for item in result.get("entries", []) if item.get("path")}
+
 
 @dataclass(slots=True)
 class FileSearchTool:
@@ -123,7 +127,7 @@ class FileSearchTool:
     name: str = "file_search"
     description: str = (
         "Search filesystem paths by filename/path glob pattern. This is path discovery only, not content search. "
-        "Use file_text_search for text inside files."
+        "Returned matches establish concrete paths for later read tools."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -170,6 +174,10 @@ class FileSearchTool:
             "total_matches": len(matches),
         }
 
+    @staticmethod
+    def discovered_paths(result: dict[str, Any]) -> set[str]:
+        return {str(item["path"]) for item in result.get("matches", []) if item.get("path")}
+
 
 @dataclass(slots=True)
 class FileTextSearchTool:
@@ -177,7 +185,7 @@ class FileTextSearchTool:
     name: str = "file_text_search"
     description: str = (
         "Search literal text inside readable text files under a root. The framework performs lexical substring "
-        "matching only and does not infer meaning or synonyms. Files that fail text decoding are reported."
+        "matching only and does not infer meaning or synonyms. Matched files establish concrete paths for later reads."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -243,15 +251,18 @@ class FileTextSearchTool:
             "decode_failures": decode_failures,
         }
 
+    @staticmethod
+    def discovered_paths(result: dict[str, Any]) -> set[str]:
+        return {str(item["path"]) for item in result.get("matches", []) if item.get("path")}
+
 
 @dataclass(slots=True)
 class FileReadTool:
     access: FileToolAccess
     name: str = "file_read"
     description: str = (
-        "Read one existing ordinary text file by path. Use this tool rather than document_read for plain-text "
-        "content. Supports line pagination so large files can be inspected without forcing the whole file into "
-        "one model round."
+        "Read one existing ordinary text file whose path was established by an attachment or a current-turn "
+        "file/code discovery tool. Use document_read for PDF/DOCX."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -265,6 +276,10 @@ class FileReadTool:
             },
             ["path"],
         )
+
+    @staticmethod
+    def required_paths(arguments: dict[str, Any]) -> set[str]:
+        return {str(arguments["path"])}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         self.access.require_owner(context)
