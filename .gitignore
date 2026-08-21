@@ -1,0 +1,11 @@
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Runtime state must stay local.
+data/
+.mai_uploads/
+*.db
+*.db-shm
+*.db-wal
