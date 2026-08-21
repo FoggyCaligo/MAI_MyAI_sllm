@@ -203,4 +203,5 @@ async def _chat_response(*, user_id: str, payload: ChatRequest) -> dict[str, Any
         "used_tools": result.used_tools,
         "tool_events": result.tool_events,
         "memory_writes": result.memory_writes,
+        "diagnostics": result.diagnostics,
     }
