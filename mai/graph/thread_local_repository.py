@@ -11,9 +11,10 @@ class GraphRepository(BaseGraphRepository):
     """Graph repository with one SQLite connection per calling thread.
 
     FastAPI may execute synchronous endpoints in worker threads. Keeping a
-    thread-local SQLite connection preserves SQLite's thread-affinity contract
-    without sharing one connection across threads. WAL + busy_timeout remain
-    the cross-thread/process coordination boundary.
+    thread-local SQLite connection avoids sharing query/transaction state
+    across worker threads. ``check_same_thread=False`` is used only so the
+    application shutdown thread can close connections created by workers.
+    WAL + busy_timeout remain the cross-thread/process coordination boundary.
     """
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
@@ -22,7 +23,7 @@ class GraphRepository(BaseGraphRepository):
         self._db_path = path
         self._busy_timeout_ms = int(busy_timeout_ms)
         self._local = local()
-        self._connections: set[sqlite3.Connection] = set()
+        self._connections: list[sqlite3.Connection] = []
         self._connections_lock = Lock()
         self._create_schema()
 
@@ -33,13 +34,14 @@ class GraphRepository(BaseGraphRepository):
             connection = self._open_connection()
             self._local.connection = connection
             with self._connections_lock:
-                self._connections.add(connection)
+                self._connections.append(connection)
         return connection
 
     def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             str(self._db_path),
             timeout=self._busy_timeout_ms / 1000,
+            check_same_thread=False,
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
