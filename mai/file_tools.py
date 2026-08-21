@@ -164,7 +164,7 @@ class FileTextSearchTool(WorkTool):
     name: str = "file_text_search"
     description: str = (
         "Search literal text inside readable text files under a root. The framework performs lexical substring "
-        "matching only and does not infer meaning or synonyms."
+        "matching only and does not infer meaning or synonyms. Files that fail text decoding are reported."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -194,6 +194,7 @@ class FileTextSearchTool(WorkTool):
 
         needle = query if case_sensitive else query.casefold()
         matches: list[dict[str, Any]] = []
+        decode_failures: list[dict[str, str]] = []
         for path in _iter_paths(root, recursive=True):
             if not path.is_file():
                 continue
@@ -213,8 +214,8 @@ class FileTextSearchTool(WorkTool):
                                     "text": line.rstrip("\r\n"),
                                 }
                             )
-            except UnicodeDecodeError:
-                continue
+            except UnicodeDecodeError as exc:
+                decode_failures.append({"path": str(path.resolve()), "error": str(exc)})
 
         matches.sort(key=lambda item: (item["relative_path"].casefold(), item["relative_path"], item["line"]))
         page = matches[cursor : cursor + limit]
@@ -226,6 +227,7 @@ class FileTextSearchTool(WorkTool):
             "has_more": next_cursor < len(matches),
             "next_cursor": next_cursor if next_cursor < len(matches) else None,
             "total_matches": len(matches),
+            "decode_failures": decode_failures,
         }
 
 
