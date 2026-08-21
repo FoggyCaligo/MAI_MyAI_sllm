@@ -77,6 +77,9 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
   - `file_update`: 기존 텍스트 파일 전체 내용을 원자적으로 교체
   - `file_delete`: 명시한 파일 하나 삭제
   - `file_download_link`: 현재 브라우저에서 받을 수 있는 1시간 임시 링크 생성
+- owner용 문서/이미지 도구:
+  - `document_read`: PDF 페이지 또는 DOCX 문단 단위 읽기
+  - `image_analyze`: 독립 이미지 모델로 이미지 분석
 
 로그인 세션은 현재 Python 서버 메모리에 있으므로, 단순 앱 전환이나 페이지 재진입에는 유지되지만 Python 서버 자체를 재시작하면 다시 로그인해야 한다. 채팅 기록과 graph DB는 SQLite에 남는다.
 
@@ -88,4 +91,8 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 
 `file_download_link`가 발급하는 `/download/<token>` URL은 기본 1시간 동안만 유효하며, 해당 token을 발급한 owner 로그인 세션도 동시에 필요하다. token 없음은 404, 만료는 410, 다른 사용자 접근은 403으로 구분한다. 서버가 재시작되면 메모리의 임시 download token은 사라진다.
 
-아직 이 단계에서는 PDF/DOCX, 이미지 분석, 터미널, 코드 검색은 연결하지 않았다. 후속 PR에서 각각 별도 work tool로 추가한다.
+`document_read`는 `.pdf`와 `.docx`만 명시적으로 지원한다. PDF는 page, DOCX는 paragraph 단위로 pagination하고, 다른 문서 형식을 임의로 텍스트 파일처럼 fallback하지 않는다. 파싱 실패도 그대로 오류로 드러난다.
+
+`image_analyze`는 일반 대화 모델과 분리된 `MAI_OLLAMA_IMAGE_MODEL`을 사용한다. 기본값은 `gemma4:12b`이며, 이미지 bytes를 Ollama `/api/chat`의 message `images` 입력으로 전달한다. framework는 분석 prompt의 의미를 재해석하거나 바꾸지 않는다.
+
+아직 이 단계에서는 터미널과 코드 검색은 연결하지 않았다. 후속 PR에서 각각 별도 work tool로 추가한다.
