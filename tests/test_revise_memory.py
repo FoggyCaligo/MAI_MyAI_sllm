@@ -215,23 +215,21 @@ def test_duplicate_edge_collision_remains_visible(tmp_path) -> None:
         repo.close()
 
 
-def test_new_node_rolls_back_when_revision_collides(tmp_path) -> None:
+def test_new_node_rolls_back_when_later_endpoint_fails(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
         anchor = repo.ensure_user_anchor(user_id="owner", turn_id="seed", source_text="owner")
         a = _node(repo, "owner", "A")
         b = _node(repo, "owner", "B")
-        edge1 = _edge(repo, "owner", anchor["node_id"], "r1", a["node_id"])
-        _edge(repo, "owner", anchor["node_id"], "r2", b["node_id"])
-        recall = {"nodes": [anchor, a, b], "edges": [edge1], "origin_path": {"nodes": [anchor, a], "edges": [edge1]}}
-        scope = _scope(_turn(recalled={anchor["node_id"], a["node_id"], b["node_id"]}), recall)
-        before = repo.lookup_nodes(user_id="owner", queries=["temp"])["matches"]
-        assert before == []
+        edge = _edge(repo, "owner", anchor["node_id"], "r1", a["node_id"])
+        recall = {"nodes": [anchor, a], "edges": [edge], "origin_path": {"nodes": [anchor, a], "edges": [edge]}}
+        scope = _scope(_turn(recalled={anchor["node_id"], a["node_id"]}), recall)
+        assert repo.lookup_nodes(user_id="owner", queries=["temp"])["matches"] == []
 
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(MemoryScopeError):
             ReviseMemoryTool(repo).execute(
                 arguments={
-                    "edge_id": edge1["edge_id"],
+                    "edge_id": edge["edge_id"],
                     "subject": {"new_node": {"name": "temp"}},
                     "relation": "r2",
                     "object": {"existing_node_id": b["node_id"]},
