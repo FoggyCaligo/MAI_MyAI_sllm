@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
-from .code_search_tool import build_code_search_tools
+from .code_search_tool import build_code_tools
 from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
@@ -172,7 +172,7 @@ def build_lifecycle(
         *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
         *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
         *build_terminal_tools(owner_id=owner_id),
-        *build_code_search_tools(owner_id=owner_id),
+        *build_code_tools(owner_id=owner_id),
     ]
     return AgentLifecycle(
         repository=repository,
