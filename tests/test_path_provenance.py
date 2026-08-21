@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from mai.agent import AgentLifecycle, PathProvenance, WorkContext
-from mai.file_mutation_tools import DownloadGrantStore, FileCreateTool, FileDeleteTool, FileUpdateTool
+from mai.file_mutation_tools import FileCreateTool, FileDeleteTool, FileUpdateTool
 from mai.file_tools import FileReadTool, FileSearchTool, FileToolAccess
 from mai.model import ModelContractError
 
@@ -22,14 +22,30 @@ class ScriptedModel:
         return self.actions.pop(0)
 
 
+def _answer(content: str = "done") -> dict[str, Any]:
+    return {
+        "action": "answer",
+        "content": content,
+        "memory_mutations": [
+            {
+                "kind": "write_memory",
+                "arguments": {
+                    "subject": {"kind": "user"},
+                    "relation": "turn_memory",
+                    "object": {"new_node": {"name": content}},
+                },
+            }
+        ],
+    }
+
+
 def lifecycle(model: ScriptedModel, tools: list[Any]) -> AgentLifecycle:
     return AgentLifecycle(
         repository=None,  # type: ignore[arg-type]
         model=model,
-        discovery_phase=None,  # type: ignore[arg-type]
         discovery=None,  # type: ignore[arg-type]
         recall=None,  # type: ignore[arg-type]
-        memory_completion=None,  # type: ignore[arg-type]
+        memory_executor=None,  # type: ignore[arg-type]
         work_tools=tools,
     )
 
@@ -73,11 +89,11 @@ def test_file_search_establishes_path_and_exposes_file_read_enum(tmp_path: Path)
         [
             {"action": "tool", "tool": "file_search", "arguments": {"pattern": "target.txt"}},
             {"action": "tool", "tool": "file_read", "arguments": {"path": str(target.resolve())}},
-            {"action": "answer", "content": "done"},
+            _answer(),
         ]
     )
 
-    answer, events = lifecycle(model, [FileSearchTool(access), FileReadTool(access)])._run_work_phase(
+    answer, _, events = lifecycle(model, [FileSearchTool(access), FileReadTool(access)])._run_work_phase(
         context=context(), candidate_ids=set(), recall_results=[]
     )
 
@@ -108,7 +124,7 @@ def test_seeded_attachment_exposes_read_and_update_for_exact_path(tmp_path: Path
     access = FileToolAccess(owner_id="owner", default_root=tmp_path)
     provenance = PathProvenance()
     provenance.add(target)
-    model = ScriptedModel([{"action": "answer", "content": "done"}])
+    model = ScriptedModel([_answer()])
 
     lifecycle(model, [FileReadTool(access), FileUpdateTool(access)])._run_work_phase(
         context=context(provenance=provenance), candidate_ids=set(), recall_results=[]
@@ -131,7 +147,7 @@ def test_file_search_then_file_update_modifies_discovered_file(tmp_path: Path) -
                 "tool": "file_update",
                 "arguments": {"path": str(target.resolve()), "content": "new"},
             },
-            {"action": "answer", "content": "done"},
+            _answer(),
         ]
     )
 
@@ -159,7 +175,7 @@ def test_file_create_registers_new_path_for_later_update(tmp_path: Path) -> None
                 "tool": "file_update",
                 "arguments": {"path": str(target.resolve()), "content": "two"},
             },
-            {"action": "answer", "content": "done"},
+            _answer(),
         ]
     )
 
@@ -182,7 +198,7 @@ def test_file_delete_removes_path_from_next_round_schema(tmp_path: Path) -> None
     model = ScriptedModel(
         [
             {"action": "tool", "tool": "file_delete", "arguments": {"path": str(target.resolve())}},
-            {"action": "answer", "content": "done"},
+            _answer(),
         ]
     )
 
