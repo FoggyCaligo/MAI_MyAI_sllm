@@ -45,6 +45,7 @@ class PathProvenance:
 class WorkTool(Protocol):
     name: str
     description: str
+    work_kind: str
 
     def schema(self) -> dict[str, Any]: ...
 
@@ -65,6 +66,7 @@ class FunctionWorkTool:
     description: str
     input_schema: dict[str, Any]
     handler: Callable[[dict[str, Any], WorkContext], Any]
+    work_kind: str = "action"
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -148,13 +150,34 @@ def _combined_schema(variants: list[dict[str, Any]]) -> dict[str, Any]:
     return {"oneOf": variants}
 
 
+def _tool_kind(tool: WorkTool) -> str:
+    explicit = getattr(tool, "work_kind", None)
+    if explicit is not None:
+        kind = str(explicit)
+        if kind not in {"inspection", "action"}:
+            raise ValueError(f"work tool {tool.name} has invalid work_kind: {kind}")
+        return kind
+    if callable(getattr(tool, "progress_keys", None)):
+        return "inspection"
+    raise ValueError(f"work tool {tool.name} must declare work_kind")
+
+
+def _validate_work_tool_contracts(tools: dict[str, WorkTool]) -> None:
+    for tool in tools.values():
+        kind = _tool_kind(tool)
+        if kind == "inspection" and not callable(getattr(tool, "progress_keys", None)):
+            raise ValueError(f"inspection work tool {tool.name} must implement progress_keys")
+
+
 def _progress_keys(tool: WorkTool, result: Any) -> set[str] | None:
+    if _tool_kind(tool) != "inspection":
+        return None
     extractor = getattr(tool, "progress_keys", None)
     if not callable(extractor):
-        return None
+        raise ValueError(f"inspection work tool {tool.name} must implement progress_keys")
     keys = extractor(result)
     if keys is None:
-        return None
+        raise ValueError(f"inspection work tool {tool.name} progress_keys must return a collection")
     return {str(key) for key in keys}
 
 
@@ -285,6 +308,7 @@ class AgentLifecycle:
             raise ValueError("work tool names must be unique")
         if {"node_lookup", "recall_memory"} & set(tools):
             raise ValueError("work tools may not shadow built-in memory tools")
+        _validate_work_tool_contracts(tools)
 
         messages: list[dict[str, str]] = [
             {
