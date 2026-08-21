@@ -25,7 +25,7 @@ class OllamaModel:
     @classmethod
     def from_env(cls) -> "OllamaModel":
         return cls(
-            model=os.getenv("MAI_OLLAMA_MODEL", "qwen3.5:9b"),
+            model=os.getenv("MAI_OLLAMA_MODEL", "gemma4:e4b"),
             base_url=os.getenv("MAI_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
             timeout_seconds=float(os.getenv("MAI_OLLAMA_TIMEOUT", "180")),
         )
