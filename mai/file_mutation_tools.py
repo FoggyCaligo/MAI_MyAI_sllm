@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -84,7 +85,7 @@ class FileUpdateTool:
     access: FileToolAccess
     name: str = "file_update"
     description: str = (
-        "Replace the complete contents of an existing text file at an explicit path. "
+        "Atomically replace the complete contents of an existing text file at an explicit path. "
         "The file must already exist; missing paths fail with FileNotFoundError."
     )
 
@@ -107,8 +108,17 @@ class FileUpdateTool:
             raise FileNotFoundError(path)
         if not path.is_file():
             raise IsADirectoryError(path)
-        with path.open("w", encoding=encoding, newline="") as handle:
-            written = handle.write(str(arguments["content"]))
+
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            with temporary.open("x", encoding=encoding, newline="") as handle:
+                written = handle.write(str(arguments["content"]))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
         return {"path": str(path), "encoding": encoding, "characters_written": written}
 
 
