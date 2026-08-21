@@ -6,7 +6,7 @@ import socket
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any, Protocol
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from ddgs import DDGS
@@ -18,6 +18,7 @@ from .file_tools import _tool_schema
 _MAX_SEARCH_RESULTS = 8
 _MAX_PAGE_BYTES = 1_000_000
 _MAX_PAGE_CHARS = 16_000
+_MAX_REDIRECTS = 5
 
 
 class _ReadableHtmlParser(HTMLParser):
@@ -65,6 +66,25 @@ def _public_http_url(url: str) -> str:
     return url
 
 
+def _fetch_public_response(client: httpx.Client, url: str) -> httpx.Response:
+    current = _public_http_url(url)
+    for _ in range(_MAX_REDIRECTS + 1):
+        response = client.get(
+            current,
+            headers={"User-Agent": "Mai/1.0", "Accept": "text/html,application/xhtml+xml"},
+            follow_redirects=False,
+        )
+        if response.is_redirect:
+            location = response.headers.get("location")
+            if not location:
+                raise ValueError("web redirect is missing Location header")
+            current = _public_http_url(urljoin(str(response.url), location))
+            continue
+        response.raise_for_status()
+        return response
+    raise ValueError(f"web page exceeded {_MAX_REDIRECTS} redirects")
+
+
 class SearchProvider(Protocol):
     def latest(self, query: str, *, limit: int) -> list[dict[str, Any]]: ...
     def web(self, query: str, *, limit: int) -> list[dict[str, Any]]: ...
@@ -101,22 +121,16 @@ class DdgSearchProvider:
         ]
 
     def read_page(self, url: str) -> dict[str, Any]:
-        checked = _public_http_url(url)
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
-            response = client.get(
-                checked,
-                headers={"User-Agent": "Mai/1.0", "Accept": "text/html,application/xhtml+xml"},
-            )
-            response.raise_for_status()
+        with httpx.Client(timeout=self.timeout) as client:
+            response = _fetch_public_response(client, url)
             data = response.content
         if len(data) > _MAX_PAGE_BYTES:
             raise ValueError(f"web page exceeds {_MAX_PAGE_BYTES} bytes")
-        final_url = _public_http_url(str(response.url))
         parser = _ReadableHtmlParser()
         parser.feed(response.text)
         content = parser.text()
         return {
-            "url": final_url,
+            "url": str(response.url),
             "title": parser.title,
             "content_type": response.headers.get("content-type", ""),
             "content": content[:_MAX_PAGE_CHARS],
