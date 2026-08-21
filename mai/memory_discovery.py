@@ -87,10 +87,11 @@ class MandatoryMemoryDiscovery:
         if not candidates:
             return {"status": "no_match", "lookup": lookup, "recall": None}
 
+        allow_lookup = True
         while True:
             action = self.model.structured(
                 messages=messages,
-                schema=_selection_schema(sorted(candidates), allow_lookup=True),
+                schema=_selection_schema(sorted(candidates), allow_lookup=allow_lookup),
             )
             tool = action.get("tool")
             if tool == "recall_memory":
@@ -102,7 +103,10 @@ class MandatoryMemoryDiscovery:
                 tool_completed("recall_memory")
                 return {"status": "recalled", "lookup": lookup, "recall": recalled}
             if tool == "node_lookup":
+                if not allow_lookup:
+                    raise ModelContractError("node_lookup is unavailable after a no-progress lookup")
                 self._require_tool(action, "node_lookup")
+                previous_candidate_ids = set(candidates)
                 tool_started("node_lookup")
                 lookup = self.discovery.node_lookup(user_id=user_id, queries=action["arguments"]["queries"])
                 tool_completed("node_lookup")
@@ -110,8 +114,7 @@ class MandatoryMemoryDiscovery:
                 messages.append({"role": "tool", "content": str({"tool": "node_lookup", "result": lookup})})
                 for node in lookup.get("matches", []):
                     candidates[int(node["node_id"])] = node
-                if not candidates:
-                    return {"status": "no_match", "lookup": lookup, "recall": None}
+                allow_lookup = set(candidates) != previous_candidate_ids
                 continue
             raise ModelContractError("unexpected discovery action")
 
