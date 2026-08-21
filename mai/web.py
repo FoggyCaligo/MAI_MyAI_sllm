@@ -4,6 +4,7 @@ import os
 import sqlite3
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -15,6 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
+from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
 from .memory_completion import MandatoryMemoryCompletion
@@ -147,13 +149,23 @@ class SessionStore:
             self._sessions.pop(token, None)
 
 
-def build_lifecycle(*, repository: GraphRepository, model: OllamaModel, owner_id: str) -> AgentLifecycle:
+def build_lifecycle(
+    *,
+    repository: GraphRepository,
+    model: OllamaModel,
+    owner_id: str,
+    download_grants: DownloadGrantStore,
+) -> AgentLifecycle:
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository)
     discovery_phase = MandatoryMemoryDiscovery(model, discovery, recall)
     writer = WriteMemoryTool(repository)
     reviser = ReviseMemoryTool(repository)
     completion = MandatoryMemoryCompletion(model, writer, reviser)
+    work_tools = [
+        *build_file_tools(owner_id=owner_id),
+        *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+    ]
     return AgentLifecycle(
         repository=repository,
         model=model,
@@ -161,7 +173,7 @@ def build_lifecycle(*, repository: GraphRepository, model: OllamaModel, owner_id
         discovery=discovery,
         recall=recall,
         memory_completion=completion,
-        work_tools=build_file_tools(owner_id=owner_id),
+        work_tools=work_tools,
     )
 
 
@@ -170,15 +182,18 @@ def create_app(
     settings: RuntimeSettings | None = None,
     lifecycle: AgentLifecycle | None = None,
     model: OllamaModel | None = None,
+    download_grants: DownloadGrantStore | None = None,
 ) -> FastAPI:
     resolved = settings or RuntimeSettings.from_env()
     resolved.upload_dir.mkdir(parents=True, exist_ok=True)
     repository = None if lifecycle is not None else GraphRepository(resolved.graph_db_path)
     resolved_model = model or OllamaModel.from_env()
+    grants = download_grants or DownloadGrantStore()
     resolved_lifecycle = lifecycle or build_lifecycle(
         repository=repository,
         model=resolved_model,
         owner_id=resolved.owner_id,
+        download_grants=grants,
     )
     history = ChatHistoryStore(resolved.chat_db_path)
     sessions = SessionStore()
@@ -195,6 +210,7 @@ def create_app(
     app.state.settings = resolved
     app.state.lifecycle = resolved_lifecycle
     app.state.model_name = resolved_model.model
+    app.state.download_grants = grants
 
     def require_user(request: Request) -> str:
         user_id = sessions.get(request.cookies.get(resolved.session_cookie))
@@ -276,6 +292,23 @@ def create_app(
                 await item.close()
             uploaded.append({"name": filename, "path": str(destination.resolve()), "size": total})
         return {"files": uploaded}
+
+    @app.get("/download/{token}")
+    def download(token: str, request: Request) -> FileResponse:
+        user_id = require_user(request)
+        grant = grants.get(token)
+        if grant is None:
+            raise HTTPException(status_code=404, detail="download token not found")
+        if datetime.now(timezone.utc) >= grant.expires_at:
+            grants.revoke(token)
+            raise HTTPException(status_code=410, detail="download token expired")
+        if user_id != grant.user_id:
+            raise HTTPException(status_code=403, detail="download token belongs to another user")
+        if not grant.path.exists():
+            raise HTTPException(status_code=404, detail="download file no longer exists")
+        if not grant.path.is_file():
+            raise HTTPException(status_code=409, detail="download target is not a file")
+        return FileResponse(grant.path, filename=grant.path.name)
 
     @app.post("/chat")
     def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
