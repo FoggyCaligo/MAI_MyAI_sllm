@@ -41,6 +41,14 @@ def _path_env(name: str, default: Path | None = None) -> Path | None:
     return default.resolve() if default is not None else None
 
 
+def _first_path_env(*names: str) -> Path | None:
+    for name in names:
+        value = _path_env(name)
+        if value is not None:
+            return value
+    return None
+
+
 def _csv_env(name: str) -> tuple[str, ...]:
     raw = os.getenv(name, "")
     return tuple(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))
@@ -69,7 +77,7 @@ def load_settings() -> Settings:
         server_host=os.getenv("MAI_SERVER_HOST", "127.0.0.1").strip(),
         server_port=int(os.getenv("MAI_SERVER_PORT", "8010")),
         db_path=_path_env("MAI_DB_PATH", data_dir / "memory.db") or (data_dir / "memory.db").resolve(),
-        sentence_breaker_db_path=_path_env("MAI_SENTENCE_BREAKER_DB_PATH"),
+        sentence_breaker_db_path=_first_path_env("MAI_SENTENCE_BREAKER_DB_PATH", "MK4_SENTENCE_BREAKER_DB_PATH"),
         require_sentence_breaker=_bool_env("MAI_REQUIRE_SENTENCE_BREAKER", True),
         allowed_login_ids=_csv_env("MAI_ALLOWED_LOGIN_IDS"),
     )
