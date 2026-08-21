@@ -25,6 +25,7 @@ from .memory_discovery import MandatoryMemoryDiscovery
 from .memory_revise import ReviseMemoryTool
 from .memory_write import WriteMemoryTool
 from .model import OllamaModel
+from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 
 
@@ -169,6 +170,7 @@ def build_lifecycle(
         *build_file_tools(owner_id=owner_id),
         *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
         *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
+        *build_terminal_tools(owner_id=owner_id),
     ]
     return AgentLifecycle(
         repository=repository,
