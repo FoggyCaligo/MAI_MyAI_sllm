@@ -12,7 +12,7 @@ def startup(*, sentence_mode: str, sentence_db: str, fallback_reason: str | None
     print(f"[MAI] ready | {detail}", flush=True)
 
 
-def chat_summary(diagnostics: list[dict[str, Any]]) -> None:
+def chat_summary(diagnostics: list[dict[str, Any]], *, sentence_mode: str) -> None:
     parts: list[str] = []
     for item in diagnostics:
         layer = str(item.get("layer") or "")
@@ -20,7 +20,7 @@ def chat_summary(diagnostics: list[dict[str, Any]]) -> None:
         elapsed = item.get("elapsed_ms")
         if elapsed is None:
             continue
-        label = _label(layer, phase, item)
+        label = _label(layer, phase, item, sentence_mode=sentence_mode)
         parts.append(f"{label}={_ms(elapsed)}")
     if parts:
         print("[MAI] chat | " + " | ".join(parts), flush=True)
@@ -30,14 +30,13 @@ def failure(message: str) -> None:
     print(f"[MAI] error | {_short(message, 240)}", flush=True)
 
 
-def _label(layer: str, phase: str, item: dict[str, Any]) -> str:
+def _label(layer: str, phase: str, item: dict[str, Any], *, sentence_mode: str) -> str:
     if layer == "model":
         if phase == "memory_commit":
             return f"model.memory{item.get('round', '')}"
         return f"model.{phase}"
     if layer == "sentence_breaker":
-        mode = str(item.get("mode") or "sentence_breaker")
-        return f"segment.{mode}"
+        return f"segment.{sentence_mode}"
     if layer == "sqlite":
         if phase == "write_memory":
             return f"db.write{item.get('round', '')}"
