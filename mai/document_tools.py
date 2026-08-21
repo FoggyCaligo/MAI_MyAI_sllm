@@ -18,20 +18,24 @@ class ImageAnalyzer(Protocol):
     def analyze(self, *, path: Path, prompt: str) -> str: ...
 
 
+_DOCUMENT_PATH_PATTERN = r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
+
+
 @dataclass(slots=True)
 class DocumentReadTool:
     access: FileToolAccess
     name: str = "document_read"
     description: str = (
-        "Read structured text from one PDF or DOCX file. PDF results are paginated by page; DOCX results "
-        "are paginated by paragraph. Unsupported document types fail explicitly."
+        "Read structured text from one existing PDF or DOCX file only. Use file_read for ordinary text files. "
+        "PDF results are paginated by page; DOCX results are paginated by paragraph. Unsupported document types "
+        "fail explicitly."
     )
 
     def schema(self) -> dict[str, Any]:
         return _tool_schema(
             self.name,
             {
-                "path": {"type": "string", "minLength": 1},
+                "path": {"type": "string", "minLength": 1, "pattern": _DOCUMENT_PATH_PATTERN},
                 "start": {"type": "integer", "minimum": 1},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             },
@@ -43,17 +47,18 @@ class DocumentReadTool:
         path = self.access.resolve_path(str(arguments["path"]))
         start = int(arguments.get("start", 1))
         limit = int(arguments.get("limit", 20))
+
+        suffix = path.suffix.casefold()
+        if suffix not in {".pdf", ".docx"}:
+            raise ValueError(f"unsupported document type: {path.suffix or '<none>'}")
         if not path.exists():
             raise FileNotFoundError(path)
         if not path.is_file():
             raise IsADirectoryError(path)
 
-        suffix = path.suffix.casefold()
         if suffix == ".pdf":
             return self._read_pdf(path=path, start=start, limit=limit)
-        if suffix == ".docx":
-            return self._read_docx(path=path, start=start, limit=limit)
-        raise ValueError(f"unsupported document type: {path.suffix or '<none>'}")
+        return self._read_docx(path=path, start=start, limit=limit)
 
     @staticmethod
     def _read_pdf(*, path: Path, start: int, limit: int) -> dict[str, Any]:
