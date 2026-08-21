@@ -3,6 +3,7 @@ uvicorn
 pydantic
 httpx
 python-multipart
+python-dotenv
 ddgs
 pypdf
 pillow
