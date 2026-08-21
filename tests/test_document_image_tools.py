@@ -42,6 +42,28 @@ def test_document_read_schema_only_accepts_pdf_or_docx_paths(tmp_path) -> None:
     assert path_schema["pattern"] == r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
 
 
+def test_contextual_document_schema_only_exposes_discovered_documents(tmp_path) -> None:
+    pdf = str((tmp_path / "a.pdf").resolve())
+    docx = str((tmp_path / "b.docx").resolve())
+    text = str((tmp_path / "c.txt").resolve())
+    schema = DocumentReadTool(access(tmp_path)).schema_for_paths({pdf, docx, text})
+    assert schema is not None
+    paths = schema["properties"]["arguments"]["properties"]["path"]["enum"]
+    assert paths == sorted([pdf, docx])
+    assert DocumentReadTool(access(tmp_path)).schema_for_paths({text}) is None
+
+
+def test_contextual_image_schema_only_exposes_discovered_images(tmp_path) -> None:
+    image = str((tmp_path / "a.png").resolve())
+    text = str((tmp_path / "b.txt").resolve())
+    tool = ImageAnalyzeTool(access(tmp_path), FakeAnalyzer())
+    schema = tool.schema_for_paths({image, text})
+    assert schema is not None
+    paths = schema["properties"]["arguments"]["properties"]["path"]["enum"]
+    assert paths == [image]
+    assert tool.schema_for_paths({text}) is None
+
+
 def test_document_read_docx_uses_paragraph_pagination(tmp_path) -> None:
     path = tmp_path / "sample.docx"
     document = Document()
