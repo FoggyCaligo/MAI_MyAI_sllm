@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +21,7 @@ class AgentResult:
     used_tools: list[str]
     tool_events: list[dict[str, Any]]
     memory_writes: list[dict[str, Any]]
+    diagnostics: list[dict[str, Any]]
 
 
 @dataclass(slots=True)
@@ -32,44 +34,55 @@ class Agent:
         used_tools: list[str] = []
         tool_events: list[dict[str, Any]] = []
         memory_writes: list[dict[str, Any]] = []
+        diagnostics: list[dict[str, Any]] = []
 
-        # Phase 1: model-driven mandatory recall. The model chooses the recall query,
-        # while the framework structurally permits only the recall action.
         recall_action = await self.model.structured(
             system=SYSTEM + "\nPhase: recall. Choose exactly one recall_memory tool action.",
             user={"message": message},
             schema=_recall_schema(),
             model=model,
         )
+        diagnostics.append({"layer": "model", "phase": "recall", "elapsed_ms": self.model.last_elapsed_ms})
         _require_action(recall_action, "tool")
         if recall_action.get("tool") != "recall_memory":
             raise ModelContractError("recall phase must call recall_memory")
         arguments = recall_action.get("arguments") or {}
         limit = int(arguments.get("limit", 8))
+        recall_started = time.perf_counter()
         recalled = self.memory.recall(user_id=user_id, limit=limit)
+        recall_ms = round((time.perf_counter() - recall_started) * 1000, 3)
+        diagnostics.append({"layer": "sqlite", "phase": "recall", "elapsed_ms": recall_ms})
         used_tools.append("recall_memory")
         tool_events.append({
             "tool": "recall_memory",
             "arguments": {"limit": limit},
-            "result": {"ok": True, "results": recalled},
+            "result": {"ok": True, "results": recalled, "db_elapsed_ms": recall_ms},
         })
 
-        # Phase 2: with no non-memory tools in the minimal core, the only valid work
-        # action is the user-visible answer draft.
         answer_action = await self.model.structured(
             system=SYSTEM + "\nPhase: answer draft. Produce the final user-visible answer now.",
             user={"message": message, "recalled_memory": recalled},
             schema=_answer_schema(),
             model=model,
         )
+        diagnostics.append({"layer": "model", "phase": "answer", "elapsed_ms": self.model.last_elapsed_ms})
         _require_action(answer_action, "answer")
         draft = str(answer_action.get("content") or "").strip()
         if not draft:
             raise ModelContractError("answer action requires non-empty content")
 
+        segment_started = time.perf_counter()
         writable_terms = _writable_terms(self.memory, user_text=message, assistant_text=draft)
+        segment_ms = round((time.perf_counter() - segment_started) * 1000, 3)
+        diagnostics.append({
+            "layer": "sentence_breaker",
+            "phase": "writable_terms",
+            "elapsed_ms": segment_ms,
+            "term_count": len(writable_terms),
+        })
+
         mutation_succeeded = False
-        for _ in range(self.max_memory_writes + 1):
+        for write_index in range(self.max_memory_writes + 1):
             action = await self.model.structured(
                 system=(
                     SYSTEM
@@ -89,6 +102,12 @@ class Agent:
                 schema=_memory_schema(writable_terms, allow_done=mutation_succeeded),
                 model=model,
             )
+            diagnostics.append({
+                "layer": "model",
+                "phase": "memory_commit",
+                "round": write_index + 1,
+                "elapsed_ms": self.model.last_elapsed_ms,
+            })
             if action.get("action") == "done":
                 if not mutation_succeeded:
                     raise ModelContractError("done is invalid before a successful memory mutation")
@@ -97,6 +116,7 @@ class Agent:
                     used_tools=used_tools,
                     tool_events=tool_events,
                     memory_writes=memory_writes,
+                    diagnostics=diagnostics,
                 )
             _require_action(action, "tool")
             if action.get("tool") != "write_memory":
@@ -114,6 +134,13 @@ class Agent:
                 object_=object_,
                 source_text=message,
             )
+            diagnostics.append({
+                "layer": "sqlite",
+                "phase": "write_memory",
+                "round": write_index + 1,
+                "elapsed_ms": result.get("db_elapsed_ms"),
+                "transaction_elapsed_ms": result.get("transaction_elapsed_ms"),
+            })
             mutation_succeeded = True
             used_tools.append("write_memory")
             memory_writes.append(result)
