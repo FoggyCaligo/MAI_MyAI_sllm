@@ -32,6 +32,7 @@ class CodeIndexTool:
     access: FileToolAccess
     state: CodeIndexState
     name: str = "code_index"
+    work_kind: str = "inspection"
     description: str = (
         "Build a compact in-memory structural map of Python source under an explicit root. "
         "Key files returned by the index establish concrete paths for later file_read calls."
@@ -85,6 +86,11 @@ class CodeIndexTool:
         root = Path(str(result["indexed_root"]))
         return {str((root / str(path)).resolve()) for path in result.get("key_files", [])}
 
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        root = Path(str(result["indexed_root"]))
+        return {str((root / str(path)).resolve()) for path in result.get("key_files", [])}
+
 
 @dataclass(slots=True)
 class CodeSearchTool:
@@ -92,6 +98,7 @@ class CodeSearchTool:
     state: CodeIndexState
     index_tool: CodeIndexTool
     name: str = "code_search"
+    work_kind: str = "inspection"
     description: str = (
         "Search the current in-memory structural Python code index and return relevant files and symbols. "
         "Returned result files establish concrete paths for later file_read calls."
@@ -158,6 +165,11 @@ class CodeSearchTool:
 
     @staticmethod
     def discovered_paths(result: dict[str, Any]) -> set[str]:
+        root = Path(str(result["indexed_root"]))
+        return {str((root / str(item["path"])).resolve()) for item in result.get("results", []) if item.get("path")}
+
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
         root = Path(str(result["indexed_root"]))
         return {str((root / str(item["path"])).resolve()) for item in result.get("results", []) if item.get("path")}
 
