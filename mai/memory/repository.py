@@ -90,6 +90,51 @@ class MemoryRepository:
             "transaction_elapsed_ms": self.last_transaction_ms,
         }
 
+    def revise_memory(
+        self,
+        *,
+        user_id: str,
+        memory_id: int,
+        subject: str,
+        relation: str,
+        object_: str,
+        source_text: str,
+    ) -> dict:
+        started = time.perf_counter()
+        with self.transaction() as conn:
+            current = conn.execute(
+                """
+                SELECT memory_id, subject, relation, object, support_count
+                FROM memories
+                WHERE user_id = ? AND memory_id = ?
+                """,
+                (user_id, int(memory_id)),
+            ).fetchone()
+            if current is None:
+                raise ValueError(f"memory_id is not owned by this user: {memory_id}")
+            conn.execute(
+                """
+                UPDATE memories
+                SET subject = ?, relation = ?, object = ?, source_text = ?,
+                    support_count = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND memory_id = ?
+                """,
+                (subject, relation, object_, source_text, user_id, int(memory_id)),
+            )
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+        return {
+            "ok": True,
+            "memory_id": int(memory_id),
+            "previous": {
+                "subject": str(current["subject"]),
+                "relation": str(current["relation"]),
+                "object": str(current["object"]),
+                "support_count": int(current["support_count"]),
+            },
+            "db_elapsed_ms": elapsed_ms,
+            "transaction_elapsed_ms": self.last_transaction_ms,
+        }
+
     def recent_memories(self, *, user_id: str, limit: int = 8) -> list[dict]:
         rows = self._conn.execute(
             """
