@@ -9,6 +9,7 @@ from .memory_completion import MandatoryMemoryCompletion
 from .memory_discovery import MandatoryMemoryDiscovery
 from .memory_write import MemoryTurnScope
 from .model import ModelContractError, StructuredModel
+from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
 
 
 class WorkTool(Protocol):
@@ -131,50 +132,63 @@ class AgentLifecycle:
         if not clean_user:
             raise ValueError("user_text must be non-empty")
         resolved_turn_id = str(turn_id or uuid4())
+        turn_started(resolved_turn_id)
 
-        self.repository.ensure_user_anchor(
-            user_id=user_id,
-            turn_id=resolved_turn_id,
-            source_text="turn initialization",
-        )
+        try:
+            with phase(resolved_turn_id, "turn_initialization"):
+                self.repository.ensure_user_anchor(
+                    user_id=user_id,
+                    turn_id=resolved_turn_id,
+                    source_text="turn initialization",
+                )
 
-        discovery_result = self.discovery_phase.run(user_id=user_id, user_text=clean_user)
-        recall_results: list[dict[str, Any]] = []
-        initial_recall = discovery_result.get("recall")
-        if initial_recall:
-            recall_results.append(initial_recall)
+            with phase(resolved_turn_id, "memory_discovery"):
+                discovery_result = self.discovery_phase.run(user_id=user_id, user_text=clean_user)
 
-        candidate_ids = {
-            int(node["node_id"])
-            for node in (discovery_result.get("lookup") or {}).get("matches", [])
-        }
+            recall_results: list[dict[str, Any]] = []
+            initial_recall = discovery_result.get("recall")
+            if initial_recall:
+                recall_results.append(initial_recall)
 
-        fixed_answer, work_events = self._run_work_phase(
-            context=WorkContext(user_id=user_id, turn_id=resolved_turn_id, user_text=clean_user),
-            candidate_ids=candidate_ids,
-            recall_results=recall_results,
-        )
+            candidate_ids = {
+                int(node["node_id"])
+                for node in (discovery_result.get("lookup") or {}).get("matches", [])
+            }
 
-        aggregate_recall = self._aggregate_recall(recall_results)
-        turn = MemoryTurnScope.from_recall(
-            user_id=user_id,
-            turn_id=resolved_turn_id,
-            user_text=clean_user,
-            assistant_text=fixed_answer,
-            recall_result=aggregate_recall,
-        )
-        memory_result = self.memory_completion.run(turn=turn, recall_result=aggregate_recall)
-        if memory_result.get("status") != "done":
-            raise RuntimeError("memory completion did not reach done")
+            with phase(resolved_turn_id, "work"):
+                fixed_answer, work_events = self._run_work_phase(
+                    context=WorkContext(user_id=user_id, turn_id=resolved_turn_id, user_text=clean_user),
+                    candidate_ids=candidate_ids,
+                    recall_results=recall_results,
+                )
 
-        return {
-            "status": "completed",
-            "turn_id": resolved_turn_id,
-            "answer": fixed_answer,
-            "discovery": discovery_result,
-            "work_events": work_events,
-            "memory": memory_result,
-        }
+            aggregate_recall = self._aggregate_recall(recall_results)
+            turn = MemoryTurnScope.from_recall(
+                user_id=user_id,
+                turn_id=resolved_turn_id,
+                user_text=clean_user,
+                assistant_text=fixed_answer,
+                recall_result=aggregate_recall,
+            )
+            with phase(resolved_turn_id, "memory_mutation"):
+                memory_result = self.memory_completion.run(turn=turn, recall_result=aggregate_recall)
+            if memory_result.get("status") != "done":
+                raise RuntimeError("memory completion did not reach done")
+
+            result = {
+                "status": "completed",
+                "turn_id": resolved_turn_id,
+                "answer": fixed_answer,
+                "discovery": discovery_result,
+                "work_events": work_events,
+                "memory": memory_result,
+            }
+        except Exception:
+            turn_failed(resolved_turn_id)
+            raise
+
+        turn_completed(resolved_turn_id)
+        return result
 
     def _run_work_phase(
         self,
@@ -220,6 +234,10 @@ class AgentLifecycle:
 
             tool_name = action.get("tool")
             arguments = action["arguments"]
+            if not isinstance(tool_name, str):
+                raise ModelContractError("work tool name must be a string")
+
+            tool_started(tool_name)
             if tool_name == "node_lookup":
                 result = self.discovery.node_lookup(user_id=context.user_id, queries=arguments["queries"])
                 for node in result.get("matches", []):
@@ -234,6 +252,7 @@ class AgentLifecycle:
                 result = tools[tool_name].execute(arguments=arguments, context=context)
             else:
                 raise ModelContractError("unexpected tool in work phase")
+            tool_completed(tool_name)
 
             event = {"tool": tool_name, "arguments": arguments, "result": result}
             events.append(event)
