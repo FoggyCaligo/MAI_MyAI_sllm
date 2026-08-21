@@ -36,6 +36,12 @@ def test_builds_exact_document_and_image_tool_names(tmp_path) -> None:
     assert [tool.name for tool in tools] == ["document_read", "image_analyze"]
 
 
+def test_document_read_schema_only_accepts_pdf_or_docx_paths(tmp_path) -> None:
+    schema = DocumentReadTool(access(tmp_path)).schema()
+    path_schema = schema["properties"]["arguments"]["properties"]["path"]
+    assert path_schema["pattern"] == r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
+
+
 def test_document_read_docx_uses_paragraph_pagination(tmp_path) -> None:
     path = tmp_path / "sample.docx"
     document = Document()
@@ -78,10 +84,16 @@ def test_document_read_pdf_uses_page_pagination(tmp_path) -> None:
     assert result["next_start"] == 3
 
 
-def test_document_read_rejects_unsupported_type(tmp_path) -> None:
-    path = tmp_path / "sample.txt"
-    path.write_text("plain", encoding="utf-8")
+def test_document_read_rejects_unsupported_type_before_path_existence(tmp_path) -> None:
+    path = tmp_path / "missing.txt"
+    assert not path.exists()
     with pytest.raises(ValueError, match="unsupported document type"):
+        DocumentReadTool(access(tmp_path)).execute(arguments={"path": str(path)}, context=context())
+
+
+def test_document_read_missing_supported_document_still_fails_as_missing(tmp_path) -> None:
+    path = tmp_path / "missing.pdf"
+    with pytest.raises(FileNotFoundError):
         DocumentReadTool(access(tmp_path)).execute(arguments={"path": str(path)}, context=context())
 
 
