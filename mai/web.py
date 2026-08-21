@@ -20,9 +20,8 @@ from .code_search_tool import build_code_tools
 from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
+from .final_memory import FinalMemoryExecutor
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
-from .memory_completion import MandatoryMemoryCompletion
-from .memory_discovery import MandatoryMemoryDiscovery
 from .memory_revise import ReviseMemoryTool
 from .memory_write import WriteMemoryTool
 from .model import OllamaModel
@@ -164,10 +163,9 @@ def build_lifecycle(
 ) -> AgentLifecycle:
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository)
-    discovery_phase = MandatoryMemoryDiscovery(model, discovery, recall)
     writer = WriteMemoryTool(repository)
     reviser = ReviseMemoryTool(repository)
-    completion = MandatoryMemoryCompletion(model, writer, reviser)
+    memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser)
     work_tools = [
         *build_file_tools(owner_id=owner_id),
         *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
@@ -179,10 +177,9 @@ def build_lifecycle(
     return AgentLifecycle(
         repository=repository,
         model=model,
-        discovery_phase=discovery_phase,
         discovery=discovery,
         recall=recall,
-        memory_completion=completion,
+        memory_executor=memory_executor,
         work_tools=work_tools,
     )
 
