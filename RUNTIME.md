@@ -67,7 +67,16 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 - 파일 업로드 (`.mai_uploads/`)
 - 현재 `AgentLifecycle` 호출
 - work tool log 표시
+- owner용 파일 조회 도구:
+  - `file_tree`: 디렉터리 구조 조회
+  - `file_search`: 파일명/경로 glob 검색
+  - `file_text_search`: 파일 본문 literal substring 검색
+  - `file_read`: 텍스트 파일 줄 단위 읽기
 
 로그인 세션은 현재 Python 서버 메모리에 있으므로, 단순 앱 전환이나 페이지 재진입에는 유지되지만 Python 서버 자체를 재시작하면 다시 로그인해야 한다. 채팅 기록과 graph DB는 SQLite에 남는다.
 
-아직 이 단계에서 업로드 파일 내용을 자동으로 읽지는 않는다. 실제 `file_*`, `document_read`, `image_analyze` 도구는 후속 PR에서 work-tool registry에 연결한다.
+파일 조회 도구는 owner에게만 열려 있다. owner에 대해서는 애플리케이션 수준의 workspace confinement를 두지 않으며, 절대 경로와 부모 경로를 그대로 사용할 수 있다. 실제 OS/filesystem 권한이 최종 경계다. `file_tree`, `file_search`, `file_text_search`, `file_read`는 큰 결과를 한 번에 문맥에 밀어 넣지 않도록 pagination을 제공하며, 다음 cursor/line을 통해 계속 읽을 수 있다.
+
+`file_text_search`는 의미 검색을 하지 않고 모델이 지정한 문자열을 literal substring으로만 찾는다. UTF-8 등 지정 인코딩으로 읽지 못한 파일은 성공으로 숨기지 않고 `decode_failures`에 명시한다.
+
+아직 이 단계에서는 파일 생성/수정/삭제/다운로드 링크, PDF/DOCX, 이미지 분석, 터미널, 코드 검색은 연결하지 않았다. 후속 PR에서 각각 별도 work tool로 추가한다.
