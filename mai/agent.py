@@ -11,7 +11,7 @@ from .model import ModelContractError, OllamaModel
 SYSTEM = (
     "You are MAI, a local personal assistant. Follow the structured response schema exactly. "
     "Memory recall is mandatory before answering. The answer draft is fixed before memory commit. "
-    "During memory commit, store durable semantic information from this turn and do not rewrite the answer."
+    "During memory commit, store or revise durable semantic information from this turn and do not rewrite the answer."
 )
 
 
@@ -77,10 +77,12 @@ class Agent:
         diagnostics.append({
             "layer": "sentence_breaker",
             "phase": "writable_terms",
+            "mode": self.memory.sentence_breaker.mode,
             "elapsed_ms": segment_ms,
             "term_count": len(writable_terms),
         })
 
+        recalled_memory_ids = [int(item["memory_id"]) for item in recalled if "memory_id" in item]
         mutation_succeeded = False
         for write_index in range(self.max_memory_writes + 1):
             action = await self.model.structured(
@@ -88,18 +90,23 @@ class Agent:
                     SYSTEM
                     + "\nPhase: memory commit. The answer is already fixed. "
                     + (
-                        "At least one mutation succeeded; either write another durable relation or choose done."
+                        "At least one mutation succeeded; write/revise another durable relation or choose done."
                         if mutation_succeeded
-                        else "No mutation succeeded yet; write one durable relation. done is not available."
+                        else "No mutation succeeded yet; write or revise one durable relation. done is not available."
                     )
                 ),
                 user={
                     "message": message,
                     "answer_draft": draft,
+                    "recalled_memory": recalled,
                     "writable_terms": writable_terms,
                     "memory_writes": memory_writes,
                 },
-                schema=_memory_schema(writable_terms, allow_done=mutation_succeeded),
+                schema=_memory_schema(
+                    writable_terms,
+                    recalled_memory_ids=recalled_memory_ids,
+                    allow_done=mutation_succeeded,
+                ),
                 model=model,
             )
             diagnostics.append({
@@ -118,33 +125,53 @@ class Agent:
                     memory_writes=memory_writes,
                     diagnostics=diagnostics,
                 )
+
             _require_action(action, "tool")
-            if action.get("tool") != "write_memory":
-                raise ModelContractError("memory phase permits only write_memory or done")
+            tool = str(action.get("tool") or "")
             args = action.get("arguments")
             if not isinstance(args, dict):
-                raise ModelContractError("write_memory arguments must be an object")
+                raise ModelContractError(f"{tool or 'memory tool'} arguments must be an object")
+
             subject = _resolve_endpoint(args.get("subject"), writable_terms, user_id=user_id)
             object_ = _resolve_endpoint(args.get("object"), writable_terms, user_id=user_id)
             relation = str(args.get("relation") or "").strip()
-            result = self.memory.write_relation(
-                user_id=user_id,
-                subject=subject,
-                relation=relation,
-                object_=object_,
-                source_text=message,
-            )
+
+            if tool == "write_memory":
+                result = self.memory.write_relation(
+                    user_id=user_id,
+                    subject=subject,
+                    relation=relation,
+                    object_=object_,
+                    source_text=message,
+                )
+                phase = "write_memory"
+            elif tool == "revise_memory":
+                memory_id = int(args.get("memory_id"))
+                if memory_id not in recalled_memory_ids:
+                    raise ModelContractError(f"memory_id is outside the current recall scope: {memory_id}")
+                result = self.memory.revise_relation(
+                    user_id=user_id,
+                    memory_id=memory_id,
+                    subject=subject,
+                    relation=relation,
+                    object_=object_,
+                    source_text=message,
+                )
+                phase = "revise_memory"
+            else:
+                raise ModelContractError("memory phase permits only write_memory, revise_memory, or done")
+
             diagnostics.append({
                 "layer": "sqlite",
-                "phase": "write_memory",
+                "phase": phase,
                 "round": write_index + 1,
                 "elapsed_ms": result.get("db_elapsed_ms"),
                 "transaction_elapsed_ms": result.get("transaction_elapsed_ms"),
             })
             mutation_succeeded = True
-            used_tools.append("write_memory")
-            memory_writes.append(result)
-            tool_events.append({"tool": "write_memory", "arguments": args, "result": result})
+            used_tools.append(tool)
+            memory_writes.append({"tool": tool, **result})
+            tool_events.append({"tool": tool, "arguments": args, "result": result})
 
         raise RuntimeError("memory commit exceeded the configured write limit without choosing done")
 
@@ -212,8 +239,14 @@ def _answer_schema() -> dict[str, Any]:
     }
 
 
-def _memory_schema(writable_terms: list[dict[str, str]], *, allow_done: bool) -> dict[str, Any]:
+def _memory_schema(
+    writable_terms: list[dict[str, str]],
+    *,
+    recalled_memory_ids: list[int] | None = None,
+    allow_done: bool,
+) -> dict[str, Any]:
     term_ids = [item["term_id"] for item in writable_terms]
+    memory_ids = list(dict.fromkeys(int(item) for item in (recalled_memory_ids or [])))
     endpoint = {
         "oneOf": [
             {
@@ -230,6 +263,11 @@ def _memory_schema(writable_terms: list[dict[str, str]], *, allow_done: bool) ->
             },
         ]
     }
+    relation_properties = {
+        "subject": endpoint,
+        "relation": {"type": "string", "minLength": 1},
+        "object": endpoint,
+    }
     write_action = {
         "type": "object",
         "properties": {
@@ -237,11 +275,7 @@ def _memory_schema(writable_terms: list[dict[str, str]], *, allow_done: bool) ->
             "tool": {"type": "string", "enum": ["write_memory"]},
             "arguments": {
                 "type": "object",
-                "properties": {
-                    "subject": endpoint,
-                    "relation": {"type": "string", "minLength": 1},
-                    "object": endpoint,
-                },
+                "properties": relation_properties,
                 "required": ["subject", "relation", "object"],
                 "additionalProperties": False,
             },
@@ -249,16 +283,33 @@ def _memory_schema(writable_terms: list[dict[str, str]], *, allow_done: bool) ->
         "required": ["action", "tool", "arguments"],
         "additionalProperties": False,
     }
-    if not allow_done:
-        return write_action
-    return {
-        "oneOf": [
-            write_action,
-            {
-                "type": "object",
-                "properties": {"action": {"type": "string", "enum": ["done"]}},
-                "required": ["action"],
-                "additionalProperties": False,
+    actions: list[dict[str, Any]] = [write_action]
+    if memory_ids:
+        actions.append({
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["tool"]},
+                "tool": {"type": "string", "enum": ["revise_memory"]},
+                "arguments": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {"type": "integer", "enum": memory_ids},
+                        **relation_properties,
+                    },
+                    "required": ["memory_id", "subject", "relation", "object"],
+                    "additionalProperties": False,
+                },
             },
-        ]
-    }
+            "required": ["action", "tool", "arguments"],
+            "additionalProperties": False,
+        })
+    if allow_done:
+        actions.append({
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["done"]}},
+            "required": ["action"],
+            "additionalProperties": False,
+        })
+    if len(actions) == 1:
+        return actions[0]
+    return {"oneOf": actions}
