@@ -122,6 +122,22 @@ def test_chat_calls_lifecycle_and_persists_history_after_success(tmp_path) -> No
         ]
 
 
+def test_session_and_history_survive_page_reentry_with_same_cookie(tmp_path) -> None:
+    lifecycle = FakeLifecycle(answer="완료")
+    app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
+    with TestClient(app) as client:
+        login(client)
+        assert client.post("/chat", json={"message": "기억해", "attachments": []}).status_code == 200
+
+        # A browser returning to the page sends the same HttpOnly cookie again.
+        assert client.get("/runtime").status_code == 200
+        history = client.get("/history").json()["messages"]
+        assert [(item["role"], item["content"]) for item in history] == [
+            ("user", "기억해"),
+            ("assistant", "완료"),
+        ]
+
+
 def test_failed_lifecycle_does_not_record_fake_success_history(tmp_path) -> None:
     lifecycle = FakeLifecycle(fail=True)
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
