@@ -255,6 +255,50 @@ class GraphRepository:
             raise GraphScopeError(f"edge_id {edge_id} is not available for user {user_id!r}")
         return dict(row)
 
+    def one_hop_neighborhood(self, *, user_id: str, focus_node_id: int) -> dict:
+        """Return exactly the focus node and its directly incident edges/nodes.
+
+        This deliberately performs no recursive traversal and no semantic/name search.
+        A caller that wants another depth must call this method again with one of the
+        returned neighboring node IDs as the next focus.
+        """
+        focus = self.get_node(user_id=user_id, node_id=focus_node_id)
+        edge_rows = self._conn.execute(
+            """
+            SELECT *
+            FROM graph_edges
+            WHERE user_id=? AND (subject_node_id=? OR object_node_id=?)
+            ORDER BY edge_id
+            """,
+            (user_id, focus_node_id, focus_node_id),
+        ).fetchall()
+        edges = [dict(row) for row in edge_rows]
+
+        node_ids = {focus_node_id}
+        for edge in edges:
+            node_ids.add(int(edge["subject_node_id"]))
+            node_ids.add(int(edge["object_node_id"]))
+
+        placeholders = ",".join("?" for _ in node_ids)
+        node_rows = self._conn.execute(
+            f"""
+            SELECT *
+            FROM graph_nodes
+            WHERE user_id=? AND node_id IN ({placeholders})
+            ORDER BY node_id
+            """,
+            (user_id, *sorted(node_ids)),
+        ).fetchall()
+        nodes = [dict(row) for row in node_rows]
+
+        return {
+            "depth": 1,
+            "focus_node_id": focus_node_id,
+            "focus": focus,
+            "nodes": nodes,
+            "edges": edges,
+        }
+
     def provenance_for_turn(self, *, user_id: str, turn_id: str) -> list[dict]:
         rows = self._conn.execute(
             """
