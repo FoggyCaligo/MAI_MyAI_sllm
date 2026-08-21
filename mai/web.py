@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
+from .file_tools import build_file_tools
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
 from .memory_completion import MandatoryMemoryCompletion
 from .memory_discovery import MandatoryMemoryDiscovery
@@ -146,7 +147,7 @@ class SessionStore:
             self._sessions.pop(token, None)
 
 
-def build_lifecycle(*, repository: GraphRepository, model: OllamaModel) -> AgentLifecycle:
+def build_lifecycle(*, repository: GraphRepository, model: OllamaModel, owner_id: str) -> AgentLifecycle:
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository)
     discovery_phase = MandatoryMemoryDiscovery(model, discovery, recall)
@@ -160,7 +161,7 @@ def build_lifecycle(*, repository: GraphRepository, model: OllamaModel) -> Agent
         discovery=discovery,
         recall=recall,
         memory_completion=completion,
-        work_tools=[],
+        work_tools=build_file_tools(owner_id=owner_id),
     )
 
 
@@ -174,7 +175,11 @@ def create_app(
     resolved.upload_dir.mkdir(parents=True, exist_ok=True)
     repository = None if lifecycle is not None else GraphRepository(resolved.graph_db_path)
     resolved_model = model or OllamaModel.from_env()
-    resolved_lifecycle = lifecycle or build_lifecycle(repository=repository, model=resolved_model)
+    resolved_lifecycle = lifecycle or build_lifecycle(
+        repository=repository,
+        model=resolved_model,
+        owner_id=resolved.owner_id,
+    )
     history = ChatHistoryStore(resolved.chat_db_path)
     sessions = SessionStore()
     static_index = Path(__file__).with_name("static") / "index.html"
