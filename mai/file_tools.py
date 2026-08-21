@@ -61,6 +61,7 @@ def _iter_paths(root: Path, *, recursive: bool) -> Iterable[Path]:
 class FileTreeTool:
     access: FileToolAccess
     name: str = "file_tree"
+    work_kind: str = "inspection"
     description: str = (
         "List filesystem structure from a concrete root path. Owner access is not workspace-confined; "
         "absolute and parent paths are allowed. Returned entries establish concrete paths for later file actions."
@@ -120,11 +121,20 @@ class FileTreeTool:
     def discovered_paths(result: dict[str, Any]) -> set[str]:
         return {str(item["path"]) for item in result.get("entries", []) if item.get("path") and item.get("kind") == "file"}
 
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        return {
+            f"{item.get('kind')}:{item.get('path')}"
+            for item in result.get("entries", [])
+            if item.get("path")
+        }
+
 
 @dataclass(slots=True)
 class FileSearchTool:
     access: FileToolAccess
     name: str = "file_search"
+    work_kind: str = "inspection"
     description: str = (
         "Search filesystem paths by filename/path glob pattern. This is path discovery only, not content search. "
         "Returned file matches establish concrete paths for later file actions."
@@ -178,11 +188,20 @@ class FileSearchTool:
     def discovered_paths(result: dict[str, Any]) -> set[str]:
         return {str(item["path"]) for item in result.get("matches", []) if item.get("path") and item.get("kind") == "file"}
 
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        return {
+            f"{item.get('kind')}:{item.get('path')}"
+            for item in result.get("matches", [])
+            if item.get("path")
+        }
+
 
 @dataclass(slots=True)
 class FileTextSearchTool:
     access: FileToolAccess
     name: str = "file_text_search"
+    work_kind: str = "inspection"
     description: str = (
         "Search literal text inside readable text files under a root. The framework performs lexical substring "
         "matching only and does not infer meaning or synonyms. Matched files establish concrete paths for later actions."
@@ -255,11 +274,20 @@ class FileTextSearchTool:
     def discovered_paths(result: dict[str, Any]) -> set[str]:
         return {str(item["path"]) for item in result.get("matches", []) if item.get("path")}
 
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        return {
+            f"{item.get('path')}:{item.get('line')}"
+            for item in result.get("matches", [])
+            if item.get("path") and item.get("line") is not None
+        }
+
 
 @dataclass(slots=True)
 class FileReadTool:
     access: FileToolAccess
     name: str = "file_read"
+    work_kind: str = "inspection"
     description: str = (
         "Read one existing ordinary text file whose path was established by an attachment, file_create, or a "
         "current-turn file/code discovery tool. Use document_read for PDF/DOCX."
@@ -327,6 +355,12 @@ class FileReadTool:
             "content": "\n".join(selected),
             "has_more": next_start_line is not None,
             "next_start_line": next_start_line,
+        }
+
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        return {
+            f"{result.get('path')}:{result.get('start_line')}:{result.get('end_line')}"
         }
 
 

@@ -23,6 +23,7 @@ class TerminalAccess:
 class TerminalCommandTool:
     access: TerminalAccess
     name: str = "terminal_command"
+    work_kind: str = "action"
     description: str = (
         "Execute one explicit shell command on the host as the owner. The framework does not semantically "
         "filter or rewrite commands. OS, shell, filesystem, registry, process, and account permissions are the "

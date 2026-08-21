@@ -26,6 +26,7 @@ _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".t
 class DocumentReadTool:
     access: FileToolAccess
     name: str = "document_read"
+    work_kind: str = "inspection"
     description: str = (
         "Read structured text from one existing PDF or DOCX whose path was established by an attachment, "
         "file_create, or a current-turn file/code discovery tool. Use file_read for ordinary text files."
@@ -79,6 +80,19 @@ class DocumentReadTool:
         return self._read_docx(path=path, start=start, limit=limit)
 
     @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        path = str(result.get("path") or "")
+        unit = str(result.get("unit") or "")
+        keys: set[str] = set()
+        for item in result.get("items", []):
+            position = item.get("page") if unit == "page" else item.get("paragraph")
+            if path and position is not None:
+                keys.add(f"{path}:{unit}:{position}")
+        if not keys and path:
+            keys.add(f"{path}:{unit}:{result.get('start')}:{result.get('total')}")
+        return keys
+
+    @staticmethod
     def _read_pdf(*, path: Path, start: int, limit: int) -> dict[str, Any]:
         reader = PdfReader(str(path))
         total = len(reader.pages)
@@ -129,6 +143,7 @@ class ImageAnalyzeTool:
     access: FileToolAccess
     analyzer: ImageAnalyzer
     name: str = "image_analyze"
+    work_kind: str = "inspection"
     description: str = (
         "Analyze one image whose path was established by an attachment, file_create, or a current-turn file/code "
         "discovery result, using the independent vision model configured by MAI_OLLAMA_IMAGE_MODEL."
@@ -173,6 +188,11 @@ class ImageAnalyzeTool:
             image.verify()
         analysis = self.analyzer.analyze(path=path, prompt=prompt)
         return {"path": str(path), "model": self.analyzer.model, "analysis": analysis}
+
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        path = str(result.get("path") or "")
+        return {path} if path else set()
 
 
 def build_document_image_tools(
