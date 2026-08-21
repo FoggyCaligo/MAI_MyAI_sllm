@@ -1,0 +1,1 @@
+"""Minimal graph-memory primitives."""
