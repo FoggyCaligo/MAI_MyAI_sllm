@@ -162,6 +162,10 @@ class LatestSearchTool:
         limit = int(arguments.get("limit", _MAX_SEARCH_RESULTS))
         return {"query": query, "results": self.provider.latest(query, limit=limit)}
 
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        return {str(row["url"]) for row in result.get("results", []) if row.get("url")}
+
 
 @dataclass(slots=True)
 class WebResearchTool:
@@ -247,6 +251,12 @@ class WebResearchTool:
             "evidence": evidence,
             "page_errors": page_errors,
         }
+
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        keys = {str(row["url"]) for row in result.get("results", []) if row.get("url")}
+        keys.update(str(row["url"]) for row in result.get("evidence", []) if row.get("url"))
+        return keys
 
 
 class MarketProvider(Protocol):
@@ -408,6 +418,20 @@ class MarketSnapshotTool:
                 "quote": provider.snapshot(provider_symbol=symbol, provider_scope=scope),
             }
         raise ValueError(f"unsupported market operation: {operation}")
+
+    @staticmethod
+    def progress_keys(result: dict[str, Any]) -> set[str]:
+        if result.get("operation") == "lookup":
+            return {
+                f"{result.get('provider_scope')}:{row['provider_symbol']}"
+                for row in result.get("candidates", [])
+                if row.get("provider_symbol")
+            }
+        quote = result.get("quote") or {}
+        symbol = quote.get("provider_symbol")
+        if not symbol:
+            return set()
+        return {f"{result.get('provider_scope')}:{symbol}:{quote.get('regular_market_time')}"}
 
 
 def build_web_market_tools(

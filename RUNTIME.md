@@ -125,6 +125,8 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 
 `market_snapshot`은 query 문자열이나 symbol을 보고 asset 종류를 추론하지 않는다. 모델이 `provider_scope` (`kr_equity`, `global_equity`, `index`, `fx`)와 `operation` (`lookup`, `snapshot`)을 명시한다. `lookup` 결과의 실제 `provider_symbol`을 이후 `snapshot`에 사용할 수 있다. Scope별 provider는 `.env` 설정으로 정하며, provider가 실패하거나 등록되지 않았을 때 다른 provider로 자동 fallback하지 않는다.
 
+Work phase는 임의의 round cap을 두지 않는다. 대신 구조적 progress key를 제공하는 조회형 tool은 이전 성공 결과에서 보지 못한 새 key를 하나도 추가하지 못하면 해당 turn의 다음 model schema에서 제거된다. 현재 `latest_search`/`web_research`는 URL, `market_snapshot`은 provider symbol/time 기반 key를 사용한다. Framework는 query 의미나 자연어 내용을 해석하지 않고 tool이 명시한 구조 식별자 증가만 비교한다.
+
 세 web/market tool의 상세 계약은 `WEB_MARKET_CONTRACT.md`를 참조한다.
 
 이제 기존 MK4에서 우선 복원 대상으로 정한 주요 model-visible capability는 모두 runtime에 연결되어 있다. 다음 단계는 실제 로컬 실행/통합 검증과 사용성 개선이다.
