@@ -5,6 +5,7 @@ from typing import Any
 
 from .graph import GraphDiscoveryService, GraphRecallService
 from .model import StructuredModel, ModelContractError
+from .progress import tool_completed, tool_started
 
 
 def _lookup_schema() -> dict[str, Any]:
@@ -76,7 +77,9 @@ class MandatoryMemoryDiscovery:
 
         first = self.model.structured(messages=messages, schema=_lookup_schema())
         self._require_tool(first, "node_lookup")
+        tool_started("node_lookup")
         lookup = self.discovery.node_lookup(user_id=user_id, queries=first["arguments"]["queries"])
+        tool_completed("node_lookup")
         messages.append({"role": "assistant", "content": str(first)})
         messages.append({"role": "tool", "content": str({"tool": "node_lookup", "result": lookup})})
 
@@ -94,11 +97,15 @@ class MandatoryMemoryDiscovery:
                 focus = int(action["arguments"]["focus_node_id"])
                 if focus not in candidates:
                     raise ModelContractError("focus_node_id is outside lookup candidate scope")
+                tool_started("recall_memory")
                 recalled = self.recall.recall_one_depth(user_id=user_id, focus_node_id=focus)
+                tool_completed("recall_memory")
                 return {"status": "recalled", "lookup": lookup, "recall": recalled}
             if tool == "node_lookup":
                 self._require_tool(action, "node_lookup")
+                tool_started("node_lookup")
                 lookup = self.discovery.node_lookup(user_id=user_id, queries=action["arguments"]["queries"])
+                tool_completed("node_lookup")
                 messages.append({"role": "assistant", "content": str(action)})
                 messages.append({"role": "tool", "content": str({"tool": "node_lookup", "result": lookup})})
                 for node in lookup.get("matches", []):

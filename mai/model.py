@@ -7,6 +7,8 @@ from typing import Any, Protocol
 
 import httpx
 
+from .progress import model_action, model_request_completed, model_request_failed, model_request_started
+
 
 class ModelContractError(RuntimeError):
     pass
@@ -31,20 +33,31 @@ class OllamaModel:
         )
 
     def structured(self, *, messages: list[dict[str, str]], schema: dict[str, Any]) -> dict[str, Any]:
-        response = httpx.post(
-            f"{self.base_url.rstrip('/')}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": False, "think": False, "format": schema},
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        content = payload.get("message", {}).get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise ModelContractError("Ollama returned empty structured content")
+        round_number = model_request_started()
         try:
-            result = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ModelContractError("Ollama returned invalid JSON") from exc
-        if not isinstance(result, dict):
-            raise ModelContractError("Ollama structured response must be an object")
+            response = httpx.post(
+                f"{self.base_url.rstrip('/')}/api/chat",
+                json={"model": self.model, "messages": messages, "stream": False, "think": False, "format": schema},
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            content = payload.get("message", {}).get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise ModelContractError("Ollama returned empty structured content")
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as exc:
+                raise ModelContractError("Ollama returned invalid JSON") from exc
+            if not isinstance(result, dict):
+                raise ModelContractError("Ollama structured response must be an object")
+        except Exception:
+            model_request_failed(round_number)
+            raise
+
+        model_request_completed(round_number)
+        model_action(
+            str(result.get("action")) if result.get("action") is not None else None,
+            str(result.get("tool")) if result.get("tool") is not None else None,
+        )
         return result

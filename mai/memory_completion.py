@@ -6,6 +6,7 @@ from typing import Any
 from .memory_revise import ReviseMemoryScope, ReviseMemoryTool
 from .memory_write import MemoryTurnScope, WriteMemoryTool
 from .model import ModelContractError, StructuredModel
+from .progress import tool_completed, tool_started
 
 
 def _done_schema() -> dict[str, Any]:
@@ -102,11 +103,15 @@ class MandatoryMemoryCompletion:
 
             tool = action.get("tool")
             if tool == "write_memory":
+                tool_started("write_memory")
                 result = self.writer.execute(arguments=action["arguments"], scope=current_turn)
+                tool_completed("write_memory")
             elif tool == "revise_memory":
                 if not revise_scope.eligible_edge_ids:
                     raise ModelContractError("revise_memory is unavailable without an eligible turn edge")
+                tool_started("revise_memory")
                 result = self.reviser.execute(arguments=action["arguments"], scope=revise_scope)
+                tool_completed("revise_memory")
             else:
                 raise ModelContractError("unexpected tool in memory completion phase")
 
