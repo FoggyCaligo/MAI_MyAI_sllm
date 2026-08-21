@@ -249,8 +249,9 @@ class FileReadTool:
     access: FileToolAccess
     name: str = "file_read"
     description: str = (
-        "Read a concrete text file by path. Supports line pagination so large files can be inspected without "
-        "forcing the whole file into one model round."
+        "Read one existing ordinary text file by path. Use this tool rather than document_read for plain-text "
+        "content. Supports line pagination so large files can be inspected without forcing the whole file into "
+        "one model round."
     )
 
     def schema(self) -> dict[str, Any]:
