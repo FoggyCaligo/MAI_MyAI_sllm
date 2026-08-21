@@ -38,10 +38,13 @@
    owner 계정의 파일 조회/CRUD에는 application-level workspace confinement를 두지 않는다. 절대경로와 상위 디렉터리 접근을 허용하며 실제 OS/filesystem 권한이 최종 경계다.
 
 5. **코드 도구**
-   - `code_search`만 유지한다.
-   - `code_index`는 모델 도구뿐 아니라 내부 구현에서도 만들지 않는다.
-   - persistent/in-memory 사전 코드 인덱스 계층을 두지 않는다.
-   - `code_search`는 필요할 때 직접 파일 구조와 소스를 탐색한다.
+   - `code_index`와 `code_search`를 모델용 도구로 둔다.
+   - `code_index`는 요청한 root의 Python source를 직접 스캔하여 AST 기반 compact structural index를 현재 프로세스 메모리에 만든다.
+   - index는 imports, classes/methods, function signatures, routes, registered tool names, config constants, tests 같은 구조 정보를 담는다.
+   - source code 전체 본문을 별도 파일로 복제하지 않는다.
+   - index를 디스크에 persistent file로 저장하지 않는다.
+   - `code_search`는 현재 in-memory structural index를 검색하고, index가 없거나 요청 root가 달라지면 현재 source에서 자동 재생성할 수 있다.
+   - 같은 root의 source가 변경되었을 때 기존 index를 조용히 자동 교체하지 않는다. 필요하면 모델이 `code_index`를 다시 호출해 명시적으로 갱신한다.
 
 6. **터미널**
    - `terminal_command`는 owner 기준 application-level 인위적 권한 제한을 두지 않는다.
@@ -366,9 +369,26 @@ file_download_link
 
 Owner 계정에서는 application-level workspace confinement를 두지 않는다.
 
-## 15. Code Search Contract
+## 15. Code Tool Contract
 
-모델용 코드 도구는 `code_search` 하나만 둔다. `code_index`는 외부/내부 모두 금지한다. `code_search`는 필요할 때 직접 파일 tree/source를 탐색한다.
+모델용 코드 도구는 `code_index`와 `code_search`를 둔다.
+
+### code_index
+- 요청 root의 Python 파일을 직접 읽고 AST를 파싱한다.
+- compact in-memory structural map을 만든다.
+- 최소 구조 정보는 imports, classes/methods, function signatures, routes, registered tool names, config constants, tests다.
+- index state는 현재 Python 프로세스 메모리에만 존재한다.
+- index를 별도 파일/DB/cache로 persistent하게 저장하지 않는다.
+- source code 전체 본문을 별도 index 저장소에 복제하지 않는다.
+- parse 실패는 `parse_errors`에 실제 경로/오류와 함께 드러낸다.
+
+### code_search
+- 현재 in-memory code index의 구조 정보를 검색한다.
+- index가 없거나 요청 root가 기존 indexed root와 다르면 현재 source에서 `code_index`를 자동 실행할 수 있다.
+- 같은 root의 source 변경은 자동 감지/자동 rebuild하지 않는다. 모델이 최신 구조가 필요하면 `code_index`를 다시 호출한다.
+- 검색 결과는 실제 indexed file/symbol 구조를 반환하고, 모델은 필요하면 `file_read`로 선택한 source를 상세 조회한다.
+
+이 구조는 옛 MK4의 compact repository map 방식을 계승하되, index 파일을 디스크에 저장하거나 실패를 fallback으로 숨기지 않는다.
 
 ## 16. Document / Image Contract
 
@@ -459,7 +479,7 @@ Tailscale 실패    -> hosting failure
 11. file CRUD/download
 12. document/image
 13. terminal
-14. code_search
+14. code_index + code_search
 15. web/current-information tools
 ```
 
