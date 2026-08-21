@@ -80,7 +80,7 @@ class MandatoryMemoryDiscovery:
         messages.append({"role": "assistant", "content": str(first)})
         messages.append({"role": "tool", "content": str({"tool": "node_lookup", "result": lookup})})
 
-        candidates = {int(node["node_id"]): node for node in lookup.get("nodes", [])}
+        candidates = {int(node["node_id"]): node for node in lookup.get("matches", [])}
         if not candidates:
             return {"status": "no_match", "lookup": lookup, "recall": None}
 
@@ -101,7 +101,7 @@ class MandatoryMemoryDiscovery:
                 lookup = self.discovery.node_lookup(user_id=user_id, queries=action["arguments"]["queries"])
                 messages.append({"role": "assistant", "content": str(action)})
                 messages.append({"role": "tool", "content": str({"tool": "node_lookup", "result": lookup})})
-                for node in lookup.get("nodes", []):
+                for node in lookup.get("matches", []):
                     candidates[int(node["node_id"])] = node
                 if not candidates:
                     return {"status": "no_match", "lookup": lookup, "recall": None}
