@@ -58,7 +58,7 @@ def _iter_paths(root: Path, *, recursive: bool) -> Iterable[Path]:
 
 
 @dataclass(slots=True)
-class FileTreeTool(WorkTool):
+class FileTreeTool:
     access: FileToolAccess
     name: str = "file_tree"
     description: str = (
@@ -118,7 +118,7 @@ class FileTreeTool(WorkTool):
 
 
 @dataclass(slots=True)
-class FileSearchTool(WorkTool):
+class FileSearchTool:
     access: FileToolAccess
     name: str = "file_search"
     description: str = (
@@ -172,7 +172,7 @@ class FileSearchTool(WorkTool):
 
 
 @dataclass(slots=True)
-class FileTextSearchTool(WorkTool):
+class FileTextSearchTool:
     access: FileToolAccess
     name: str = "file_text_search"
     description: str = (
@@ -245,7 +245,7 @@ class FileTextSearchTool(WorkTool):
 
 
 @dataclass(slots=True)
-class FileReadTool(WorkTool):
+class FileReadTool:
     access: FileToolAccess
     name: str = "file_read"
     description: str = (
