@@ -232,6 +232,20 @@ def create_app(
             raise HTTPException(status_code=401, detail="authentication required")
         return user_id
 
+    def validated_attachment_paths(user_id: str, values: list[str]) -> list[Path]:
+        user_root = (resolved.upload_dir / user_id).resolve()
+        paths: list[Path] = []
+        for value in values:
+            path = Path(value).expanduser().resolve()
+            try:
+                path.relative_to(user_root)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="attachment path is outside authenticated upload scope") from exc
+            if not path.exists() or not path.is_file():
+                raise HTTPException(status_code=422, detail="attachment path is not an existing uploaded file")
+            paths.append(path)
+        return paths
+
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(static_index)
@@ -330,11 +344,15 @@ def create_app(
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="message must be non-empty")
-        attachment_lines = [str(Path(path)) for path in payload.attachments]
+        attachment_paths = validated_attachment_paths(user_id, payload.attachments)
         agent_input = message
-        if attachment_lines:
-            agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_lines)
-        result = resolved_lifecycle.run(user_id=user_id, user_text=agent_input)
+        if attachment_paths:
+            agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_paths)
+        result = resolved_lifecycle.run(
+            user_id=user_id,
+            user_text=agent_input,
+            attachment_paths=attachment_paths,
+        )
         answer = str(result["answer"])
         history.append_turn(
             user_id=user_id,
