@@ -168,6 +168,13 @@ def _required_paths(tool: WorkTool, arguments: dict[str, Any]) -> set[str]:
     return {PathProvenance.normalize(path) for path in extractor(arguments)}
 
 
+def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] | None:
+    builder = getattr(tool, "schema_for_paths", None)
+    if callable(builder):
+        return builder(set(context.path_provenance.paths))
+    return tool.schema()
+
+
 @dataclass(slots=True)
 class AgentLifecycle:
     repository: GraphRepository
@@ -291,7 +298,15 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
-            variants.extend(tools[name].schema() for name in tools if name in available_tools)
+            exposed_tools: set[str] = set()
+            for name, tool in tools.items():
+                if name not in available_tools:
+                    continue
+                tool_schema = _schema_for_context(tool, context)
+                if tool_schema is None:
+                    continue
+                variants.append(tool_schema)
+                exposed_tools.add(name)
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
@@ -324,8 +339,8 @@ class AgentLifecycle:
                 result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
                 recall_results.append(result)
             elif tool_name in tools:
-                if tool_name not in available_tools:
-                    raise ModelContractError(f"{tool_name} is unavailable after a no-progress result")
+                if tool_name not in exposed_tools:
+                    raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
                 tool = tools[tool_name]
                 for required_path in _required_paths(tool, arguments):
                     context.path_provenance.require(required_path)
