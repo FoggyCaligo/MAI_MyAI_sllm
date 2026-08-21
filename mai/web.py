@@ -239,7 +239,6 @@ def create_app(
         user_id = require_user(request)
         return {
             "model": app.state.model_name,
-            "image_model": app.state.image_model_name,
             "user_id": user_id,
             "role": "owner" if user_id == resolved.owner_id else "user",
         }
