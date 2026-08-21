@@ -16,6 +16,15 @@ MAI_OWNER_ID=<접속에 사용할 owner ID>
 
 대화 모델은 `.env`에서만 관리하고 UI에서는 읽기 전용으로 표시한다. 이미지 모델도 별도 `.env` 값으로 관리한다.
 
+시장 provider도 `.env`에서 scope별로 관리한다.
+
+```env
+MAI_MARKET_KR_EQUITY_PROVIDER=yahoo
+MAI_MARKET_GLOBAL_EQUITY_PROVIDER=yahoo
+MAI_MARKET_INDEX_PROVIDER=yahoo
+MAI_MARKET_FX_PROVIDER=yahoo
+```
+
 ## 2. 설치
 
 ```powershell
@@ -85,6 +94,10 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 - owner용 코드 도구:
   - `code_index`: Python source를 AST로 읽어 compact in-memory repository map 생성
   - `code_search`: 현재 structural index에서 관련 file/symbol 검색
+- web/current-information 도구:
+  - `latest_search`: 모델이 작성한 query로 recent/news 검색
+  - `web_research`: 모델이 작성한 objective + queries로 검색하고 public page evidence 구성
+  - `market_snapshot`: 구조화된 provider scope로 asset lookup/snapshot
 
 로그인 세션은 현재 Python 서버 메모리에 있으므로, 단순 앱 전환이나 페이지 재진입에는 유지되지만 Python 서버 자체를 재시작하면 다시 로그인해야 한다. 채팅 기록과 graph DB는 SQLite에 남는다.
 
@@ -106,6 +119,12 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 
 `code_search`는 현재 in-memory structural index의 path/symbol/구조 텍스트를 검색해 관련 file과 symbol을 좁힌다. index가 아직 없거나 요청 root가 기존 indexed root와 다르면 현재 source로 자동 rebuild한다. 같은 root에서 source가 바뀐 경우에는 기존 index를 조용히 덮어쓰지 않으므로, 최신 구조가 필요하면 모델이 `code_index`를 다시 호출한다. 이후 상세 구현 확인은 `file_read`로 실제 source를 읽는다.
 
-이 구조에서는 source code 전체를 index 파일에 복제하지 않고, persistent hidden index file도 만들지 않는다. 구조 정보는 process-local memory에만 유지된다.
+`latest_search`는 모델이 작성한 `query`를 그대로 recent/news provider에 전달한다. Framework는 query를 의미적으로 분류하거나 재작성하지 않는다.
 
-다음 구현 단계는 web/current-information tool이다.
+`web_research`는 모델이 `objective`뿐 아니라 `queries` 배열도 직접 작성한다. Framework는 objective에서 검색어를 자동 생성하지 않고 전달된 queries만 실행한다. 상위 public HTTP(S) page를 읽을 때 redirect 목적지도 매 단계 public address인지 다시 확인한다. 페이지별 실패는 `page_errors`에 명시된다.
+
+`market_snapshot`은 query 문자열이나 symbol을 보고 asset 종류를 추론하지 않는다. 모델이 `provider_scope` (`kr_equity`, `global_equity`, `index`, `fx`)와 `operation` (`lookup`, `snapshot`)을 명시한다. `lookup` 결과의 실제 `provider_symbol`을 이후 `snapshot`에 사용할 수 있다. Scope별 provider는 `.env` 설정으로 정하며, provider가 실패하거나 등록되지 않았을 때 다른 provider로 자동 fallback하지 않는다.
+
+세 web/market tool의 상세 계약은 `WEB_MARKET_CONTRACT.md`를 참조한다.
+
+이제 기존 MK4에서 우선 복원 대상으로 정한 주요 model-visible capability는 모두 runtime에 연결되어 있다. 다음 단계는 실제 로컬 실행/통합 검증과 사용성 개선이다.
