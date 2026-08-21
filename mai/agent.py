@@ -14,7 +14,7 @@ from .progress import phase, tool_completed, tool_started, turn_completed, turn_
 
 
 class PathProvenanceError(PermissionError):
-    """Raised when a read tool targets a path not established by this turn."""
+    """Raised when a file action targets a path not established by this turn."""
 
 
 @dataclass(slots=True)
@@ -31,6 +31,10 @@ class PathProvenance:
     def add_many(self, paths: Iterable[str | Path]) -> None:
         for path in paths:
             self.add(path)
+
+    def remove_many(self, paths: Iterable[str | Path]) -> None:
+        for path in paths:
+            self.paths.discard(self.normalize(path))
 
     def require(self, path: str | Path) -> None:
         normalized = self.normalize(path)
@@ -161,6 +165,13 @@ def _discovered_paths(tool: WorkTool, result: Any) -> set[str]:
     return {PathProvenance.normalize(path) for path in extractor(result)}
 
 
+def _removed_paths(tool: WorkTool, result: Any) -> set[str]:
+    extractor = getattr(tool, "removed_paths", None)
+    if not callable(extractor):
+        return set()
+    return {PathProvenance.normalize(path) for path in extractor(result)}
+
+
 def _required_paths(tool: WorkTool, arguments: dict[str, Any]) -> set[str]:
     extractor = getattr(tool, "required_paths", None)
     if not callable(extractor):
@@ -281,8 +292,8 @@ class AgentLifecycle:
                 "content": (
                     "Memory discovery is complete. Perform normal work using exactly one structured "
                     "action per round. You may use available tools, inspect more memory with node_lookup "
-                    "and recall_memory, or produce one final answer. File-reading tools may only use paths "
-                    "established by current-turn attachments or file/code discovery tool results."
+                    "and recall_memory, or produce one final answer. Existing-file actions may only use paths "
+                    "established by current-turn attachments, file_create, or file/code discovery tool results."
                 ),
             },
             {"role": "user", "content": context.user_text},
@@ -346,6 +357,7 @@ class AgentLifecycle:
                     context.path_provenance.require(required_path)
                 result = tool.execute(arguments=arguments, context=context)
                 context.path_provenance.add_many(_discovered_paths(tool, result))
+                context.path_provenance.remove_many(_removed_paths(tool, result))
                 keys = _progress_keys(tool, result)
                 if keys is not None:
                     prior = seen_progress.setdefault(tool_name, set())
