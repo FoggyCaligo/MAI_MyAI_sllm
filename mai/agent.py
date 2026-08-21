@@ -215,9 +215,12 @@ class AgentLifecycle:
             {"role": "user", "content": context.user_text},
         ]
         events: list[dict[str, Any]] = []
+        allow_lookup = True
 
         while True:
-            variants = [_answer_schema(), _lookup_schema()]
+            variants = [_answer_schema()]
+            if allow_lookup:
+                variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
             variants.extend(tool.schema() for tool in self.work_tools)
@@ -239,9 +242,13 @@ class AgentLifecycle:
 
             tool_started(tool_name)
             if tool_name == "node_lookup":
+                if not allow_lookup:
+                    raise ModelContractError("node_lookup is unavailable after a no-progress lookup")
+                previous_candidate_ids = set(candidate_ids)
                 result = self.discovery.node_lookup(user_id=context.user_id, queries=arguments["queries"])
                 for node in result.get("matches", []):
                     candidate_ids.add(int(node["node_id"]))
+                allow_lookup = candidate_ids != previous_candidate_ids
             elif tool_name == "recall_memory":
                 focus = int(arguments["focus_node_id"])
                 if focus not in candidate_ids:
