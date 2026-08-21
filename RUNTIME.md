@@ -83,8 +83,8 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 - owner용 시스템 도구:
   - `terminal_command`: 호스트 shell 명령 실행
 - owner용 코드 도구:
-  - `code_search`: 현재 source 파일을 직접 읽는 literal 코드 검색
-  - `code_index`: 모델이 선택한 코드 범위를 JSON 메타데이터 파일로 생성/교체
+  - `code_index`: Python source를 AST로 읽어 compact in-memory repository map 생성
+  - `code_search`: 현재 structural index에서 관련 file/symbol 검색
 
 로그인 세션은 현재 Python 서버 메모리에 있으므로, 단순 앱 전환이나 페이지 재진입에는 유지되지만 Python 서버 자체를 재시작하면 다시 로그인해야 한다. 채팅 기록과 graph DB는 SQLite에 남는다.
 
@@ -102,29 +102,10 @@ Funnel 설정 실패, Tailscale 미설치, Python 서버 조기 종료는 성공
 
 `terminal_command`는 owner가 작성한 `command` 문자열을 의미적으로 검사하거나 재작성하지 않고 host shell에 그대로 전달한다. `cwd`, 선택적 `timeout_seconds`, 출력 `encoding`을 구조적으로 지정할 수 있다. 명령이 non-zero exit로 끝나면 `ok=false`, `returncode`, `stdout`, `stderr`를 그대로 반환하여 실패를 성공처럼 숨기지 않는다. 잘못된 cwd, timeout, shell/OS 실행 오류는 실제 예외로 드러난다. OS, shell, filesystem, registry, process, 계정 권한이 최종 실행 경계다.
 
-`code_search`는 호출 시 실제 filesystem/source를 직접 순회한다. 모델이 준 `query`를 literal substring으로 찾고, 선택적으로 `glob`, `case_sensitive`, `context_lines`, pagination을 사용한다. framework가 확장자나 파일명을 보고 코드 파일을 의미적으로 자동 분류하지 않는다. binary/지정 encoding decode 실패는 `decode_failures`에 명시한다.
+`code_index`는 옛 MK4의 compact repository map 방식처럼 요청 root 아래 Python 파일을 직접 읽고 AST를 파싱한다. index에는 imports, classes/methods, function signatures, routes, registered tool names, config constants, tests 같은 구조 정보가 들어간다. index state는 현재 Python 프로세스 메모리에만 존재하며 별도 파일이나 DB로 저장하지 않는다. parse 실패는 `parse_errors`로 경로와 오류를 그대로 반환한다.
 
-`code_index`는 검색 속도를 높이기 위한 내부 index가 아니다. 모델이 코드 구조를 정리할 필요가 있을 때 명시적 `index_path`에 JSON 파일을 생성하거나 교체한다. 각 entry는 `path`, `start_line`, `end_line`, `symbol`, `kind`만 기록하며 source code 본문은 복제하지 않는다. framework는 source 파일 존재 여부와 실제 line 범위만 구조적으로 검증한다. `symbol`과 `kind`의 의미는 모델이 정한다.
+`code_search`는 현재 in-memory structural index의 path/symbol/구조 텍스트를 검색해 관련 file과 symbol을 좁힌다. index가 아직 없거나 요청 root가 기존 indexed root와 다르면 현재 source로 자동 rebuild한다. 같은 root에서 source가 바뀐 경우에는 기존 index를 조용히 덮어쓰지 않으므로, 최신 구조가 필요하면 모델이 `code_index`를 다시 호출한다. 이후 상세 구현 확인은 `file_read`로 실제 source를 읽는다.
 
-예시:
-
-```json
-{
-  "format": "mai-code-range-index",
-  "version": 1,
-  "root": "C:\\repo",
-  "entries": [
-    {
-      "path": "C:\\repo\\mai\\agent.py",
-      "start_line": 73,
-      "end_line": 148,
-      "symbol": "AgentLifecycle.run",
-      "kind": "method"
-    }
-  ]
-}
-```
-
-`code_search`는 이 metadata 파일을 자동으로 읽거나 ranking/cache 용도로 사용하지 않는다. 모델이 `code_index`를 활용하려면 일반 file tool로 명시적으로 읽고, 그 결과를 바탕으로 다음 `code_search`/`file_read` 호출을 결정한다. 따라서 persistent/in-memory pre-index나 hidden cache는 없다.
+이 구조에서는 source code 전체를 index 파일에 복제하지 않고, persistent hidden index file도 만들지 않는다. 구조 정보는 process-local memory에만 유지된다.
 
 다음 구현 단계는 web/current-information tool이다.
