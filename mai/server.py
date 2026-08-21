@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .agent import Agent
 from .config import ROOT_DIR, settings
+from .logging import chat_summary, failure, startup
 from .memory.repository import MemoryRepository
 from .memory.service import MemoryService
 from .model import OllamaModel
@@ -52,6 +53,11 @@ async def lifespan(app: FastAPI):
     sentence_breaker = SentenceBreaker.open()
     repository = MemoryRepository(settings.db_path)
     agent = Agent(model=OllamaModel(), memory=MemoryService(repository, sentence_breaker))
+    startup(
+        sentence_mode=sentence_breaker.mode,
+        sentence_db=str(sentence_breaker.db_path or ""),
+        fallback_reason=sentence_breaker.fallback_reason,
+    )
     try:
         yield
     finally:
@@ -92,9 +98,16 @@ async def ui() -> HTMLResponse:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    sentence_mode = "uninitialized"
+    sentence_reason = None
+    if agent is not None:
+        sentence_mode = agent.memory.sentence_breaker.mode
+        sentence_reason = agent.memory.sentence_breaker.fallback_reason
     return {
         "status": "ok",
+        "sentence_breaker_mode": sentence_mode,
         "sentence_breaker_db": str(settings.sentence_breaker_db_path or ""),
+        "sentence_breaker_fallback_reason": sentence_reason,
         "memory_db": str(settings.db_path),
     }
 
@@ -108,7 +121,14 @@ async def login(payload: LoginRequest):
     token = secrets.token_urlsafe(32)
     sessions[token] = (login_id, role)
     response = JSONResponse({"ok": True, "role": role})
-    response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict", path="/")
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="strict",
+        path="/",
+    )
     return response
 
 
@@ -189,6 +209,7 @@ async def _run_job(job_id: str, *, user_id: str, payload: ChatRequest) -> None:
         job.response = response
         job.status = "completed"
     except Exception as exc:
+        failure(str(exc))
         job.error = str(exc)
         job.response = {"detail": str(exc)}
         job.status = "failed"
@@ -198,6 +219,7 @@ async def _chat_response(*, user_id: str, payload: ChatRequest) -> dict[str, Any
     if agent is None:
         raise RuntimeError("agent is not initialized")
     result = await agent.run(user_id=user_id, message=payload.message, model=payload.model)
+    chat_summary(result.diagnostics, sentence_mode=agent.memory.sentence_breaker.mode)
     return {
         "text": result.text,
         "used_tools": result.used_tools,
