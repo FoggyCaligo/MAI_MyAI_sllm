@@ -28,6 +28,11 @@ class FakeRecall:
         return {"nodes": [], "edges": [], "origin_path": {"nodes": [], "edges": []}}
 
 
+class NoScratchpadMemoryExecutor:
+    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
+        return frozenset()
+
+
 def _answer() -> dict[str, Any]:
     return {
         "action": "answer",
@@ -59,7 +64,7 @@ def test_agent_disables_lookup_after_no_candidate_progress() -> None:
         model=model,
         discovery=ScriptedDiscovery([{"matches": [{"node_id": 1}]}]),
         recall=FakeRecall(),
-        memory_executor=None,
+        memory_executor=NoScratchpadMemoryExecutor(),  # type: ignore[arg-type]
         work_tools=[],
     )
 
@@ -85,7 +90,7 @@ def test_agent_keeps_lookup_when_candidate_set_expands() -> None:
         model=model,
         discovery=ScriptedDiscovery([{"matches": [{"node_id": 1}, {"node_id": 2}]}]),
         recall=FakeRecall(),
-        memory_executor=None,
+        memory_executor=NoScratchpadMemoryExecutor(),  # type: ignore[arg-type]
         work_tools=[],
     )
 

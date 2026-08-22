@@ -54,6 +54,7 @@ class TurnEvidenceRegistry:
         tool_name: str,
         arguments: dict[str, Any],
         result: dict[str, Any],
+        source_kind: str = "tool_operation",
     ) -> EvidenceItem:
         with self._lock:
             next_index = self._tool_counters.get(turn_id, 0) + 1
@@ -65,6 +66,7 @@ class TurnEvidenceRegistry:
             kind="tool",
             payload={
                 "tool": str(tool_name),
+                "source_kind": str(source_kind),
                 "arguments": dict(arguments),
                 "result": dict(result),
             },
@@ -90,8 +92,14 @@ class TurnEvidenceRegistry:
         with self._lock:
             item = self._items.get(str(turn_id), {}).get(str(evidence_id))
         if item is None:
-            raise ModelContractError(f"evidence_id is outside current-turn scope: {evidence_id}")
+            raise ModelContractError(f"evidence_id is outside current-turn evidence scope: {evidence_id}")
         return item
+
+    def select(self, *, turn_id: str, evidence_ids: Iterable[str]) -> list[EvidenceItem]:
+        return [
+            self.require(turn_id=turn_id, evidence_id=evidence_id)
+            for evidence_id in dict.fromkeys(str(value) for value in evidence_ids)
+        ]
 
     def ids_for(self, *, turn_id: str) -> frozenset[str]:
         with self._lock:
@@ -196,6 +204,47 @@ class ScratchpadRegistry:
             self._counters.pop(str(turn_id), None)
 
 
+def _delegated_work_kind(delegate: Any) -> str:
+    explicit = getattr(delegate, "work_kind", None)
+    if explicit is not None:
+        kind = str(explicit)
+        if kind not in {"inspection", "action"}:
+            raise ValueError(f"work tool {delegate.name} has invalid work_kind: {kind}")
+        return kind
+    if callable(getattr(delegate, "progress_keys", None)):
+        return "inspection"
+    raise ValueError(f"work tool {delegate.name} must declare work_kind")
+
+
+@dataclass(slots=True)
+class EvidenceKindToolAdapter:
+    """Declare the provenance kind produced by a work tool without naming heuristics."""
+
+    delegate: Any
+    evidence_kind: str
+
+    @property
+    def name(self) -> str:
+        return str(self.delegate.name)
+
+    @property
+    def description(self) -> str:
+        return str(self.delegate.description)
+
+    @property
+    def work_kind(self) -> str:
+        return _delegated_work_kind(self.delegate)
+
+    def schema(self) -> dict[str, Any]:
+        return self.delegate.schema()
+
+    def execute(self, *, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+        return self.delegate.execute(arguments=arguments, context=context)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.delegate, name)
+
+
 @dataclass(slots=True)
 class EvidenceTrackingTool:
     delegate: Any
@@ -211,7 +260,7 @@ class EvidenceTrackingTool:
 
     @property
     def work_kind(self) -> str:
-        return str(self.delegate.work_kind)
+        return _delegated_work_kind(self.delegate)
 
     def schema(self) -> dict[str, Any]:
         return self.delegate.schema()
@@ -225,6 +274,7 @@ class EvidenceTrackingTool:
             tool_name=self.name,
             arguments=arguments,
             result=result,
+            source_kind=str(getattr(self.delegate, "evidence_kind", "tool_operation")),
         )
         return {**result, "evidence_id": evidence_item.evidence_id}
 

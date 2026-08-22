@@ -132,16 +132,20 @@ def test_owner_upload_is_saved_under_authenticated_user_directory(tmp_path) -> N
         assert path.name.endswith("_note.txt")
 
 
-def test_trial_upload_is_rejected_before_file_write(tmp_path) -> None:
+def test_trial_upload_is_saved_only_under_its_account_directory(tmp_path) -> None:
     app = create_app(settings=settings(tmp_path), lifecycle=FakeLifecycle(), model=FakeModel())
     with TestClient(app) as client:
         login(client, "member")
         response = client.post(
             "/upload",
-            files={"files": ("note.txt", b"hello", "text/plain")},
+            files={"files": ("note.txt", b"hello trial", "text/plain")},
         )
-        assert response.status_code == 403
-        assert not (tmp_path / "uploads" / "member").exists()
+        assert response.status_code == 200
+        uploaded = response.json()["files"][0]
+        path = Path(uploaded["path"])
+        assert path.exists()
+        assert path.read_bytes() == b"hello trial"
+        assert path.parent == (tmp_path / "uploads" / "member").resolve()
 
 
 def test_upload_limit_fails_and_partial_file_is_removed(tmp_path) -> None:
@@ -207,6 +211,27 @@ def test_chat_passes_validated_uploaded_attachment_to_lifecycle(tmp_path) -> Non
         assert lifecycle.calls[0]["attachment_paths"] == [str(Path(attachment).resolve())]
 
 
+def test_trial_chat_can_use_only_its_uploaded_attachment(tmp_path) -> None:
+    lifecycle = FakeLifecycle(answer="확인")
+    app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
+    with TestClient(app) as client:
+        login(client, "member")
+        upload = client.post(
+            "/upload",
+            files={"files": ("trial.txt", b"trial data", "text/plain")},
+        )
+        assert upload.status_code == 200
+        attachment = upload.json()["files"][0]["path"]
+        response = client.post(
+            "/chat",
+            json={"message": "첨부를 읽어줘", "attachments": [attachment]},
+        )
+        job = wait_job(client, response.json()["job_id"])
+        assert job["status"] == "completed"
+        assert lifecycle.calls[0]["user_id"] == "member"
+        assert lifecycle.calls[0]["attachment_paths"] == [str(Path(attachment).resolve())]
+
+
 def test_chat_rejects_attachment_path_outside_authenticated_upload_scope(tmp_path) -> None:
     lifecycle = FakeLifecycle()
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
@@ -217,6 +242,22 @@ def test_chat_rejects_attachment_path_outside_authenticated_upload_scope(tmp_pat
         response = client.post(
             "/chat",
             json={"message": "읽어줘", "attachments": [str(outside)]},
+        )
+        assert response.status_code == 422
+        assert lifecycle.calls == []
+
+
+def test_trial_cannot_use_another_accounts_uploaded_attachment(tmp_path) -> None:
+    lifecycle = FakeLifecycle()
+    app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
+    owner_file = tmp_path / "uploads" / "secret-owner" / "owner.txt"
+    owner_file.parent.mkdir(parents=True)
+    owner_file.write_text("owner only", encoding="utf-8")
+    with TestClient(app) as client:
+        login(client, "member")
+        response = client.post(
+            "/chat",
+            json={"message": "읽어줘", "attachments": [str(owner_file)]},
         )
         assert response.status_code == 422
         assert lifecycle.calls == []

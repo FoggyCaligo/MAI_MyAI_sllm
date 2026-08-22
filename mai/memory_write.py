@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .graph import GraphRepository, GraphScopeError
+from .graph import GraphRepository, GraphScopeError, GraphSourceStore, SourceRecord
 from .model import ModelContractError
 
 
@@ -81,6 +81,7 @@ class MemoryTurnScope:
     assistant_text: str
     recalled_node_ids: frozenset[int]
     evidence_context: tuple[str, ...] = ()
+    source_records: tuple[SourceRecord, ...] = ()
 
     @classmethod
     def from_recall(
@@ -125,6 +126,7 @@ class WriteMemoryTool:
     """Atomic semantic graph writer constrained by the current turn scope."""
 
     repository: GraphRepository
+    source_store: GraphSourceStore | None = None
 
     @property
     def name(self) -> str:
@@ -191,8 +193,7 @@ class WriteMemoryTool:
             edge_id = int(edge_row["edge_id"])
             self._insert_provenance(
                 conn,
-                user_id=scope.user_id,
-                turn_id=scope.turn_id,
+                scope=scope,
                 source_text=source_text,
                 edge_id=edge_id,
             )
@@ -259,7 +260,14 @@ class WriteMemoryTool:
                 (scope.user_id, name),
             ).fetchone()
             if existing is not None:
-                return int(existing["node_id"])
+                node_id = int(existing["node_id"])
+                self._insert_provenance(
+                    conn,
+                    scope=scope,
+                    source_text=source_text,
+                    node_id=node_id,
+                )
+                return node_id
 
             cursor = conn.execute(
                 "INSERT INTO graph_nodes (user_id, name) VALUES (?, ?)",
@@ -269,8 +277,7 @@ class WriteMemoryTool:
             created_node_ids.append(node_id)
             self._insert_provenance(
                 conn,
-                user_id=scope.user_id,
-                turn_id=scope.turn_id,
+                scope=scope,
                 source_text=source_text,
                 node_id=node_id,
             )
@@ -278,21 +285,38 @@ class WriteMemoryTool:
 
         raise ModelContractError("memory endpoint violates write_memory contract")
 
-    @staticmethod
     def _insert_provenance(
+        self,
         conn: Any,
         *,
-        user_id: str,
-        turn_id: str,
+        scope: MemoryTurnScope,
         source_text: str,
         node_id: int | None = None,
         edge_id: int | None = None,
     ) -> None:
+        if self.source_store is not None and scope.source_records:
+            source_ids = self.source_store.ensure_sources_in_connection(
+                conn,
+                user_id=scope.user_id,
+                turn_id=scope.turn_id,
+                records=scope.source_records,
+            )
+            self.source_store.link_sources_in_connection(
+                conn,
+                user_id=scope.user_id,
+                turn_id=scope.turn_id,
+                source_ids=source_ids,
+                node_id=node_id,
+                edge_id=edge_id,
+            )
+            marker = "source_refs:" + ",".join(str(source_id) for source_id in source_ids)
+        else:
+            marker = source_text
         conn.execute(
             """
             INSERT INTO graph_provenance
                 (user_id, turn_id, source_role, source_text, node_id, edge_id)
             VALUES (?, ?, 'turn', ?, ?, ?)
             """,
-            (user_id, turn_id, source_text, node_id, edge_id),
+            (scope.user_id, scope.turn_id, marker, node_id, edge_id),
         )

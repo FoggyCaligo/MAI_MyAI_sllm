@@ -1,6 +1,6 @@
 # Mai Attachment / Scratchpad Working-Memory Contract
 
-이 문서는 Phase 4의 attachment evidence와 turn-local scratchpad 계약을 정의한다.
+이 문서는 attachment evidence와 turn-local scratchpad 계약을 정의한다.
 
 ## 1. Attachment routing is structural
 
@@ -36,7 +36,11 @@ attachment:2
 ...
 ```
 
-Context 비대화를 막기 위해 automatic extraction은 명시적인 character budget을 가진다. Budget으로 읽지 못한 첨부는 성공으로 추측하지 않고 `not_loaded_context_budget` 상태를 모델에 보여준다. 원본 path는 current-turn path provenance에 남으므로 owner agent가 필요하면 normal document/file/image tool로 추가 inspection할 수 있다.
+Context 비대화를 막기 위해 automatic extraction은 명시적인 character budget을 가진다. Budget으로 읽지 못한 첨부는 성공으로 추측하지 않고 `not_loaded_context_budget` 상태를 모델에 보여준다.
+
+Owner는 current-turn attachment path provenance를 통해 normal file/document/image tool로 추가 inspection할 수 있다.
+
+Trial은 host file/document/image work tool을 받지 않는다. 대신 자기 authenticated upload directory에 직접 올린 첨부파일만 automatic attachment evidence로 읽거나 분석할 수 있다. 다른 계정 upload path 또는 임의 host path는 허용하지 않는다.
 
 ## 3. Tool evidence IDs
 
@@ -55,6 +59,8 @@ Tool result object에는 해당 `evidence_id`가 추가되어 모델이 이후 s
 Failed tool execution은 evidence ID를 만들지 않는다.
 
 Evidence ID 생성 여부를 tool/error 문자열 heuristic으로 판단하지 않는다. Adapter가 감싼 actual successful tool execution만 source가 된다.
+
+Tool evidence의 durable provenance kind도 tool-name 문자열을 해석해서 정하지 않는다. Tool adapter가 `web_evidence`, `file_evidence` 같은 source kind를 구조적으로 선언하고, 선언이 없는 일반 tool result는 `tool_operation`으로 남는다.
 
 ## 4. Model-managed scratchpad
 
@@ -111,19 +117,26 @@ scratchpad_ids: ["scratchpad:1"]
 
 선택된 scratchpad item만 해당 mutation의 `MemoryTurnScope.evidence_context`에 들어간다.
 
-현재 Phase 4에서는 이 선택된 evidence context를 기존 `graph_provenance.source_text`에 포함한다. Stable raw-source foreign key/reference 구조는 Phase 5에서 추가한다.
+Production graph source store가 연결된 경우, 선택된 scratchpad와 그 scratchpad가 실제로 참조한 attachment/tool/web evidence는 durable `SourceRecord`로 `graph.sqlite3`에 저장되고 해당 node/edge와 stable source link로 연결된다.
+
+이때 raw evidence 전체를 `graph_provenance.source_text`에 다시 복제하지 않는다. Legacy provenance row에는 source reference marker만 남기고 실제 원문은 source store에서 관리한다.
+
+Scratchpad를 선택하지 않은 직접 대화 기반 memory mutation은 current user message와 fixed assistant answer를 source로 보존할 수 있다. Assistant source는 생성 사실 자체와 외부 세계의 factual truth를 구분하기 위해 unverified metadata를 가진다.
+
+상세 source/provenance 조회 계약은 `GRAPH_SOURCE_CONTRACT.md`를 따른다.
 
 ## 6. No automatic graph copy
 
-다음은 graph에 자동 저장하지 않는다.
+다음은 graph semantic node/edge로 자동 복제하지 않는다.
 
 - attachment evidence 전체
 - normal tool result 전체
 - scratchpad 전체
+- raw chat transcript 전체
 
-Graph에는 기존과 동일하게 final memory mutation이 선택한 semantic relation만 들어간다.
+Graph에는 final memory mutation이 선택한 semantic relation만 들어간다.
 
-Scratchpad는 relation 자체가 아니라 선택된 mutation의 evidence context로만 작용한다.
+Durable source store 역시 모든 evidence를 자동 수집하는 archive가 아니다. **실제로 장기 memory mutation의 근거로 채택된 source만** 보존한다.
 
 ## 7. Lifetime
 
@@ -132,6 +145,8 @@ Attachment evidence registry와 scratchpad registry는 `turn_id` scope다.
 Lifecycle가 completed/failed 어느 쪽으로 끝나도 wrapper `finally`에서 해당 turn registry를 제거한다.
 
 따라서 scratchpad는 다음 turn으로 암묵적으로 carry-over되지 않는다. 장기 continuity는 raw conversation history와 semantic graph가 담당한다.
+
+단, final memory mutation이 채택한 scratchpad/evidence source는 graph source store에 durable copy/reference로 승격되므로 turn-local registry가 제거되어도 해당 장기기억의 근거는 유지된다.
 
 ## 8. Failure visibility
 
@@ -145,5 +160,7 @@ Lifecycle가 completed/failed 어느 쪽으로 끝나도 wrapper `finally`에서
 - unknown scratchpad ID -> model contract failure
 - `scratchpad_update` on unknown current-turn ID -> model contract failure
 - evidence-tracked tool returning a non-object result -> tool contract failure
+- unsupported durable source kind -> source contract failure
+- stable source identity collision -> explicit source failure
 
-Phase 4는 evidence와 working memory를 추가하지만 기존 fail-visible 원칙을 완화하지 않는다.
+Attachment/scratchpad/source 계층은 기존 fail-visible 원칙을 완화하지 않는다.

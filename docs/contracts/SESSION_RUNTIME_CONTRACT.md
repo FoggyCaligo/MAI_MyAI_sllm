@@ -30,9 +30,24 @@
 - `owner`: 전체 등록 work tool catalog
 - `trial`: public web/market work-tool suite만
 
-`node_lookup`, `recall_memory`, final semantic memory mutation은 work-tool catalog와 별개의 core agent capability이므로 양쪽 역할에서 유지한다.
+`node_lookup`, `recall_memory`, graph source inspection, final semantic memory mutation은 work-tool catalog와 별개의 core agent capability이므로 양쪽 역할에서 유지한다.
 
-Trial restriction은 user text를 해석해서 route하지 않는다. Owner-only file/terminal/code/document/image tool은 trial의 compact catalog, `tool_manual` target, executable schema에 애초에 존재하지 않는다. Upload/download host-file endpoints도 owner-only다.
+Trial restriction은 user text를 해석해서 route하지 않는다. Owner-only file/terminal/code/document/image work tool은 trial의 compact catalog, `tool_manual` target, executable schema에 애초에 존재하지 않는다.
+
+### Trial attachment exception
+
+Trial도 `/upload`를 통해 첨부파일을 올리고 current-turn attachment evidence로 읽거나 분석할 수 있다.
+
+이 예외는 host filesystem tool 권한을 주는 것이 아니다.
+
+- 업로드는 `MAI_UPLOAD_DIR/<authenticated user_id>/` 아래의 계정별 directory에 저장한다.
+- attachment path는 반드시 현재 authenticated user의 upload directory 아래에 실제 존재하는 file이어야 한다.
+- 다른 계정의 upload directory나 host의 임의 path를 attachment로 제출하면 실패한다.
+- 지원 text/document/image 파일은 `AttachmentEvidenceBuilder`가 model-only current-turn evidence로 읽거나 분석한다.
+- trial에는 `file_*`, `document_read`, `image_analyze`, `code_*`, `terminal_command` 같은 host work tool schema가 노출되지 않는다.
+- `file_download_link`와 `/download/{token}`은 계속 owner-only다.
+
+즉 trial은 **자기가 명시적으로 업로드한 파일의 내용은 분석할 수 있지만, PC의 다른 파일을 탐색하거나 수정할 수 없다.**
 
 ## 3. Request-detached chat jobs
 
@@ -54,9 +69,7 @@ Job은 authenticated `user_id`와 stable `session_id`에 귀속되며 다른 use
 
 Queued job은 HTTP 요청 시점의 `SessionRecord`를 계속 신뢰하지 않는다. 실제 user lock을 얻은 시점에 stable `session_id`로 persistent session을 다시 읽는다. 따라서 앞선 job이 working root를 바꿨다면 다음 job은 최신 root를 사용한다. Session이 그 사이 expire/revoke되거나 현재 account policy와 달라졌으면 job은 명확히 실패한다.
 
-완료된 job만 raw chat history와 compact tool-operation history에 성공 turn으로 기록한다.
-
-실패한 lifecycle은 `failed`로 남고 fake assistant history를 만들지 않는다.
+완료된 job만 raw chat history와 compact tool-operation history에 성공 turn으로 기록한다. 실패한 lifecycle은 `failed`로 남고 fake assistant history를 만들지 않는다.
 
 서버가 재시작되면 이전 프로세스의 `pending/running` job을 성공으로 추측하거나 재실행하지 않는다. DB에서 `interrupted` + `server_restarted_during_execution`으로 명시한다.
 
@@ -86,7 +99,7 @@ Working root는 owner의 file/code discovery 편의 기준점이지 sandbox/secu
 - unrelated tool result에 우연히 `root` 같은 필드가 있어도 working root를 변경하지 않는다.
 - 같은 user의 queued job은 실행 직전 최신 persistent session을 다시 읽으므로 앞선 job이 승격한 root를 이어받는다.
 
-Working root는 기존 current-turn path provenance를 대체하지 않는다. Existing-file mutation은 여전히 현재 turn에 실제로 established된 concrete path만 사용한다. Owner의 절대경로/상위경로 접근도 인위적으로 금지하지 않으며 실제 OS/filesystem permission이 최종 경계다.
+Working root는 existing-file path provenance를 대체하지 않는다. Owner의 절대경로/상위경로 접근은 실제 OS/filesystem permission이 최종 경계다.
 
 ## 6. Failure visibility
 
@@ -97,6 +110,7 @@ Working root는 기존 current-turn path provenance를 대체하지 않는다. E
 - replaced trial session -> authentication/authorization failure on the old session
 - queued job 실행 전에 session revoke/expire/replace -> failed job
 - foreign job -> not found in caller scope
+- foreign/out-of-scope attachment path -> explicit validation failure
 - lifecycle exception -> failed job with concrete exception type/message
 - process restart during job -> interrupted
 - invalid working-root metadata -> explicit path error
