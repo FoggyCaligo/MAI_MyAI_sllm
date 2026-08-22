@@ -9,8 +9,8 @@ from .agent import AgentLifecycle
 from .attachment_evidence import AttachmentEvidenceBuilder
 from .memory_agent_adapter import MemoryAgentAdapter
 from .memory_embedding import EmbeddingModel, OllamaEmbeddingModel
-from .memory_extension import AgentGraphMemoryExtension
 from .model_context import use_attachment_evidence
+from .versioned_memory_extension import VersionedAgentGraphMemoryExtension
 
 
 @dataclass(slots=True)
@@ -37,7 +37,7 @@ class WorkingMemoryLifecycle:
         elif not model_name:
             raise ValueError("embedding_model_name is required when injecting an embedding implementation")
 
-        memory = AgentGraphMemoryExtension(
+        memory = VersionedAgentGraphMemoryExtension(
             repository=self.delegate.repository,
             source_store=self.delegate.source_store,
             embedding=embedding,
