@@ -171,8 +171,8 @@ class LatestSearchTool:
     provider: SearchProvider
     name: str = "latest_search"
     description: str = (
-        "Search recent public news/web results for a model-authored query. The framework does not rewrite or "
-        "classify the query. Returns source snippets and available publication metadata."
+        "Search recent news, events, announcements, and changing public information. "
+        "For current market quotes, prefer market_snapshot."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -204,9 +204,8 @@ class WebResearchTool:
     provider: SearchProvider
     name: str = "web_research"
     description: str = (
-        "Research a model-authored objective using model-authored search queries. The framework executes exactly "
-        "those queries, reads selected result pages, and returns a compact evidence package; it does not generate "
-        "or semantically rewrite the queries."
+        "Research facts across public web pages with model-authored queries and page evidence. "
+        "Use when a structured tool lacks needed facts."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -405,9 +404,8 @@ class MarketSnapshotTool:
     settings: MarketProviderSettings
     name: str = "market_snapshot"
     description: str = (
-        "Look up or fetch a market snapshot using an explicit provider_scope chosen by the model. The framework "
-        "does not infer asset type from query strings or symbols. Lookup returns actual provider symbols; snapshot "
-        "requires one of those provider symbols (or another explicit provider symbol supplied by the model)."
+        "Look up market instruments and fetch current quote data: price, previous close, exchange, currency, index, "
+        "and FX data. Prefer this for current market quotes over general web search."
     )
 
     def schema(self) -> dict[str, Any]:
