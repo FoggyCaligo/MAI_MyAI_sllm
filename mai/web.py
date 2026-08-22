@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
 from .code_search_tool import build_code_tools
+from .context import compact_tool_event
 from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
@@ -25,6 +27,7 @@ from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
 from .memory_revise import ReviseMemoryTool
 from .memory_write import WriteMemoryTool
 from .model import OllamaModel
+from .model_context import use_model_context
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
@@ -97,6 +100,20 @@ class ChatHistoryStore:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id, message_id)"
         )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tool_operations (
+                operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                event_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tool_operations_user ON tool_operations(user_id, operation_id)"
+        )
         self._conn.commit()
 
     def append_turn(self, *, user_id: str, turn_id: str, user_text: str, assistant_text: str) -> None:
@@ -117,6 +134,26 @@ class ChatHistoryStore:
             else:
                 self._conn.commit()
 
+    def append_tool_operations(self, *, user_id: str, turn_id: str, events: list[dict[str, Any]]) -> None:
+        if not events:
+            return
+        compact = [compact_tool_event(event) for event in events]
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.executemany(
+                    "INSERT INTO tool_operations (user_id, turn_id, event_json) VALUES (?, ?, ?)",
+                    [
+                        (user_id, turn_id, json.dumps(event, ensure_ascii=False, sort_keys=True, default=str))
+                        for event in compact
+                    ],
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
+
     def list_messages(self, *, user_id: str, limit: int = 200) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
@@ -129,6 +166,25 @@ class ChatHistoryStore:
             (user_id, int(limit)),
         ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def list_tool_operations(self, *, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT event_json
+            FROM tool_operations
+            WHERE user_id=?
+            ORDER BY operation_id DESC
+            LIMIT ?
+            """,
+            (user_id, int(limit)),
+        ).fetchall()
+        operations: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            parsed = json.loads(str(row["event_json"]))
+            if not isinstance(parsed, dict):
+                raise ValueError("stored tool operation must be a JSON object")
+            operations.append(parsed)
+        return operations
 
     def close(self) -> None:
         self._conn.close()
@@ -352,22 +408,37 @@ def create_app(
         agent_input = message
         if attachment_paths:
             agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_paths)
-        result = resolved_lifecycle.run(
-            user_id=user_id,
-            user_text=agent_input,
-            attachment_paths=attachment_paths,
-        )
+
+        recent_messages = history.list_messages(user_id=user_id, limit=10)
+        recent_tool_operations = history.list_tool_operations(user_id=user_id, limit=5)
+        with use_model_context(
+            recent_messages=recent_messages,
+            recent_tool_operations=recent_tool_operations,
+        ):
+            result = resolved_lifecycle.run(
+                user_id=user_id,
+                user_text=agent_input,
+                attachment_paths=attachment_paths,
+            )
+
         answer = str(result["answer"])
+        turn_id = str(result["turn_id"])
+        work_events = list(result.get("work_events", []))
         history.append_turn(
             user_id=user_id,
-            turn_id=str(result["turn_id"]),
+            turn_id=turn_id,
             user_text=message,
             assistant_text=answer,
         )
+        history.append_tool_operations(
+            user_id=user_id,
+            turn_id=turn_id,
+            events=work_events,
+        )
         return {
             "answer": answer,
-            "turn_id": result["turn_id"],
-            "work_events": result.get("work_events", []),
+            "turn_id": turn_id,
+            "work_events": work_events,
         }
 
     return app
