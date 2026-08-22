@@ -7,6 +7,10 @@ from .graph import GraphRepository, GraphScopeError, GraphSourceStore, SourceRec
 from .model import ModelContractError
 
 
+class MemorySelfLoopRejected(ModelContractError):
+    """Raised when a memory mutation resolves both endpoints to the same graph node."""
+
+
 def _endpoint_schema(recalled_node_ids: list[int]) -> dict[str, Any]:
     variants: list[dict[str, Any]] = [
         {
@@ -136,7 +140,8 @@ class WriteMemoryTool:
     def description(self) -> str:
         return (
             "Write one semantic relation using the canonical user anchor, nodes actually "
-            "recalled this turn, or new model-authored nodes grounded in the current turn."
+            "recalled this turn, or new model-authored nodes grounded in the current turn. "
+            "Subject and object must resolve to distinct graph nodes; self-loops are rejected."
         )
 
     def schema(self, *, scope: MemoryTurnScope) -> dict[str, Any]:
@@ -169,6 +174,10 @@ class WriteMemoryTool:
                 source_text=source_text,
                 created_node_ids=created_node_ids,
             )
+            if subject_id == object_id:
+                raise MemorySelfLoopRejected(
+                    f"write_memory rejected self-loop on node_id {subject_id}: subject and object must be distinct"
+                )
 
             conn.execute(
                 """
