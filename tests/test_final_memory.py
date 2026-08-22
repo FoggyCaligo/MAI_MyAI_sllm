@@ -11,7 +11,7 @@ from mai.model import ModelContractError
 
 def test_answer_schema_requires_at_least_one_memory_mutation() -> None:
     schema = answer_with_memory_schema(None)
-    assert schema["required"] == ["action", "content", "memory_mutations"]
+    assert schema["required"] == ["action", "outcome", "content", "memory_mutations"]
     assert schema["properties"]["memory_mutations"]["minItems"] == 1
 
 
@@ -19,6 +19,7 @@ def test_answer_schema_exposes_revise_only_for_recalled_edges() -> None:
     without_recall = answer_with_memory_schema(None)
     item_without = without_recall["properties"]["memory_mutations"]["items"]
     assert item_without["properties"]["kind"] == {"const": "write_memory"}
+    assert item_without["properties"]["scratchpad_ids"]["items"]["pattern"]
 
     with_recall = answer_with_memory_schema(
         {
