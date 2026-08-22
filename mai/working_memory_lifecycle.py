@@ -12,6 +12,7 @@ from .scratchpad import (
     EvidenceTrackingTool,
     ScratchpadPutTool,
     ScratchpadRegistry,
+    ScratchpadUpdateTool,
     TurnEvidenceRegistry,
 )
 
@@ -30,7 +31,12 @@ class WorkingMemoryLifecycle:
             raise ValueError("agent lifecycle already uses another scratchpad registry")
         self.delegate.memory_executor.scratchpads = self.scratchpads
         wrapped_tools = [EvidenceTrackingTool(tool, self.evidence) for tool in self.delegate.work_tools]
-        wrapped_tools.append(ScratchpadPutTool(scratchpads=self.scratchpads, evidence=self.evidence))
+        wrapped_tools.extend(
+            [
+                ScratchpadPutTool(scratchpads=self.scratchpads, evidence=self.evidence),
+                ScratchpadUpdateTool(scratchpads=self.scratchpads, evidence=self.evidence),
+            ]
+        )
         self.delegate.work_tools = wrapped_tools
 
     def __getattr__(self, name: str) -> Any:
