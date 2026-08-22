@@ -218,7 +218,7 @@ def _delegated_work_kind(delegate: Any) -> str:
 
 @dataclass(slots=True)
 class EvidenceKindToolAdapter:
-    """Declare the provenance kind produced by a work tool without naming heuristics."""
+    """Declare evidence kind and the structural path policy for a work tool."""
 
     delegate: Any
     evidence_kind: str
@@ -229,7 +229,14 @@ class EvidenceKindToolAdapter:
 
     @property
     def description(self) -> str:
-        return str(self.delegate.description)
+        base = str(self.delegate.description)
+        if self.work_kind == "inspection":
+            return (
+                base
+                + " Inspection tools may target a concrete existing path directly; prior file_tree/file_search discovery "
+                "is not required. Existence, file type, account role, and OS permissions are validated at execution."
+            )
+        return base
 
     @property
     def work_kind(self) -> str:
@@ -237,6 +244,22 @@ class EvidenceKindToolAdapter:
 
     def schema(self) -> dict[str, Any]:
         return self.delegate.schema()
+
+    def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
+        if self.work_kind == "inspection":
+            return self.delegate.schema()
+        builder = getattr(self.delegate, "schema_for_paths", None)
+        if callable(builder):
+            return builder(paths)
+        return self.delegate.schema()
+
+    def required_paths(self, arguments: dict[str, Any]) -> set[str]:
+        if self.work_kind == "inspection":
+            return set()
+        extractor = getattr(self.delegate, "required_paths", None)
+        if not callable(extractor):
+            return set()
+        return {str(path) for path in extractor(arguments)}
 
     def execute(self, *, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         return self.delegate.execute(arguments=arguments, context=context)
