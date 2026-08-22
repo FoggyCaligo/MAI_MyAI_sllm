@@ -50,6 +50,16 @@ class PersistentSessionStore:
     def _hash_token(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _record(row: sqlite3.Row) -> SessionRecord:
+        return SessionRecord(
+            session_id=str(row["session_id"]),
+            user_id=str(row["user_id"]),
+            role=str(row["role"]),
+            working_root=str(row["working_root"]),
+            expires_at=float(row["expires_at"]),
+        )
+
     def create(self, *, user_id: str, role: str) -> tuple[str, SessionRecord]:
         if role not in {"owner", "trial"}:
             raise ValueError(f"unsupported account role: {role}")
@@ -85,7 +95,6 @@ class PersistentSessionStore:
     def get(self, token: str | None) -> SessionRecord | None:
         if not token:
             return None
-        now = time()
         token_hash = self._hash_token(token)
         with self._lock:
             row = self._conn.execute(
@@ -98,17 +107,29 @@ class PersistentSessionStore:
             ).fetchone()
             if row is None:
                 return None
-            if float(row["expires_at"]) <= now:
+            if float(row["expires_at"]) <= time():
                 self._conn.execute("DELETE FROM auth_sessions WHERE token_hash=?", (token_hash,))
                 self._conn.commit()
                 return None
-        return SessionRecord(
-            session_id=str(row["session_id"]),
-            user_id=str(row["user_id"]),
-            role=str(row["role"]),
-            working_root=str(row["working_root"]),
-            expires_at=float(row["expires_at"]),
-        )
+            return self._record(row)
+
+    def get_by_session_id(self, session_id: str) -> SessionRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT session_id, user_id, role, working_root, expires_at
+                FROM auth_sessions
+                WHERE session_id=?
+                """,
+                (str(session_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            if float(row["expires_at"]) <= time():
+                self._conn.execute("DELETE FROM auth_sessions WHERE session_id=?", (str(session_id),))
+                self._conn.commit()
+                return None
+            return self._record(row)
 
     def update_working_root(self, *, session_id: str, working_root: str) -> None:
         resolved = str(Path(working_root).expanduser().resolve())
