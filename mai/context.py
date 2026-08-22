@@ -101,7 +101,7 @@ def compact_tool_result(*, tool: str, result: Any) -> Any:
         return compact
 
     if tool in {"latest_search", "web_research"}:
-        for key in ("objective", "queries", "search_errors", "page_errors"):
+        for key in ("objective", "queries", "page_errors"):
             if key in result:
                 compact[key] = _compact_value(result.get(key), limit=1200)
         results = result.get("results")

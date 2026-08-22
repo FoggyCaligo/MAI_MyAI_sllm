@@ -7,9 +7,6 @@ from typing import Any, Iterable
 from .model import ModelContractError
 
 
-_SCRATCHPAD_SOURCE_KINDS = frozenset({"web", "model", "user", "internal_file"})
-
-
 @dataclass(frozen=True, slots=True)
 class EvidenceItem:
     evidence_id: str
@@ -18,28 +15,16 @@ class EvidenceItem:
 
 
 @dataclass(frozen=True, slots=True)
-class ScratchpadSource:
-    kind: str
-    evidence_id: str | None = None
-
-    def as_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {"kind": self.kind}
-        if self.evidence_id is not None:
-            result["evidence_id"] = self.evidence_id
-        return result
-
-
-@dataclass(frozen=True, slots=True)
 class ScratchpadItem:
     scratchpad_id: str
     content: str
-    sources: tuple[ScratchpadSource, ...]
+    source_ids: tuple[str, ...]
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "scratchpad_id": self.scratchpad_id,
             "content": self.content,
-            "sources": [source.as_dict() for source in self.sources],
+            "source_ids": list(self.source_ids),
         }
 
 
@@ -127,7 +112,7 @@ class TurnEvidenceRegistry:
 
 
 class ScratchpadRegistry:
-    """Turn-local model-managed working memory with explicit source provenance."""
+    """Turn-local model-managed working memory backed by validated evidence IDs."""
 
     def __init__(self, *, evidence: TurnEvidenceRegistry) -> None:
         self._evidence = evidence
@@ -135,77 +120,28 @@ class ScratchpadRegistry:
         self._items: dict[str, dict[str, ScratchpadItem]] = {}
         self._counters: dict[str, int] = {}
 
-    @staticmethod
-    def _expected_kind_for_evidence(item: EvidenceItem) -> str | None:
-        if item.kind == "attachment":
-            return "internal_file"
-        if item.kind != "tool":
-            return None
-        source_kind = str(item.payload.get("source_kind") or "tool_operation")
-        if source_kind == "web_evidence":
-            return "web"
-        if source_kind == "file_evidence":
-            return "internal_file"
-        if source_kind == "tool_operation":
-            return "model"
-        return None
-
-    def _validated_source(self, *, turn_id: str, raw: Any) -> ScratchpadSource:
-        if not isinstance(raw, dict):
-            raise ModelContractError("scratchpad source must be an object")
-        keys = set(raw)
-        if not keys <= {"kind", "evidence_id"} or "kind" not in keys:
-            raise ModelContractError("scratchpad source requires kind and optional evidence_id only")
-        kind = str(raw.get("kind") or "").strip()
-        if kind not in _SCRATCHPAD_SOURCE_KINDS:
-            raise ModelContractError(f"unsupported scratchpad source kind: {kind}")
-
-        raw_evidence_id = raw.get("evidence_id")
-        evidence_id = None if raw_evidence_id is None else str(raw_evidence_id).strip()
-        if raw_evidence_id is not None and not evidence_id:
-            raise ModelContractError("scratchpad evidence_id must be non-empty when provided")
-        if evidence_id is None:
-            return ScratchpadSource(kind=kind)
-
-        evidence_item = self._evidence.require(turn_id=turn_id, evidence_id=evidence_id)
-        expected_kind = self._expected_kind_for_evidence(evidence_item)
-        if expected_kind is None:
-            raise ModelContractError(f"evidence_id has unsupported scratchpad provenance: {evidence_id}")
-        if kind != expected_kind:
-            raise ModelContractError(
-                f"scratchpad source kind {kind!r} does not match evidence provenance {expected_kind!r}: {evidence_id}"
-            )
-        return ScratchpadSource(kind=kind, evidence_id=evidence_id)
-
     def _validated_payload(
         self,
         *,
         turn_id: str,
         content: str,
-        sources: Iterable[Any],
-    ) -> tuple[str, tuple[ScratchpadSource, ...]]:
+        source_ids: Iterable[str],
+    ) -> tuple[str, tuple[str, ...]]:
         text = str(content).strip()
         if not text:
             raise ModelContractError("scratchpad content must be non-empty")
+        resolved_sources = tuple(dict.fromkeys(str(item) for item in source_ids))
+        if not resolved_sources:
+            raise ModelContractError("scratchpad item requires at least one evidence source")
+        for source_id in resolved_sources:
+            self._evidence.require(turn_id=turn_id, evidence_id=source_id)
+        return text, resolved_sources
 
-        resolved: list[ScratchpadSource] = []
-        seen: set[tuple[str, str | None]] = set()
-        for raw in sources:
-            source = self._validated_source(turn_id=turn_id, raw=raw)
-            identity = (source.kind, source.evidence_id)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            resolved.append(source)
-        if not resolved:
-            raise ModelContractError("scratchpad item requires at least one source")
-        return text, tuple(resolved)
-
-    def put(self, *, turn_id: str, content: str, sources: Iterable[Any]) -> ScratchpadItem:
+    def put(self, *, turn_id: str, content: str, source_ids: Iterable[str]) -> ScratchpadItem:
         text, resolved_sources = self._validated_payload(
             turn_id=turn_id,
             content=content,
-            sources=sources,
+            source_ids=source_ids,
         )
         with self._lock:
             next_index = self._counters.get(str(turn_id), 0) + 1
@@ -214,7 +150,7 @@ class ScratchpadRegistry:
             item = ScratchpadItem(
                 scratchpad_id=scratchpad_id,
                 content=text,
-                sources=resolved_sources,
+                source_ids=resolved_sources,
             )
             self._items.setdefault(str(turn_id), {})[scratchpad_id] = item
         return item
@@ -225,12 +161,12 @@ class ScratchpadRegistry:
         turn_id: str,
         scratchpad_id: str,
         content: str,
-        sources: Iterable[Any],
+        source_ids: Iterable[str],
     ) -> ScratchpadItem:
         text, resolved_sources = self._validated_payload(
             turn_id=turn_id,
             content=content,
-            sources=sources,
+            source_ids=source_ids,
         )
         with self._lock:
             turn_items = self._items.get(str(turn_id), {})
@@ -239,7 +175,7 @@ class ScratchpadRegistry:
             item = ScratchpadItem(
                 scratchpad_id=str(scratchpad_id),
                 content=text,
-                sources=resolved_sources,
+                source_ids=resolved_sources,
             )
             turn_items[item.scratchpad_id] = item
         return item
@@ -293,9 +229,7 @@ class EvidenceKindToolAdapter:
 
     @property
     def description(self) -> str:
-        domain = str(self.evidence_kind).strip()
-        prefix = f"Evidence domain: {domain}. " if domain else ""
-        base = prefix + str(self.delegate.description)
+        base = str(self.delegate.description)
         if self.work_kind == "inspection":
             return (
                 base
@@ -358,59 +292,30 @@ class EvidenceTrackingTool:
         result = self.delegate.execute(arguments=arguments, context=context)
         if not isinstance(result, dict):
             raise TypeError(f"evidence-tracked tool {self.name} must return an object result")
-        explicit_evidence_kind = getattr(self.delegate, "evidence_kind", None)
-        evidence_kind = str(explicit_evidence_kind or "tool_operation")
         evidence_item = self.evidence.register_tool_result(
             turn_id=context.turn_id,
             tool_name=self.name,
             arguments=arguments,
             result=result,
-            source_kind=evidence_kind,
+            source_kind=str(getattr(self.delegate, "evidence_kind", "tool_operation")),
         )
-        tracked = {**result, "evidence_id": evidence_item.evidence_id}
-        if explicit_evidence_kind is not None:
-            tracked["evidence_kind"] = evidence_kind
-        return tracked
+        return {**result, "evidence_id": evidence_item.evidence_id}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
 
 
-def _scratchpad_source_schema() -> dict[str, Any]:
-    variants: list[dict[str, Any]] = []
-    for kind in sorted(_SCRATCHPAD_SOURCE_KINDS):
-        variants.append(
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["kind"],
-                "properties": {
-                    "kind": {"const": kind},
-                    "evidence_id": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": (
-                            "Optional current-turn framework evidence ID such as tool:1 or attachment:1. "
-                            "Paths, URLs, filenames, and free-form labels are not evidence IDs."
-                        ),
-                    },
-                },
-            }
-        )
-    return {"oneOf": variants}
-
-
 def _scratchpad_arguments_schema(*, include_id: bool) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "content": {"type": "string", "minLength": 1, "maxLength": 2400},
-        "sources": {
+        "source_ids": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": True,
-            "items": _scratchpad_source_schema(),
+            "items": {"type": "string", "minLength": 1},
         },
     }
-    required = ["content", "sources"]
+    required = ["content", "source_ids"]
     if include_id:
         properties["scratchpad_id"] = {
             "type": "string",
@@ -432,8 +337,8 @@ class ScratchpadPutTool:
     name: str = "scratchpad_put"
     work_kind: str = "action"
     description: str = (
-        "Store one concise turn-local working-memory note. Sources must declare web, model, user, or internal_file; "
-        "an evidence_id is optional, but when present it must be a real current-turn framework evidence ID."
+        "Store one concise turn-local working-memory item grounded in evidence IDs returned by attachments or tools. "
+        "Scratchpad items are temporary and are not durable graph memory unless a final memory mutation cites them."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -452,7 +357,7 @@ class ScratchpadPutTool:
         item = self.scratchpads.put(
             turn_id=context.turn_id,
             content=str(arguments["content"]),
-            sources=arguments["sources"],
+            source_ids=arguments["source_ids"],
         )
         return {"status": "stored", **item.as_dict()}
 
@@ -464,7 +369,7 @@ class ScratchpadUpdateTool:
     name: str = "scratchpad_update"
     work_kind: str = "action"
     description: str = (
-        "Replace one existing current-turn scratchpad note and its structured web/model/user/internal_file sources."
+        "Replace one existing current-turn scratchpad item with revised concise content and validated evidence sources."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -484,6 +389,6 @@ class ScratchpadUpdateTool:
             turn_id=context.turn_id,
             scratchpad_id=str(arguments["scratchpad_id"]),
             content=str(arguments["content"]),
-            sources=arguments["sources"],
+            source_ids=arguments["source_ids"],
         )
         return {"status": "updated", **item.as_dict()}

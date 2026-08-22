@@ -10,7 +10,6 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from ddgs import DDGS
-from ddgs.exceptions import DDGSException
 
 from .agent import WorkContext, WorkTool
 from .file_tools import _tool_schema
@@ -87,27 +86,6 @@ def _fetch_public_response(client: httpx.Client, url: str) -> httpx.Response:
     raise ValueError(f"web page exceeded {_MAX_REDIRECTS} redirects")
 
 
-class SearchProviderError(RuntimeError):
-    """Structured provider failure that remains visible to the agent without selecting a fallback."""
-
-    def __init__(self, *, provider: str, operation: str, query: str, cause: Exception) -> None:
-        self.provider = provider
-        self.operation = operation
-        self.query = query
-        self.cause_type = type(cause).__name__
-        self.detail = str(cause)
-        super().__init__(f"{provider} {operation} failed with {self.cause_type}: {self.detail}")
-
-    def as_dict(self) -> dict[str, str]:
-        return {
-            "provider": self.provider,
-            "operation": self.operation,
-            "query": self.query,
-            "error_type": self.cause_type,
-            "error": self.detail,
-        }
-
-
 class SearchProvider(Protocol):
     def latest(self, query: str, *, limit: int) -> list[dict[str, Any]]: ...
     def web(self, query: str, *, limit: int) -> list[dict[str, Any]]: ...
@@ -119,10 +97,7 @@ class DdgSearchProvider:
     timeout: float = 20.0
 
     def latest(self, query: str, *, limit: int) -> list[dict[str, Any]]:
-        try:
-            rows = DDGS().news(query, max_results=limit)
-        except DDGSException as exc:
-            raise SearchProviderError(provider="ddgs", operation="news", query=query, cause=exc) from exc
+        rows = DDGS().news(query, max_results=limit)
         return [
             {
                 "title": str(row.get("title") or ""),
@@ -135,10 +110,7 @@ class DdgSearchProvider:
         ]
 
     def web(self, query: str, *, limit: int) -> list[dict[str, Any]]:
-        try:
-            rows = DDGS().text(query, max_results=limit)
-        except DDGSException as exc:
-            raise SearchProviderError(provider="ddgs", operation="text", query=query, cause=exc) from exc
+        rows = DDGS().text(query, max_results=limit)
         return [
             {
                 "title": str(row.get("title") or ""),
@@ -172,7 +144,8 @@ class LatestSearchTool:
     provider: SearchProvider
     name: str = "latest_search"
     description: str = (
-        "Search recent news/events and changing public information. Use market_snapshot instead for current market quotes."
+        "Search recent public news/web results for a model-authored query. The framework does not rewrite or "
+        "classify the query. Returns source snippets and available publication metadata."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -188,11 +161,7 @@ class LatestSearchTool:
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         query = str(arguments["query"])
         limit = int(arguments.get("limit", _MAX_SEARCH_RESULTS))
-        try:
-            results = self.provider.latest(query, limit=limit)
-        except SearchProviderError as exc:
-            return {"query": query, "results": [], "search_errors": [exc.as_dict()]}
-        return {"query": query, "results": results, "search_errors": []}
+        return {"query": query, "results": self.provider.latest(query, limit=limit)}
 
     @staticmethod
     def progress_keys(result: dict[str, Any]) -> set[str]:
@@ -204,7 +173,9 @@ class WebResearchTool:
     provider: SearchProvider
     name: str = "web_research"
     description: str = (
-        "Research facts across public web pages with queries and page evidence when structured tools lack the needed facts."
+        "Research a model-authored objective using model-authored search queries. The framework executes exactly "
+        "those queries, reads selected result pages, and returns a compact evidence package; it does not generate "
+        "or semantically rewrite the queries."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -235,15 +206,9 @@ class WebResearchTool:
         pages_to_read = int(arguments.get("pages_to_read", 3))
 
         results: list[dict[str, Any]] = []
-        search_errors: list[dict[str, str]] = []
         seen_urls: set[str] = set()
         for query in queries:
-            try:
-                rows = self.provider.web(query, limit=_MAX_SEARCH_RESULTS)
-            except SearchProviderError as exc:
-                search_errors.append(exc.as_dict())
-                continue
-            for row in rows:
+            for row in self.provider.web(query, limit=_MAX_SEARCH_RESULTS):
                 url = str(row.get("url") or "")
                 if not url or url in seen_urls:
                     continue
@@ -285,7 +250,6 @@ class WebResearchTool:
             "preferred_domains": preferred,
             "results": results[:24],
             "evidence": evidence,
-            "search_errors": search_errors,
             "page_errors": page_errors,
         }
 
