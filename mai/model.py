@@ -149,7 +149,14 @@ class OllamaModel:
                 },
                 timeout=self.timeout_seconds,
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                body = response.text.strip()
+                detail = body if body else "<empty response body>"
+                raise ModelContractError(
+                    f"Ollama HTTP {response.status_code} for model {self.model!r}: {detail}"
+                ) from exc
             payload = response.json()
             content = payload.get("message", {}).get("content")
             if not isinstance(content, str) or not content.strip():
