@@ -2,9 +2,12 @@
 
 루트에는 프로젝트를 처음 볼 때 필요한 핵심 문서만 유지한다.
 
-- `../README.md` — 현재 프로젝트 개요, 기억 구조, tool 목록, 설치/실행/종료 방법
+- `../README.md` — GitHub 기본 노출용 영어 README
+- `../README.ko.md` — 내용 기준으로 관리하는 한국어 원본 README
 - `../CONTRACT.md` — 핵심 런타임/제품 계약
 - `../ROADMAP.md` — MK4 parity 및 이후 작업 계획
+
+README 내용 변경은 `README.ko.md`를 먼저 수정한 뒤 영어 `README.md`를 같은 구조와 정보량으로 동기화한다.
 
 ## Operations
 
