@@ -6,6 +6,7 @@ import pytest
 
 from mai.agent import AgentLifecycle
 from mai.graph import GraphRepository, GraphSourceStore
+from mai.memory_agent_adapter import MemoryAgentAdapter
 from mai.memory_extension import AgentGraphMemoryExtension
 from mai.model import ModelContractError
 
@@ -48,6 +49,15 @@ def _memory(repo, sources, vectors):
 
 def _schema_variants(schema: dict) -> list[dict]:
     return list(schema.get("oneOf", [schema]))
+
+
+def _tool_names(schema: dict) -> set[str]:
+    names: set[str] = set()
+    for variant in _schema_variants(schema):
+        tool = (variant.get("properties") or {}).get("tool") or {}
+        if "const" in tool:
+            names.add(str(tool["const"]))
+    return names
 
 
 def _has_answer(schema: dict) -> bool:
@@ -244,12 +254,13 @@ def test_edge_fix_applies_delta_promotes_relevance_and_disconnects(tmp_path) -> 
         repo.close()
 
 
-def test_agent_forces_query_recall_before_answer_and_uses_same_loop_sync_gate(tmp_path) -> None:
+def test_agent_first_round_exposes_only_vector_recall_then_opens_external_tools(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
     try:
         memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "past context": [1.0, 0.0]})
+        adapter = MemoryAgentAdapter(memory)
         model = FakeModel(
             [
                 {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past context"}},
@@ -261,12 +272,15 @@ def test_agent_forces_query_recall_before_answer_and_uses_same_loop_sync_gate(tm
                 },
             ]
         )
-        agent = AgentLifecycle(repository=repo, model=model, source_store=sources, core_extension=memory)
+        agent = AgentLifecycle(repository=repo, model=model, source_store=sources, core_extension=adapter)
 
         result = agent.run(user_id="u", user_text="question", turn_id="t1")
 
         assert result["answer"] == "done"
         assert _has_answer(model.schemas[0]) is False
+        assert _tool_names(model.schemas[0]) == {"memory/recall"}
+        first_arguments = model.schemas[0]["properties"]["arguments"]
+        assert first_arguments["required"] == ["query"]
         assert _has_answer(model.schemas[1]) is True
         answer_variant = next(
             variant
@@ -275,6 +289,28 @@ def test_agent_forces_query_recall_before_answer_and_uses_same_loop_sync_gate(tm
         )
         assert answer_variant["properties"]["graph_synced"] == {"const": True}
         assert len(model.schemas) == 2
+    finally:
+        sources.close()
+        repo.close()
+
+
+def test_agent_rejects_final_answer_without_graph_sync_acknowledgement(tmp_path) -> None:
+    path = tmp_path / "graph.db"
+    repo = GraphRepository(path)
+    sources = GraphSourceStore(path)
+    try:
+        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "past context": [1.0, 0.0]})
+        adapter = MemoryAgentAdapter(memory)
+        model = FakeModel(
+            [
+                {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past context"}},
+                {"action": "answer", "outcome": "completed", "content": "done"},
+            ]
+        )
+        agent = AgentLifecycle(repository=repo, model=model, source_store=sources, core_extension=adapter)
+
+        with pytest.raises(ModelContractError, match="graph_synced=true"):
+            agent.run(user_id="u", user_text="question", turn_id="t1")
     finally:
         sources.close()
         repo.close()
