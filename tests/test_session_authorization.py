@@ -58,23 +58,24 @@ def test_owner_catalog_retains_full_host_capabilities(tmp_path: Path) -> None:
     assert {"latest_search", "web_research", "market_snapshot"} <= names
 
 
-def test_explicit_successful_file_tree_promotes_session_working_root(tmp_path: Path) -> None:
+def test_structural_working_root_metadata_promotes_session_root(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     next_root = _next_working_root(
         current_root=str(tmp_path),
         work_events=[
             {
-                "tool": "file_tree",
-                "arguments": {"root": str(project)},
-                "result": {"root": str(project), "entries": []},
+                "tool": "renamed_or_wrapped_discovery_tool",
+                "arguments": {},
+                "result": {"root": "not interpreted here"},
+                "working_root": str(project),
             }
         ],
     )
     assert next_root == str(project.resolve())
 
 
-def test_unrelated_tool_result_cannot_change_session_working_root(tmp_path: Path) -> None:
+def test_unrelated_result_root_cannot_change_session_working_root(tmp_path: Path) -> None:
     other = tmp_path / "other"
     other.mkdir()
     next_root = _next_working_root(
