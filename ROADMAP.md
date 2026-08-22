@@ -4,8 +4,6 @@ Mai가 MK4의 실사용 안정성과 문맥 유지 능력을 넘기 전까지, �
 
 ## Memory/source model
 
-세 종류의 memory를 분리한다.
-
 ```text
 raw conversation history = 최근 대화 continuity
 semantic graph           = 장기 의미 기억
@@ -15,10 +13,10 @@ scratchpad               = 현재 작업 중 임시 working memory
 Raw conversation을 자동으로 semantic graph로 복제하지 않는다.
 
 ### Graph source provenance
-Graph node/edge는 의미만 저장하되, 그 의미가 만들어진 원문 source로 구조적으로 역추적 가능해야 한다. stable source reference를 사용하며 source가 유실되면 추측하지 않고 missing source로 드러낸다.
+Graph node/edge는 의미만 저장하되 stable source reference로 원문까지 역추적 가능해야 한다. source가 유실되면 추측하지 않고 missing source로 드러낸다.
 
 ### Graph confidence and lazy source disclosure
-기본 recall은 `semantic relation + confidence + source_kind`로 compact하게 유지한다. 상세 provenance summary와 raw source는 모델이 필요할 때만 lazy inspection으로 연다. `confidence`는 source reliability, support/conflict, stability, source availability/freshness처럼 Framework가 구조적으로 알고 있는 신호를 압축한 값이며 문장 의미 휴리스틱으로 계산하지 않는다. Assistant-origin evidence는 `assistant가 말했다`는 사실과 그 내용의 world-fact certainty를 분리한다.
+기본 recall은 `semantic relation + confidence + source_kind`만 제공한다. provenance summary와 raw source는 필요할 때 lazy inspection으로 연다. confidence는 source reliability, support/conflict, stability, source availability/freshness 등 구조적 신호를 압축한 값이며 문장 의미 휴리스틱으로 계산하지 않는다. Assistant-origin evidence는 `assistant가 말했다`는 사실과 해당 내용의 world-fact certainty를 분리한다.
 
 ## Phase 1 — Model context parity
 - 최근 대화 context
