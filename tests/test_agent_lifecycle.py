@@ -95,7 +95,7 @@ def test_plain_answer_uses_one_model_round_and_mutates_memory_before_release(tmp
         repo.close()
 
 
-def test_work_tool_is_selected_by_structured_action_and_result_returns_to_model(tmp_path) -> None:
+def test_work_tool_requires_scope_then_returns_result_to_model(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
         calls = []
@@ -116,17 +116,21 @@ def test_work_tool_is_selected_by_structured_action_and_result_returns_to_model(
             handler=handler,
         )
         model = FakeModel([
+            {"action": "request_action_scope", "scope": "generic"},
             {"action": "tool", "tool": "double", "arguments": {"value": 4}},
             _answer("8"),
         ])
 
         result = _lifecycle(repo, model, [tool]).run(user_id="owner", user_text="double", turn_id="t1")
 
-        assert len(model.schemas) == 2
+        assert len(model.schemas) == 3
         assert calls == [({"value": 4}, "t1")]
         assert result["work_events"][0]["result"] == {"value": 8}
         first_schema = model.schemas[0]
         variants = first_schema["oneOf"]
+        assert not any(v.get("properties", {}).get("tool") == {"const": "double"} for v in variants)
+        second_schema = model.schemas[1]
+        variants = second_schema["oneOf"]
         assert any(v.get("properties", {}).get("tool") == {"const": "double"} for v in variants)
     finally:
         repo.close()
@@ -197,7 +201,7 @@ def test_fixed_answer_is_not_returned_when_memory_mutation_fails(tmp_path) -> No
         repo.close()
 
 
-def test_agent_loop_has_no_arbitrary_round_cap(tmp_path) -> None:
+def test_agent_loop_has_no_arbitrary_round_cap_after_scope_activation(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
         count = 25
@@ -219,15 +223,19 @@ def test_agent_loop_has_no_arbitrary_round_cap(tmp_path) -> None:
             handler=handler,
         )
         actions = [
-            {"action": "tool", "tool": "echo_number", "arguments": {"n": n}}
-            for n in range(count)
-        ] + [_answer("done")]
+            {"action": "request_action_scope", "scope": "generic"},
+            *[
+                {"action": "tool", "tool": "echo_number", "arguments": {"n": n}}
+                for n in range(count)
+            ],
+            _answer("done"),
+        ]
         model = FakeModel(actions)
 
         result = _lifecycle(repo, model, [tool]).run(user_id="owner", user_text="loop", turn_id="t1")
 
         assert calls == list(range(count))
         assert result["answer"] == "done"
-        assert len(model.schemas) == count + 1
+        assert len(model.schemas) == count + 2
     finally:
         repo.close()
