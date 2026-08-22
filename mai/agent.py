@@ -362,7 +362,12 @@ class AgentLifecycle:
 
         while True:
             aggregate_recall = self._aggregate_recall(recall_results)
-            variants = [answer_with_memory_schema(aggregate_recall)]
+            variants = [
+                answer_with_memory_schema(
+                    aggregate_recall,
+                    scratchpad_ids=self.memory_executor.available_scratchpad_ids(turn_id=context.turn_id),
+                )
+            ]
             if allow_lookup:
                 variants.append(_lookup_schema())
             if candidate_ids:
