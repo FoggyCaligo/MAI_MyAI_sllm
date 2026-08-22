@@ -122,7 +122,7 @@ def test_undiscovered_file_action_cannot_execute_even_after_manual(tmp_path: Pat
         ]
     )
 
-    with pytest.raises(ModelContractError, match="requires tool_manual"):
+    with pytest.raises(ModelContractError, match="unavailable in the current work scope"):
         lifecycle(model, [FileReadTool(access)])._run_agent_phase(
             context=context(), candidate_ids=set(), recall_results=[]
         )
