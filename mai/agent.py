@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
@@ -195,6 +196,36 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
     return tool.schema()
 
 
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return ("object", tuple((key, _freeze_json(value[key])) for key in sorted(value)))
+    if isinstance(value, list):
+        return ("array", tuple(_freeze_json(item) for item in value))
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return ("scalar", value)
+    raise ModelContractError(f"structured action contains unsupported JSON value: {type(value).__name__}")
+
+
+def _exclude_successful_arguments(
+    schema: dict[str, Any],
+    successful_arguments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not successful_arguments:
+        return schema
+    updated = deepcopy(schema)
+    properties = updated.get("properties")
+    if not isinstance(properties, dict) or not isinstance(properties.get("arguments"), dict):
+        raise ValueError("tool schema must expose an arguments object")
+    original_arguments = properties["arguments"]
+    properties["arguments"] = {
+        "allOf": [
+            original_arguments,
+            {"not": {"enum": deepcopy(successful_arguments)}},
+        ]
+    }
+    return updated
+
+
 @dataclass(slots=True)
 class AgentLifecycle:
     repository: GraphRepository
@@ -302,14 +333,24 @@ class AgentLifecycle:
         allow_lookup = True
         available_tools = set(tools)
         seen_progress: dict[str, set[str]] = {}
+        successful_arguments: dict[str, list[dict[str, Any]]] = {}
+        successful_action_ids: set[Any] = set()
 
         while True:
             aggregate_recall = self._aggregate_recall(recall_results)
             variants = [answer_with_memory_schema(aggregate_recall)]
             if allow_lookup:
-                variants.append(_lookup_schema())
+                variants.append(
+                    _exclude_successful_arguments(
+                        _lookup_schema(), successful_arguments.get("node_lookup", [])
+                    )
+                )
             if candidate_ids:
-                variants.append(_recall_schema(candidate_ids))
+                variants.append(
+                    _exclude_successful_arguments(
+                        _recall_schema(candidate_ids), successful_arguments.get("recall_memory", [])
+                    )
+                )
             exposed_tools: set[str] = set()
             for name, tool in tools.items():
                 if name not in available_tools:
@@ -317,7 +358,9 @@ class AgentLifecycle:
                 tool_schema = _schema_for_context(tool, context)
                 if tool_schema is None:
                     continue
-                variants.append(tool_schema)
+                variants.append(
+                    _exclude_successful_arguments(tool_schema, successful_arguments.get(name, []))
+                )
                 exposed_tools.add(name)
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
@@ -337,6 +380,12 @@ class AgentLifecycle:
             arguments = action["arguments"]
             if not isinstance(tool_name, str):
                 raise ModelContractError("work tool name must be a string")
+
+            action_id = (tool_name, _freeze_json(arguments))
+            if action_id in successful_action_ids:
+                raise ModelContractError(
+                    f"successful structured action may not repeat in the same turn: {tool_name}"
+                )
 
             tool_started(tool_name)
             if tool_name == "node_lookup":
@@ -373,6 +422,8 @@ class AgentLifecycle:
                 raise ModelContractError("unexpected tool in agent phase")
             tool_completed(tool_name)
 
+            successful_action_ids.add(action_id)
+            successful_arguments.setdefault(tool_name, []).append(deepcopy(arguments))
             event = {"tool": tool_name, "arguments": arguments, "result": result}
             events.append(event)
             messages.append({"role": "assistant", "content": str(action)})
