@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .agent import AgentLifecycle
 from .attachment_evidence import AttachmentEvidenceBuilder
+from .memory_agent_adapter import MemoryAgentAdapter
 from .memory_embedding import EmbeddingModel, OllamaEmbeddingModel
 from .memory_extension import AgentGraphMemoryExtension
 from .model_context import use_attachment_evidence
@@ -36,12 +37,13 @@ class WorkingMemoryLifecycle:
         elif not model_name:
             raise ValueError("embedding_model_name is required when injecting an embedding implementation")
 
-        self.delegate.core_extension = AgentGraphMemoryExtension(
+        memory = AgentGraphMemoryExtension(
             repository=self.delegate.repository,
             source_store=self.delegate.source_store,
             embedding=embedding,
             embedding_model_name=model_name,
         )
+        self.delegate.core_extension = MemoryAgentAdapter(memory)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
