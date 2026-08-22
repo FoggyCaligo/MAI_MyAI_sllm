@@ -291,8 +291,27 @@ class AgentGraphMemoryExtension:
         end = int(arguments["end_node_id"])
         if start not in state.viewed_nodes or end not in state.viewed_nodes:
             raise ModelContractError("edge endpoints must be opened in the current ViewedGraph")
-        self._consume_edge_budget(state, start, end)
         source_ids = self._require_sources(state, arguments["source_ids"])
+        existing = self.repository.edge_for_pair(
+            user_id=state.user_id,
+            start_node_id=start,
+            end_node_id=end,
+        )
+        if existing is not None:
+            edge_id = int(existing["edge_id"])
+            payload = self._edge_payload(state.user_id, edge_id)
+            state.viewed_edges[edge_id] = payload
+            state.available_source_ids.update(int(value) for value in payload["source_ids"])
+            return {
+                "status": "rejected",
+                "reason": "directed_edge_already_exists",
+                "existing_edge_id": edge_id,
+                "existing_edge": payload,
+                "requested_source_ids": source_ids,
+                "viewed_graph": self._viewed_graph_payload(state),
+            }
+
+        self._consume_edge_budget(state, start, end)
         edge = self.repository.create_edge(
             user_id=state.user_id,
             start_node_id=start,
