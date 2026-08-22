@@ -160,7 +160,11 @@ def test_web_answer_requires_grounding_acceptance(monkeypatch) -> None:
     web_event = {
         "tool": "latest_search",
         "arguments": {"query": "x"},
-        "result": {"results": [{"title": "T", "url": "https://example.com", "snippet": "fact"}]},
+        "result": {
+            "evidence_id": "web:0:result:0",
+            "evidence_kind": "web_evidence",
+            "results": [{"title": "T", "url": "https://example.com", "snippet": "fact"}],
+        },
     }
     result = model.structured(
         messages=[
@@ -193,11 +197,16 @@ def test_grounding_rejection_forces_non_answer_next_action(monkeypatch) -> None:
 
     monkeypatch.setattr("mai.model.httpx.post", fake_post)
     model = OllamaModel(model="test")
+    model.configure_grounding_tools({"web_research"})
     action = {"action": "tool", "tool": "latest_search", "arguments": {"query": "x"}}
     web_event = {
         "tool": "latest_search",
         "arguments": {"query": "x"},
-        "result": {"results": [{"title": "T", "url": "https://example.com", "snippet": "partial"}]},
+        "result": {
+            "evidence_id": "web:0:result:0",
+            "evidence_kind": "web_evidence",
+            "results": [{"title": "T", "url": "https://example.com", "snippet": "partial"}],
+        },
     }
     result = model.structured(
         messages=[
