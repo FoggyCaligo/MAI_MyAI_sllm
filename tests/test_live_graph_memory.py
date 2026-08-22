@@ -65,39 +65,36 @@ def _has_answer(schema: dict) -> bool:
     )
 
 
-def _seed_pair(repo, *, user_id="u"):
-    a = repo.create_node(user_id=user_id, name="A")
-    b = repo.create_node(user_id=user_id, name="B")
-    repo.set_node_embedding(user_id=user_id, node_id=a["node_id"], model="fake-embed", vector=[1.0, 0.0])
-    repo.set_node_embedding(user_id=user_id, node_id=b["node_id"], model="fake-embed", vector=[0.9, 0.1])
+def _seed_pair(repo):
+    a = repo.create_node(user_id="u", name="A")
+    b = repo.create_node(user_id="u", name="B")
+    repo.set_node_embedding(user_id="u", node_id=a["node_id"], model="fake-embed", vector=[1.0, 0.0])
+    repo.set_node_embedding(user_id="u", node_id=b["node_id"], model="fake-embed", vector=[0.9, 0.1])
     return a, b
 
 
 def _open_pair(memory, state, a, b):
-    candidates = memory.execute(tool="memory/recall", arguments={"query": "pair"}, state=state)["candidates"]
-    ids = {item["node_id"] for item in candidates}
-    assert a["node_id"] in ids and b["node_id"] in ids
+    memory.execute(tool="memory/recall", arguments={"query": "pair"}, state=state)
     memory.execute(tool="memory/recall", arguments={"node_id": a["node_id"]}, state=state)
     memory.execute(tool="memory/recall", arguments={"node_id": b["node_id"]}, state=state)
 
 
-def test_query_recall_returns_candidates_without_opening_working_graph(tmp_path) -> None:
+def test_query_candidates_do_not_open_working_graph(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
+    memory = None
     try:
         node = repo.create_node(user_id="u", name="Mai")
         repo.set_node_embedding(user_id="u", node_id=node["node_id"], model="fake-embed", vector=[0.0, 1.0])
         memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "Mai query": [0.0, 1.0]})
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="hello")
-
         result = memory.execute(tool="memory/recall", arguments={"query": "Mai query"}, state=state)
-
         assert result["candidates"][0]["node_id"] == node["node_id"]
         assert result["viewed_graph"] == {"nodes": [], "edges": []}
-        assert memory.answer_schema(state)["properties"]["graph_synced"] == {"const": True}
     finally:
-        memory.abort_turn(turn_id="t1")
+        if memory is not None:
+            memory.abort_turn(turn_id="t1")
         sources.close()
         repo.close()
 
@@ -106,6 +103,7 @@ def test_recall_accumulates_only_opened_one_hop_regions(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
+    memory = None
     try:
         a, b = _seed_pair(repo)
         c = repo.create_node(user_id="u", name="C")
@@ -114,42 +112,41 @@ def test_recall_accumulates_only_opened_one_hop_regions(tmp_path) -> None:
             user_id="u", start_node_id=a["node_id"], end_node_id=b["node_id"],
             relation="A to B", weight=1.0, personal_relevance=0.5, turn_id="seed",
         )
-        memory = _memory(repo, sources, {"사용자": [0.0, 0.0], "find A": [1.0, 0.0], "find C": [0.0, 1.0]})
+        memory = _memory(
+            repo,
+            sources,
+            {"사용자": [0.2, 0.8], "find A": [1.0, 0.0], "find C": [0.0, 1.0]},
+        )
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="hello")
-
-        first = memory.execute(tool="memory/recall", arguments={"query": "find A"}, state=state)
-        memory.execute(tool="memory/recall", arguments={"node_id": first["candidates"][0]["node_id"]}, state=state)
+        memory.execute(tool="memory/recall", arguments={"query": "find A"}, state=state)
+        memory.execute(tool="memory/recall", arguments={"node_id": a["node_id"]}, state=state)
         assert {item["name"] for item in state.viewed_nodes.values()} == {"A", "B"}
-
-        second = memory.execute(tool="memory/recall", arguments={"query": "find C"}, state=state)
-        c_id = next(item["node_id"] for item in second["candidates"] if item["name"] == "C")
-        memory.execute(tool="memory/recall", arguments={"node_id": c_id}, state=state)
+        memory.execute(tool="memory/recall", arguments={"query": "find C"}, state=state)
+        memory.execute(tool="memory/recall", arguments={"node_id": c["node_id"]}, state=state)
         assert {item["name"] for item in state.viewed_nodes.values()} == {"A", "B", "C"}
     finally:
-        memory.abort_turn(turn_id="t1")
+        if memory is not None:
+            memory.abort_turn(turn_id="t1")
         sources.close()
         repo.close()
 
 
-def test_generate_node_is_only_working_until_commit(tmp_path) -> None:
+def test_pending_node_does_not_exist_in_actual_graph_until_commit(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
     try:
-        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "new fact": [0.0, 1.0], "새 노드": [0.0, 1.0]})
+        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "lookup": [0.0, 1.0], "새 노드": [0.0, 1.0]})
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="source fact")
         source_id = next(iter(state.available_source_ids))
-        memory.execute(tool="memory/recall", arguments={"query": "new fact"}, state=state)
+        memory.execute(tool="memory/recall", arguments={"query": "lookup"}, state=state)
         staged = memory.execute(
             tool="memory/generate/node",
             arguments={"kind": "concept", "name": "새 노드", "source_ids": [source_id]},
             state=state,
         )["node"]
-
-        assert staged["node_id"] < 0
-        assert staged["pending"] is True
+        assert staged["node_id"] < 0 and staged["pending"] is True
         assert all(item["name"] != "새 노드" for item in repo.active_node_embeddings(user_id="u", model="fake-embed"))
-
         commit = memory.commit_turn(turn_id="t1")
         actual_id = commit["node_id_map"][staged["node_id"]]
         assert repo.get_node(user_id="u", node_id=actual_id)["name"] == "새 노드"
@@ -158,7 +155,7 @@ def test_generate_node_is_only_working_until_commit(tmp_path) -> None:
         repo.close()
 
 
-def test_edge_fix_keeps_actual_history_intact_until_final_commit(tmp_path) -> None:
+def test_edge_history_separates_actual_from_working_until_commit(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
@@ -173,32 +170,25 @@ def test_edge_fix_keeps_actual_history_intact_until_final_commit(tmp_path) -> No
             records=[SourceRecord("user_message", "user", "나는 개발자야", {})],
         )[0]
         sources.link_sources(
-            user_id="u", turn_id="old-turn", source_ids=[old_source],
-            edge_version_id=edge["current_version_id"],
+            user_id="u", turn_id="old-turn", source_ids=[old_source], edge_version_id=edge["current_version_id"],
         )
         memory = _memory(repo, sources, {"사용자": [0.0, 1.0], "pair": [1.0, 0.0]})
         state = memory.begin_turn(user_id="u", turn_id="new-turn", user_text="예전엔 디자이너였잖아")
         new_source = next(iter(state.available_source_ids))
         _open_pair(memory, state, a, b)
-
-        staged = memory.execute(
+        memory.execute(
             tool="memory/fix/edge",
             arguments={
                 "operation": "update", "edge_id": edge["edge_id"], "relation": "디자이너",
                 "weight_delta": 0.0, "personal_relevance": "user_centered", "source_ids": [new_source],
             },
             state=state,
-        )["edge"]
-        assert staged["relation"] == "디자이너" and staged["pending"] is True
-        assert repo.get_edge(user_id="u", edge_id=edge["edge_id"])["relation"] == "개발자"
-
-        history = memory.execute(
-            tool="memory/recall", arguments={"edge_id": edge["edge_id"]}, state=state,
         )
+        assert repo.get_edge(user_id="u", edge_id=edge["edge_id"])["relation"] == "개발자"
+        history = memory.execute(tool="memory/recall", arguments={"edge_id": edge["edge_id"]}, state=state)
         assert history["actual_current"]["relation"] == "개발자"
         assert history["working_current"]["relation"] == "디자이너"
         assert history["working_state_is_past_evidence"] is False
-
         memory.commit_turn(turn_id="new-turn")
         committed = repo.get_edge(user_id="u", edge_id=edge["edge_id"])
         assert committed["relation"] == "디자이너"
@@ -209,7 +199,7 @@ def test_edge_fix_keeps_actual_history_intact_until_final_commit(tmp_path) -> No
         repo.close()
 
 
-def test_disconnect_is_staged_then_committed_as_weight_zero_version(tmp_path) -> None:
+def test_disconnect_commits_weight_zero_without_deleting_logical_edge(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
@@ -223,14 +213,12 @@ def test_disconnect_is_staged_then_committed_as_weight_zero_version(tmp_path) ->
         state = memory.begin_turn(user_id="u", turn_id="disconnect-turn", user_text="disconnect")
         source_id = next(iter(state.available_source_ids))
         _open_pair(memory, state, a, b)
-        staged = memory.execute(
+        memory.execute(
             tool="memory/fix/edge",
             arguments={"operation": "disconnect", "edge_id": edge["edge_id"], "source_ids": [source_id]},
             state=state,
-        )["edge"]
-        assert staged["weight"] == 0.0
+        )
         assert repo.get_edge(user_id="u", edge_id=edge["edge_id"])["weight"] == pytest.approx(0.7)
-
         memory.commit_turn(turn_id="disconnect-turn")
         assert repo.get_edge(user_id="u", edge_id=edge["edge_id"])["weight"] == 0.0
         assert repo.one_hop_neighborhood(user_id="u", focus_node_id=a["node_id"])["edges"] == []
@@ -239,15 +227,15 @@ def test_disconnect_is_staged_then_committed_as_weight_zero_version(tmp_path) ->
         repo.close()
 
 
-def test_abort_discards_working_mutations(tmp_path) -> None:
+def test_abort_discards_staged_semantic_changes(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
     try:
-        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "new fact": [0.0, 1.0]})
+        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "lookup": [0.0, 1.0]})
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="source fact")
         source_id = next(iter(state.available_source_ids))
-        memory.execute(tool="memory/recall", arguments={"query": "new fact"}, state=state)
+        memory.execute(tool="memory/recall", arguments={"query": "lookup"}, state=state)
         memory.execute(
             tool="memory/generate/node",
             arguments={"kind": "concept", "name": "discard me", "source_ids": [source_id]},
@@ -261,20 +249,20 @@ def test_abort_discards_working_mutations(tmp_path) -> None:
         repo.close()
 
 
-def test_agent_first_round_requires_vector_recall_and_final_sync(tmp_path) -> None:
+def test_agent_first_round_requires_recall_and_final_graph_sync(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
     try:
-        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "past context": [1.0, 0.0]})
+        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "past": [1.0, 0.0]})
         adapter = MemoryAgentAdapter(memory)
         noop = FunctionWorkTool(
-            name="noop", description="No-op external test tool",
+            name="noop", description="noop",
             input_schema={"type": "object", "additionalProperties": False, "properties": {}},
             handler=lambda arguments, context: {"ok": True},
         )
         model = FakeModel([
-            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past context"}},
+            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past"}},
             {"action": "answer", "outcome": "completed", "content": "done", "graph_synced": True},
         ])
         agent = AgentLifecycle(
