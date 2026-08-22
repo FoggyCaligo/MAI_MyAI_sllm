@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from mai.agent import AgentLifecycle, WorkContext
+from mai.agent import AgentLifecycle, PathProvenance, WorkContext
 from mai.code_search_tool import build_code_tools
 from mai.document_tools import build_document_image_tools
 from mai.file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
@@ -151,6 +151,16 @@ def test_every_context_dependent_work_tool_schema_keeps_common_envelope(tmp_path
 
 
 def test_every_registered_owner_work_tool_can_open_route_manual(tmp_path: Path) -> None:
+    established_paths = [
+        tmp_path / "note.txt",
+        tmp_path / "manual.pdf",
+        tmp_path / "image.png",
+    ]
+    for path in established_paths:
+        path.write_bytes(b"test")
+    provenance = PathProvenance()
+    provenance.add_many(established_paths)
+
     for tool in _all_registered_owner_work_tools(tmp_path):
         registry = ToolRouteRegistry.for_tools([tool])
         route = registry.route_for_tool(tool.name)
@@ -163,7 +173,12 @@ def test_every_registered_owner_work_tool_can_open_route_manual(tmp_path: Path) 
         lifecycle = AgentLifecycle(repository=None, model=model, work_tools=[tool])
 
         answer, events = lifecycle._run_agent_phase(
-            context=WorkContext(user_id="owner", turn_id=f"manual-{tool.name}", user_text="inspect tool manual"),
+            context=WorkContext(
+                user_id="owner",
+                turn_id=f"manual-{tool.name}",
+                user_text="inspect tool manual",
+                path_provenance=provenance,
+            ),
             extension_state=None,
         )
 
@@ -171,7 +186,10 @@ def test_every_registered_owner_work_tool_can_open_route_manual(tmp_path: Path) 
         assert events[0]["tool"] == "tool_route"
         assert events[0]["result"]["tool"] == tool.name
         assert events[0]["result"]["operation"] == "manual"
-        assert events[0]["result"]["input_schema"] == tool.schema()["properties"]["arguments"]
+        expected_schema = getattr(tool, "schema_for_paths", lambda _: tool.schema())(set(provenance.paths))
+        if expected_schema is None:
+            expected_schema = tool.schema()
+        assert events[0]["result"]["input_schema"] == expected_schema["properties"]["arguments"]
 
 
 def test_market_snapshot_keeps_operation_union_inside_arguments(tmp_path: Path) -> None:
