@@ -59,6 +59,70 @@ class MemoryAgentAdapter:
     ) -> dict[str, Any]:
         return self.memory.execute(tool=tool, arguments=arguments, state=state)
 
+    def graph_sync_schema(self, state: MemoryTurnState) -> dict[str, Any]:
+        builder = getattr(self.memory, "sync_schemas", None)
+        variants = builder(state) if callable(builder) else self.memory.schemas(state)
+        if not variants:
+            raise RuntimeError("graph sync has no available memory operation schema")
+        item_schema: dict[str, Any]
+        if len(variants) == 1:
+            item_schema = variants[0]
+        else:
+            item_schema = {"oneOf": variants}
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["sync", "operations"],
+            "properties": {
+                "sync": {"const": "graph_sync"},
+                "operations": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": item_schema,
+                },
+            },
+        }
+
+    def execute_graph_sync(
+        self,
+        *,
+        state: MemoryTurnState,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if payload.get("sync") != "graph_sync":
+            raise ModelContractError("graph sync round requires sync=graph_sync")
+        operations = payload.get("operations")
+        if not isinstance(operations, list):
+            raise ModelContractError("graph sync operations must be an array")
+        if len(operations) > 20:
+            raise ModelContractError("graph sync operation batch exceeds 20 operations")
+
+        results: list[dict[str, Any]] = []
+        for operation in operations:
+            if not isinstance(operation, dict):
+                raise ModelContractError("graph sync operation must be an object")
+            if operation.get("action") != "tool":
+                raise ModelContractError("graph sync may contain only memory tool actions")
+            tool = operation.get("tool")
+            arguments = operation.get("arguments")
+            if not isinstance(tool, str) or tool not in self.tool_names:
+                raise ModelContractError("graph sync may contain only registered memory tools")
+            if not isinstance(arguments, dict):
+                raise ModelContractError("graph sync memory tool arguments must be an object")
+            result = self.memory.execute(tool=tool, arguments=arguments, state=state)
+            results.append({"tool": tool, "arguments": dict(arguments), "result": result})
+        return results
+
+    def graph_sync_context(self, state: MemoryTurnState) -> str:
+        return (
+            "Mandatory graph-sync-only round. Do not answer the user and do not select external work tools. "
+            "Review the user message, the complete current-turn transcript through the immediately preceding "
+            "main action/result, and the current Working Graph. Use only memory operations to synchronize "
+            "durable information into the Working Graph. Return an empty operations array only when no graph "
+            "change is warranted. This round must finish before the next main Agent round can begin.\n"
+            + self.memory.round_context(state)
+        )
+
     def observe_work_tool_result(
         self,
         *,
