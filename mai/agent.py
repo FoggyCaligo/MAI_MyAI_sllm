@@ -354,8 +354,9 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
-            if available_tools:
-                variants.append(_tool_manual_schema(available_tools))
+            manual_targets = available_tools - activated_tools
+            if manual_targets:
+                variants.append(_tool_manual_schema(manual_targets))
 
             exposed_tools: set[str] = set()
             for name in sorted(activated_tools):
@@ -404,8 +405,8 @@ class AgentLifecycle:
                 recall_results.append(result)
             elif tool_name == "tool_manual":
                 requested = str(arguments["tool"])
-                if requested not in available_tools:
-                    raise ModelContractError("tool_manual target is unavailable in the current work scope")
+                if requested not in manual_targets:
+                    raise ModelContractError("tool_manual target is unavailable or already activated")
                 tool = tools[requested]
                 activated_tools.add(requested)
                 result = {
@@ -414,8 +415,10 @@ class AgentLifecycle:
                     "input_schema": tool.schema()["properties"]["arguments"],
                 }
             elif tool_name in tools:
-                if tool_name not in activated_tools or tool_name not in exposed_tools:
+                if tool_name not in activated_tools:
                     raise ModelContractError(f"{tool_name} requires tool_manual before execution")
+                if tool_name not in exposed_tools:
+                    raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
                 tool = tools[tool_name]
                 for required_path in _required_paths(tool, arguments):
                     context.path_provenance.require(required_path)
