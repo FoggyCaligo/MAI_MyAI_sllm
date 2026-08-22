@@ -110,7 +110,7 @@ def test_recent_tool_operations_are_limited_to_five() -> None:
     assert '"pattern": "6"' in context_message["content"]
 
 
-def test_current_tool_message_is_compacted_into_assistant_context_without_mutating_original() -> None:
+def test_current_tool_message_is_compacted_as_model_input_without_mutating_original() -> None:
     content = "x" * 10000
     event = {
         "tool": "file_read",
@@ -128,10 +128,11 @@ def test_current_tool_message_is_compacted_into_assistant_context_without_mutati
         prepared = prepare_model_messages(messages)
 
     assert all(item["role"] != "tool" for item in prepared)
+    assert prepared[-2] == {"role": "assistant", "content": "{'action': 'tool'}"}
     compacted = prepared[-1]["content"]
-    assert prepared[-1]["role"] == "assistant"
-    assert "{'action': 'tool'}" in compacted
-    assert "Framework tool result:" in compacted
+    assert prepared[-1]["role"] == "user"
+    assert "Framework tool result for the preceding structured action:" in compacted
+    assert "Choose the next structured action" in compacted
     assert len(compacted) < 4000
     assert "...[truncated]..." in compacted
     assert messages[-1]["content"] == str(event)
