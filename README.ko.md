@@ -66,7 +66,7 @@ Mai는 기억을 수명과 역할에 따라 세 층으로 분리한다.
 
 최근 user/assistant 대화는 raw text 그대로 `chat.sqlite3`에 저장된다.
 
-모델에게는 기본적으로 최근 10개 message 정도만 다시 주입한다. 모든 과거 대화를 매번 모델 context에 넣지 않기 때문에 context 사용량을 제한하면서도 “아까 말한 것” 같은 자연스러운 대화를 이어갈 수 있다.
+모델에게는 기본적으로 최근 10개 message 정도만 다시 주입한다. 모든 과거 대화를 매번 context에 넣지 않기 때문에 사용량을 제한하면서도 “아까 말한 것” 같은 자연스러운 대화를 이어갈 수 있다.
 
 Raw chat은 장기 graph와 역할이 다르다. 모든 문장을 자동으로 graph에 복제하지 않는다.
 
@@ -86,9 +86,7 @@ scratchpad:1
 scratchpad_update
 ```
 
-Scratchpad는 current turn이 끝나면 사라진다.
-
-중요한 내용만 최종 memory mutation에서 `scratchpad_id`로 선택할 수 있으며, 선택되지 않은 scratchpad 전체가 장기기억으로 복제되지는 않는다.
+Scratchpad는 current turn이 끝나면 사라진다. 최종 memory mutation에서 선택된 scratchpad만 장기기억의 근거로 사용되며, scratchpad 전체가 자동으로 graph에 복제되지는 않는다.
 
 ## 2.3 Semantic graph — 개인 장기기억
 
@@ -96,14 +94,6 @@ Scratchpad는 current turn이 끝나면 사라진다.
 
 ```text
 node ─relation→ node
-```
-
-예:
-
-```text
-사용자 ─진행 중 프로젝트→ Mai
-사용자 ─선호→ 어떤 작업 방식
-Mai ─목적→ 로컬 개인 AI
 ```
 
 동일 user 범위에서 exact same canonical node name이 이미 존재하면 기존 node를 재사용한다. 동일 `(subject, relation, object)` 관계가 반복 확인되면 edge를 다시 복제하지 않고 `support_count`를 증가시킨다.
@@ -116,37 +106,23 @@ Framework가 문자열이 비슷하다는 이유만으로 임의의 fuzzy merge�
 
 Mai의 장기기억은 대화 한 번이 끝날 때 사라지지 않는다.
 
-예를 들어 여러 날에 걸쳐 사용자가 다음과 같은 정보를 이야기했다고 하자.
-
-```text
-사용 중인 PC 환경
-진행 중인 프로젝트
-좋아하는 작업 방식
-이전에 내린 결정
-자주 반복되는 요구사항
-```
-
-이 중 장기적으로 의미 있다고 모델이 선택한 관계는 semantic graph에 누적된다.
+사용자의 PC 환경, 진행 중 프로젝트, 선호, 과거 결정, 반복되는 요구사항 중 장기적으로 의미 있다고 모델이 선택한 관계는 semantic graph에 누적된다.
 
 나중에 관련 질문이 들어오면 Mai는 graph 전체를 모델에게 던지는 대신 필요한 node 주변만 다시 인출한다. 따라서 시간이 지날수록 **사용자의 상황과 배경을 다시 설명해야 하는 횟수가 줄고, 개인 문맥에 맞는 답을 만들 수 있는 기반이 커진다.**
 
-이 기억은 모델 provider의 서버에만 존재하는 계정 상태가 아니다. 로컬 SQLite 파일로 유지되므로 사용자가 직접 복사하고 백업할 수 있다.
+이 기억은 로컬 SQLite에 저장된다.
 
 ```text
 data/graph.sqlite3
 ```
 
-이 파일은 Mai의 장기 semantic memory와 그 기억에 연결된 durable source evidence를 보관한다. 백업해 두었다가 같은 Mai 환경에 복원하면 개인 장기기억도 함께 보존할 수 있다.
+이 파일은 장기 semantic memory와 그 기억에 연결된 durable source evidence를 보관한다. 사용자가 직접 복사하고 백업할 수 있으므로, 장기기억을 **사용자 본인이 소유하고 관리할 수 있는 개인 데이터**로 다룰 수 있다.
 
-따라서 장기기억을 **사용자 본인이 소유하고 관리할 수 있는 개인 데이터**로 다루는 것이 가능하다.
-
-전체 대화 기록과 실행 세션은 별도의 `chat.sqlite3`에 저장된다. 완전한 상태 백업을 원한다면 Mai를 정상 종료한 뒤 `data/` 디렉터리 전체를 백업하는 것이 가장 단순하다.
+전체 대화 기록과 세션은 별도의 `data/chat.sqlite3`에 저장된다. 완전한 상태 백업을 원한다면 Mai를 정상 종료한 뒤 `data/` 폴더 전체를 백업하는 편이 가장 단순하다.
 
 ---
 
-# 4. 장기기억이 만들어지는 과정
-
-한 turn은 대략 다음 순서로 진행된다.
+# 4. 장기기억이 만들어지고 다시 인출되는 과정
 
 ```text
 현재 user 발화
@@ -167,15 +143,9 @@ Framework가 node / edge / scratchpad / source scope 검증
 선택된 source evidence를 graph provenance에 연결
 ```
 
-중요한 원칙은 **원문 전체를 자동으로 장기 graph에 쌓지 않는 것**이다.
+원문 전체를 자동으로 장기 graph에 쌓지 않는다.
 
-모델이 최종 단계에서 장기적으로 의미 있다고 선택한 relation만 저장한다. Scratchpad를 근거로 한 기억은 해당 scratchpad와 실제 attachment/tool/web evidence까지 source chain으로 연결할 수 있다.
-
----
-
-# 5. 장기기억을 다시 꺼내는 과정
-
-모델은 `graph.sqlite3` 전체를 매번 받지 않는다.
+기억을 다시 꺼낼 때도 graph 전체를 주지 않는다.
 
 ```text
 현재 질문
@@ -191,69 +161,47 @@ recall_memory
 + source_kind
 ```
 
-기본 recall은 작게 유지한다.
-
 상세 근거가 필요할 때만:
 
 ```text
 memory_source_summary
   ↓
-출처 종류 / reliability / stability / support / conflict / source ID
-  ↓
-필요한 경우에만
 memory_source_read
   ↓
-실제 raw evidence 일부
+필요한 raw evidence 구간
 ```
 
-순으로 내려간다.
+으로 내려간다.
 
-즉 tool의 `tool_manual`과 마찬가지로 memory provenance도 **lazy disclosure** 방식이다.
-
-Confidence는 모델이 임의로 만든 감정적 확신도가 아니라 다음과 같은 구조적 신호를 압축한 값이다.
-
-- source kind의 기본 reliability
-- 동일 edge가 반복 확인된 `support_count`
-- revision/conflict 횟수
-- source 종류별 stability
-
-문장 내용을 `if text contains ...` 식으로 읽어서 confidence를 정하지 않는다.
+Confidence는 source kind의 기본 reliability, `support_count`, revision/conflict 횟수, stability 같은 구조적 신호를 압축한 값이다. 문장 내용을 문자열 휴리스틱으로 읽어서 confidence를 정하지 않는다.
 
 ---
 
-# 6. 작은 sLLM의 부담을 줄이는 방법
+# 5. 작은 sLLM의 부담을 줄이는 방법
 
-Mai는 작은 로컬 모델이 긴 prompt/tool schema에 묻히지 않도록 여러 단계에서 context를 줄인다.
+Mai는 작은 로컬 모델이 긴 prompt와 tool schema에 묻히지 않도록 context를 단계적으로 줄인다.
 
-## 6.1 Tool 사용법은 필요할 때만 연다
+## 5.1 Tool manual lazy loading
 
 처음부터 모든 tool의 전체 JSON schema를 주지 않는다.
-
-처음에는:
 
 ```text
 tool name + 짧은 summary
 ```
 
-만 제공한다.
-
-실제 사용이 필요할 때 모델이:
+만 제공하고, 사용법이 필요할 때:
 
 ```text
 tool_manual(tool_name)
 ```
 
-을 호출하면 그 tool의 full description과 argument schema가 활성화된다.
+을 호출해 해당 tool의 상세 설명과 schema를 연다.
 
-이미 manual을 읽은 tool은 같은 turn에서 다시 manual 대상으로 남기지 않는다.
+## 5.2 Tool result compaction
 
-## 6.2 Tool result compaction
+실제 runtime event 원본은 유지하지만, 다음 model round에 다시 주입되는 결과는 compact하게 줄인다.
 
-실제 runtime event 원본은 유지하지만 다음 model round에 재주입되는 결과는 compact하게 줄인다.
-
-큰 파일이나 웹 페이지 하나 때문에 남은 대화 context가 전부 밀려나는 문제를 줄이기 위한 구조다.
-
-## 6.3 최근 context만 제한적으로 주입
+## 5.3 최근 context 제한
 
 기본 model input은 대략 다음으로 제한된다.
 
@@ -266,19 +214,17 @@ tool_manual(tool_name)
 - compact tool catalog
 - JSON output contract
 
-## 6.4 동일 성공 action 재실행 방지
+## 5.4 동일 성공 action 재실행 방지
 
 같은 tool + 동일 JSON arguments가 이미 성공했다면 동일 side effect를 반복 실행하지 않는다.
 
-## 6.5 Web grounding
+## 5.5 Web grounding
 
-웹 evidence를 이용한 최종 답변은 실제 evidence와 연결되는지 별도 grounding pass에서 확인한다.
-
-Grounding reviewer는 답변을 마음대로 다시 쓰지 않고 `accept` 또는 `needs_more_evidence`만 결정한다.
+웹 evidence를 이용한 최종 답변은 실제 evidence와 연결되는지 별도 grounding pass에서 확인한다. Grounding reviewer는 답변을 다시 쓰지 않고 `accept` 또는 `needs_more_evidence`만 결정한다.
 
 ---
 
-# 7. 현재 Tool 목록
+# 6. 현재 Tool 목록
 
 ## Memory / agent built-ins
 
@@ -287,7 +233,7 @@ Grounding reviewer는 답변을 마음대로 다시 쓰지 않고 `accept` 또�
 | `node_lookup` | user graph에서 관련 node 후보 찾기 |
 | `recall_memory` | candidate node의 실제 graph 관계 인출 |
 | `memory_source_summary` | recall한 node/edge의 compact provenance 조회 |
-| `memory_source_read` | summary에서 확인한 source의 raw evidence를 필요한 구간만 읽기 |
+| `memory_source_read` | 선택된 source의 raw evidence 일부 읽기 |
 | `tool_manual` | work tool의 상세 설명과 JSON schema 조회 |
 | `scratchpad_put` | evidence 기반 turn-local working memory 생성 |
 | `scratchpad_update` | 기존 scratchpad 갱신 |
@@ -306,9 +252,9 @@ Grounding reviewer는 답변을 마음대로 다시 쓰지 않고 `accept` 또�
 | `file_delete` | 파일 삭제 |
 | `file_download_link` | 임시 브라우저 다운로드 링크 생성 |
 
-Existing-file mutation은 current turn에서 실제로 established된 path provenance를 요구한다. Owner filesystem 접근의 최종 경계는 실제 OS/filesystem permission이다.
+세션 working root 바로 아래에 실제로 존재하는 파일은 turn 시작 시 읽기 provenance에 포함된다. 하위 폴더 파일은 여전히 `file_tree`, `file_search`, `code_search` 같은 정상 discovery를 거쳐야 한다.
 
-## Document / image — owner work tool
+## Document / image — owner
 
 | Tool | 기능 |
 | --- | --- |
@@ -328,8 +274,6 @@ Existing-file mutation은 current turn에서 실제로 established된 path prove
 | --- | --- |
 | `terminal_command` | 현재 PC에서 shell command 실행 |
 
-Terminal output encoding은 `.env`의 `MAI_TERMINAL_ENCODING`이 결정한다.
-
 ## Web / market — owner + trial
 
 | Tool | 기능 |
@@ -340,9 +284,7 @@ Terminal output encoding은 `.env`의 `MAI_TERMINAL_ENCODING`이 결정한다.
 
 ---
 
-# 8. Owner와 Trial
-
-Mai의 로그인 ID는 `owner`와 `trial` role로 구분된다.
+# 7. Owner와 Trial
 
 ## Owner
 
@@ -357,7 +299,7 @@ Mai의 로그인 ID는 `owner`와 `trial` role로 구분된다.
 - 독립된 user graph memory
 - core memory capability
 - web/market tool
-- **첨부파일 upload 및 해당 첨부의 자동 text/document/image 분석**
+- 첨부파일 upload 및 해당 첨부의 자동 text/document/image 분석
 - host filesystem 탐색/수정, terminal, code tool은 사용 불가
 - download link는 사용 불가
 - 한 trial ID에는 active persistent session 하나만 허용
@@ -367,20 +309,16 @@ Trial upload는 계정별 폴더로 분리된다.
 ```text
 .mai_uploads/
 ├─ friend/
-│  └─ ...
 └─ family/
-   └─ ...
 ```
-
-Trial은 자기 계정 upload directory 밖의 path를 attachment로 제출할 수 없다. 따라서 “첨부한 파일은 읽을 수 있지만 host PC의 임의 파일을 탐색할 수는 없는” 경계가 유지된다.
 
 같은 trial ID로 다른 브라우저에서 새로 로그인하면 이전 session은 폐기된다.
 
 ---
 
-# 9. 브라우저를 떠나도 작업이 이어지는 방식
+# 8. 브라우저를 떠나도 작업이 이어지는 방식
 
-`POST /chat`은 긴 모델 작업이 끝날 때까지 HTTP request 자체를 붙잡지 않는다.
+채팅은 persistent job으로 실행된다.
 
 ```text
 /chat
@@ -389,46 +327,34 @@ Trial은 자기 계정 upload directory 밖의 path를 attachment로 제출할 �
 → browser는 job ID polling
 ```
 
-다른 앱을 보거나 페이지를 새로고침해도 서버 작업은 계속된다.
-
-다시 접속하면 완료된 대화는 `/history`, 실행 중 작업은 `/chat/jobs`에서 복원한다.
-
-서버 프로세스 자체가 꺼지면 실행 중 job은 성공으로 추측하지 않고 `interrupted`로 남는다.
+다른 앱을 보거나 페이지를 새로고침해도 서버 작업은 계속된다. 다시 접속하면 완료된 대화는 `/history`, 실행 중 작업은 `/chat/jobs`에서 복원한다.
 
 ---
 
-# 10. 처음 설치하기 — Windows 일반 사용자 기준
+# 9. 처음 설치하기 — Windows 일반 사용자 기준
 
 아래 과정은 개발 환경이 전혀 없는 PC를 기준으로 한다.
 
-## 10.1 Git 설치
+## 9.1 Git 설치
 
-Git for Windows를 설치한다.
-
-설치 후 PowerShell을 새로 열고 확인한다.
+Git for Windows를 설치한 뒤 새 PowerShell에서 확인한다.
 
 ```powershell
 git --version
 ```
 
-버전이 출력되면 된다.
+## 9.2 Python 설치
 
-## 10.2 Python 설치
-
-Python 3를 설치한다. 설치 프로그램에서 가능하면 **Add Python to PATH**를 활성화한다.
-
-설치 후 새 PowerShell에서 확인한다.
+Python 3를 설치한다. 가능하면 설치 과정에서 **Add Python to PATH**를 활성화한다.
 
 ```powershell
 python --version
 pip --version
 ```
 
-## 10.3 Ollama 설치
+## 9.3 Ollama 설치
 
 Windows용 Ollama를 설치하고 실행한다.
-
-확인:
 
 ```powershell
 ollama --version
@@ -438,20 +364,16 @@ ollama --version
 
 Mai에서 **작동이 확인된 최소 기준 대화 모델은 `gemma4:e4b`**다.
 
-`gemma4:e4b`보다 작은 모델은 단순 문장 생성 자체는 가능하더라도, Mai가 요구하는 구조화 JSON 계약 유지, tool 선택, `tool_manual` 사용, 여러 round의 문맥 유지, 장기기억 mutation 같은 동작이 불안정할 수 있다. 따라서 **실제 사용에는 `gemma4:e4b` 또는 그 이상의 성능을 가진 모델을 권장한다.**
-
-즉 더 작은 모델을 임의로 설정한 뒤 Mai의 동작이 이상해지는 경우, 먼저 모델 성능이 최소 기준을 충족하는지 확인해야 한다.
-
-기본 예시 모델을 미리 받는다.
+그보다 작은/약한 모델은 단순 문장 생성은 가능하더라도 구조화 JSON 계약, tool 선택, `tool_manual`, 여러 round 문맥 유지, 장기기억 mutation 등이 불안정할 수 있다. 따라서 **실제 사용에는 `gemma4:e4b` 또는 그 이상의 성능을 가진 모델을 권장한다.**
 
 ```powershell
 ollama pull gemma4:e4b
 ollama pull gemma4:12b
 ```
 
-`gemma4:e4b`는 기본 대화 모델 예시이고, `gemma4:12b`는 기본 이미지 분석 모델 예시다. 하드웨어 여유가 있다면 더 높은 성능의 대화 모델을 `.env`의 `MAI_OLLAMA_MODEL`에 지정하는 것을 권장한다.
+`gemma4:12b`는 기본 이미지 분석 모델 예시다.
 
-Ollama 서비스가 실행되지 않는 환경에서는:
+Ollama 서비스가 따로 필요하면:
 
 ```powershell
 ollama serve
@@ -459,25 +381,21 @@ ollama serve
 
 를 별도 터미널에서 실행한다.
 
-## 10.4 Mai 저장소 clone
-
-원하는 작업 폴더로 이동한 뒤:
+## 9.4 저장소 clone
 
 ```powershell
 git clone https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
 cd MAI_MyAI_sllm
 ```
 
-## 10.5 Python 가상환경 생성
+## 9.5 Python 가상환경
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-PowerShell 정책 때문에 `Activate.ps1` 실행이 차단되면 정책을 임의로 시스템 전체 변경하기보다, Python venv 사용법에 맞춰 현재 환경에서 허용되는 shell을 사용한다.
-
-## 10.6 Python package 설치
+## 9.6 package 설치
 
 ```powershell
 python -m pip install --upgrade pip
@@ -490,73 +408,131 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 ```
 
-## 10.7 `.env` 만들기
+## 9.7 `.env` 만들기
 
 ```powershell
 Copy-Item .env.example .env
 ```
-
-`.env`를 메모장이나 VS Code로 열어 계정을 설정한다.
 
 예:
 
 ```dotenv
 MAI_OWNER_ID=owner
 MAI_ALLOWED_USER_IDS=friend,family
-
 MAI_OLLAMA_MODEL=gemma4:e4b
 MAI_OLLAMA_IMAGE_MODEL=gemma4:12b
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
 ```
 
-`MAI_OWNER_ID`는 전체 PC tool을 사용할 수 있는 owner 계정이다.
-
-`MAI_ALLOWED_USER_IDS`에는 쉼표로 여러 trial 계정을 적을 수 있다.
-
-```dotenv
-MAI_ALLOWED_USER_IDS=friend,family
-```
-
-## 10.8 Mai 실행
-
-프로젝트 폴더와 venv가 활성화된 PowerShell에서:
+## 9.8 로컬 실행
 
 ```powershell
 python run_server.py
 ```
 
-기본 주소는:
+브라우저에서:
 
 ```text
 http://127.0.0.1:8000/
 ```
 
-이다. 브라우저에서 열고 `.env`에 설정한 ID로 로그인한다.
+을 연다.
 
-## 10.9 외부에서 접속하기 — 선택사항
+---
 
-Tailscale 설정이 되어 있다면:
+# 10. Tailscale로 외부 접속 설정하기 — 선택사항
+
+Mai를 같은 PC에서만 사용할 거라면 이 단계는 필요 없다.
+
+## 10.1 Tailscale 설치와 로그인
+
+Windows용 Tailscale을 설치하고 system tray의 Tailscale 아이콘에서 로그인한다.
+
+설치 후 PowerShell에서 확인한다.
+
+```powershell
+tailscale version
+tailscale status
+```
+
+`tailscale status`에서 현재 기기가 연결된 상태로 보여야 한다.
+
+## 10.2 Serve와 Funnel 차이
+
+- **Tailscale Serve**: 같은 tailnet에 로그인된 기기들끼리만 Mai에 접근한다.
+- **Tailscale Funnel**: Mai를 일반 인터넷에서도 접근 가능한 HTTPS 주소로 공개한다.
+
+Mai의 `start_public_tailscale.cmd`는 **Funnel**을 사용한다. Funnel은 외부 인터넷에 공개되는 기능이므로 owner/trial 계정 설정을 신중히 관리한다.
+
+처음 Funnel을 사용할 때 Tailscale이 HTTPS/MagicDNS/Funnel 사용 승인을 위한 안내 URL을 보여줄 수 있다. 화면 안내에 따라 해당 tailnet에서 기능을 활성화한다.
+
+## 10.3 Mai를 Funnel로 실행
+
+프로젝트 폴더에서:
 
 ```powershell
 .\start_public_tailscale.cmd
 ```
 
-를 사용할 수 있다.
+을 실행한다.
 
-외부 공개 설정은 로컬 전용 실행보다 공격 표면이 커지므로 owner ID와 허용 ID를 신중히 관리한다.
+스크립트는:
+
+```text
+Tailscale 연결 확인
+→ Funnel 구성
+→ Funnel 주소 출력
+→ 같은 터미널 foreground에서 Mai 실행
+```
+
+순으로 동작한다.
+
+이제 이 터미널이 Mai 서버 프로세스를 직접 붙잡고 있으므로 **이 창에서 `Ctrl+C`를 누르면 Mai 서버가 정상 종료된다.**
+
+Funnel 상태는:
+
+```powershell
+tailscale funnel status
+```
+
+으로 확인할 수 있다.
+
+Mai 종료 후 이 장치의 Funnel 구성을 전부 제거하고 싶다면:
+
+```powershell
+tailscale funnel reset
+```
+
+을 사용할 수 있다. 이 명령은 해당 장치의 Funnel 구성을 초기화하므로 다른 Funnel 설정도 함께 사용하는 장치라면 먼저 `tailscale funnel status`로 확인한다.
+
+Tailnet 내부에서만 쓸 경우에는 Tailscale 공식 `serve` 명령을 사용해 `http://127.0.0.1:8000`을 공유할 수 있다. Serve/Funnel CLI는 Tailscale 버전에 따라 변경될 수 있으므로 문제가 있으면 최신 Tailscale 공식 문서를 확인한다.
 
 ---
 
 # 11. 정상 종료
 
-의도된 종료 방법은 Mai를 실행한 터미널에서:
+## `python run_server.py`로 실행한 경우
+
+같은 터미널에서:
 
 ```text
 Ctrl+C
 ```
 
-이다.
+를 누른다.
+
+## `start_public_tailscale.cmd`로 실행한 경우
+
+최신 스크립트 역시 Python을 같은 터미널 foreground에서 실행하므로 같은 창에서:
+
+```text
+Ctrl+C
+```
+
+를 누른다.
+
+정상 종료 흐름은:
 
 ```text
 Ctrl+C
@@ -566,9 +542,18 @@ Ctrl+C
 → process 종료
 ```
 
-Windows terminal에서 `Ctrl+C`가 전달되지 않으면 `Ctrl+Break`도 사용할 수 있다.
+이다.
 
-터미널 창을 바로 닫는 것은 graceful shutdown이 아니므로 권장하지 않는다.
+### 구버전 launcher 때문에 서버가 이미 백그라운드에 남아 있다면
+
+포트 8000을 점유한 PID를 찾아 한 번 종료한다.
+
+```powershell
+$pid = (Get-NetTCPConnection -LocalPort 8000 -State Listen).OwningProcess
+Stop-Process -Id $pid
+```
+
+그 뒤 최신 스크립트로 다시 실행하면 된다.
 
 SQLite는 WAL mode를 사용하므로 실행 중 다음 파일들이 보일 수 있다.
 
@@ -593,14 +578,11 @@ chat.sqlite3-shm
 
 개인 장기기억의 중심 파일이다.
 
-- semantic graph nodes
-- semantic graph edges
+- semantic graph nodes/edges
 - user anchor
 - support/conflict 신호
 - durable graph source evidence
 - graph → source 연결
-
-장기기억만 별도로 소유·보관하고 싶다면 Mai를 정상 종료한 뒤 이 파일을 백업할 수 있다.
 
 ## `data/chat.sqlite3`
 
@@ -609,15 +591,11 @@ chat.sqlite3-shm
 - authenticated sessions
 - persistent chat jobs
 
-Mai 상태 전체를 그대로 보존하려면 정상 종료 후 `data/` 폴더 전체를 백업하는 편이 안전하다.
-
-DB 파일은 clone 후 처음 실행하면서 자동 생성된다. 즉 처음 사용한 시점부터 기억이 로컬 SQLite에 쌓이며, 이후 사용자가 원하는 위치에 복사해 개인 데이터로 보관할 수 있다.
+Mai 상태 전체를 보존하려면 정상 종료 후 `data/` 폴더 전체를 백업하는 편이 안전하다.
 
 ---
 
 # 13. 개발 테스트
-
-개발 의존성을 설치했다면:
 
 ```powershell
 python -m pytest -q
@@ -627,17 +605,12 @@ python -m pytest -q
 
 오류를 테스트 통과용 fallback으로 숨기지 않는다. Runtime contract가 바뀌었다면 테스트 fixture도 새 필수 계약을 명시적으로 충족하도록 수정한다.
 
-DB를 초기화한 뒤 실제 모델을 순서대로 검증하려면 [`docs/MODEL_TEST_GUIDE.md`](docs/MODEL_TEST_GUIDE.md)를 따른다.
-
 ---
 
 # 14. 문서
-
-루트에는 프로젝트를 처음 이해할 때 필요한 문서만 둔다.
 
 - [`README.md`](README.md) — 영어 메인 README
 - [`README.ko.md`](README.ko.md) — 한국어 원본 README
 - [`CONTRACT.md`](CONTRACT.md) — 핵심 runtime/product 계약
 - [`ROADMAP.md`](ROADMAP.md) — 남은 발전 계획
-
-세부 문서는 [`docs/`](docs/)에 있다.
+- [`docs/`](docs/) — 세부 운영/계약 문서
