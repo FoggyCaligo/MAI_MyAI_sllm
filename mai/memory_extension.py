@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from .graph import GraphConflictError, GraphRepository, GraphSourceStore, SourceRecord
+from .graph import GraphRepository, GraphSourceStore, SourceRecord
 from .memory_embedding import EmbeddingModel
 from .model import ModelContractError
 
@@ -127,9 +127,9 @@ class AgentGraphMemoryExtension:
         schemas = [self._recall_schema(state)]
         if state.node_generation_unlocked and state.new_node_count < MAX_NEW_NODES_PER_TURN:
             schemas.append(self._generate_node_schema(state))
-        if len(state.known_node_ids) >= 2 and state.available_source_ids:
+        if len(state.viewed_nodes) >= 2 and state.available_source_ids:
             schemas.append(self._generate_edge_schema(state))
-        if state.known_node_ids and state.available_source_ids:
+        if state.viewed_nodes and state.available_source_ids:
             schemas.append(self._fix_node_schema(state))
         if state.viewed_edges and state.available_source_ids:
             schemas.append(self._fix_edge_schema(state))
@@ -139,6 +139,7 @@ class AgentGraphMemoryExtension:
         payload = {
             "memory_protocol": {
                 "first_query_recall_required_before_answer": True,
+                "candidate_nodes_must_be_opened_before_relation_mutation": True,
                 "reuse_or_fix_before_generate": True,
                 "new_node_requires_fresh_query_recall": True,
                 "new_node_budget_remaining": MAX_NEW_NODES_PER_TURN - state.new_node_count,
@@ -259,8 +260,8 @@ class AgentGraphMemoryExtension:
         source_ids = self._require_sources(state, arguments["source_ids"])
         member_ids = [int(value) for value in arguments.get("member_node_ids", [])]
         if kind == "composite":
-            if len(member_ids) < 2 or any(node_id not in state.known_node_ids for node_id in member_ids):
-                raise ModelContractError("composite members must be current-turn known nodes")
+            if len(member_ids) < 2 or any(node_id not in state.viewed_nodes for node_id in member_ids):
+                raise ModelContractError("composite members must be opened in the current ViewedGraph")
         elif member_ids:
             raise ModelContractError("concept node may not declare composite members")
 
@@ -288,8 +289,8 @@ class AgentGraphMemoryExtension:
     def _generate_edge(self, *, arguments: dict[str, Any], state: MemoryTurnState) -> dict[str, Any]:
         start = int(arguments["start_node_id"])
         end = int(arguments["end_node_id"])
-        if start not in state.known_node_ids or end not in state.known_node_ids:
-            raise ModelContractError("edge endpoints must be current-turn known nodes")
+        if start not in state.viewed_nodes or end not in state.viewed_nodes:
+            raise ModelContractError("edge endpoints must be opened in the current ViewedGraph")
         self._consume_edge_budget(state, start, end)
         source_ids = self._require_sources(state, arguments["source_ids"])
         edge = self.repository.create_edge(
@@ -315,16 +316,16 @@ class AgentGraphMemoryExtension:
         source_ids = self._require_sources(state, arguments["source_ids"])
         if operation == "rename":
             node_id = int(arguments["node_id"])
-            self._require_known_node(state, node_id)
+            self._require_viewed_node(state, node_id)
             node = self.repository.rename_node(user_id=state.user_id, node_id=node_id, name=str(arguments["name"]))
             self._ensure_node_embedding(state.user_id, node, force=True)
             target_id = node_id
         elif operation == "set_members":
             node_id = int(arguments["node_id"])
-            self._require_known_node(state, node_id)
+            self._require_viewed_node(state, node_id)
             members = [int(value) for value in arguments["member_node_ids"]]
-            if any(member not in state.known_node_ids for member in members):
-                raise ModelContractError("composite members must be current-turn known nodes")
+            if any(member not in state.viewed_nodes for member in members):
+                raise ModelContractError("composite members must be opened in the current ViewedGraph")
             self.repository.set_composite_members(
                 user_id=state.user_id,
                 composite_node_id=node_id,
@@ -334,8 +335,8 @@ class AgentGraphMemoryExtension:
         elif operation == "merge":
             source_id = int(arguments["source_node_id"])
             target_id = int(arguments["target_node_id"])
-            self._require_known_node(state, source_id)
-            self._require_known_node(state, target_id)
+            self._require_viewed_node(state, source_id)
+            self._require_viewed_node(state, target_id)
             inherited_sources = self.source_store.source_ids_for_node(user_id=state.user_id, node_id=source_id)
             self.repository.merge_node(user_id=state.user_id, source_node_id=source_id, target_node_id=target_id)
             source_ids = list(dict.fromkeys([*source_ids, *inherited_sources]))
@@ -404,10 +405,14 @@ class AgentGraphMemoryExtension:
         for node in neighborhood["nodes"]:
             node_id_value = int(node["node_id"])
             state.known_node_ids.add(node_id_value)
-            state.viewed_nodes[node_id_value] = self._node_payload(state.user_id, node_id_value)
+            payload = self._node_payload(state.user_id, node_id_value)
+            state.viewed_nodes[node_id_value] = payload
+            state.available_source_ids.update(int(value) for value in payload["source_ids"])
         for edge in neighborhood["edges"]:
             edge_id = int(edge["edge_id"])
-            state.viewed_edges[edge_id] = self._edge_payload(state.user_id, edge_id)
+            payload = self._edge_payload(state.user_id, edge_id)
+            state.viewed_edges[edge_id] = payload
+            state.available_source_ids.update(int(value) for value in payload["source_ids"])
 
     def _refresh_after_edge(self, *, state: MemoryTurnState, edge_id: int) -> None:
         edge = self.repository.get_edge(user_id=state.user_id, edge_id=edge_id)
@@ -484,9 +489,9 @@ class AgentGraphMemoryExtension:
         return dot / (left_norm * right_norm)
 
     @staticmethod
-    def _require_known_node(state: MemoryTurnState, node_id: int) -> None:
-        if int(node_id) not in state.known_node_ids:
-            raise ModelContractError("node_id is outside current-turn known node scope")
+    def _require_viewed_node(state: MemoryTurnState, node_id: int) -> None:
+        if int(node_id) not in state.viewed_nodes:
+            raise ModelContractError("node_id must be opened in the current ViewedGraph")
 
     @staticmethod
     def _require_sources(state: MemoryTurnState, raw_ids: Iterable[int]) -> list[int]:
@@ -534,7 +539,7 @@ class AgentGraphMemoryExtension:
 
     def _generate_node_schema(self, state: MemoryTurnState) -> dict[str, Any]:
         source_ids = sorted(state.available_source_ids)
-        known = sorted(state.known_node_ids)
+        viewed = sorted(state.viewed_nodes)
         concept = {
             "type": "object",
             "additionalProperties": False,
@@ -546,7 +551,7 @@ class AgentGraphMemoryExtension:
             },
         }
         variants = [concept]
-        if len(known) >= 2:
+        if len(viewed) >= 2:
             variants.append(
                 {
                     "type": "object",
@@ -559,7 +564,7 @@ class AgentGraphMemoryExtension:
                             "type": "array",
                             "minItems": 2,
                             "uniqueItems": True,
-                            "items": {"type": "integer", "enum": known},
+                            "items": {"type": "integer", "enum": viewed},
                         },
                         "source_ids": self._source_array_schema(source_ids),
                     },
@@ -568,7 +573,7 @@ class AgentGraphMemoryExtension:
         return self._tool_schema("memory/generate/node", {"oneOf": variants})
 
     def _generate_edge_schema(self, state: MemoryTurnState) -> dict[str, Any]:
-        known = sorted(state.known_node_ids)
+        viewed = sorted(state.viewed_nodes)
         return self._tool_schema(
             "memory/generate/edge",
             {
@@ -576,8 +581,8 @@ class AgentGraphMemoryExtension:
                 "additionalProperties": False,
                 "required": ["start_node_id", "end_node_id", "relation", "weight", "personal_relevance", "source_ids"],
                 "properties": {
-                    "start_node_id": {"type": "integer", "enum": known},
-                    "end_node_id": {"type": "integer", "enum": known},
+                    "start_node_id": {"type": "integer", "enum": viewed},
+                    "end_node_id": {"type": "integer", "enum": viewed},
                     "relation": {"type": "string", "minLength": 1},
                     "weight": {"type": "number", "exclusiveMinimum": 0.0, "maximum": 1.0},
                     "personal_relevance": {"type": "string", "enum": sorted(PERSONAL_RELEVANCE)},
@@ -587,7 +592,7 @@ class AgentGraphMemoryExtension:
         )
 
     def _fix_node_schema(self, state: MemoryTurnState) -> dict[str, Any]:
-        known = sorted(state.known_node_ids)
+        viewed = sorted(state.viewed_nodes)
         sources = self._source_array_schema(sorted(state.available_source_ids))
         variants: list[dict[str, Any]] = [
             {
@@ -596,13 +601,13 @@ class AgentGraphMemoryExtension:
                 "required": ["operation", "node_id", "name", "source_ids"],
                 "properties": {
                     "operation": {"const": "rename"},
-                    "node_id": {"type": "integer", "enum": known},
+                    "node_id": {"type": "integer", "enum": viewed},
                     "name": {"type": "string", "minLength": 1},
                     "source_ids": sources,
                 },
             }
         ]
-        if len(known) >= 2:
+        if len(viewed) >= 2:
             variants.extend(
                 [
                     {
@@ -611,12 +616,12 @@ class AgentGraphMemoryExtension:
                         "required": ["operation", "node_id", "member_node_ids", "source_ids"],
                         "properties": {
                             "operation": {"const": "set_members"},
-                            "node_id": {"type": "integer", "enum": known},
+                            "node_id": {"type": "integer", "enum": viewed},
                             "member_node_ids": {
                                 "type": "array",
                                 "minItems": 2,
                                 "uniqueItems": True,
-                                "items": {"type": "integer", "enum": known},
+                                "items": {"type": "integer", "enum": viewed},
                             },
                             "source_ids": sources,
                         },
@@ -627,8 +632,8 @@ class AgentGraphMemoryExtension:
                         "required": ["operation", "source_node_id", "target_node_id", "source_ids"],
                         "properties": {
                             "operation": {"const": "merge"},
-                            "source_node_id": {"type": "integer", "enum": known},
-                            "target_node_id": {"type": "integer", "enum": known},
+                            "source_node_id": {"type": "integer", "enum": viewed},
+                            "target_node_id": {"type": "integer", "enum": viewed},
                             "source_ids": sources,
                         },
                     },
