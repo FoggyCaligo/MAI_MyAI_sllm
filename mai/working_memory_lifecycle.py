@@ -42,6 +42,19 @@ class WorkingMemoryLifecycle:
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
 
+    def _initial_discovered_paths(self) -> list[Path]:
+        discovered: set[str] = set()
+        for tool in self.delegate.work_tools:
+            extractor = getattr(tool, "initial_discovered_paths", None)
+            if not callable(extractor):
+                continue
+            for path in extractor():
+                resolved = Path(path).expanduser().resolve()
+                if not resolved.exists() or not resolved.is_file():
+                    raise FileNotFoundError(resolved)
+                discovered.add(str(resolved))
+        return [Path(path) for path in sorted(discovered)]
+
     def run(
         self,
         *,
@@ -56,13 +69,14 @@ class WorkingMemoryLifecycle:
         for item in evidence_items:
             self.evidence.register_attachment(turn_id=resolved_turn_id, item=item)
 
+        provenance_paths = [*paths, *self._initial_discovered_paths()]
         try:
             with use_attachment_evidence(evidence_items):
                 result = self.delegate.run(
                     user_id=user_id,
                     user_text=str(user_text),
                     turn_id=resolved_turn_id,
-                    attachment_paths=paths,
+                    attachment_paths=provenance_paths,
                 )
             result["attachment_evidence"] = evidence_items
             result["scratchpad"] = self.scratchpads.snapshot(turn_id=resolved_turn_id)
