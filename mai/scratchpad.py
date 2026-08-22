@@ -229,7 +229,9 @@ class EvidenceKindToolAdapter:
 
     @property
     def description(self) -> str:
-        base = str(self.delegate.description)
+        domain = str(self.evidence_kind).strip()
+        prefix = f"Evidence domain: {domain}. " if domain else ""
+        base = prefix + str(self.delegate.description)
         if self.work_kind == "inspection":
             return (
                 base
