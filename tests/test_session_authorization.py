@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mai.file_mutation_tools import DownloadGrantStore
-from mai.graph import GraphRepository
+from mai.graph import GraphRepository, GraphSourceStore
 from mai.web import _next_working_root, build_lifecycle
 
 
@@ -25,7 +25,9 @@ class DummyImageAnalyzer:
 
 
 def lifecycle_tool_names(tmp_path: Path, *, role: str) -> set[str]:
-    repository = GraphRepository(tmp_path / f"{role}.db")
+    db_path = tmp_path / f"{role}.db"
+    repository = GraphRepository(db_path)
+    source_store = GraphSourceStore(db_path)
     try:
         lifecycle = build_lifecycle(
             repository=repository,
@@ -34,11 +36,13 @@ def lifecycle_tool_names(tmp_path: Path, *, role: str) -> set[str]:
             terminal_encoding="utf-8",
             download_grants=DownloadGrantStore(),
             image_analyzer=DummyImageAnalyzer(),
+            source_store=source_store,
             role=role,
             default_root=tmp_path,
         )
         return {tool.name for tool in lifecycle.work_tools}
     finally:
+        source_store.close()
         repository.close()
 
 
@@ -48,8 +52,6 @@ def test_trial_catalog_excludes_host_mutation_and_file_tools(tmp_path: Path) -> 
         "latest_search",
         "web_research",
         "market_snapshot",
-        "scratchpad_put",
-        "scratchpad_update",
     }
     assert "file_create" not in names
     assert "terminal_command" not in names
@@ -65,8 +67,6 @@ def test_owner_catalog_retains_full_host_capabilities(tmp_path: Path) -> None:
         "latest_search",
         "web_research",
         "market_snapshot",
-        "scratchpad_put",
-        "scratchpad_update",
     } <= names
 
 
