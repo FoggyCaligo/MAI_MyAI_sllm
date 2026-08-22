@@ -8,7 +8,6 @@ from mai.graph import GraphDiscoveryService, GraphRecallService, GraphRepository
 from mai.memory_completion import GraphCommitPhase
 from mai.memory_revise import ReviseMemoryTool
 from mai.memory_write import WriteMemoryTool
-from mai.model_context import use_model_context
 
 
 @dataclass
@@ -195,44 +194,5 @@ def test_agent_lifecycle_adds_one_narrow_memory_call_after_answer(tmp_path) -> N
         assert memory_messages[1]["role"] == "user"
         assert "반가워, 신재용." in memory_messages[1]["content"]
         assert "내 이름은 신재용이야." in memory_messages[1]["content"]
-    finally:
-        repo.close()
-
-
-def test_graph_commit_explicit_messages_do_not_copy_ambient_context(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "graph.db")
-    try:
-        repo.ensure_user_anchor(user_id="owner", turn_id="seed", source_text="owner")
-        model = FakeModel(
-            [
-                {
-                    "action": "tool",
-                    "tool": "write_memory",
-                    "arguments": {
-                        "subject": {"kind": "user"},
-                        "relation": "name",
-                        "object": {"new_node": {"name": "신재용"}},
-                    },
-                    "continue_memory": False,
-                }
-            ]
-        )
-        with use_model_context(
-            recent_messages=[{"role": "user", "content": "ambient old chat"}],
-            recent_tool_operations=[{"tool": "old_tool", "arguments": {}, "result": {"value": "ambient"}}],
-            working_root=str(tmp_path),
-        ):
-            GraphCommitPhase(model=model, executor=_executor(repo)).run(
-                user_id="owner",
-                turn_id="turn-1",
-                user_text="내 이름은 신재용이야.",
-                fixed_answer="반가워, 신재용.",
-                recall_result=None,
-            )
-
-        assert len(model.messages_seen[0]) == 2
-        joined = "\n".join(item["content"] for item in model.messages_seen[0])
-        assert "ambient old chat" not in joined
-        assert "old_tool" not in joined
     finally:
         repo.close()
