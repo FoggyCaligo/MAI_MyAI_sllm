@@ -29,25 +29,11 @@ class FakeRecall:
 
 
 class NoScratchpadMemoryExecutor:
-    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
-        return frozenset()
+    pass
 
 
 def _answer() -> dict[str, Any]:
-    return {
-        "action": "answer",
-        "content": "done",
-        "memory_mutations": [
-            {
-                "kind": "write_memory",
-                "arguments": {
-                    "subject": {"kind": "user"},
-                    "relation": "turn_memory",
-                    "object": {"new_node": {"name": "done"}},
-                },
-            }
-        ],
-    }
+    return {"action": "answer", "outcome": "completed", "content": "done"}
 
 
 def _has_node_lookup(schema: dict[str, Any]) -> bool:
@@ -68,7 +54,7 @@ def test_agent_disables_lookup_after_no_candidate_progress() -> None:
         work_tools=[],
     )
 
-    answer, _, events = lifecycle._run_agent_phase(
+    answer, events = lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="hello"),
         candidate_ids={1},
         recall_results=[],

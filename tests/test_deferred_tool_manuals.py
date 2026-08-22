@@ -10,20 +10,7 @@ from mai.model import ModelContractError
 
 
 def _answer(content: str = "안녕하세요!") -> dict[str, Any]:
-    return {
-        "action": "answer",
-        "content": content,
-        "memory_mutations": [
-            {
-                "kind": "write_memory",
-                "arguments": {
-                    "subject": {"kind": "user"},
-                    "relation": "turn_memory",
-                    "object": {"new_node": {"name": content}},
-                },
-            }
-        ],
-    }
+    return {"action": "answer", "outcome": "completed", "content": content}
 
 
 def _tool_names(schema: dict[str, Any]) -> set[str]:
@@ -49,8 +36,7 @@ class ScriptedModel:
 
 
 class NoScratchpadMemoryExecutor:
-    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
-        return frozenset()
+    pass
 
 
 @dataclass
@@ -107,7 +93,7 @@ def test_first_round_defers_full_work_tool_schema() -> None:
     model = ScriptedModel(actions=[_answer()])
     tool = FakeTool()
 
-    answer, _, events = _lifecycle(model, tool)._run_agent_phase(
+    answer, events = _lifecycle(model, tool)._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="안녕?"),
         candidate_ids=set(),
         recall_results=[],
@@ -132,7 +118,7 @@ def test_tool_manual_activates_only_requested_work_tool_once() -> None:
     )
     tool = FakeTool()
 
-    answer, _, events = _lifecycle(model, tool)._run_agent_phase(
+    answer, events = _lifecycle(model, tool)._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="do it"),
         candidate_ids=set(),
         recall_results=[],

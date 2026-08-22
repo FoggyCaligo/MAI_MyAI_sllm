@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from mai.context import compact_tool_event
-from mai.model_context import prepare_model_messages, use_attachment_evidence, use_model_context
+from mai.model_context import (
+    prepare_model_messages,
+    use_attachment_evidence,
+    use_isolated_model_context,
+    use_model_context,
+)
 
 
 def test_recent_dialogue_date_and_working_root_are_injected_before_current_user(tmp_path) -> None:
@@ -28,6 +33,32 @@ def test_recent_dialogue_date_and_working_root_are_injected_before_current_user(
     assert prepared[2] == {"role": "assistant", "content": "previous answer"}
     assert prepared[3] == {"role": "user", "content": "current"}
     assert messages[0]["content"] == "system"
+
+
+def test_isolated_context_suppresses_ambient_chat_tools_root_and_attachments(tmp_path) -> None:
+    messages = [
+        {"role": "system", "content": "memory phase"},
+        {"role": "user", "content": "explicit compact payload"},
+    ]
+    with use_model_context(
+        recent_messages=[{"role": "user", "content": "ambient chat"}],
+        recent_tool_operations=[{"tool": "file_read", "arguments": {}, "result": {"value": "ambient tool"}}],
+        working_root=str(tmp_path.resolve()),
+    ):
+        with use_attachment_evidence(
+            [{"evidence_id": "attachment:1", "status": "loaded", "content": "ambient attachment"}]
+        ):
+            with use_isolated_model_context():
+                prepared = prepare_model_messages(messages)
+
+    assert len(prepared) == 2
+    assert "Current date:" in prepared[0]["content"]
+    assert "Conversation working root:" not in prepared[0]["content"]
+    assert prepared[1] == {"role": "user", "content": "explicit compact payload"}
+    joined = "\n".join(item["content"] for item in prepared)
+    assert "ambient chat" not in joined
+    assert "ambient tool" not in joined
+    assert "ambient attachment" not in joined
 
 
 def test_attachment_evidence_is_model_context_not_user_text() -> None:

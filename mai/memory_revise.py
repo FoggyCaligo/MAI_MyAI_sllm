@@ -196,7 +196,7 @@ class ReviseMemoryTool:
                 )
             self._insert_provenance(
                 conn,
-                scope=scope,
+                scope=scope.turn,
                 source_text=source_text,
                 edge_id=edge_id,
             )

@@ -23,25 +23,11 @@ class ScriptedModel:
 
 
 class NoScratchpadMemoryExecutor:
-    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
-        return frozenset()
+    pass
 
 
 def _answer(content: str = "done") -> dict[str, Any]:
-    return {
-        "action": "answer",
-        "content": content,
-        "memory_mutations": [
-            {
-                "kind": "write_memory",
-                "arguments": {
-                    "subject": {"kind": "user"},
-                    "relation": "turn_memory",
-                    "object": {"new_node": {"name": content}},
-                },
-            }
-        ],
-    }
+    return {"action": "answer", "outcome": "completed", "content": content}
 
 
 def _manual(tool: str) -> dict[str, Any]:
@@ -104,7 +90,7 @@ def test_file_search_establishes_path_and_exposes_file_read_after_manual(tmp_pat
         ]
     )
 
-    answer, _, events = lifecycle(model, [FileSearchTool(access), FileReadTool(access)])._run_agent_phase(
+    answer, events = lifecycle(model, [FileSearchTool(access), FileReadTool(access)])._run_agent_phase(
         context=context(), candidate_ids=set(), recall_results=[]
     )
 
