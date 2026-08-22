@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Iterable
 
 from .memory_revise import ReviseMemoryScope, ReviseMemoryTool, revise_memory_schema
 from .memory_write import MemoryTurnScope, WriteMemoryTool, write_memory_schema
@@ -10,24 +10,31 @@ from .progress import tool_completed, tool_started
 from .scratchpad import ScratchpadItem, ScratchpadRegistry
 
 
-def _mutation_item_schema(*, recalled_node_ids: list[int], recalled_edge_ids: list[int]) -> dict[str, Any]:
+def _mutation_item_schema(
+    *,
+    recalled_node_ids: list[int],
+    recalled_edge_ids: list[int],
+    scratchpad_ids: list[str],
+) -> dict[str, Any]:
     write_arguments = write_memory_schema(recalled_node_ids)["properties"]["arguments"]
 
     def mutation_variant(kind: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        properties: dict[str, Any] = {
+            "kind": {"const": kind},
+            "arguments": arguments,
+        }
+        if scratchpad_ids:
+            properties["scratchpad_ids"] = {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": scratchpad_ids},
+            }
         return {
             "type": "object",
             "additionalProperties": False,
             "required": ["kind", "arguments"],
-            "properties": {
-                "kind": {"const": kind},
-                "arguments": arguments,
-                "scratchpad_ids": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": True,
-                    "items": {"type": "string", "pattern": r"^scratchpad:[1-9][0-9]*$"},
-                },
-            },
+            "properties": properties,
         }
 
     variants: list[dict[str, Any]] = [mutation_variant("write_memory", write_arguments)]
@@ -40,8 +47,13 @@ def _mutation_item_schema(*, recalled_node_ids: list[int], recalled_edge_ids: li
     return variants[0] if len(variants) == 1 else {"oneOf": variants}
 
 
-def answer_with_memory_schema(recall_result: dict[str, Any] | None) -> dict[str, Any]:
+def answer_with_memory_schema(
+    recall_result: dict[str, Any] | None,
+    *,
+    scratchpad_ids: Iterable[str] = (),
+) -> dict[str, Any]:
     recalled_node_ids, recalled_edge_ids = _recalled_scope_ids(recall_result)
+    available_scratchpad_ids = sorted(set(str(item) for item in scratchpad_ids))
     return {
         "type": "object",
         "additionalProperties": False,
@@ -56,6 +68,7 @@ def answer_with_memory_schema(recall_result: dict[str, Any] | None) -> dict[str,
                 "items": _mutation_item_schema(
                     recalled_node_ids=sorted(recalled_node_ids),
                     recalled_edge_ids=sorted(recalled_edge_ids),
+                    scratchpad_ids=available_scratchpad_ids,
                 ),
             },
         },
@@ -95,6 +108,14 @@ class FinalMemoryExecutor:
     writer: WriteMemoryTool
     reviser: ReviseMemoryTool
     scratchpads: ScratchpadRegistry | None = None
+
+    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
+        if self.scratchpads is None:
+            return frozenset()
+        return frozenset(
+            str(item["scratchpad_id"])
+            for item in self.scratchpads.snapshot(turn_id=turn_id)
+        )
 
     def execute(
         self,
