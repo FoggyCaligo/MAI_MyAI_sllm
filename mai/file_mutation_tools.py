@@ -59,6 +59,7 @@ class FileCreateTool:
     access: FileToolAccess
     name: str = "file_create"
     work_kind: str = "action"
+    action_scope: str = "file"
     description: str = (
         "Create a new text file at an explicit path. Parent directories are created when requested. "
         "Existing files are not overwritten and raise FileExistsError. A successfully created path becomes "
@@ -98,6 +99,7 @@ class FileUpdateTool:
     access: FileToolAccess
     name: str = "file_update"
     work_kind: str = "action"
+    action_scope: str = "file"
     description: str = (
         "Atomically replace the complete contents of an existing text file whose path was established by a "
         "current-turn attachment, discovery result, or file_create."
@@ -156,6 +158,7 @@ class FileDeleteTool:
     access: FileToolAccess
     name: str = "file_delete"
     work_kind: str = "action"
+    action_scope: str = "file"
     description: str = (
         "Delete one existing file whose path was established by a current-turn attachment, discovery result, "
         "or file_create. Directories are not deleted."
@@ -193,6 +196,7 @@ class FileDownloadLinkTool:
     grants: DownloadGrantStore
     name: str = "file_download_link"
     work_kind: str = "action"
+    action_scope: str = "file"
     description: str = (
         "Create a temporary browser download URL for one existing file whose path was established in the current "
         "turn. The URL expires after one hour and still requires the authenticated owner session."
