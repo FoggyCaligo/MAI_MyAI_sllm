@@ -38,6 +38,7 @@ class RuntimeSettings:
     chat_db_path: Path
     upload_dir: Path
     max_upload_bytes: int
+    terminal_encoding: str = "utf-8"
     session_cookie: str = "mai_session"
 
     @classmethod
@@ -46,6 +47,9 @@ class RuntimeSettings:
         owner_id = os.getenv("MAI_OWNER_ID", "owner").strip()
         if not owner_id:
             raise ValueError("MAI_OWNER_ID must be non-empty")
+        terminal_encoding = os.getenv("MAI_TERMINAL_ENCODING", "utf-8").strip()
+        if not terminal_encoding:
+            raise ValueError("MAI_TERMINAL_ENCODING must be non-empty")
         extra = {
             value.strip()
             for value in os.getenv("MAI_ALLOWED_USER_IDS", "").split(",")
@@ -58,6 +62,7 @@ class RuntimeSettings:
             chat_db_path=Path(os.getenv("MAI_CHAT_DB", "data/chat.sqlite3")),
             upload_dir=Path(os.getenv("MAI_UPLOAD_DIR", ".mai_uploads")),
             max_upload_bytes=int(os.getenv("MAI_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
+            terminal_encoding=terminal_encoding,
         )
 
 
@@ -158,6 +163,7 @@ def build_lifecycle(
     repository: GraphRepository,
     model: OllamaModel,
     owner_id: str,
+    terminal_encoding: str,
     download_grants: DownloadGrantStore,
     image_analyzer: ImageAnalyzer,
 ) -> AgentLifecycle:
@@ -170,7 +176,7 @@ def build_lifecycle(
         *build_file_tools(owner_id=owner_id),
         *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
         *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
-        *build_terminal_tools(owner_id=owner_id),
+        *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
         *build_code_tools(owner_id=owner_id),
         *build_web_market_tools(),
     ]
@@ -202,6 +208,7 @@ def create_app(
         repository=repository,
         model=resolved_model,
         owner_id=resolved.owner_id,
+        terminal_encoding=resolved.terminal_encoding,
         download_grants=grants,
         image_analyzer=resolved_image_analyzer,
     )
