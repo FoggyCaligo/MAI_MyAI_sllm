@@ -24,21 +24,24 @@ class FakeModel:
         return self.actions.pop(0)
 
 
-def _answer(content: str, *, object_endpoint: dict | None = None) -> dict:
+def _answer(content: str) -> dict:
+    return {"action": "answer", "outcome": "completed", "content": content}
+
+
+def _memory_write(name: str, *, object_endpoint: dict | None = None) -> dict:
     return {
-        "action": "answer",
-        "content": content,
-        "memory_mutations": [
-            {
-                "kind": "write_memory",
-                "arguments": {
-                    "subject": {"kind": "user"},
-                    "relation": "turn_memory",
-                    "object": object_endpoint or {"new_node": {"name": content}},
-                },
-            }
-        ],
+        "action": "tool",
+        "tool": "write_memory",
+        "arguments": {
+            "subject": {"kind": "user"},
+            "relation": "turn_memory",
+            "object": object_endpoint or {"new_node": {"name": name}},
+        },
     }
+
+
+def _done() -> dict:
+    return {"action": "done"}
 
 
 def _manual(tool: str) -> dict:
@@ -92,19 +95,83 @@ def _tool_names(schema: dict) -> set[str]:
     return names
 
 
-def test_plain_answer_uses_one_model_round_and_mutates_memory_before_release(tmp_path) -> None:
+def test_plain_answer_freezes_then_runs_graph_memory_loop(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
-        model = FakeModel([_answer("fixed")])
+        model = FakeModel([
+            _answer("fixed"),
+            _memory_write("fixed"),
+            _done(),
+        ])
 
         result = _lifecycle(repo, model).run(user_id="owner", user_text="hello", turn_id="t1")
 
-        assert len(model.schemas) == 1
+        assert len(model.schemas) == 3
         assert result["answer"] == "fixed"
         assert result["status"] == "completed"
         assert result["discovery"] == {"status": "agent_driven"}
         assert result["memory"]["status"] == "done"
         assert result["memory"]["mutation_count"] == 1
+        answer_schema = model.schemas[0]
+        answer_variants = answer_schema.get("oneOf", [answer_schema])
+        answer_variant = next(
+            variant
+            for variant in answer_variants
+            if (variant.get("properties") or {}).get("action", {}).get("const") == "answer"
+        )
+        assert "memory_mutations" not in answer_variant["properties"]
+        first_memory_schema = model.schemas[1]
+        assert "done" not in {
+            (variant.get("properties") or {}).get("action", {}).get("const")
+            for variant in first_memory_schema.get("oneOf", [first_memory_schema])
+        }
+        second_memory_schema = model.schemas[2]
+        assert "done" in {
+            (variant.get("properties") or {}).get("action", {}).get("const")
+            for variant in second_memory_schema.get("oneOf", [second_memory_schema])
+        }
+    finally:
+        repo.close()
+
+
+def test_graph_memory_loop_can_write_multiple_relations_before_done(tmp_path) -> None:
+    repo = GraphRepository(tmp_path / "g.db")
+    try:
+        model = FakeModel([
+            _answer("nice to meet you"),
+            _memory_write("신재용"),
+            {
+                "action": "tool",
+                "tool": "write_memory",
+                "arguments": {
+                    "subject": {"new_node": {"name": "신재용"}},
+                    "relation": "family_name",
+                    "object": {"new_node": {"name": "신"}},
+                },
+            },
+            {
+                "action": "tool",
+                "tool": "write_memory",
+                "arguments": {
+                    "subject": {"new_node": {"name": "신재용"}},
+                    "relation": "given_name",
+                    "object": {"new_node": {"name": "재용"}},
+                },
+            },
+            _done(),
+        ])
+
+        result = _lifecycle(repo, model).run(
+            user_id="owner",
+            user_text="내 이름은 신재용이고 성은 신, 이름은 재용이야",
+            turn_id="t1",
+        )
+
+        assert result["memory"]["mutation_count"] == 3
+        nodes = repo.list_nodes(user_id="owner")
+        assert [node["name"] for node in nodes].count("신재용") == 1
+        assert [node["name"] for node in nodes].count("신") == 1
+        assert [node["name"] for node in nodes].count("재용") == 1
     finally:
         repo.close()
 
@@ -133,11 +200,13 @@ def test_work_tool_requires_manual_then_result_returns_to_model(tmp_path) -> Non
             _manual("double"),
             {"action": "tool", "tool": "double", "arguments": {"value": 4}},
             _answer("8"),
+            _memory_write("8"),
+            _done(),
         ])
 
         result = _lifecycle(repo, model, [tool]).run(user_id="owner", user_text="double", turn_id="t1")
 
-        assert len(model.schemas) == 3
+        assert len(model.schemas) == 5
         assert calls == [({"value": 4}, "t1")]
         assert [event["tool"] for event in result["work_events"]] == ["tool_manual", "double"]
         assert result["work_events"][1]["result"] == {"value": 8}
@@ -157,12 +226,14 @@ def test_lookup_and_recall_are_available_inside_the_same_agent_loop(tmp_path) ->
         model = FakeModel([
             {"action": "tool", "tool": "node_lookup", "arguments": {"queries": ["MAI"]}},
             {"action": "tool", "tool": "recall_memory", "arguments": {"focus_node_id": a["node_id"]}},
-            _answer("remembered", object_endpoint={"existing_node_id": a["node_id"]}),
+            _answer("remembered"),
+            _memory_write("remembered", object_endpoint={"existing_node_id": a["node_id"]}),
+            _done(),
         ])
 
         result = _lifecycle(repo, model).run(user_id="owner", user_text="MAI", turn_id="t1")
 
-        assert len(model.schemas) == 3
+        assert len(model.schemas) == 5
         assert [event["tool"] for event in result["work_events"][:2]] == ["node_lookup", "recall_memory"]
         assert result["memory"]["mutation_count"] == 1
         assert result["memory"]["mutations"][0]["edge"]["object_node_id"] == a["node_id"]
@@ -187,24 +258,20 @@ def test_recall_cannot_use_unlooked_up_id(tmp_path) -> None:
         repo.close()
 
 
-def test_fixed_answer_is_not_returned_when_memory_mutation_fails(tmp_path) -> None:
+def test_fixed_answer_is_not_returned_when_graph_memory_mutation_fails(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
         model = FakeModel([
+            _answer("must not release"),
             {
-                "action": "answer",
-                "content": "must not release",
-                "memory_mutations": [
-                    {
-                        "kind": "write_memory",
-                        "arguments": {
-                            "subject": {"kind": "user"},
-                            "relation": "",
-                            "object": {"new_node": {"name": "x"}},
-                        },
-                    }
-                ],
-            }
+                "action": "tool",
+                "tool": "write_memory",
+                "arguments": {
+                    "subject": {"kind": "user"},
+                    "relation": "",
+                    "object": {"new_node": {"name": "x"}},
+                },
+            },
         ])
 
         with pytest.raises(ModelContractError, match="relation must be non-empty"):
@@ -237,13 +304,13 @@ def test_agent_loop_has_no_arbitrary_round_cap(tmp_path) -> None:
         actions = [_manual("echo_number")] + [
             {"action": "tool", "tool": "echo_number", "arguments": {"n": n}}
             for n in range(count)
-        ] + [_answer("done")]
+        ] + [_answer("done"), _memory_write("done"), _done()]
         model = FakeModel(actions)
 
         result = _lifecycle(repo, model, [tool]).run(user_id="owner", user_text="loop", turn_id="t1")
 
         assert calls == list(range(count))
         assert result["answer"] == "done"
-        assert len(model.schemas) == count + 2
+        assert len(model.schemas) == count + 4
     finally:
         repo.close()
