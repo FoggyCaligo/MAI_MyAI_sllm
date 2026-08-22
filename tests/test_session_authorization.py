@@ -44,7 +44,7 @@ def lifecycle_tool_names(tmp_path: Path, *, role: str) -> set[str]:
 
 def test_trial_catalog_excludes_host_mutation_and_file_tools(tmp_path: Path) -> None:
     names = lifecycle_tool_names(tmp_path, role="trial")
-    assert names == {"latest_search", "web_research", "market_snapshot"}
+    assert names == {"latest_search", "web_research", "market_snapshot", "scratchpad_put"}
     assert "file_create" not in names
     assert "terminal_command" not in names
     assert "code_search" not in names
@@ -55,7 +55,7 @@ def test_trial_catalog_excludes_host_mutation_and_file_tools(tmp_path: Path) -> 
 def test_owner_catalog_retains_full_host_capabilities(tmp_path: Path) -> None:
     names = lifecycle_tool_names(tmp_path, role="owner")
     assert {"file_tree", "file_create", "terminal_command", "code_search", "document_read", "image_analyze"} <= names
-    assert {"latest_search", "web_research", "market_snapshot"} <= names
+    assert {"latest_search", "web_research", "market_snapshot", "scratchpad_put"} <= names
 
 
 def test_structural_working_root_metadata_promotes_session_root(tmp_path: Path) -> None:
