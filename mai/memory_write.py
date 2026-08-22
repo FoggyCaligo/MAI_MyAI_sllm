@@ -247,6 +247,20 @@ class WriteMemoryTool:
             name = str(new_node.get("name", "")).strip()
             if not name:
                 raise ModelContractError("new_node name must be non-empty")
+
+            existing = conn.execute(
+                """
+                SELECT node_id
+                FROM graph_nodes
+                WHERE user_id=? AND name=?
+                ORDER BY node_id
+                LIMIT 1
+                """,
+                (scope.user_id, name),
+            ).fetchone()
+            if existing is not None:
+                return int(existing["node_id"])
+
             cursor = conn.execute(
                 "INSERT INTO graph_nodes (user_id, name) VALUES (?, ?)",
                 (scope.user_id, name),
