@@ -214,6 +214,19 @@ def _required_paths(tool: WorkTool, arguments: dict[str, Any]) -> set[str]:
     return {PathProvenance.normalize(path) for path in extractor(arguments)}
 
 
+def _working_root(tool: WorkTool, result: Any) -> str | None:
+    extractor = getattr(tool, "working_root", None)
+    if not callable(extractor):
+        return None
+    value = extractor(result)
+    if value is None:
+        return None
+    root = Path(value).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise NotADirectoryError(root)
+    return str(root)
+
+
 def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] | None:
     builder = getattr(tool, "schema_for_paths", None)
     if callable(builder):
@@ -389,6 +402,7 @@ class AgentLifecycle:
                 raise ModelContractError("work tool name must be a string")
 
             tool_started(tool_name)
+            event_metadata: dict[str, Any] = {}
             if tool_name == "node_lookup":
                 if not allow_lookup:
                     raise ModelContractError("node_lookup is unavailable after a no-progress lookup")
@@ -425,6 +439,9 @@ class AgentLifecycle:
                 result = tool.execute(arguments=arguments, context=context)
                 context.path_provenance.add_many(_discovered_paths(tool, result))
                 context.path_provenance.remove_many(_removed_paths(tool, result))
+                root = _working_root(tool, result)
+                if root is not None:
+                    event_metadata["working_root"] = root
                 keys = _progress_keys(tool, result)
                 if keys is not None:
                     prior = seen_progress.setdefault(tool_name, set())
@@ -437,7 +454,7 @@ class AgentLifecycle:
                 raise ModelContractError("unexpected tool in agent phase")
             tool_completed(tool_name)
 
-            event = {"tool": tool_name, "arguments": arguments, "result": result}
+            event = {"tool": tool_name, "arguments": arguments, "result": result, **event_metadata}
             events.append(event)
             messages.append({"role": "assistant", "content": str(action)})
             messages.append({"role": "tool", "content": str(event)})
