@@ -100,7 +100,7 @@ def _recalled_scope_ids(recall_result: dict[str, Any] | None) -> tuple[set[int],
 
 def _scratchpad_context(items: list[ScratchpadItem]) -> tuple[str, ...]:
     return tuple(
-        f"{item.scratchpad_id} sources={list(item.source_ids)}\n{item.content}"
+        f"{item.scratchpad_id} sources={[source.as_dict() for source in item.sources]}\n{item.content}"
         for item in items
     )
 
@@ -179,21 +179,17 @@ class FinalMemoryExecutor:
             content=fixed_answer,
             metadata={"factual_status": "unverified"},
         )
+        user = SourceRecord(
+            source_kind="user_message",
+            source_key="user",
+            content=user_text,
+            metadata={},
+        )
         if not selected:
-            return (
-                SourceRecord(
-                    source_kind="user_message",
-                    source_key="user",
-                    content=user_text,
-                    metadata={},
-                ),
-                assistant,
-            )
-
-        if self.evidence is None:
-            raise ModelContractError("scratchpad-backed memory requires configured evidence registry")
+            return (user, assistant)
 
         records: list[SourceRecord] = [assistant]
+        added_user = False
         seen_evidence: set[str] = set()
         for scratchpad in selected:
             records.append(
@@ -201,12 +197,19 @@ class FinalMemoryExecutor:
                     source_kind="scratchpad",
                     source_key=scratchpad.scratchpad_id,
                     content=scratchpad.content,
-                    metadata={"source_ids": list(scratchpad.source_ids)},
+                    metadata={"sources": [source.as_dict() for source in scratchpad.sources]},
                 )
             )
-            for evidence_id in scratchpad.source_ids:
-                if evidence_id in seen_evidence:
+            for source in scratchpad.sources:
+                if source.kind == "user" and not added_user:
+                    records.append(user)
+                    added_user = True
+
+                evidence_id = source.evidence_id
+                if evidence_id is None or evidence_id in seen_evidence:
                     continue
+                if self.evidence is None:
+                    raise ModelContractError("scratchpad evidence citation requires configured evidence registry")
                 seen_evidence.add(evidence_id)
                 evidence_item = self.evidence.require(turn_id=turn_id, evidence_id=evidence_id)
                 if evidence_item.kind == "attachment":
