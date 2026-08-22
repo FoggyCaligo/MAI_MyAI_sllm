@@ -63,8 +63,9 @@ class FileTreeTool:
     name: str = "file_tree"
     work_kind: str = "inspection"
     description: str = (
-        "List filesystem structure from a concrete root path. Owner access is not workspace-confined; "
-        "absolute and parent paths are allowed. Returned entries establish concrete paths for later file actions."
+        "Inspect local filesystem structure only; this does not search the internet or external information. "
+        "Owner access is not workspace-confined; absolute and parent paths are allowed. Returned entries establish "
+        "concrete paths for later file actions."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -136,8 +137,8 @@ class FileSearchTool:
     name: str = "file_search"
     work_kind: str = "inspection"
     description: str = (
-        "Search filesystem paths by filename/path glob pattern. This is path discovery only, not content search. "
-        "Returned file matches establish concrete paths for later file actions."
+        "Search local filesystem paths only by filename/path glob pattern. This never searches the internet, products, "
+        "websites, or general external knowledge. Returned file matches establish concrete paths for later file actions."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -203,8 +204,9 @@ class FileTextSearchTool:
     name: str = "file_text_search"
     work_kind: str = "inspection"
     description: str = (
-        "Search literal text inside readable text files under a root. The framework performs lexical substring "
-        "matching only and does not infer meaning or synonyms. Matched files establish concrete paths for later actions."
+        "Search literal text only inside local readable files; this does not search the internet or external knowledge. "
+        "The framework performs lexical substring matching only and does not infer meaning or synonyms. Matched files "
+        "establish concrete paths for later actions."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -289,8 +291,8 @@ class FileReadTool:
     name: str = "file_read"
     work_kind: str = "inspection"
     description: str = (
-        "Read one existing ordinary text file whose path was established by an attachment, file_create, or a "
-        "current-turn file/code discovery tool. Use document_read for PDF/DOCX."
+        "Read one existing local ordinary text file whose path was established by an attachment, file_create, or a "
+        "current-turn file/code discovery tool. This does not retrieve internet content. Use document_read for PDF/DOCX."
     )
 
     def schema(self) -> dict[str, Any]:
