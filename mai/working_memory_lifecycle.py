@@ -16,11 +16,16 @@ class WorkingMemoryLifecycle:
     """Attachment-aware wrapper around the single live Agent loop.
 
     The persistent graph is the Agent's working memory. There is no second
-    memory-model phase and no request-scoped scratchpad registry.
+    memory-model phase and no request-scoped scratchpad in the execution path.
+    Legacy constructor fields remain temporarily accepted so runtime assembly
+    can be migrated without reintroducing their behavior.
     """
 
     delegate: AgentLifecycle
     attachments: AttachmentEvidenceBuilder
+    evidence: Any | None = None
+    scratchpads: Any | None = None
+    memory_model: Any | None = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
