@@ -264,18 +264,40 @@ class MarketProvider(Protocol):
     def snapshot(self, *, provider_symbol: str, provider_scope: str) -> dict[str, Any]: ...
 
 
+def _raise_yahoo_http_error(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = response.text.strip() or "<empty response body>"
+        raise RuntimeError(f"Yahoo Finance HTTP {response.status_code}: {detail}") from exc
+
+
 @dataclass(slots=True)
 class YahooMarketProvider:
     timeout: float = 20.0
 
     def lookup(self, *, query: str, provider_scope: str, limit: int) -> list[dict[str, Any]]:
+        params = {
+            "q": query,
+            "quotesCount": limit,
+            "enableFuzzyQuery": False,
+            "newsCount": 0,
+            "quotesQueryId": "tss_match_phrase_query",
+            "newsQueryId": "news_cie_vespa",
+            "listsCount": 0,
+            "enableCb": False,
+            "enableNavLinks": False,
+            "enableResearchReports": False,
+            "enableCulturalAssets": False,
+            "recommendedCount": 0,
+        }
         with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
             response = client.get(
                 "https://query1.finance.yahoo.com/v1/finance/search",
-                params={"q": query, "quotesCount": limit, "newsCount": 0},
+                params=params,
                 headers={"User-Agent": "Mozilla/5.0"},
             )
-            response.raise_for_status()
+            _raise_yahoo_http_error(response)
             payload = response.json()
         return [
             {
@@ -295,7 +317,7 @@ class YahooMarketProvider:
                 params={"range": "1d", "interval": "1m"},
                 headers={"User-Agent": "Mozilla/5.0"},
             )
-            response.raise_for_status()
+            _raise_yahoo_http_error(response)
             payload = response.json()
         result = (payload.get("chart") or {}).get("result") or []
         if not result:
