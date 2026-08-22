@@ -478,11 +478,19 @@ check Tailscale connection
 
 Because the Python server stays attached to that terminal, **pressing `Ctrl+C` in that window now shuts Mai down normally.**
 
-Check Funnel status separately with:
+Check Funnel status with:
 
 ```powershell
 tailscale funnel status
 ```
+
+If you want to remove all Funnel configuration on this device after shutting Mai down:
+
+```powershell
+tailscale funnel reset
+```
+
+This resets the device's Funnel configuration, so check `tailscale funnel status` first if the device hosts other Funnels.
 
 If you want tailnet-only access instead, use Tailscale's official `serve` command to share `http://127.0.0.1:8000`. Serve/Funnel CLI behavior may change between Tailscale releases, so consult current Tailscale documentation if the CLI reports a different setup flow.
 
