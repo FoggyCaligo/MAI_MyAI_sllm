@@ -158,3 +158,64 @@ def test_merge_refuses_semantic_edge_collision_instead_of_choosing(tmp_path) -> 
             )
     finally:
         repo.close()
+
+
+def test_merge_preserves_members_when_both_nodes_are_composites(tmp_path) -> None:
+    repo = GraphRepository(tmp_path / "graph.db")
+    try:
+        a = repo.create_node(user_id="u", name="A")
+        b = repo.create_node(user_id="u", name="B")
+        c = repo.create_node(user_id="u", name="C")
+        source = repo.create_node(user_id="u", name="duplicate composite", kind="composite")
+        target = repo.create_node(user_id="u", name="canonical composite", kind="composite")
+        repo.set_composite_members(
+            user_id="u",
+            composite_node_id=source["node_id"],
+            member_node_ids=[a["node_id"], b["node_id"]],
+        )
+        repo.set_composite_members(
+            user_id="u",
+            composite_node_id=target["node_id"],
+            member_node_ids=[b["node_id"], c["node_id"]],
+        )
+
+        repo.merge_node(
+            user_id="u",
+            source_node_id=source["node_id"],
+            target_node_id=target["node_id"],
+        )
+
+        assert repo.composite_members(user_id="u", composite_node_id=target["node_id"]) == sorted(
+            [a["node_id"], b["node_id"], c["node_id"]]
+        )
+        assert repo.get_node(user_id="u", node_id=source["node_id"])["is_active"] == 0
+    finally:
+        repo.close()
+
+
+def test_merge_rejects_composite_into_concept_instead_of_losing_members(tmp_path) -> None:
+    repo = GraphRepository(tmp_path / "graph.db")
+    try:
+        a = repo.create_node(user_id="u", name="A")
+        b = repo.create_node(user_id="u", name="B")
+        source = repo.create_node(user_id="u", name="composite duplicate", kind="composite")
+        target = repo.create_node(user_id="u", name="concept canonical", kind="concept")
+        repo.set_composite_members(
+            user_id="u",
+            composite_node_id=source["node_id"],
+            member_node_ids=[a["node_id"], b["node_id"]],
+        )
+
+        with pytest.raises(GraphConflictError, match="would lose structural members"):
+            repo.merge_node(
+                user_id="u",
+                source_node_id=source["node_id"],
+                target_node_id=target["node_id"],
+            )
+
+        assert repo.composite_members(user_id="u", composite_node_id=source["node_id"]) == sorted(
+            [a["node_id"], b["node_id"]]
+        )
+        assert repo.get_node(user_id="u", node_id=source["node_id"])["is_active"] == 1
+    finally:
+        repo.close()
