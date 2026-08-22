@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any, Iterable
 
@@ -30,7 +31,18 @@ class MemoryAgentAdapter:
         )
 
     def answer_schema(self, state: MemoryTurnState) -> dict[str, Any] | None:
-        return self.memory.answer_schema(state)
+        if not state.query_recall_performed:
+            return None
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action", "outcome", "content"],
+            "properties": {
+                "action": {"const": "answer"},
+                "outcome": {"type": "string", "enum": ["completed", "blocked"]},
+                "content": {"type": "string", "minLength": 1},
+            },
+        }
 
     def schemas(self, state: MemoryTurnState) -> list[dict[str, Any]]:
         if not state.query_recall_performed:
@@ -47,7 +59,12 @@ class MemoryAgentAdapter:
             raise ModelContractError("answer is unavailable before the mandatory vector recall")
 
     def round_context(self, state: MemoryTurnState) -> str:
-        return self.memory.round_context(state)
+        payload = self._memory_context_payload(state)
+        protocol = payload.setdefault("memory_protocol", {})
+        protocol.pop("final_answer_requires_graph_synced", None)
+        protocol["periodic_graph_checkpoint_required"] = True
+        protocol["final_graph_checkpoint_required_before_return"] = True
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
     def execute(
         self,
@@ -59,7 +76,7 @@ class MemoryAgentAdapter:
         return self.memory.execute(tool=tool, arguments=arguments, state=state)
 
     def graph_checkpoint_schema(self, state: MemoryTurnState) -> dict[str, Any]:
-        """Only memory actions or an explicit no-change completion are legal here."""
+        """Only one memory action or an explicit no-change completion is legal."""
         variants: list[dict[str, Any]] = [self._checkpoint_complete_schema()]
         for schema in self.memory.schemas(state):
             checkpoint_tool = deepcopy(schema)
@@ -106,9 +123,19 @@ class MemoryAgentAdapter:
 
     def graph_checkpoint_context(self, state: MemoryTurnState, *, final: bool) -> str:
         purpose = (
-            "This is the mandatory final graph checkpoint before the frozen answer can be committed and returned. "
+            "This is the mandatory final graph checkpoint before the answer candidate can be committed and returned. "
             if final
             else "This is a mandatory periodic graph checkpoint before the main Agent may continue. "
+        )
+        payload = self._memory_context_payload(state)
+        protocol = payload.setdefault("memory_protocol", {})
+        protocol.pop("final_answer_requires_graph_synced", None)
+        protocol.update(
+            {
+                "checkpoint_is_graph_only": True,
+                "working_graph_must_match_current_durable_understanding_before_checkpoint_exit": True,
+                "working_state_is_not_past_memory_evidence": True,
+            }
         )
         return (
             purpose
@@ -116,9 +143,8 @@ class MemoryAgentAdapter:
             "the durable understanding established by the current-turn transcript so far. Use exactly one memory "
             "action when recall or a graph change is needed. Set sync_complete=false when another checkpoint action "
             "is still needed after this action; set sync_complete=true only when applying this action is sufficient. "
-            "If no memory action is needed, return the explicit sync_complete action. The Working Graph is current "
-            "turn state, not past-memory evidence.\n"
-            + self.memory.round_context(state)
+            "If no memory action is needed, return the explicit sync_complete action.\n"
+            + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         )
 
     def observe_work_tool_result(
@@ -148,6 +174,12 @@ class MemoryAgentAdapter:
         abort = getattr(self.memory, "abort_turn", None)
         if callable(abort):
             abort(turn_id=turn_id)
+
+    def _memory_context_payload(self, state: MemoryTurnState) -> dict[str, Any]:
+        payload = json.loads(self.memory.round_context(state))
+        if not isinstance(payload, dict):
+            raise RuntimeError("memory round context must decode to an object")
+        return payload
 
     @staticmethod
     def _checkpoint_complete_schema() -> dict[str, Any]:
