@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
@@ -206,26 +205,6 @@ def _freeze_json(value: Any) -> Any:
     raise ModelContractError(f"structured action contains unsupported JSON value: {type(value).__name__}")
 
 
-def _exclude_successful_arguments(
-    schema: dict[str, Any],
-    successful_arguments: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if not successful_arguments:
-        return schema
-    updated = deepcopy(schema)
-    properties = updated.get("properties")
-    if not isinstance(properties, dict) or not isinstance(properties.get("arguments"), dict):
-        raise ValueError("tool schema must expose an arguments object")
-    original_arguments = properties["arguments"]
-    properties["arguments"] = {
-        "allOf": [
-            original_arguments,
-            {"not": {"enum": deepcopy(successful_arguments)}},
-        ]
-    }
-    return updated
-
-
 @dataclass(slots=True)
 class AgentLifecycle:
     repository: GraphRepository
@@ -333,24 +312,17 @@ class AgentLifecycle:
         allow_lookup = True
         available_tools = set(tools)
         seen_progress: dict[str, set[str]] = {}
-        successful_arguments: dict[str, list[dict[str, Any]]] = {}
         successful_action_ids: set[Any] = set()
+        recalled_focus_ids: set[int] = set()
 
         while True:
             aggregate_recall = self._aggregate_recall(recall_results)
             variants = [answer_with_memory_schema(aggregate_recall)]
             if allow_lookup:
-                variants.append(
-                    _exclude_successful_arguments(
-                        _lookup_schema(), successful_arguments.get("node_lookup", [])
-                    )
-                )
-            if candidate_ids:
-                variants.append(
-                    _exclude_successful_arguments(
-                        _recall_schema(candidate_ids), successful_arguments.get("recall_memory", [])
-                    )
-                )
+                variants.append(_lookup_schema())
+            available_recall_ids = candidate_ids - recalled_focus_ids
+            if available_recall_ids:
+                variants.append(_recall_schema(available_recall_ids))
             exposed_tools: set[str] = set()
             for name, tool in tools.items():
                 if name not in available_tools:
@@ -358,9 +330,7 @@ class AgentLifecycle:
                 tool_schema = _schema_for_context(tool, context)
                 if tool_schema is None:
                     continue
-                variants.append(
-                    _exclude_successful_arguments(tool_schema, successful_arguments.get(name, []))
-                )
+                variants.append(tool_schema)
                 exposed_tools.add(name)
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
@@ -383,9 +353,20 @@ class AgentLifecycle:
 
             action_id = (tool_name, _freeze_json(arguments))
             if action_id in successful_action_ids:
-                raise ModelContractError(
-                    f"successful structured action may not repeat in the same turn: {tool_name}"
-                )
+                if tool_name == "node_lookup":
+                    allow_lookup = False
+                elif tool_name in tools:
+                    available_tools.discard(tool_name)
+                result = {
+                    "status": "rejected",
+                    "reason": "duplicate_successful_action",
+                    "executed": False,
+                }
+                event = {"tool": tool_name, "arguments": arguments, "result": result}
+                events.append(event)
+                messages.append({"role": "assistant", "content": str(action)})
+                messages.append({"role": "tool", "content": str(event)})
+                continue
 
             tool_started(tool_name)
             if tool_name == "node_lookup":
@@ -398,10 +379,11 @@ class AgentLifecycle:
                 allow_lookup = candidate_ids != previous_candidate_ids
             elif tool_name == "recall_memory":
                 focus = int(arguments["focus_node_id"])
-                if focus not in candidate_ids:
-                    raise ModelContractError("focus_node_id is outside actual lookup candidate scope")
+                if focus not in available_recall_ids:
+                    raise ModelContractError("focus_node_id is outside current recall candidate scope")
                 result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
                 recall_results.append(result)
+                recalled_focus_ids.add(focus)
             elif tool_name in tools:
                 if tool_name not in exposed_tools:
                     raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
@@ -423,7 +405,6 @@ class AgentLifecycle:
             tool_completed(tool_name)
 
             successful_action_ids.add(action_id)
-            successful_arguments.setdefault(tool_name, []).append(deepcopy(arguments))
             event = {"tool": tool_name, "arguments": arguments, "result": result}
             events.append(event)
             messages.append({"role": "assistant", "content": str(action)})
