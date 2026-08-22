@@ -73,23 +73,34 @@ class PersistentSessionStore:
             expires_at=now + self._ttl_seconds,
         )
         with self._lock:
-            self._conn.execute(
-                """
-                INSERT INTO auth_sessions
-                    (session_id, token_hash, user_id, role, working_root, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session.session_id,
-                    self._hash_token(token),
-                    session.user_id,
-                    session.role,
-                    session.working_root,
-                    now,
-                    session.expires_at,
-                ),
-            )
-            self._conn.commit()
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if role == "trial":
+                    self._conn.execute(
+                        "DELETE FROM auth_sessions WHERE user_id=? AND role='trial'",
+                        (session.user_id,),
+                    )
+                self._conn.execute(
+                    """
+                    INSERT INTO auth_sessions
+                        (session_id, token_hash, user_id, role, working_root, created_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session.session_id,
+                        self._hash_token(token),
+                        session.user_id,
+                        session.role,
+                        session.working_root,
+                        now,
+                        session.expires_at,
+                    ),
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
         return token, session
 
     def get(self, token: str | None) -> SessionRecord | None:
