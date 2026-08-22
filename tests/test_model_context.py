@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import ast
-
 from mai.context import compact_tool_event
 from mai.model_context import prepare_model_messages, use_model_context
 
 
-def test_recent_dialogue_and_date_are_injected_before_current_user() -> None:
+def test_recent_dialogue_date_and_working_root_are_injected_before_current_user(tmp_path) -> None:
     messages = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "current"},
@@ -15,11 +13,17 @@ def test_recent_dialogue_and_date_are_injected_before_current_user() -> None:
         {"role": "user", "content": "previous question"},
         {"role": "assistant", "content": "previous answer"},
     ]
+    working_root = str(tmp_path.resolve())
 
-    with use_model_context(recent_messages=recent, recent_tool_operations=[]):
+    with use_model_context(
+        recent_messages=recent,
+        recent_tool_operations=[],
+        working_root=working_root,
+    ):
         prepared = prepare_model_messages(messages)
 
     assert "Current date:" in prepared[0]["content"]
+    assert f"Conversation working root: {working_root}" in prepared[0]["content"]
     assert prepared[1] == {"role": "user", "content": "previous question"}
     assert prepared[2] == {"role": "assistant", "content": "previous answer"}
     assert prepared[3] == {"role": "user", "content": "current"}
