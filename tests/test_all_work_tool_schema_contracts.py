@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mai.agent import AgentLifecycle, WorkContext
 from mai.code_search_tool import build_code_tools
 from mai.document_tools import build_document_image_tools
 from mai.file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
@@ -38,6 +39,30 @@ class FakeMarketProvider:
 
     def snapshot(self, *, provider_symbol: str, provider_scope: str) -> dict[str, Any]:
         return {}
+
+
+@dataclass
+class ScriptedModel:
+    actions: list[dict[str, Any]]
+    schemas: list[dict[str, Any]] = field(default_factory=list)
+
+    def structured(self, *, messages: list[dict[str, str]], schema: dict[str, Any]) -> dict[str, Any]:
+        self.schemas.append(schema)
+        return self.actions.pop(0)
+
+
+class EmptyDiscovery:
+    def node_lookup(self, *, user_id: str, queries: list[str]) -> dict[str, Any]:
+        return {"matches": []}
+
+
+class EmptyRecall:
+    def recall_one_depth(self, *, user_id: str, focus_node_id: int) -> dict[str, Any]:
+        return {"nodes": [], "edges": [], "origin_path": {"nodes": [], "edges": []}}
+
+
+class NoScratchpadMemoryExecutor:
+    pass
 
 
 def _assert_common_work_tool_schema(*, tool_name: str, schema: dict[str, Any]) -> None:
@@ -145,6 +170,35 @@ def test_every_context_dependent_work_tool_schema_keeps_common_envelope(tmp_path
         "document_read",
         "image_analyze",
     }
+
+
+def test_every_registered_owner_work_tool_can_open_lazy_manual(tmp_path: Path) -> None:
+    for tool in _all_registered_owner_work_tools(tmp_path):
+        model = ScriptedModel(
+            actions=[
+                {"action": "tool", "tool": "tool_manual", "arguments": {"tool": tool.name}},
+                {"action": "answer", "outcome": "completed", "content": "done"},
+            ]
+        )
+        lifecycle = AgentLifecycle(
+            repository=None,  # type: ignore[arg-type]
+            model=model,
+            discovery=EmptyDiscovery(),  # type: ignore[arg-type]
+            recall=EmptyRecall(),  # type: ignore[arg-type]
+            memory_executor=NoScratchpadMemoryExecutor(),  # type: ignore[arg-type]
+            work_tools=[tool],
+        )
+
+        answer, events = lifecycle._run_agent_phase(
+            context=WorkContext(user_id="owner", turn_id=f"manual-{tool.name}", user_text="inspect tool manual"),
+            candidate_ids=set(),
+            recall_results=[],
+        )
+
+        assert answer == "done"
+        assert events[0]["tool"] == "tool_manual"
+        assert events[0]["result"]["tool"] == tool.name
+        assert events[0]["result"]["input_schema"] == tool.schema()["properties"]["arguments"]
 
 
 def test_market_snapshot_keeps_operation_union_inside_arguments(tmp_path: Path) -> None:
