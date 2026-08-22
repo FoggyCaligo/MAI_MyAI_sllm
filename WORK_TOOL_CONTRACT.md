@@ -58,25 +58,31 @@ A successful structured tool action is identified by exact JSON structure:
 (tool name, arguments object)
 ```
 
-Once that exact action succeeds in the current turn:
+Once that exact action succeeds in the current turn, the framework records its structural identity. If the model later emits the exact same action again:
 
-- the same arguments object is excluded from that tool's schema in later rounds;
-- a different arguments object for the same tool remains available;
-- if a model nevertheless emits the exact already-successful action, the framework rejects it before executing the tool again;
-- failed actions are not recorded as successful and are not converted into success;
-- the framework does not compare natural-language meaning, path similarity, command similarity, or substrings.
+- the tool is **not executed a second time**;
+- the agent receives an explicit tool event with `status=rejected`, `reason=duplicate_successful_action`, and `executed=false`;
+- for registered work tools, that tool is removed from subsequent schemas for the rest of the turn so the model cannot loop on the same successful operation;
+- for `node_lookup`, further lookup is disabled after an exact successful duplicate request;
+- recalled focus IDs are removed from later `recall_memory` schemas after successful recall;
+- the agent loop continues so the model can choose another valid action or answer;
+- failed actions are never recorded as successful and are not converted into success.
 
-This contract applies to built-in memory tools and registered work tools. It is independent from inspection progress gating. Inspection progress asks whether new structural information was obtained; successful-action dedup asks whether an identical successful operation is being requested again.
+The comparison is exact structural JSON equality only. The framework does not compare natural-language meaning, path similarity, command similarity, substrings, or inferred intent.
 
 Example:
 
 ```text
 file_create(path=A, content=X) -> success
-file_create(path=A, content=X) -> excluded/rejected
-file_create(path=B, content=Y) -> still available
+file_create(path=A, content=X) -> rejected, not executed, file_create closes for this turn
+agent -> may answer or choose another available tool
 ```
 
-The framework does not automatically reinterpret the second create as `file_update`, does not ignore `FileExistsError`, and does not replay a cached success result.
+Before a duplicate request occurs, a different arguments object for the same action tool remains available, so multiple legitimate actions in one turn are still possible.
+
+The framework does not automatically reinterpret a duplicate create as `file_update`, does not ignore `FileExistsError`, and does not replay a cached success result.
+
+This contract is independent from inspection progress gating. Inspection progress asks whether new structural information was obtained; successful-action dedup asks whether an identical already-successful operation is being requested again.
 
 ## File path provenance
 
