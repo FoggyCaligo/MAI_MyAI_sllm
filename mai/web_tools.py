@@ -351,46 +351,37 @@ class MarketSnapshotTool:
 
     def schema(self) -> dict[str, Any]:
         scope = {"type": "string", "enum": ["kr_equity", "global_equity", "index", "fx"]}
-        lookup = {
+        lookup_arguments = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["operation", "provider_scope", "query"],
+            "properties": {
+                "operation": {"const": "lookup"},
+                "provider_scope": scope,
+                "query": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+        }
+        snapshot_arguments = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["operation", "provider_scope", "provider_symbol"],
+            "properties": {
+                "operation": {"const": "snapshot"},
+                "provider_scope": scope,
+                "provider_symbol": {"type": "string", "minLength": 1},
+            },
+        }
+        return {
             "type": "object",
             "additionalProperties": False,
             "required": ["action", "tool", "arguments"],
             "properties": {
                 "action": {"const": "tool"},
                 "tool": {"const": self.name},
-                "arguments": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["operation", "provider_scope", "query"],
-                    "properties": {
-                        "operation": {"const": "lookup"},
-                        "provider_scope": scope,
-                        "query": {"type": "string", "minLength": 1},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 10},
-                    },
-                },
+                "arguments": {"oneOf": [lookup_arguments, snapshot_arguments]},
             },
         }
-        snapshot = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["action", "tool", "arguments"],
-            "properties": {
-                "action": {"const": "tool"},
-                "tool": {"const": self.name},
-                "arguments": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["operation", "provider_scope", "provider_symbol"],
-                    "properties": {
-                        "operation": {"const": "snapshot"},
-                        "provider_scope": scope,
-                        "provider_symbol": {"type": "string", "minLength": 1},
-                    },
-                },
-            },
-        }
-        return {"oneOf": [lookup, snapshot]}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         operation = str(arguments["operation"])
