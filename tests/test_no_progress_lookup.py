@@ -64,7 +64,7 @@ def test_work_disables_lookup_after_no_candidate_progress() -> None:
         work_tools=[],
     )
 
-    answer, _, events = lifecycle._run_work_phase(
+    answer, _, events = lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="hello"),
         candidate_ids={1},
         recall_results=[],
@@ -90,7 +90,7 @@ def test_work_keeps_lookup_when_candidate_set_expands() -> None:
         work_tools=[],
     )
 
-    lifecycle._run_work_phase(
+    lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="hello"),
         candidate_ids={1},
         recall_results=[],
