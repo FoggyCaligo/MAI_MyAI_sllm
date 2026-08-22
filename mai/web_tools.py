@@ -171,8 +171,7 @@ class LatestSearchTool:
     provider: SearchProvider
     name: str = "latest_search"
     description: str = (
-        "Search recent news, events, announcements, and changing public information. "
-        "For current market quotes, prefer market_snapshot."
+        "Search recent news/events and changing public information. Use market_snapshot instead for current market quotes."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -204,8 +203,7 @@ class WebResearchTool:
     provider: SearchProvider
     name: str = "web_research"
     description: str = (
-        "Research facts across public web pages with model-authored queries and page evidence. "
-        "Use when a structured tool lacks needed facts."
+        "Research facts across public web pages with queries and page evidence when structured tools lack the needed facts."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -404,8 +402,7 @@ class MarketSnapshotTool:
     settings: MarketProviderSettings
     name: str = "market_snapshot"
     description: str = (
-        "Look up market instruments and fetch current quote data: price, previous close, exchange, currency, index, "
-        "and FX data. Prefer this for current market quotes over general web search."
+        "Look up market instruments and current quote data: price, previous close, exchange, currency, index, and FX."
     )
 
     def schema(self) -> dict[str, Any]:
