@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
+from .graph import GraphSourceStore, SourceRecord
 from .memory_revise import ReviseMemoryScope, ReviseMemoryTool, revise_memory_schema
 from .memory_write import MemoryTurnScope, WriteMemoryTool, write_memory_schema
 from .model import ModelContractError
 from .progress import tool_completed, tool_started
-from .scratchpad import ScratchpadItem, ScratchpadRegistry
+from .scratchpad import EvidenceItem, ScratchpadItem, ScratchpadRegistry, TurnEvidenceRegistry
 
 
 def _mutation_item_schema(
@@ -103,11 +105,54 @@ def _scratchpad_context(items: list[ScratchpadItem]) -> tuple[str, ...]:
     )
 
 
+def _attachment_source_record(item: EvidenceItem) -> SourceRecord:
+    payload = dict(item.payload)
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        raise ModelContractError(f"attachment evidence {item.evidence_id} has no loaded content")
+    metadata = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"content", "evidence_id"}
+    }
+    return SourceRecord(
+        source_kind="file_evidence",
+        source_key=item.evidence_id,
+        content=content,
+        metadata=metadata,
+    )
+
+
+def _tool_source_record(item: EvidenceItem) -> SourceRecord:
+    payload = dict(item.payload)
+    source_kind = str(payload.get("source_kind") or "tool_operation")
+    if source_kind not in {"web_evidence", "file_evidence", "tool_operation"}:
+        raise ModelContractError(f"unsupported tool evidence source kind: {source_kind}")
+    content = json.dumps(
+        {
+            "tool": payload.get("tool"),
+            "arguments": payload.get("arguments"),
+            "result": payload.get("result"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    return SourceRecord(
+        source_kind=source_kind,
+        source_key=item.evidence_id,
+        content=content,
+        metadata={"tool": str(payload.get("tool") or "")},
+    )
+
+
 @dataclass(slots=True)
 class FinalMemoryExecutor:
     writer: WriteMemoryTool
     reviser: ReviseMemoryTool
     scratchpads: ScratchpadRegistry | None = None
+    evidence: TurnEvidenceRegistry | None = None
+    source_store: GraphSourceStore | None = None
 
     def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
         if self.scratchpads is None:
@@ -116,6 +161,61 @@ class FinalMemoryExecutor:
             str(item["scratchpad_id"])
             for item in self.scratchpads.snapshot(turn_id=turn_id)
         )
+
+    def _source_records(
+        self,
+        *,
+        turn_id: str,
+        user_text: str,
+        fixed_answer: str,
+        selected: list[ScratchpadItem],
+    ) -> tuple[SourceRecord, ...]:
+        if self.source_store is None:
+            return ()
+
+        assistant = SourceRecord(
+            source_kind="assistant_message",
+            source_key="assistant",
+            content=fixed_answer,
+            metadata={"factual_status": "unverified"},
+        )
+        if not selected:
+            return (
+                SourceRecord(
+                    source_kind="user_message",
+                    source_key="user",
+                    content=user_text,
+                    metadata={},
+                ),
+                assistant,
+            )
+
+        if self.evidence is None:
+            raise ModelContractError("scratchpad-backed memory requires configured evidence registry")
+
+        records: list[SourceRecord] = [assistant]
+        seen_evidence: set[str] = set()
+        for scratchpad in selected:
+            records.append(
+                SourceRecord(
+                    source_kind="scratchpad",
+                    source_key=scratchpad.scratchpad_id,
+                    content=scratchpad.content,
+                    metadata={"source_ids": list(scratchpad.source_ids)},
+                )
+            )
+            for evidence_id in scratchpad.source_ids:
+                if evidence_id in seen_evidence:
+                    continue
+                seen_evidence.add(evidence_id)
+                evidence_item = self.evidence.require(turn_id=turn_id, evidence_id=evidence_id)
+                if evidence_item.kind == "attachment":
+                    records.append(_attachment_source_record(evidence_item))
+                elif evidence_item.kind == "tool":
+                    records.append(_tool_source_record(evidence_item))
+                else:
+                    raise ModelContractError(f"unsupported current-turn evidence kind: {evidence_item.kind}")
+        return tuple(records)
 
     def execute(
         self,
@@ -155,7 +255,17 @@ class FinalMemoryExecutor:
                 if self.scratchpads is None
                 else self.scratchpads.select(turn_id=turn_id, scratchpad_ids=raw_scratchpad_ids)
             )
-            mutation_turn = replace(current_turn, evidence_context=_scratchpad_context(selected))
+            source_records = self._source_records(
+                turn_id=turn_id,
+                user_text=user_text,
+                fixed_answer=fixed_answer,
+                selected=selected,
+            )
+            mutation_turn = replace(
+                current_turn,
+                evidence_context=_scratchpad_context(selected),
+                source_records=source_records,
+            )
 
             if kind == "write_memory":
                 tool_started("write_memory")
@@ -190,4 +300,4 @@ class FinalMemoryExecutor:
         for node in result.get("created_nodes", []):
             if "node_id" in node:
                 eligible.add(int(node["node_id"]))
-        return replace(turn, recalled_node_ids=frozenset(eligible), evidence_context=())
+        return replace(turn, recalled_node_ids=frozenset(eligible), evidence_context=(), source_records=())
