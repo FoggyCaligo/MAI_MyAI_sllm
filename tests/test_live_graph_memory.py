@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from mai.agent import AgentLifecycle
+from mai.agent import AgentLifecycle, FunctionWorkTool
 from mai.graph import GraphRepository, GraphSourceStore
 from mai.memory_agent_adapter import MemoryAgentAdapter
 from mai.memory_extension import AgentGraphMemoryExtension
@@ -261,6 +261,12 @@ def test_agent_first_round_exposes_only_vector_recall_then_opens_external_tools(
     try:
         memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "past context": [1.0, 0.0]})
         adapter = MemoryAgentAdapter(memory)
+        noop = FunctionWorkTool(
+            name="noop",
+            description="No-op external test tool",
+            input_schema={"type": "object", "additionalProperties": False, "properties": {}},
+            handler=lambda arguments, context: {"ok": True},
+        )
         model = FakeModel(
             [
                 {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past context"}},
@@ -272,7 +278,13 @@ def test_agent_first_round_exposes_only_vector_recall_then_opens_external_tools(
                 },
             ]
         )
-        agent = AgentLifecycle(repository=repo, model=model, source_store=sources, core_extension=adapter)
+        agent = AgentLifecycle(
+            repository=repo,
+            model=model,
+            source_store=sources,
+            core_extension=adapter,
+            work_tools=[noop],
+        )
 
         result = agent.run(user_id="u", user_text="question", turn_id="t1")
 
@@ -282,6 +294,7 @@ def test_agent_first_round_exposes_only_vector_recall_then_opens_external_tools(
         first_arguments = model.schemas[0]["properties"]["arguments"]
         assert first_arguments["required"] == ["query"]
         assert _has_answer(model.schemas[1]) is True
+        assert "tool_route" in _tool_names(model.schemas[1])
         answer_variant = next(
             variant
             for variant in _schema_variants(model.schemas[1])
