@@ -12,6 +12,10 @@ def test_session_store_hashes_token_and_persists_working_root(tmp_path: Path) ->
     assert token
     assert session.working_root == str(tmp_path.resolve())
     store.update_working_root(session_id=session.session_id, working_root=tmp_path / "project")
+
+    refreshed = store.get_by_session_id(session.session_id)
+    assert refreshed is not None
+    assert refreshed.working_root == str((tmp_path / "project").resolve())
     store.close()
 
     reopened = PersistentSessionStore(db, ttl_seconds=3600, default_root=tmp_path)
@@ -20,6 +24,8 @@ def test_session_store_hashes_token_and_persists_working_root(tmp_path: Path) ->
     assert restored.user_id == "owner"
     assert restored.role == "owner"
     assert restored.working_root == str((tmp_path / "project").resolve())
+    restored_by_id = reopened.get_by_session_id(session.session_id)
+    assert restored_by_id == restored
     reopened.close()
 
 
