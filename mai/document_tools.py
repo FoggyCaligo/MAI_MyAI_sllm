@@ -18,7 +18,10 @@ class ImageAnalyzer(Protocol):
     def analyze(self, *, path: Path, prompt: str) -> str: ...
 
 
-_DOCUMENT_PATH_PATTERN = r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
+_DOCUMENT_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
+_DOCUMENT_PATH_PATTERN = (
+    r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX]|[tT][xX][tT]|[mM][dD]|[mM][aA][rR][kK][dD][oO][wW][nN])$"
+)
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
 
@@ -28,8 +31,8 @@ class DocumentReadTool:
     name: str = "document_read"
     work_kind: str = "inspection"
     description: str = (
-        "Read structured text from one existing PDF or DOCX whose path was established by an attachment, "
-        "file_create, or a current-turn file/code discovery tool. Use file_read for ordinary text files."
+        "Read structured text from one existing PDF, DOCX, TXT, MD, or MARKDOWN file whose path was established "
+        "by an attachment, file_create, or a current-turn file/code discovery tool."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -44,7 +47,7 @@ class DocumentReadTool:
         )
 
     def schema_for_paths(self, paths: set[str]) -> dict[str, Any] | None:
-        documents = sorted(path for path in paths if Path(path).suffix.casefold() in {".pdf", ".docx"})
+        documents = sorted(path for path in paths if Path(path).suffix.casefold() in _DOCUMENT_SUFFIXES)
         if not documents:
             return None
         return _tool_schema(
@@ -68,7 +71,7 @@ class DocumentReadTool:
         limit = int(arguments.get("limit", 20))
 
         suffix = path.suffix.casefold()
-        if suffix not in {".pdf", ".docx"}:
+        if suffix not in _DOCUMENT_SUFFIXES:
             raise ValueError(f"unsupported document type: {path.suffix or '<none>'}")
         if not path.exists():
             raise FileNotFoundError(path)
@@ -77,7 +80,9 @@ class DocumentReadTool:
 
         if suffix == ".pdf":
             return self._read_pdf(path=path, start=start, limit=limit)
-        return self._read_docx(path=path, start=start, limit=limit)
+        if suffix == ".docx":
+            return self._read_docx(path=path, start=start, limit=limit)
+        return self._read_text(path=path, start=start, limit=limit)
 
     @staticmethod
     def progress_keys(result: dict[str, Any]) -> set[str]:
@@ -85,7 +90,12 @@ class DocumentReadTool:
         unit = str(result.get("unit") or "")
         keys: set[str] = set()
         for item in result.get("items", []):
-            position = item.get("page") if unit == "page" else item.get("paragraph")
+            if unit == "page":
+                position = item.get("page")
+            elif unit == "paragraph":
+                position = item.get("paragraph")
+            else:
+                position = item.get("line")
             if path and position is not None:
                 keys.add(f"{path}:{unit}:{position}")
         if not keys and path:
@@ -130,6 +140,28 @@ class DocumentReadTool:
             "path": str(path),
             "document_type": "docx",
             "unit": "paragraph",
+            "start": start,
+            "items": items,
+            "total": total,
+            "has_more": next_start is not None,
+            "next_start": next_start,
+        }
+
+    @staticmethod
+    def _read_text(*, path: Path, start: int, limit: int) -> dict[str, Any]:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        total = len(lines)
+        start_index = start - 1
+        end_index = min(start_index + limit, total)
+        items = [
+            {"line": index + 1, "text": lines[index]}
+            for index in range(start_index, end_index)
+        ]
+        next_start = end_index + 1 if end_index < total else None
+        return {
+            "path": str(path),
+            "document_type": path.suffix.casefold().lstrip("."),
+            "unit": "line",
             "start": start,
             "items": items,
             "total": total,

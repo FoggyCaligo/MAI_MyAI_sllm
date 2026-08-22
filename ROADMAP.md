@@ -14,6 +14,8 @@ scratchpad               = 현재 작업 중 임시 working memory
 
 Raw conversation을 자동으로 semantic graph로 복제하지 않는다.
 
+동일 사용자 graph에서 모델이 `new_node`를 제안하더라도 trim 이후 정확히 같은 node name이 이미 존재하면 새 node를 만들지 않고 기존 node를 재사용한다. 동일 `(subject, relation, object)` edge는 새 edge를 복제하지 않고 `support_count`를 강화한다. 비슷한 의미의 서로 다른 문자열을 Framework가 휴리스틱으로 합치지는 않는다.
+
 ### Graph source provenance
 
 Graph node/edge는 의미만 저장하되, 그 의미가 만들어진 원문 source로 구조적으로 역추적 가능해야 한다.
@@ -122,7 +124,7 @@ Scratchpad 전체를 durable graph에 자동 저장하지 않는다. Final graph
 
 현재 Phase 4는 선택된 scratchpad evidence를 기존 `graph_provenance.source_text`에 포함한다. Graph source를 stable raw-source foreign key/reference로 영속 연결하는 작업은 Phase 5에서 한 번에 정식화한다.
 
-자세한 계약은 `WORKING_MEMORY_CONTRACT.md`를 참조한다.
+자세한 계약은 `docs/contracts/WORKING_MEMORY_CONTRACT.md`를 참조한다.
 
 ## Phase 5 — Graph provenance, confidence, and source inspection
 

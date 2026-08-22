@@ -36,21 +36,28 @@ def test_builds_exact_document_and_image_tool_names(tmp_path) -> None:
     assert [tool.name for tool in tools] == ["document_read", "image_analyze"]
 
 
-def test_document_read_schema_only_accepts_pdf_or_docx_paths(tmp_path) -> None:
+def test_document_read_schema_accepts_structured_and_text_documents(tmp_path) -> None:
     schema = DocumentReadTool(access(tmp_path)).schema()
     path_schema = schema["properties"]["arguments"]["properties"]["path"]
-    assert path_schema["pattern"] == r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX])$"
+    pattern = path_schema["pattern"]
+    for name in ("a.pdf", "a.docx", "a.txt", "a.md", "a.markdown"):
+        import re
+
+        assert re.fullmatch(pattern, name)
 
 
-def test_contextual_document_schema_only_exposes_discovered_documents(tmp_path) -> None:
+def test_contextual_document_schema_exposes_supported_discovered_documents(tmp_path) -> None:
     pdf = str((tmp_path / "a.pdf").resolve())
     docx = str((tmp_path / "b.docx").resolve())
     text = str((tmp_path / "c.txt").resolve())
-    schema = DocumentReadTool(access(tmp_path)).schema_for_paths({pdf, docx, text})
+    markdown = str((tmp_path / "d.md").resolve())
+    unsupported = str((tmp_path / "e.bin").resolve())
+    tool = DocumentReadTool(access(tmp_path))
+    schema = tool.schema_for_paths({pdf, docx, text, markdown, unsupported})
     assert schema is not None
     paths = schema["properties"]["arguments"]["properties"]["path"]["enum"]
-    assert paths == sorted([pdf, docx])
-    assert DocumentReadTool(access(tmp_path)).schema_for_paths({text}) is None
+    assert paths == sorted([pdf, docx, text, markdown])
+    assert tool.schema_for_paths({unsupported}) is None
 
 
 def test_contextual_image_schema_only_exposes_discovered_images(tmp_path) -> None:
@@ -106,15 +113,37 @@ def test_document_read_pdf_uses_page_pagination(tmp_path) -> None:
     assert result["next_start"] == 3
 
 
+def test_document_read_text_and_markdown_use_line_pagination(tmp_path) -> None:
+    for suffix in (".txt", ".md", ".markdown"):
+        path = tmp_path / f"sample{suffix}"
+        path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        result = DocumentReadTool(access(tmp_path)).execute(
+            arguments={"path": str(path), "start": 2, "limit": 1},
+            context=context(),
+        )
+        assert result["document_type"] == suffix.lstrip(".")
+        assert result["unit"] == "line"
+        assert result["items"] == [{"line": 2, "text": "two"}]
+        assert result["total"] == 3
+        assert result["next_start"] == 3
+
+
+def test_document_read_text_decode_failure_is_visible(tmp_path) -> None:
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"\xff\xfe")
+    with pytest.raises(UnicodeDecodeError):
+        DocumentReadTool(access(tmp_path)).execute(arguments={"path": str(path)}, context=context())
+
+
 def test_document_read_rejects_unsupported_type_before_path_existence(tmp_path) -> None:
-    path = tmp_path / "missing.txt"
+    path = tmp_path / "missing.bin"
     assert not path.exists()
     with pytest.raises(ValueError, match="unsupported document type"):
         DocumentReadTool(access(tmp_path)).execute(arguments={"path": str(path)}, context=context())
 
 
 def test_document_read_missing_supported_document_still_fails_as_missing(tmp_path) -> None:
-    path = tmp_path / "missing.pdf"
+    path = tmp_path / "missing.txt"
     with pytest.raises(FileNotFoundError):
         DocumentReadTool(access(tmp_path)).execute(arguments={"path": str(path)}, context=context())
 
