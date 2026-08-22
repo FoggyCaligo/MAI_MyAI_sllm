@@ -7,13 +7,7 @@ from .model import ModelContractError
 
 
 class MemoryAgentAdapter:
-    """Expose graph memory through generic Agent core-extension gates.
-
-    The adapter owns Agent-loop protocol constraints that are not graph-storage
-    semantics: the first model action must be vector recall, external tools are
-    unavailable until that recall completes, and the final answer must carry
-    the same-loop graph sync acknowledgement.
-    """
+    """Expose graph memory through generic Agent core-extension gates."""
 
     def __init__(self, memory: AgentGraphMemoryExtension) -> None:
         self.memory = memory
@@ -82,6 +76,17 @@ class MemoryAgentAdapter:
             result=result,
         )
 
+    def commit_turn(self, *, turn_id: str) -> dict[str, Any]:
+        commit = getattr(self.memory, "commit_turn", None)
+        if not callable(commit):
+            raise RuntimeError("configured memory extension does not support final working-graph commit")
+        return commit(turn_id=turn_id)
+
+    def abort_turn(self, *, turn_id: str) -> None:
+        abort = getattr(self.memory, "abort_turn", None)
+        if callable(abort):
+            abort(turn_id=turn_id)
+
     @staticmethod
     def _initial_query_recall_schema() -> dict[str, Any]:
         return {
@@ -95,9 +100,7 @@ class MemoryAgentAdapter:
                     "type": "object",
                     "additionalProperties": False,
                     "required": ["query"],
-                    "properties": {
-                        "query": {"type": "string", "minLength": 1},
-                    },
+                    "properties": {"query": {"type": "string", "minLength": 1}},
                 },
             },
         }
