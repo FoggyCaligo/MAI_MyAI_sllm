@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
-from .final_memory import FinalMemoryExecutor, answer_with_memory_schema
+from .final_memory import FinalMemoryExecutor
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
+from .memory_completion import GraphCommitPhase
 from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
 
@@ -88,6 +89,19 @@ class FunctionWorkTool:
         return self.handler(arguments, context)
 
 
+def _answer_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", "outcome", "content"],
+        "properties": {
+            "action": {"const": "answer"},
+            "outcome": {"type": "string", "enum": ["completed", "blocked"]},
+            "content": {"type": "string", "minLength": 1},
+        },
+    }
+
+
 def _lookup_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -126,10 +140,7 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
                 "additionalProperties": False,
                 "required": ["focus_node_id"],
                 "properties": {
-                    "focus_node_id": {
-                        "type": "integer",
-                        "enum": sorted(candidate_ids),
-                    }
+                    "focus_node_id": {"type": "integer", "enum": sorted(candidate_ids)}
                 },
             },
         },
@@ -139,33 +150,23 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
 def _memory_source_summary_schema(*, node_ids: set[int], edge_ids: set[int]) -> dict[str, Any]:
     targets: list[dict[str, Any]] = []
     if node_ids:
-        targets.append(
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["node_id"],
-                "properties": {"node_id": {"type": "integer", "enum": sorted(node_ids)}},
-            }
-        )
+        targets.append({
+            "type": "object", "additionalProperties": False, "required": ["node_id"],
+            "properties": {"node_id": {"type": "integer", "enum": sorted(node_ids)}},
+        })
     if edge_ids:
-        targets.append(
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["edge_id"],
-                "properties": {"edge_id": {"type": "integer", "enum": sorted(edge_ids)}},
-            }
-        )
+        targets.append({
+            "type": "object", "additionalProperties": False, "required": ["edge_id"],
+            "properties": {"edge_id": {"type": "integer", "enum": sorted(edge_ids)}},
+        })
     if not targets:
         raise ValueError("memory source summary requires recalled graph targets")
     target_schema = targets[0] if len(targets) == 1 else {"oneOf": targets}
     return {
-        "type": "object",
-        "additionalProperties": False,
+        "type": "object", "additionalProperties": False,
         "required": ["action", "tool", "arguments"],
         "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "memory_source_summary"},
+            "action": {"const": "tool"}, "tool": {"const": "memory_source_summary"},
             "arguments": target_schema,
         },
     }
@@ -173,16 +174,12 @@ def _memory_source_summary_schema(*, node_ids: set[int], edge_ids: set[int]) -> 
 
 def _memory_source_read_schema(source_ids: set[int]) -> dict[str, Any]:
     return {
-        "type": "object",
-        "additionalProperties": False,
+        "type": "object", "additionalProperties": False,
         "required": ["action", "tool", "arguments"],
         "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "memory_source_read"},
+            "action": {"const": "tool"}, "tool": {"const": "memory_source_read"},
             "arguments": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["source_id"],
+                "type": "object", "additionalProperties": False, "required": ["source_id"],
                 "properties": {
                     "source_id": {"type": "integer", "enum": sorted(source_ids)},
                     "start": {"type": "integer", "minimum": 1},
@@ -195,22 +192,13 @@ def _memory_source_read_schema(source_ids: set[int]) -> dict[str, Any]:
 
 def _tool_manual_schema(tool_names: set[str]) -> dict[str, Any]:
     return {
-        "type": "object",
-        "additionalProperties": False,
+        "type": "object", "additionalProperties": False,
         "required": ["action", "tool", "arguments"],
         "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "tool_manual"},
+            "action": {"const": "tool"}, "tool": {"const": "tool_manual"},
             "arguments": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["tool"],
-                "properties": {
-                    "tool": {
-                        "type": "string",
-                        "enum": sorted(tool_names),
-                    }
-                },
+                "type": "object", "additionalProperties": False, "required": ["tool"],
+                "properties": {"tool": {"type": "string", "enum": sorted(tool_names)}},
             },
         },
     }
@@ -366,7 +354,7 @@ class AgentLifecycle:
             recall_results: list[dict[str, Any]] = []
             candidate_ids: set[int] = set()
             with phase(resolved_turn_id, "agent"):
-                fixed_answer, memory_plan, work_events = self._run_agent_phase(
+                fixed_answer, work_events = self._run_agent_phase(
                     context=WorkContext(
                         user_id=user_id,
                         turn_id=resolved_turn_id,
@@ -379,16 +367,15 @@ class AgentLifecycle:
 
             aggregate_recall = self._aggregate_recall(recall_results)
             with phase(resolved_turn_id, "memory_mutation"):
-                memory_result = self.memory_executor.execute(
+                memory_result = GraphCommitPhase(model=self.model, executor=self.memory_executor).run(
                     user_id=user_id,
                     turn_id=resolved_turn_id,
                     user_text=clean_user,
                     fixed_answer=fixed_answer,
                     recall_result=aggregate_recall,
-                    mutations=memory_plan,
                 )
             if memory_result.get("status") != "done":
-                raise RuntimeError("memory mutation did not complete")
+                raise RuntimeError("graph commit did not complete")
 
             result = {
                 "status": "completed",
@@ -411,7 +398,7 @@ class AgentLifecycle:
         context: WorkContext,
         candidate_ids: set[int],
         recall_results: list[dict[str, Any]],
-    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[str, list[dict[str, Any]]]:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
@@ -430,10 +417,10 @@ class AgentLifecycle:
                     "conversation memory is useful. Recalled graph edges expose compact confidence and source_kind; "
                     "inspect provenance with memory_source_summary and open raw evidence with memory_source_read only "
                     "when needed. Work-tool schemas are deferred: the available tool catalog is "
-                    f"{catalog}. Call tool_manual for a tool before using that work tool. A final answer must include at "
-                    "least one semantic memory mutation plan. The framework fixes the answer text before executing that "
-                    "plan and releases the answer only after memory mutation succeeds. Existing-file actions may only "
-                    "use paths established by current-turn attachments, file_create, or file/code discovery tool results."
+                    f"{catalog}. Call tool_manual for a tool before using that work tool. Durable graph memory is committed "
+                    "after the answer is fixed, in a separate narrow memory loop, so do not plan graph mutations in the "
+                    "answer. Existing-file actions may only use paths established by current-turn attachments, file_create, "
+                    "or file/code discovery tool results."
                 ),
             },
             {"role": "user", "content": context.user_text},
@@ -448,23 +435,13 @@ class AgentLifecycle:
         while True:
             aggregate_recall = self._aggregate_recall(recall_results)
             recalled_node_ids, recalled_edge_ids = _recalled_ids(aggregate_recall)
-            variants = [
-                answer_with_memory_schema(
-                    aggregate_recall,
-                    scratchpad_ids=self.memory_executor.available_scratchpad_ids(turn_id=context.turn_id),
-                )
-            ]
+            variants = [_answer_schema()]
             if allow_lookup:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
             if self.source_store is not None and (recalled_node_ids or recalled_edge_ids):
-                variants.append(
-                    _memory_source_summary_schema(
-                        node_ids=recalled_node_ids,
-                        edge_ids=recalled_edge_ids,
-                    )
-                )
+                variants.append(_memory_source_summary_schema(node_ids=recalled_node_ids, edge_ids=recalled_edge_ids))
             if self.source_store is not None and available_source_ids:
                 variants.append(_memory_source_read_schema(available_source_ids))
             manual_targets = available_tools - activated_tools
@@ -486,12 +463,9 @@ class AgentLifecycle:
 
             if action.get("action") == "answer":
                 content = str(action.get("content", "")).strip()
-                mutations = action.get("memory_mutations")
                 if not content:
                     raise ModelContractError("answer content must be non-empty")
-                if not isinstance(mutations, list) or not mutations:
-                    raise ModelContractError("answer requires at least one memory mutation")
-                return content, mutations, events
+                return content, events
 
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
                 raise ModelContractError("agent phase requires one tool action or one answer")
