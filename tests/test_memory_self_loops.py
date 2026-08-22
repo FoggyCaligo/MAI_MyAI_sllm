@@ -53,7 +53,7 @@ def test_write_rejects_user_anchor_self_loop(tmp_path) -> None:
                 scope=_scope(),
             )
 
-        assert repo.one_hop(user_id="owner", node_id=anchor["node_id"])["edges"] == []
+        assert repo.one_hop_neighborhood(user_id="owner", focus_node_id=anchor["node_id"])["edges"] == []
         assert repo.provenance_for_turn(user_id="owner", turn_id="turn-1") == []
     finally:
         repo.close()
