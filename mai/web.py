@@ -21,19 +21,18 @@ from .attachment_evidence import AttachmentEvidenceBuilder
 from .code_search_tool import build_code_tools
 from .context import compact_tool_event
 from .document_tools import ImageAnalyzer, build_document_image_tools
+from .embedding import OllamaEmbeddingModel
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
-from .final_memory import FinalMemoryExecutor
-from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
-from .memory_revise import ReviseMemoryTool
-from .memory_write import WriteMemoryTool
+from .graph import GraphRepository, GraphSourceStore
+from .live_memory import LiveGraphMemory
 from .model import OllamaModel
 from .model_context import use_model_context
 from .runtime_state import PersistentChatJobStore, PersistentSessionStore, SessionRecord, public_job
-from .scratchpad import EvidenceKindToolAdapter, ScratchpadRegistry, TurnEvidenceRegistry
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
+from .work_tool_adapter import EvidenceKindToolAdapter
 from .working_context import WorkingRootToolAdapter
 from .working_memory_lifecycle import WorkingMemoryLifecycle
 
@@ -208,6 +207,7 @@ def build_lifecycle(
     *,
     repository: GraphRepository,
     model: OllamaModel,
+    embedding_model: OllamaEmbeddingModel,
     owner_id: str,
     terminal_encoding: str,
     download_grants: DownloadGrantStore,
@@ -218,19 +218,7 @@ def build_lifecycle(
 ) -> WorkingMemoryLifecycle:
     if role not in {"owner", "trial"}:
         raise ValueError(f"unsupported account role: {role}")
-    discovery = GraphDiscoveryService(repository)
-    recall = GraphRecallService(repository, source_store=source_store)
-    writer = WriteMemoryTool(repository, source_store=source_store)
-    reviser = ReviseMemoryTool(repository, source_store=source_store)
-    evidence = TurnEvidenceRegistry()
-    scratchpads = ScratchpadRegistry(evidence=evidence)
-    memory_executor = FinalMemoryExecutor(
-        writer=writer,
-        reviser=reviser,
-        scratchpads=scratchpads,
-        evidence=evidence,
-        source_store=source_store,
-    )
+
     web_tools = _with_evidence_kind(build_web_market_tools(), "web_evidence")
     if role == "trial":
         work_tools = web_tools
@@ -263,20 +251,22 @@ def build_lifecycle(
             *code_tools,
             *web_tools,
         ]
+
+    memory = LiveGraphMemory(
+        repository,
+        embedding=embedding_model,
+        source_store=source_store,
+    )
     base = AgentLifecycle(
         repository=repository,
         model=model,
-        discovery=discovery,
-        recall=recall,
-        memory_executor=memory_executor,
+        memory=memory,
         work_tools=work_tools,
         source_store=source_store,
     )
     return WorkingMemoryLifecycle(
         delegate=base,
         attachments=AttachmentEvidenceBuilder(analyzer=image_analyzer),
-        evidence=evidence,
-        scratchpads=scratchpads,
     )
 
 
@@ -298,6 +288,7 @@ def create_app(
     settings: RuntimeSettings | None = None,
     lifecycle: AgentLifecycle | None = None,
     model: OllamaModel | None = None,
+    embedding_model: OllamaEmbeddingModel | None = None,
     image_analyzer: ImageAnalyzer | None = None,
     download_grants: DownloadGrantStore | None = None,
 ) -> FastAPI:
@@ -306,6 +297,7 @@ def create_app(
     repository = None if lifecycle is not None else GraphRepository(resolved.graph_db_path)
     source_store = None if lifecycle is not None else GraphSourceStore(resolved.graph_db_path)
     resolved_model = model or OllamaModel.from_env()
+    resolved_embedding_model = embedding_model or OllamaEmbeddingModel.from_env()
     resolved_image_analyzer = image_analyzer or OllamaVisionModel.from_env()
     grants = download_grants or DownloadGrantStore()
     history = ChatHistoryStore(resolved.chat_db_path)
@@ -352,6 +344,7 @@ def create_app(
     app = FastAPI(title="Mai", lifespan=lifespan)
     app.state.settings = resolved
     app.state.model_name = resolved_model.model
+    app.state.embedding_model_name = resolved_embedding_model.model
     app.state.image_model_name = resolved_image_analyzer.model
     app.state.download_grants = grants
 
@@ -400,6 +393,7 @@ def create_app(
                 cached = build_lifecycle(
                     repository=repository,
                     model=resolved_model,
+                    embedding_model=resolved_embedding_model,
                     owner_id=resolved.owner_id,
                     terminal_encoding=resolved.terminal_encoding,
                     download_grants=grants,
@@ -482,6 +476,7 @@ def create_app(
         session = require_session(request)
         return {
             "model": app.state.model_name,
+            "embedding_model": app.state.embedding_model_name,
             "user_id": session.user_id,
             "role": session.role,
             "working_root": session.working_root if session.role == "owner" else None,
