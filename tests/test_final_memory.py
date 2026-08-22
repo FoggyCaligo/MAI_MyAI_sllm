@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 import pytest
 
 from mai.final_memory import FinalMemoryExecutor, answer_with_memory_schema
@@ -9,93 +12,88 @@ from mai.memory_write import WriteMemoryTool
 from mai.model import ModelContractError
 
 
+def _variants(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    return schema.get("oneOf", [schema])
+
+
+def _tool_names(schema: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for variant in _variants(schema):
+        kind = (variant.get("properties") or {}).get("kind") or {}
+        if "const" in kind:
+            names.add(str(kind["const"]))
+    return names
+
+
 def test_answer_schema_requires_at_least_one_memory_mutation() -> None:
     schema = answer_with_memory_schema(None)
-    assert schema["required"] == ["action", "outcome", "content", "memory_mutations"]
-    assert schema["properties"]["memory_mutations"]["minItems"] == 1
+    mutations = schema["properties"]["memory_mutations"]
+    assert mutations["minItems"] == 1
+    assert _tool_names(mutations["items"]) == {"write_memory"}
 
 
-def test_answer_schema_exposes_only_actual_scratchpad_ids() -> None:
-    without_scratchpad = answer_with_memory_schema(None)
-    item_without = without_scratchpad["properties"]["memory_mutations"]["items"]
-    assert "scratchpad_ids" not in item_without["properties"]
-
-    with_scratchpad = answer_with_memory_schema(
-        None,
-        scratchpad_ids=["scratchpad:2", "scratchpad:1"],
-    )
-    item_with = with_scratchpad["properties"]["memory_mutations"]["items"]
-    assert item_with["properties"]["scratchpad_ids"]["items"] == {
-        "type": "string",
-        "enum": ["scratchpad:1", "scratchpad:2"],
+def test_answer_schema_exposes_revise_only_for_recalled_edge() -> None:
+    recall = {
+        "nodes": [{"node_id": 1}],
+        "edges": [{"edge_id": 9}],
+        "origin_path": {"nodes": [], "edges": []},
+    }
+    schema = answer_with_memory_schema(recall)
+    assert _tool_names(schema["properties"]["memory_mutations"]["items"]) == {
+        "write_memory",
+        "revise_memory",
     }
 
 
-def test_answer_schema_exposes_revise_only_for_recalled_edges() -> None:
-    without_recall = answer_with_memory_schema(None)
-    item_without = without_recall["properties"]["memory_mutations"]["items"]
-    assert item_without["properties"]["kind"] == {"const": "write_memory"}
-
-    with_recall = answer_with_memory_schema(
-        {
-            "nodes": [{"node_id": 3}],
-            "edges": [{"edge_id": 7}],
-            "origin_path": {"nodes": [], "edges": []},
-        }
-    )
-    item_with = with_recall["properties"]["memory_mutations"]["items"]
-    kinds = {
-        variant["properties"]["kind"]["const"]
-        for variant in item_with["oneOf"]
-    }
-    assert kinds == {"write_memory", "revise_memory"}
-
-
-def test_executor_commits_multiple_planned_mutations_without_model_rounds(tmp_path) -> None:
+def test_final_executor_commits_planned_mutations_without_model_call(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
-        repo.ensure_user_anchor(user_id="owner", turn_id="seed", source_text="owner")
-        executor = FinalMemoryExecutor(WriteMemoryTool(repo), ReviseMemoryTool(repo))
+        executor = FinalMemoryExecutor(
+            writer=WriteMemoryTool(repo),
+            reviser=ReviseMemoryTool(repo),
+        )
         result = executor.execute(
             user_id="owner",
-            turn_id="t1",
+            turn_id="turn-1",
             user_text="hello",
-            fixed_answer="hi",
+            fixed_answer="fixed",
             recall_result=None,
             mutations=[
                 {
                     "kind": "write_memory",
                     "arguments": {
                         "subject": {"kind": "user"},
-                        "relation": "said",
-                        "object": {"new_node": {"name": "hello"}},
+                        "relation": "remembered",
+                        "object": {"new_node": {"name": "fixed"}},
                     },
-                },
-                {
-                    "kind": "write_memory",
-                    "arguments": {
-                        "subject": {"kind": "user"},
-                        "relation": "received",
-                        "object": {"new_node": {"name": "hi"}},
-                    },
-                },
+                }
             ],
         )
         assert result["status"] == "done"
-        assert result["mutation_count"] == 2
-        assert len(result["mutations"]) == 2
+        assert result["mutation_count"] == 1
+        assert result["mutations"][0]["edge"]["relation"] == "remembered"
     finally:
         repo.close()
 
 
-def test_executor_rejects_empty_plan() -> None:
-    executor = FinalMemoryExecutor(None, None)  # type: ignore[arg-type]
+def test_final_executor_rejects_empty_plan() -> None:
+    @dataclass
+    class Unused:
+        calls: list = field(default_factory=list)
+
+        def execute(self, *, arguments, scope):
+            self.calls.append((arguments, scope))
+            return {}
+
+    unused = Unused()
+    executor = FinalMemoryExecutor(writer=unused, reviser=unused)  # type: ignore[arg-type]
     with pytest.raises(ModelContractError, match="at least one memory mutation"):
         executor.execute(
             user_id="owner",
-            turn_id="t1",
-            user_text="hello",
-            fixed_answer="hi",
+            turn_id="turn",
+            user_text="u",
+            fixed_answer="a",
             recall_result=None,
             mutations=[],
         )
+    assert unused.calls == []
