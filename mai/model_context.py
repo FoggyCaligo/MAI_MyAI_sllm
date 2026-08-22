@@ -14,7 +14,6 @@ from .context import compact_recent_messages, compact_recent_tool_operations, co
 class ModelContext:
     recent_messages: tuple[dict[str, Any], ...] = ()
     recent_tool_operations: tuple[dict[str, Any], ...] = ()
-    working_root: str | None = None
 
 
 _model_context: ContextVar[ModelContext] = ContextVar("mai_model_context", default=ModelContext())
@@ -25,13 +24,11 @@ def use_model_context(
     *,
     recent_messages: list[dict[str, Any]],
     recent_tool_operations: list[dict[str, Any]],
-    working_root: str | None = None,
 ) -> Iterator[None]:
     token: Token[ModelContext] = _model_context.set(
         ModelContext(
             recent_messages=tuple(recent_messages),
             recent_tool_operations=tuple(recent_tool_operations),
-            working_root=str(working_root).strip() if working_root else None,
         )
     )
     try:
@@ -47,17 +44,10 @@ def prepare_model_messages(messages: list[dict[str, str]]) -> list[dict[str, str
         return current
 
     today = datetime.now().astimezone().date().isoformat()
-    system_suffix = f"Current date: {today}."
-    if context.working_root:
-        system_suffix += (
-            " Conversation working root: "
-            f"{context.working_root}. For file/code discovery tools with an optional root, use this root unless "
-            "you intentionally select another explicit root."
-        )
     if current[0].get("role") == "system":
-        current[0]["content"] = f"{current[0].get('content', '')}\n{system_suffix}"
+        current[0]["content"] = f"{current[0].get('content', '')}\nCurrent date: {today}."
     else:
-        current.insert(0, {"role": "system", "content": system_suffix})
+        current.insert(0, {"role": "system", "content": f"Current date: {today}."})
 
     recent_messages = compact_recent_messages(list(context.recent_messages))
     recent_operations = compact_recent_tool_operations(list(context.recent_tool_operations))
