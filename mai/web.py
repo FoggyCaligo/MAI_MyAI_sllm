@@ -23,14 +23,10 @@ from .context import compact_tool_event
 from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
-from .final_memory import FinalMemoryExecutor
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
-from .memory_revise import ReviseMemoryTool
-from .memory_write import WriteMemoryTool
 from .model import OllamaModel
 from .model_context import use_model_context
 from .runtime_state import PersistentChatJobStore, PersistentSessionStore, SessionRecord, public_job
-from .scratchpad import EvidenceKindToolAdapter, ScratchpadRegistry, TurnEvidenceRegistry
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
@@ -200,10 +196,6 @@ class ChatHistoryStore:
             self._conn.close()
 
 
-def _with_evidence_kind(tools: list[Any], kind: str) -> list[Any]:
-    return [EvidenceKindToolAdapter(tool, kind) for tool in tools]
-
-
 def build_lifecycle(
     *,
     repository: GraphRepository,
@@ -218,65 +210,42 @@ def build_lifecycle(
 ) -> WorkingMemoryLifecycle:
     if role not in {"owner", "trial"}:
         raise ValueError(f"unsupported account role: {role}")
+
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository, source_store=source_store)
-    writer = WriteMemoryTool(repository, source_store=source_store)
-    reviser = ReviseMemoryTool(repository, source_store=source_store)
-    evidence = TurnEvidenceRegistry()
-    scratchpads = ScratchpadRegistry(evidence=evidence)
-    memory_executor = FinalMemoryExecutor(
-        writer=writer,
-        reviser=reviser,
-        scratchpads=scratchpads,
-        evidence=evidence,
-        source_store=source_store,
-    )
-    web_tools = _with_evidence_kind(build_web_market_tools(), "web_evidence")
+    web_tools = build_web_market_tools()
+
     if role == "trial":
         work_tools = web_tools
     else:
-        file_tools = _with_evidence_kind(
-            [
-                WorkingRootToolAdapter(tool, "root")
-                for tool in build_file_tools(owner_id=owner_id, default_root=default_root)
-            ],
-            "file_evidence",
-        )
-        code_tools = _with_evidence_kind(
-            [
-                WorkingRootToolAdapter(tool, "indexed_root")
-                for tool in build_code_tools(owner_id=owner_id, default_root=default_root)
-            ],
-            "file_evidence",
-        )
+        file_tools = [
+            WorkingRootToolAdapter(tool, "root")
+            for tool in build_file_tools(owner_id=owner_id, default_root=default_root)
+        ]
+        code_tools = [
+            WorkingRootToolAdapter(tool, "indexed_root")
+            for tool in build_code_tools(owner_id=owner_id, default_root=default_root)
+        ]
         work_tools = [
             *file_tools,
-            *_with_evidence_kind(
-                build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
-                "file_evidence",
-            ),
-            *_with_evidence_kind(
-                build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
-                "file_evidence",
-            ),
+            *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+            *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
             *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
             *code_tools,
             *web_tools,
         ]
+
     base = AgentLifecycle(
         repository=repository,
         model=model,
         discovery=discovery,
         recall=recall,
-        memory_executor=memory_executor,
         work_tools=work_tools,
         source_store=source_store,
     )
     return WorkingMemoryLifecycle(
         delegate=base,
         attachments=AttachmentEvidenceBuilder(analyzer=image_analyzer),
-        evidence=evidence,
-        scratchpads=scratchpads,
     )
 
 
