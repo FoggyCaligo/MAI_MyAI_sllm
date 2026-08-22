@@ -44,6 +44,16 @@ class WorkingMemoryLifecycle:
         )
         self.delegate.work_tools = wrapped_tools
 
+        configure_grounding = getattr(self.delegate.model, "configure_grounding_tools", None)
+        if callable(configure_grounding):
+            configure_grounding(
+                {
+                    tool.name
+                    for tool in wrapped_tools
+                    if getattr(tool, "evidence_kind", None) == "web_evidence"
+                }
+            )
+
         if self.memory_model is None:
             if isinstance(self.delegate.model, OllamaModel):
                 self.memory_model = OllamaModel(
