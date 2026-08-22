@@ -187,7 +187,7 @@ def test_chat_job_is_request_detached_and_records_completed_turn(tmp_path) -> No
         ]
 
 
-def test_chat_seeds_lifecycle_with_validated_uploaded_attachment(tmp_path) -> None:
+def test_chat_passes_validated_uploaded_attachment_to_lifecycle(tmp_path) -> None:
     lifecycle = FakeLifecycle(answer="완료")
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
     with TestClient(app) as client:
@@ -203,8 +203,7 @@ def test_chat_seeds_lifecycle_with_validated_uploaded_attachment(tmp_path) -> No
         )
         job = wait_job(client, response.json()["job_id"])
         assert job["status"] == "completed"
-        assert "[attached files]" in lifecycle.calls[0]["user_text"]
-        assert str(Path(attachment).resolve()) in lifecycle.calls[0]["user_text"]
+        assert lifecycle.calls[0]["user_text"] == "파일을 봐줘"
         assert lifecycle.calls[0]["attachment_paths"] == [str(Path(attachment).resolve())]
 
 
