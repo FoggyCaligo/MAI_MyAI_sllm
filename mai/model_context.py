@@ -108,9 +108,12 @@ def prepare_model_messages(messages: list[dict[str, str]]) -> list[dict[str, str
         user_index = next((index for index, item in enumerate(current) if item.get("role") == "user"), len(current))
         current[user_index:user_index] = insertion
 
+    normalized: list[dict[str, str]] = []
     for item in current:
         if item.get("role") != "tool":
+            normalized.append(item)
             continue
+
         raw = item.get("content", "")
         try:
             event = ast.literal_eval(raw)
@@ -118,6 +121,11 @@ def prepare_model_messages(messages: list[dict[str, str]]) -> list[dict[str, str
             raise ValueError("tool message is not a structured event and cannot be compacted") from exc
         if not isinstance(event, dict):
             raise ValueError("tool message must decode to an object before model compaction")
-        item["content"] = dump_context(compact_tool_event(event))
+        if not normalized or normalized[-1].get("role") != "assistant":
+            raise ValueError("tool message requires a preceding assistant action")
 
-    return current
+        compacted = dump_context(compact_tool_event(event))
+        prior = str(normalized[-1].get("content", ""))
+        normalized[-1]["content"] = f"{prior}\nFramework tool result: {compacted}"
+
+    return normalized
