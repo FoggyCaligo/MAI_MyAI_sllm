@@ -6,12 +6,15 @@ from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
 from .final_memory import FinalMemoryExecutor, answer_with_memory_schema
-from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
+from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
 from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
 
 
 _TOOL_SUMMARY_LIMIT = 120
+_BUILTIN_TOOL_NAMES = frozenset(
+    {"node_lookup", "recall_memory", "tool_manual", "memory_source_summary", "memory_source_read"}
+)
 
 
 class PathProvenanceError(PermissionError):
@@ -133,6 +136,63 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
     }
 
 
+def _memory_source_summary_schema(*, node_ids: set[int], edge_ids: set[int]) -> dict[str, Any]:
+    targets: list[dict[str, Any]] = []
+    if node_ids:
+        targets.append(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["node_id"],
+                "properties": {"node_id": {"type": "integer", "enum": sorted(node_ids)}},
+            }
+        )
+    if edge_ids:
+        targets.append(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["edge_id"],
+                "properties": {"edge_id": {"type": "integer", "enum": sorted(edge_ids)}},
+            }
+        )
+    if not targets:
+        raise ValueError("memory source summary requires recalled graph targets")
+    target_schema = targets[0] if len(targets) == 1 else {"oneOf": targets}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", "tool", "arguments"],
+        "properties": {
+            "action": {"const": "tool"},
+            "tool": {"const": "memory_source_summary"},
+            "arguments": target_schema,
+        },
+    }
+
+
+def _memory_source_read_schema(source_ids: set[int]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", "tool", "arguments"],
+        "properties": {
+            "action": {"const": "tool"},
+            "tool": {"const": "memory_source_read"},
+            "arguments": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "integer", "enum": sorted(source_ids)},
+                    "start": {"type": "integer", "minimum": 1},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 12000},
+                },
+            },
+        },
+    }
+
+
 def _tool_manual_schema(tool_names: set[str]) -> dict[str, Any]:
     return {
         "type": "object",
@@ -248,6 +308,27 @@ def _compact_tool_catalog(tools: dict[str, WorkTool]) -> list[dict[str, str]]:
     ]
 
 
+def _recalled_ids(recall_result: dict[str, Any] | None) -> tuple[set[int], set[int]]:
+    nodes: set[int] = set()
+    edges: set[int] = set()
+    if not recall_result:
+        return nodes, edges
+    for node in recall_result.get("nodes", []):
+        if "node_id" in node:
+            nodes.add(int(node["node_id"]))
+    for edge in recall_result.get("edges", []):
+        if "edge_id" in edge:
+            edges.add(int(edge["edge_id"]))
+    origin = recall_result.get("origin_path") or {}
+    for node in origin.get("nodes", []):
+        if "node_id" in node:
+            nodes.add(int(node["node_id"]))
+    for edge in origin.get("edges", []):
+        if "edge_id" in edge:
+            edges.add(int(edge["edge_id"]))
+    return nodes, edges
+
+
 @dataclass(slots=True)
 class AgentLifecycle:
     repository: GraphRepository
@@ -256,6 +337,7 @@ class AgentLifecycle:
     recall: GraphRecallService
     memory_executor: FinalMemoryExecutor
     work_tools: list[WorkTool] = field(default_factory=list)
+    source_store: GraphSourceStore | None = None
 
     def run(
         self,
@@ -333,7 +415,7 @@ class AgentLifecycle:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
-        if {"node_lookup", "recall_memory", "tool_manual"} & set(tools):
+        if _BUILTIN_TOOL_NAMES & set(tools):
             raise ValueError("work tools may not shadow built-in agent tools")
         _validate_work_tool_contracts(tools)
 
@@ -345,7 +427,9 @@ class AgentLifecycle:
                     "Operate as one agent loop using exactly one structured action per round. User-facing conversational "
                     "output must only be delivered through the answer action; never use a file, terminal, web, or other "
                     "work tool as a delivery channel for the answer. Use node_lookup and recall_memory only when "
-                    "conversation memory is useful. Work-tool schemas are deferred: the available tool catalog is "
+                    "conversation memory is useful. Recalled graph edges expose compact confidence and source_kind; "
+                    "inspect provenance with memory_source_summary and open raw evidence with memory_source_read only "
+                    "when needed. Work-tool schemas are deferred: the available tool catalog is "
                     f"{catalog}. Call tool_manual for a tool before using that work tool. A final answer must include at "
                     "least one semantic memory mutation plan. The framework fixes the answer text before executing that "
                     "plan and releases the answer only after memory mutation succeeds. Existing-file actions may only "
@@ -359,9 +443,11 @@ class AgentLifecycle:
         available_tools = set(tools)
         activated_tools: set[str] = set()
         seen_progress: dict[str, set[str]] = {}
+        available_source_ids: set[int] = set()
 
         while True:
             aggregate_recall = self._aggregate_recall(recall_results)
+            recalled_node_ids, recalled_edge_ids = _recalled_ids(aggregate_recall)
             variants = [
                 answer_with_memory_schema(
                     aggregate_recall,
@@ -372,6 +458,15 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
+            if self.source_store is not None and (recalled_node_ids or recalled_edge_ids):
+                variants.append(
+                    _memory_source_summary_schema(
+                        node_ids=recalled_node_ids,
+                        edge_ids=recalled_edge_ids,
+                    )
+                )
+            if self.source_store is not None and available_source_ids:
+                variants.append(_memory_source_read_schema(available_source_ids))
             manual_targets = available_tools - activated_tools
             if manual_targets:
                 variants.append(_tool_manual_schema(manual_targets))
@@ -422,6 +517,37 @@ class AgentLifecycle:
                     raise ModelContractError("focus_node_id is outside actual lookup candidate scope")
                 result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
                 recall_results.append(result)
+            elif tool_name == "memory_source_summary":
+                if self.source_store is None:
+                    raise ModelContractError("memory_source_summary is unavailable")
+                keys = set(arguments)
+                if keys == {"node_id"}:
+                    node_id = int(arguments["node_id"])
+                    if node_id not in recalled_node_ids:
+                        raise ModelContractError("node_id is outside current recalled source scope")
+                    result = self.source_store.provenance_summary(user_id=context.user_id, node_id=node_id)
+                elif keys == {"edge_id"}:
+                    edge_id = int(arguments["edge_id"])
+                    if edge_id not in recalled_edge_ids:
+                        raise ModelContractError("edge_id is outside current recalled source scope")
+                    result = self.source_store.provenance_summary(user_id=context.user_id, edge_id=edge_id)
+                else:
+                    raise ModelContractError("memory_source_summary requires one recalled node_id or edge_id")
+                for source in result.get("sources", []):
+                    if "source_id" in source:
+                        available_source_ids.add(int(source["source_id"]))
+            elif tool_name == "memory_source_read":
+                if self.source_store is None:
+                    raise ModelContractError("memory_source_read is unavailable")
+                source_id = int(arguments["source_id"])
+                if source_id not in available_source_ids:
+                    raise ModelContractError("source_id is outside inspected provenance scope")
+                result = self.source_store.read_source(
+                    user_id=context.user_id,
+                    source_id=source_id,
+                    start=int(arguments.get("start", 1)),
+                    limit=int(arguments.get("limit", 8000)),
+                )
             elif tool_name == "tool_manual":
                 requested = str(arguments["tool"])
                 if requested not in manual_targets:
