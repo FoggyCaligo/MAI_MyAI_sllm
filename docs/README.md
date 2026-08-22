@@ -9,6 +9,7 @@
 ## Operations
 
 - `OPERATIONS.md` — SQLite WAL/SHM, 정상 종료, 개발 DB 초기화
+- `MODEL_TEST_GUIDE.md` — DB 초기화 후 실제 모델의 JSON 계약, 기억, 파일/웹/시장 tool, 재실행 후 회상을 순서대로 검증하는 수동 테스트 가이드
 - `RUNTIME.md` — 런타임 상세
 - `REBUILD.md` — 전체 재구축/복구 참고
 
