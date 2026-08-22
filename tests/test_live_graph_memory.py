@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 import pytest
 
 from mai.agent import AgentLifecycle, FunctionWorkTool
-from mai.graph import GraphRepository, GraphSourceStore
+from mai.graph import GraphRepository, GraphSourceStore, SourceRecord
 from mai.memory_agent_adapter import MemoryAgentAdapter
-from mai.memory_extension import AgentGraphMemoryExtension
 from mai.model import ModelContractError
+from mai.versioned_memory_extension import VersionedAgentGraphMemoryExtension
 
 
 @dataclass
@@ -39,7 +39,7 @@ class FakeModel:
 
 
 def _memory(repo, sources, vectors):
-    return AgentGraphMemoryExtension(
+    return VersionedAgentGraphMemoryExtension(
         repository=repo,
         source_store=sources,
         embedding=FakeEmbedding(vectors),
@@ -79,11 +79,7 @@ def test_query_recall_returns_candidates_without_opening_viewed_graph(tmp_path) 
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="hello")
 
         assert memory.answer_schema(state) is None
-        result = memory.execute(
-            tool="memory/recall",
-            arguments={"query": "Mai query"},
-            state=state,
-        )
+        result = memory.execute(tool="memory/recall", arguments={"query": "Mai query"}, state=state)
 
         assert result["candidates"][0]["node_id"] == node["node_id"]
         assert result["viewed_graph"] == {"nodes": [], "edges": []}
@@ -111,6 +107,7 @@ def test_node_recall_accumulates_one_hop_into_turn_viewed_graph(tmp_path) -> Non
             relation="A to B",
             weight=1.0,
             personal_relevance=0.5,
+            turn_id="seed",
         )
         memory = _memory(
             repo,
@@ -124,17 +121,9 @@ def test_node_recall_accumulates_one_hop_into_turn_viewed_graph(tmp_path) -> Non
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="hello")
 
         first = memory.execute(tool="memory/recall", arguments={"query": "find A"}, state=state)
-        memory.execute(
-            tool="memory/recall",
-            arguments={"node_id": first["candidates"][0]["node_id"]},
-            state=state,
-        )
+        memory.execute(tool="memory/recall", arguments={"node_id": first["candidates"][0]["node_id"]}, state=state)
         second = memory.execute(tool="memory/recall", arguments={"query": "find C"}, state=state)
-        opened = memory.execute(
-            tool="memory/recall",
-            arguments={"node_id": second["candidates"][0]["node_id"]},
-            state=state,
-        )
+        opened = memory.execute(tool="memory/recall", arguments={"node_id": second["candidates"][0]["node_id"]}, state=state)
 
         names = {node["name"] for node in opened["viewed_graph"]["nodes"]}
         assert {"A", "B", "C"}.issubset(names)
@@ -148,15 +137,7 @@ def test_each_new_node_requires_fresh_query_recall(tmp_path) -> None:
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
     try:
-        memory = _memory(
-            repo,
-            sources,
-            {
-                "사용자": [1.0, 0.0],
-                "first lookup": [0.0, 1.0],
-                "first node": [0.0, 1.0],
-            },
-        )
+        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "first lookup": [0.0, 1.0], "first node": [0.0, 1.0]})
         state = memory.begin_turn(user_id="u", turn_id="t1", user_text="source fact")
         source_id = next(iter(state.available_source_ids))
         memory.execute(tool="memory/recall", arguments={"query": "first lookup"}, state=state)
@@ -177,7 +158,7 @@ def test_each_new_node_requires_fresh_query_recall(tmp_path) -> None:
         repo.close()
 
 
-def test_edge_fix_applies_delta_promotes_relevance_and_disconnects(tmp_path) -> None:
+def test_edge_fix_appends_versions_and_disconnects_with_weight_zero(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
@@ -207,25 +188,7 @@ def test_edge_fix_applies_delta_promotes_relevance_and_disconnects(tmp_path) -> 
             state=state,
         )
         edge_id = created["edge"]["edge_id"]
-        mutations_before_rejection = dict(state.edge_mutations_by_node)
-
-        rejected = memory.execute(
-            tool="memory/generate/edge",
-            arguments={
-                "start_node_id": a["node_id"],
-                "end_node_id": b["node_id"],
-                "relation": "another wording",
-                "weight": 0.8,
-                "personal_relevance": "user_centered",
-                "source_ids": [source_id],
-            },
-            state=state,
-        )
-        assert rejected["status"] == "rejected"
-        assert rejected["reason"] == "directed_edge_already_exists"
-        assert rejected["existing_edge_id"] == edge_id
-        assert state.edge_mutations_by_node == mutations_before_rejection
-        assert edge_id in state.viewed_edges
+        first_version = created["edge"]["version_id"]
 
         updated = memory.execute(
             tool="memory/fix/edge",
@@ -239,6 +202,7 @@ def test_edge_fix_applies_delta_promotes_relevance_and_disconnects(tmp_path) -> 
             },
             state=state,
         )["edge"]
+        assert updated["version_id"] != first_version
         assert updated["weight"] == pytest.approx(0.9)
         assert updated["personal_relevance"] == 1.0
 
@@ -246,9 +210,79 @@ def test_edge_fix_applies_delta_promotes_relevance_and_disconnects(tmp_path) -> 
             tool="memory/fix/edge",
             arguments={"operation": "disconnect", "edge_id": edge_id, "source_ids": [source_id]},
             state=state,
-        )
-        assert disconnected["edge"]["weight"] == 0.0
+        )["edge"]
+        assert disconnected["weight"] == 0.0
+        assert disconnected["version_id"] != updated["version_id"]
         assert edge_id not in state.viewed_edges
+        versions = repo.edge_versions(user_id="u", edge_id=edge_id)
+        assert len(versions) == 3
+        assert versions[0]["weight"] == 0.0
+    finally:
+        sources.close()
+        repo.close()
+
+
+def test_same_turn_rewrite_cannot_be_used_as_past_memory_evidence(tmp_path) -> None:
+    path = tmp_path / "graph.db"
+    repo = GraphRepository(path)
+    sources = GraphSourceStore(path)
+    try:
+        a = repo.create_node(user_id="u", name="사용자")
+        b = repo.create_node(user_id="u", name="직업")
+        repo.set_node_embedding(user_id="u", node_id=a["node_id"], model="fake-embed", vector=[1.0, 0.0])
+        repo.set_node_embedding(user_id="u", node_id=b["node_id"], model="fake-embed", vector=[0.9, 0.1])
+        edge = repo.create_edge(
+            user_id="u",
+            start_node_id=a["node_id"],
+            end_node_id=b["node_id"],
+            relation="개발자",
+            weight=0.8,
+            personal_relevance=1.0,
+            turn_id="old-turn",
+        )
+        old_source = sources.ensure_sources(
+            user_id="u",
+            turn_id="old-turn",
+            records=[SourceRecord("user_message", "user", "나는 개발자야", {})],
+        )[0]
+        sources.link_sources(
+            user_id="u",
+            turn_id="old-turn",
+            source_ids=[old_source],
+            edge_version_id=edge["current_version_id"],
+        )
+
+        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "직업": [0.9, 0.1], "직업 기억": [1.0, 0.0]})
+        state = memory.begin_turn(user_id="u", turn_id="current-turn", user_text="예전엔 디자이너였잖아")
+        new_source = next(iter(state.available_source_ids))
+        candidates = memory.execute(tool="memory/recall", arguments={"query": "직업 기억"}, state=state)["candidates"]
+        for node_id in [a["node_id"], b["node_id"]]:
+            assert node_id in {item["node_id"] for item in candidates}
+            memory.execute(tool="memory/recall", arguments={"node_id": node_id}, state=state)
+
+        memory.execute(
+            tool="memory/fix/edge",
+            arguments={
+                "operation": "update",
+                "edge_id": edge["edge_id"],
+                "relation": "디자이너",
+                "weight_delta": 0.0,
+                "personal_relevance": "user_centered",
+                "source_ids": [new_source],
+            },
+            state=state,
+        )
+        history = memory.execute(
+            tool="memory/recall",
+            arguments={"edge_id": edge["edge_id"]},
+            state=state,
+        )
+
+        assert history["current_edge"]["relation"] == "디자이너"
+        assert history["current_edge"]["version_turn_id"] == "current-turn"
+        assert [item["relation"] for item in history["past_versions"]] == ["개발자"]
+        assert history["past_versions"][0]["source_ids"] == [old_source]
+        assert history["current_turn_versions_are_past_evidence"] is False
     finally:
         sources.close()
         repo.close()
@@ -270,12 +304,7 @@ def test_agent_first_round_exposes_only_vector_recall_then_opens_external_tools(
         model = FakeModel(
             [
                 {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past context"}},
-                {
-                    "action": "answer",
-                    "outcome": "completed",
-                    "content": "done",
-                    "graph_synced": True,
-                },
+                {"action": "answer", "outcome": "completed", "content": "done", "graph_synced": True},
             ]
         )
         agent = AgentLifecycle(
