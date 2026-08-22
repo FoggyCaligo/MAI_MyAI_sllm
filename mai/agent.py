@@ -65,6 +65,7 @@ class FunctionWorkTool:
     input_schema: dict[str, Any]
     handler: Callable[[dict[str, Any], WorkContext], Any]
     work_kind: str = "action"
+    action_scope: str = "generic"
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -130,6 +131,18 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
     }
 
 
+def _request_action_scope_schema(scopes: set[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", "scope"],
+        "properties": {
+            "action": {"const": "request_action_scope"},
+            "scope": {"type": "string", "enum": sorted(scopes)},
+        },
+    }
+
+
 def _combined_schema(variants: list[dict[str, Any]]) -> dict[str, Any]:
     if len(variants) == 1:
         return variants[0]
@@ -148,11 +161,22 @@ def _tool_kind(tool: WorkTool) -> str:
     raise ValueError(f"work tool {tool.name} must declare work_kind")
 
 
+def _action_scope(tool: WorkTool) -> str | None:
+    if _tool_kind(tool) != "action":
+        return None
+    scope = str(getattr(tool, "action_scope", "")).strip()
+    if not scope:
+        raise ValueError(f"action work tool {tool.name} must declare action_scope")
+    return scope
+
+
 def _validate_work_tool_contracts(tools: dict[str, WorkTool]) -> None:
     for tool in tools.values():
         kind = _tool_kind(tool)
         if kind == "inspection" and not callable(getattr(tool, "progress_keys", None)):
             raise ValueError(f"inspection work tool {tool.name} must implement progress_keys")
+        if kind == "action":
+            _action_scope(tool)
 
 
 def _progress_keys(tool: WorkTool, result: Any) -> set[str] | None:
@@ -288,12 +312,16 @@ class AgentLifecycle:
             {
                 "role": "system",
                 "content": (
-                    "Operate as one agent loop using exactly one structured action per round. Use node_lookup and "
-                    "recall_memory only when conversation memory is useful, use available work tools when needed, "
-                    "or produce the final answer directly. A final answer must include at least one semantic memory "
-                    "mutation plan. The framework fixes the answer text before executing that plan, and releases the "
-                    "answer only after memory mutation succeeds. Existing-file actions may only use paths established "
-                    "by current-turn attachments, file_create, or file/code discovery tool results."
+                    "Operate as one agent loop using exactly one structured action per round. User-facing conversational "
+                    "output must only be delivered through the answer action; never use a file, terminal, or other work "
+                    "tool as a delivery channel for the final conversational reply. Use node_lookup and recall_memory only "
+                    "when conversation memory is useful. Inspection tools may be used when information is needed. "
+                    "State-changing action tools are unavailable until you explicitly request their structural action "
+                    "scope with request_action_scope; request a scope only when carrying out an external side effect is "
+                    "actually part of the user's task. A final answer must include at least one semantic memory mutation "
+                    "plan. The framework fixes the answer text before executing that plan, and releases the answer only "
+                    "after memory mutation succeeds. Existing-file actions may only use paths established by current-turn "
+                    "attachments, file_create, or file/code discovery tool results."
                 ),
             },
             {"role": "user", "content": context.user_text},
@@ -302,6 +330,12 @@ class AgentLifecycle:
         allow_lookup = True
         available_tools = set(tools)
         seen_progress: dict[str, set[str]] = {}
+        enabled_action_scopes: set[str] = set()
+        all_action_scopes = {
+            scope
+            for tool in tools.values()
+            if (scope := _action_scope(tool)) is not None
+        }
 
         while True:
             aggregate_recall = self._aggregate_recall(recall_results)
@@ -310,15 +344,23 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
+            unopened_action_scopes = all_action_scopes - enabled_action_scopes
+            if unopened_action_scopes:
+                variants.append(_request_action_scope_schema(unopened_action_scopes))
+
             exposed_tools: set[str] = set()
             for name, tool in tools.items():
                 if name not in available_tools:
+                    continue
+                tool_scope = _action_scope(tool)
+                if tool_scope is not None and tool_scope not in enabled_action_scopes:
                     continue
                 tool_schema = _schema_for_context(tool, context)
                 if tool_schema is None:
                     continue
                 variants.append(tool_schema)
                 exposed_tools.add(name)
+
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
@@ -330,8 +372,22 @@ class AgentLifecycle:
                     raise ModelContractError("answer requires at least one memory mutation")
                 return content, mutations, events
 
+            if action.get("action") == "request_action_scope":
+                scope = str(action.get("scope", "")).strip()
+                if scope not in unopened_action_scopes:
+                    raise ModelContractError("requested action scope is unavailable")
+                enabled_action_scopes.add(scope)
+                messages.append({"role": "assistant", "content": str(action)})
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": f"Framework action scope granted for this turn: {scope}",
+                    }
+                )
+                continue
+
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
-                raise ModelContractError("agent phase requires one tool action or one answer")
+                raise ModelContractError("agent phase requires one tool action, one action-scope request, or one answer")
 
             tool_name = action.get("tool")
             arguments = action["arguments"]
