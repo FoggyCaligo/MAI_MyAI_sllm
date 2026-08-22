@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import locale
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +12,7 @@ from .file_tools import FileToolAuthorizationError, _tool_schema
 @dataclass(frozen=True, slots=True)
 class TerminalAccess:
     owner_id: str
+    encoding: str = "utf-8"
 
     def require_owner(self, context: WorkContext) -> None:
         if context.user_id != self.owner_id:
@@ -27,7 +27,8 @@ class TerminalCommandTool:
     description: str = (
         "Execute one explicit shell command on the host as the owner. The framework does not semantically "
         "filter or rewrite commands. OS, shell, filesystem, registry, process, and account permissions are the "
-        "execution boundary. Non-zero exit codes are returned explicitly with stdout and stderr."
+        "execution boundary. Non-zero exit codes are returned explicitly with stdout and stderr. Output decoding "
+        "uses the framework-configured terminal encoding; the model does not choose an encoding."
     )
 
     def schema(self) -> dict[str, Any]:
@@ -37,7 +38,6 @@ class TerminalCommandTool:
                 "command": {"type": "string", "minLength": 1},
                 "cwd": {"type": "string", "minLength": 1},
                 "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
-                "encoding": {"type": "string", "minLength": 1},
             },
             ["command"],
         )
@@ -55,7 +55,9 @@ class TerminalCommandTool:
 
         timeout_value = arguments.get("timeout_seconds")
         timeout = None if timeout_value is None else float(timeout_value)
-        encoding = str(arguments.get("encoding", locale.getpreferredencoding(False)))
+        encoding = str(self.access.encoding).strip()
+        if not encoding:
+            raise ValueError("terminal encoding must be non-empty")
 
         completed = subprocess.run(
             command,
@@ -78,5 +80,5 @@ class TerminalCommandTool:
         }
 
 
-def build_terminal_tools(*, owner_id: str) -> list[WorkTool]:
-    return [TerminalCommandTool(TerminalAccess(owner_id=owner_id))]
+def build_terminal_tools(*, owner_id: str, encoding: str = "utf-8") -> list[WorkTool]:
+    return [TerminalCommandTool(TerminalAccess(owner_id=owner_id, encoding=encoding))]
