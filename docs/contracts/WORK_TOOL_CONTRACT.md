@@ -21,7 +21,7 @@ tool_manual(tool=<registered tool name>)
 
 The manual result contains the selected tool's full description and argument schema. From the following round onward, that tool may be exposed as an executable action while it remains available under the other framework contracts.
 
-`tool_manual` activation does not bypass path provenance, inspection progress gating, ownership, or any other execution contract. For example, reading the manual for `file_update` does not expose an executable `file_update` schema until a concrete current-turn path has also been established.
+`tool_manual` activation does not bypass inspection progress gating, ownership, or any other execution contract. For mutating file actions such as `file_update`, it also does not bypass path provenance.
 
 User-facing conversational text must be delivered only through the final `answer` action. Work tools are not answer-delivery channels.
 
@@ -30,6 +30,10 @@ The framework does not inspect the user's natural-language text to decide which 
 ## Inspection tools
 
 Inspection tools obtain information without intentionally changing external state.
+
+An inspection tool may target a concrete existing path directly after its manual is activated. It does not require a preceding `file_tree`, `file_search`, attachment, or other path-discovery action merely to establish provenance. The tool itself remains responsible for checking that the path exists, has the expected type, is allowed for the authenticated role, and is accessible under the actual OS/filesystem permissions.
+
+This rule is structural: it applies because the tool declares `work_kind = "inspection"`, not because its name appears in a hardcoded list.
 
 An inspection tool must provide a callable `progress_keys(result)` contract. The returned keys identify concrete structural information obtained by the successful execution. The framework accumulates those keys for the current work phase.
 
@@ -77,6 +81,8 @@ Action failures remain visible. The framework does not silently retry, redirect,
 
 ## File path provenance
 
-The existing current-turn path provenance contract remains independent from manual activation and progress gating.
+Path provenance is reserved for side-effecting file actions rather than read-only inspection.
 
-Discovery and creation may establish concrete paths. Existing-file actions are only exposed for established paths, and execution re-checks the same scope. Manual activation answers whether the model has explicitly requested a tool's full contract. Progress gating answers whether an inspection tool is still obtaining new structural information.
+Discovery and creation may establish concrete paths. Mutating or export-style file actions that operate on an existing path remain exposed only for established paths, and execution re-checks the same scope. Read-only inspection does not require that prior provenance step; attempting to inspect a nonexistent or inaccessible path fails visibly in the underlying tool.
+
+Manual activation answers whether the model has explicitly requested a tool's full contract. Progress gating answers whether an inspection tool is still obtaining new structural information. Path provenance answers whether a side-effecting existing-file action is allowed to target a concrete path.
