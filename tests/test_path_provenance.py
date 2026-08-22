@@ -22,6 +22,11 @@ class ScriptedModel:
         return self.actions.pop(0)
 
 
+class NoScratchpadMemoryExecutor:
+    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
+        return frozenset()
+
+
 def _answer(content: str = "done") -> dict[str, Any]:
     return {
         "action": "answer",
@@ -49,7 +54,7 @@ def lifecycle(model: ScriptedModel, tools: list[Any]) -> AgentLifecycle:
         model=model,
         discovery=None,  # type: ignore[arg-type]
         recall=None,  # type: ignore[arg-type]
-        memory_executor=None,  # type: ignore[arg-type]
+        memory_executor=NoScratchpadMemoryExecutor(),  # type: ignore[arg-type]
         work_tools=tools,
     )
 
