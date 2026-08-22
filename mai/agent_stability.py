@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+from copy import deepcopy
 from typing import Any
 
 
@@ -13,9 +14,9 @@ AUTONOMY_RETRY_INSTRUCTION = (
 )
 
 GROUNDING_REVIEW_INSTRUCTION = (
-    "Review the proposed answer only against the supplied web evidence catalog. Do not add facts from memory. "
-    "Accept only when the factual claims that depend on web information are supported by selected evidence IDs. "
-    "If evidence is insufficient, request more evidence instead of accepting."
+    "Review the proposed answer only against the supplied external evidence catalog. Do not add facts from memory. "
+    "Accept only when the factual claims that depend on current external information are supported by selected "
+    "evidence IDs. If evidence is insufficient, request more evidence instead of accepting."
 )
 
 DUPLICATE_ACTION_INSTRUCTION = (
@@ -90,6 +91,41 @@ def remove_answer_from_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return _combine_variants(kept)
 
 
+def restrict_schema_to_grounding_tools(schema: dict[str, Any], tool_names: set[str] | frozenset[str]) -> dict[str, Any]:
+    allowed = {str(name) for name in tool_names}
+    if not allowed:
+        raise ValueError("grounding requested more evidence but no grounding-capable tools are configured")
+
+    kept: list[dict[str, Any]] = []
+    for variant in _schema_variants(schema):
+        if _variant_is_answer(variant):
+            continue
+        tool_name = _variant_tool_name(variant)
+        if tool_name in allowed:
+            kept.append(variant)
+            continue
+        if tool_name != "tool_manual":
+            continue
+
+        manual = deepcopy(variant)
+        properties = manual.get("properties")
+        arguments = properties.get("arguments") if isinstance(properties, dict) else None
+        argument_properties = arguments.get("properties") if isinstance(arguments, dict) else None
+        target = argument_properties.get("tool") if isinstance(argument_properties, dict) else None
+        enum = target.get("enum") if isinstance(target, dict) else None
+        if not isinstance(enum, list):
+            raise ValueError("tool_manual schema must expose an enum of available tool names")
+        filtered = [name for name in enum if isinstance(name, str) and name in allowed]
+        if not filtered:
+            continue
+        target["enum"] = filtered
+        kept.append(manual)
+
+    if not kept:
+        raise ValueError("grounding requested more evidence but no grounding-capable action remains")
+    return _combine_variants(kept)
+
+
 def duplicate_guard_message(*, tool: str, arguments: dict[str, Any]) -> dict[str, str]:
     return {
         "role": "system",
@@ -124,40 +160,40 @@ def autonomy_guard_message(*, rejected_content: str) -> dict[str, str]:
     }
 
 
+def _compact_external_evidence(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 4:
+        return str(value)[:1200]
+    if isinstance(value, dict):
+        return {
+            str(key): _compact_external_evidence(item, depth=depth + 1)
+            for key, item in list(value.items())[:30]
+            if key not in {"evidence_kind"}
+        }
+    if isinstance(value, list):
+        return [_compact_external_evidence(item, depth=depth + 1) for item in value[:12]]
+    if isinstance(value, str):
+        return value[:4000]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:1200]
+
+
 def web_evidence_catalog(messages: list[dict[str, str]]) -> dict[str, dict[str, Any]]:
+    """Build grounding evidence from structurally tagged external-evidence tool results."""
+
     catalog: dict[str, dict[str, Any]] = {}
     for event_index, event in enumerate(tool_events_from_messages(messages)):
-        tool = event.get("tool")
         result = event.get("result")
-        if tool not in {"latest_search", "web_research"} or not isinstance(result, dict):
+        if not isinstance(result, dict) or result.get("evidence_kind") != "web_evidence":
             continue
-
-        for result_index, row in enumerate(result.get("results", [])):
-            if not isinstance(row, dict):
-                continue
-            evidence_id = f"web:{event_index}:result:{result_index}"
-            catalog[evidence_id] = {
-                "evidence_id": evidence_id,
-                "kind": "search_snippet",
-                "title": str(row.get("title") or "")[:500],
-                "url": str(row.get("url") or "")[:1200],
-                "snippet": str(row.get("snippet") or "")[:1600],
-                "source": row.get("source"),
-                "published_at": row.get("published_at"),
-            }
-
-        for evidence_index, row in enumerate(result.get("evidence", [])):
-            if not isinstance(row, dict):
-                continue
-            evidence_id = f"web:{event_index}:page:{evidence_index}"
-            catalog[evidence_id] = {
-                "evidence_id": evidence_id,
-                "kind": "page_evidence",
-                "title": str(row.get("title") or "")[:500],
-                "url": str(row.get("url") or "")[:1200],
-                "content": str(row.get("content") or "")[:5000],
-                "truncated": bool(row.get("truncated")),
-            }
+        raw_evidence_id = result.get("evidence_id")
+        evidence_id = str(raw_evidence_id) if raw_evidence_id else f"external:{event_index}"
+        catalog[evidence_id] = {
+            "evidence_id": evidence_id,
+            "kind": "external_tool_evidence",
+            "tool": str(event.get("tool") or ""),
+            "data": _compact_external_evidence(result),
+        }
     return catalog
 
 
@@ -218,12 +254,13 @@ def grounding_retry_message(*, proposed_answer: str, reason: str) -> dict[str, s
         "role": "system",
         "content": json.dumps(
             {
-                "guard": "web_grounding_requires_more_evidence",
+                "guard": "external_grounding_requires_more_evidence",
                 "proposed_answer": proposed_answer[:2000],
                 "reason": reason[:1000],
                 "instruction": (
-                    "The proposed answer was not sufficiently grounded. The next structured action must gather or "
-                    "inspect additional evidence rather than return another answer immediately."
+                    "The proposed answer was not sufficiently grounded. The next structured action must use an "
+                    "available grounding-capable tool, or inspect that tool's manual, to gather additional external "
+                    "evidence rather than return another answer immediately."
                 ),
             },
             ensure_ascii=False,
