@@ -49,7 +49,7 @@ def prepare_model_messages(messages: list[dict[str, str]]) -> list[dict[str, str
     today = datetime.now().astimezone().date().isoformat()
     system_suffix = f"Current date: {today}."
     if context.working_root:
-        system_suffix += f" Current session working root: {context.working_root}."
+        system_suffix += f" Conversation working root: {context.working_root}."
     if current[0].get("role") == "system":
         current[0]["content"] = f"{current[0].get('content', '')}\n{system_suffix}"
     else:
