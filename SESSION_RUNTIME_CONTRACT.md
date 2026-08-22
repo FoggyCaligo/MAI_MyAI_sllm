@@ -17,7 +17,7 @@
 역할은 Framework가 authenticated user identity에서 구조적으로 결정한다.
 
 - `owner`: 전체 등록 work tool catalog
-- `trial`: `latest_search`, `web_research`, `market_snapshot` work tool만
+- `trial`: public web/market work-tool suite만
 
 `node_lookup`, `recall_memory`, final semantic memory mutation은 work-tool catalog와 별개의 core agent capability이므로 양쪽 역할에서 유지한다.
 
@@ -30,7 +30,7 @@ Trial restriction은 user text를 해석해서 route하지 않는다. Owner-only
 ```text
 POST /chat
   -> persistent chat_jobs row(status=pending)
-  -> daemon worker starts
+  -> detached worker starts
   -> immediate {job_id, status}
 
 GET /chat/jobs/{job_id}
@@ -66,11 +66,13 @@ Working root는 owner의 file/code discovery 편의 기준점이지 sandbox/secu
 
 - session 생성 시 `Path.cwd()`를 initial root로 저장한다.
 - owner lifecycle의 file discovery와 code discovery tool은 이 root를 default root로 사용한다.
-- 모델이 문자열만으로 working root를 선언할 수 없다.
-- 실제 성공한 `file_tree`, `file_search`, `file_text_search` result의 resolved `root`만 file working root 후보가 된다.
-- 실제 성공한 `code_index`, `code_search` result의 resolved `indexed_root`도 working root 후보가 된다.
+- 현재 working root는 짧은 structured runtime context로 모델에게 전달한다.
+- 모델이 일반 텍스트만으로 working root를 선언할 수 없다.
+- working root를 승격할 수 있는 tool은 `WorkingRootToolAdapter`로 성공 result의 root field를 명시적으로 선언한다.
+- Agent는 선언된 tool의 성공 event에만 top-level `working_root` metadata를 붙인다.
+- session 계층은 tool name이나 임의 result field를 해석하지 않고 해당 metadata만 반영한다.
 - 후보 root는 실제 존재하는 directory여야 한다.
-- terminal 등 unrelated tool result에 우연히 `root` 필드가 있어도 working root를 변경하지 않는다.
+- unrelated tool result에 우연히 `root` 같은 필드가 있어도 working root를 변경하지 않는다.
 - 같은 user의 queued job은 실행 직전 최신 persistent session을 다시 읽으므로 앞선 job이 승격한 root를 이어받는다.
 
 Working root는 기존 current-turn path provenance를 대체하지 않는다. Existing-file mutation은 여전히 현재 turn에 실제로 established된 concrete path만 사용한다. Owner의 절대경로/상위경로 접근도 인위적으로 금지하지 않으며 실제 OS/filesystem permission이 최종 경계다.
@@ -85,6 +87,7 @@ Working root는 기존 current-turn path provenance를 대체하지 않는다. E
 - foreign job -> not found in caller scope
 - lifecycle exception -> failed job with concrete exception type/message
 - process restart during job -> interrupted
+- invalid working-root metadata -> explicit path error
 - missing session row on working-root update -> explicit error
 
 Request-detached execution은 실패를 숨기는 fallback이 아니다. 실행 결과를 HTTP request 수명과 분리하여 persistent state로 보존하는 계층이다.
