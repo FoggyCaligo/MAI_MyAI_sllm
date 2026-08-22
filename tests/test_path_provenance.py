@@ -93,7 +93,7 @@ def test_file_search_establishes_path_and_exposes_file_read_enum(tmp_path: Path)
         ]
     )
 
-    answer, _, events = lifecycle(model, [FileSearchTool(access), FileReadTool(access)])._run_work_phase(
+    answer, _, events = lifecycle(model, [FileSearchTool(access), FileReadTool(access)])._run_agent_phase(
         context=context(), candidate_ids=set(), recall_results=[]
     )
 
@@ -112,7 +112,7 @@ def test_undiscovered_file_action_is_not_exposed(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ModelContractError, match="unavailable in the current work scope"):
-        lifecycle(model, [FileReadTool(access)])._run_work_phase(
+        lifecycle(model, [FileReadTool(access)])._run_agent_phase(
             context=context(), candidate_ids=set(), recall_results=[]
         )
     assert "file_read" not in _tool_names(model.schemas[0])
@@ -126,7 +126,7 @@ def test_seeded_attachment_exposes_read_and_update_for_exact_path(tmp_path: Path
     provenance.add(target)
     model = ScriptedModel([_answer()])
 
-    lifecycle(model, [FileReadTool(access), FileUpdateTool(access)])._run_work_phase(
+    lifecycle(model, [FileReadTool(access), FileUpdateTool(access)])._run_agent_phase(
         context=context(provenance=provenance), candidate_ids=set(), recall_results=[]
     )
 
@@ -151,7 +151,7 @@ def test_file_search_then_file_update_modifies_discovered_file(tmp_path: Path) -
         ]
     )
 
-    lifecycle(model, [FileSearchTool(access), FileUpdateTool(access)])._run_work_phase(
+    lifecycle(model, [FileSearchTool(access), FileUpdateTool(access)])._run_agent_phase(
         context=context(), candidate_ids=set(), recall_results=[]
     )
 
@@ -179,7 +179,7 @@ def test_file_create_registers_new_path_for_later_update(tmp_path: Path) -> None
         ]
     )
 
-    lifecycle(model, [FileCreateTool(access), FileUpdateTool(access)])._run_work_phase(
+    lifecycle(model, [FileCreateTool(access), FileUpdateTool(access)])._run_agent_phase(
         context=context(), candidate_ids=set(), recall_results=[]
     )
 
@@ -202,7 +202,7 @@ def test_file_delete_removes_path_from_next_round_schema(tmp_path: Path) -> None
         ]
     )
 
-    lifecycle(model, [FileDeleteTool(access), FileReadTool(access)])._run_work_phase(
+    lifecycle(model, [FileDeleteTool(access), FileReadTool(access)])._run_agent_phase(
         context=context(provenance=provenance), candidate_ids=set(), recall_results=[]
     )
 
