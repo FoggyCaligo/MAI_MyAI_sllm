@@ -21,7 +21,6 @@ Graph node/edge는 의미만 저장하되, 그 의미가 만들어진 원문 sou
 현재 `graph_provenance.source_text`처럼 원문 문자열 사본만 저장하는 방식에서 발전시켜, provenance가 stable source reference를 갖도록 한다.
 
 예정 source kinds:
-
 - `chat_message`: raw user/assistant message
 - `tool_operation`: file/terminal/code/document/image tool evidence
 - `web_evidence`: web search/research evidence
@@ -48,7 +47,12 @@ Level 3 — raw source
 
 Level 2와 Level 3은 모델이 필요할 때만 구조화된 source/provenance inspection을 통해 lazy하게 조회한다. Tool의 `tool_manual`과 같은 lazy-disclosure 원칙을 memory에도 적용한다.
 
-`confidence`는 모델이 임의로 정하는 문장 의미 점수가 아니라 Framework가 이미 알고 있는 구조적 신호를 compact하게 표현한 값이다. 후보 신호는 source kind/reliability, support count, conflict signal/count, stability, source availability/freshness처럼 구조적으로 확인 가능한 metadata다.
+`confidence`는 모델이 임의로 정하는 문장 의미 점수가 아니라 Framework가 이미 알고 있는 구조적 신호를 compact하게 표현한 값이다. 후보 신호는 다음과 같다.
+- source kind/reliability
+- support count
+- conflict signal/count
+- stability
+- source availability/freshness처럼 구조적으로 확인 가능한 metadata
 
 세부 계산식은 구현 전에 MK4의 trust/stability 사용 방식을 기준으로 검토한다. Framework가 문장 내용을 문자열/의미 휴리스틱으로 읽어서 confidence를 결정하지 않는다.
 
@@ -63,6 +67,11 @@ Assistant statement의 경우 `assistant가 그렇게 말했다`는 provenance �
 - tool result compaction
 - recent tool-operation context
 - current date system injection
+
+규칙:
+- 최근 대화는 raw text로 저장하고 최근 message만 model context에 주입한다.
+- graph는 final memory mutation에서 모델이 선택한 semantic relation만 저장한다.
+- tool result 원본은 runtime event에 보존하고 model-facing copy만 compact한다.
 
 ## Phase 2 — Agent stability parity
 
@@ -85,6 +94,10 @@ Web grounding은 실제 web evidence ID/reference와 final factual answer의 근
 - 다른 앱/탭을 보고 돌아와도 chat/job 상태가 끊기지 않는 request-detached execution
 - session별 file working context/root
 
+권한은 Framework가 구조적으로 강제한다. 모델이 user text를 보고 owner/trial을 추론하지 않는다.
+
+Session별 working directory/root는 file tool의 discovery root와 합쳐 하나의 working-context abstraction으로 관리한다.
+
 ## Phase 4 — Attachment and working memory
 
 필수/권장:
@@ -93,6 +106,12 @@ Web grounding은 실제 web evidence ID/reference와 final factual answer의 근
 - file/tool evidence → scratchpad working-memory carryover
 - final graph mutation에서 scratchpad 참고 가능
 - scratchpad source provenance
+
+첨부파일 자동 처리는 파일 종류라는 구조적 정보로 reader/analyzer capability를 결정하며 사용자 문장의 의미를 문자열 휴리스틱으로 route하지 않는다.
+
+Scratchpad는 현재 작업용 temporary state다. 모델이 tool evidence에서 중요한 내용을 scratchpad에 기록/갱신할 수 있어야 하며, final answer/memory plan을 만들 때 읽을 수 있어야 한다.
+
+Scratchpad 전체를 자동으로 durable graph에 저장하지 않는다. Final graph mutation에서 모델이 선택한 semantic facts만 graph에 들어간다. Graph provenance는 그 mutation이 참조한 scratchpad/source까지 역추적 가능해야 한다.
 
 ## Phase 5 — Graph provenance, confidence, and source inspection
 
@@ -103,6 +122,10 @@ Web grounding은 실제 web evidence ID/reference와 final factual answer의 근
 - raw-source lazy inspection
 - user/assistant/web/file/scratchpad source distinctions
 - support/conflict/stability structural metadata
+
+Graph recall이 원문 전체를 기본 payload에 포함하지 않도록 한다. 상세 evidence는 필요할 때만 연다.
+
+Graph source reference가 가리키는 raw source는 삭제되거나 유실될 수 있다. 이 경우 source inspection은 missing source failure를 명확히 반환하며 다른 텍스트를 대신 사용하지 않는다.
 
 ## Phase 6 — Remaining MK4 parity checks
 
