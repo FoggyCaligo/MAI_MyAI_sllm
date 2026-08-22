@@ -7,7 +7,7 @@ from threading import Lock, local
 from .repository import GraphRepository as BaseGraphRepository
 
 
-_GRAPH_SCHEMA_VERSION = "2"
+_GRAPH_SCHEMA_VERSION = "3"
 
 
 class GraphRepository(BaseGraphRepository):
@@ -19,10 +19,10 @@ class GraphRepository(BaseGraphRepository):
     application shutdown thread can close connections created by workers.
     WAL + busy_timeout remain the cross-thread/process coordination boundary.
 
-    The current graph schema is intentionally incompatible with the retired
-    post-answer memory schema. We do not migrate or reinterpret an old graph
-    database. If an existing graph database has no matching schema marker, the
-    repository fails visibly and requires that graph database to be deleted.
+    The current graph schema is intentionally incompatible with retired graph
+    schemas. We do not migrate or reinterpret an old graph database. If an
+    existing graph database has no matching schema marker, the repository fails
+    visibly and requires that graph database to be deleted.
     """
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
