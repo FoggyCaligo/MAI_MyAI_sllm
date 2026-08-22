@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from mai.agent import AgentLifecycle
-from mai.final_memory import FinalMemoryExecutor, answer_with_memory_schema
+from mai.final_memory import FinalMemoryExecutor
 from mai.graph import GraphDiscoveryService, GraphRecallService, GraphRepository
-from mai.memory_completion import AnswerOnlyModelAdapter, GraphCommitPhase, PostAnswerMemoryLifecycle
+from mai.memory_completion import GraphCommitPhase
 from mai.memory_revise import ReviseMemoryTool
 from mai.memory_write import WriteMemoryTool
 
@@ -42,24 +42,6 @@ def _executor(repo: GraphRepository) -> FinalMemoryExecutor:
         writer=WriteMemoryTool(repo),
         reviser=ReviseMemoryTool(repo),
     )
-
-
-def test_answer_only_adapter_removes_memory_plan_from_actual_model_schema() -> None:
-    delegate = FakeModel(
-        [{"action": "answer", "outcome": "completed", "content": "안녕"}]
-    )
-    adapter = AnswerOnlyModelAdapter(delegate)
-
-    result = adapter.structured(
-        messages=[{"role": "system", "content": "system"}],
-        schema=answer_with_memory_schema(None),
-    )
-
-    answer_schema = delegate.schemas[0]
-    assert "memory_mutations" not in answer_schema["properties"]
-    assert "memory_mutations" not in answer_schema["required"]
-    assert result["content"] == "안녕"
-    assert result["memory_mutations"][0]["kind"] == "deferred_graph_commit"
 
 
 def test_one_memory_mutation_finishes_without_a_done_round(tmp_path) -> None:
@@ -160,7 +142,7 @@ def test_current_turn_written_edge_is_immediately_revisable(tmp_path) -> None:
         repo.close()
 
 
-def test_post_answer_lifecycle_uses_one_extra_model_call_for_one_memory(tmp_path) -> None:
+def test_agent_lifecycle_adds_one_narrow_memory_call_after_answer(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
         model = FakeModel(
@@ -178,18 +160,13 @@ def test_post_answer_lifecycle_uses_one_extra_model_call_for_one_memory(tmp_path
                 },
             ]
         )
-        executor = _executor(repo)
-        base = AgentLifecycle(
+        lifecycle = AgentLifecycle(
             repository=repo,
             model=model,
             discovery=GraphDiscoveryService(repo),
             recall=GraphRecallService(repo),
-            memory_executor=executor,
+            memory_executor=_executor(repo),
             work_tools=[],
-        )
-        lifecycle = PostAnswerMemoryLifecycle(
-            delegate=base,
-            memory_completion=GraphCommitPhase(model=model, executor=executor),
         )
 
         result = lifecycle.run(
@@ -202,12 +179,20 @@ def test_post_answer_lifecycle_uses_one_extra_model_call_for_one_memory(tmp_path
         assert result["memory"]["mutation_count"] == 1
         assert len(model.schemas) == 2
 
-        first_answer_variant = next(
+        answer_variant = next(
             item
             for item in _variants(model.schemas[0])
             if item.get("properties", {}).get("action") == {"const": "answer"}
         )
-        assert "memory_mutations" not in first_answer_variant["properties"]
+        assert "memory_mutations" not in answer_variant["properties"]
+        assert "memory_mutations" not in answer_variant["required"]
         assert model.schemas[1]["properties"]["continue_memory"] == {"type": "boolean"}
+
+        memory_messages = model.messages_seen[1]
+        assert len(memory_messages) == 2
+        assert memory_messages[0]["role"] == "system"
+        assert memory_messages[1]["role"] == "user"
+        assert "반가워, 신재용." in memory_messages[1]["content"]
+        assert "내 이름은 신재용이야." in memory_messages[1]["content"]
     finally:
         repo.close()
