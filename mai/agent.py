@@ -1,21 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
-from .final_memory import FinalMemoryExecutor
-from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
-from .memory_completion import GraphCommitPhase
 from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
-
-
-_TOOL_SUMMARY_LIMIT = 120
-_BUILTIN_TOOL_NAMES = frozenset(
-    {"node_lookup", "recall_memory", "tool_manual", "memory_source_summary", "memory_source_read"}
-)
+from .tool_routes import ToolRouteRegistry, tool_route_schema
 
 
 class PathProvenanceError(PermissionError):
@@ -55,6 +48,52 @@ class WorkTool(Protocol):
     def schema(self) -> dict[str, Any]: ...
 
     def execute(self, *, arguments: dict[str, Any], context: "WorkContext") -> Any: ...
+
+
+class AgentCoreExtension(Protocol):
+    tool_names: frozenset[str]
+
+    def begin_turn(
+        self,
+        *,
+        user_id: str,
+        turn_id: str,
+        user_text: str,
+        attachment_evidence: Iterable[dict[str, Any]] = (),
+    ) -> Any: ...
+
+    def answer_schema(self, state: Any) -> dict[str, Any] | None: ...
+
+    def schemas(self, state: Any) -> list[dict[str, Any]]: ...
+
+    def external_actions_enabled(self, state: Any) -> bool: ...
+
+    def validate_answer(self, *, state: Any, action: dict[str, Any]) -> None: ...
+
+    def round_context(self, state: Any) -> str: ...
+
+    def execute(self, *, tool: str, arguments: dict[str, Any], state: Any) -> dict[str, Any]: ...
+
+    def graph_checkpoint_schema(self, state: Any) -> dict[str, Any]: ...
+
+    def graph_checkpoint_context(self, state: Any, *, final: bool) -> str: ...
+
+    def execute_graph_checkpoint(
+        self,
+        *,
+        state: Any,
+        action: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]: ...
+
+    def observe_work_tool_result(
+        self,
+        *,
+        state: Any,
+        source_kind: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,135 +141,9 @@ def _answer_schema() -> dict[str, Any]:
     }
 
 
-def _lookup_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["action", "tool", "arguments"],
-        "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "node_lookup"},
-            "arguments": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["queries"],
-                "properties": {
-                    "queries": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 3,
-                        "items": {"type": "string", "minLength": 1},
-                    }
-                },
-            },
-        },
-    }
-
-
-def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["action", "tool", "arguments"],
-        "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "recall_memory"},
-            "arguments": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["focus_node_id"],
-                "properties": {
-                    "focus_node_id": {
-                        "type": "integer",
-                        "enum": sorted(candidate_ids),
-                    }
-                },
-            },
-        },
-    }
-
-
-def _memory_source_summary_schema(*, node_ids: set[int], edge_ids: set[int]) -> dict[str, Any]:
-    targets: list[dict[str, Any]] = []
-    if node_ids:
-        targets.append(
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["node_id"],
-                "properties": {"node_id": {"type": "integer", "enum": sorted(node_ids)}},
-            }
-        )
-    if edge_ids:
-        targets.append(
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["edge_id"],
-                "properties": {"edge_id": {"type": "integer", "enum": sorted(edge_ids)}},
-            }
-        )
-    if not targets:
-        raise ValueError("memory source summary requires recalled graph targets")
-    target_schema = targets[0] if len(targets) == 1 else {"oneOf": targets}
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["action", "tool", "arguments"],
-        "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "memory_source_summary"},
-            "arguments": target_schema,
-        },
-    }
-
-
-def _memory_source_read_schema(source_ids: set[int]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["action", "tool", "arguments"],
-        "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "memory_source_read"},
-            "arguments": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["source_id"],
-                "properties": {
-                    "source_id": {"type": "integer", "enum": sorted(source_ids)},
-                    "start": {"type": "integer", "minimum": 1},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 12000},
-                },
-            },
-        },
-    }
-
-
-def _tool_manual_schema(tool_names: set[str]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["action", "tool", "arguments"],
-        "properties": {
-            "action": {"const": "tool"},
-            "tool": {"const": "tool_manual"},
-            "arguments": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["tool"],
-                "properties": {
-                    "tool": {
-                        "type": "string",
-                        "enum": sorted(tool_names),
-                    }
-                },
-            },
-        },
-    }
-
-
 def _combined_schema(variants: list[dict[str, Any]]) -> dict[str, Any]:
+    if not variants:
+        raise RuntimeError("agent has no available action schema")
     if len(variants) == 1:
         return variants[0]
     return {"oneOf": variants}
@@ -308,50 +221,20 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
     return tool.schema()
 
 
-def _compact_tool_summary(description: str) -> str:
-    one_line = " ".join(str(description or "").split())
-    if len(one_line) <= _TOOL_SUMMARY_LIMIT:
-        return one_line
-    return one_line[: _TOOL_SUMMARY_LIMIT - 3] + "..."
-
-
-def _compact_tool_catalog(tools: dict[str, WorkTool]) -> list[dict[str, str]]:
-    return [
-        {"name": name, "summary": _compact_tool_summary(tool.description)}
-        for name, tool in sorted(tools.items())
-    ]
-
-
-def _recalled_ids(recall_result: dict[str, Any] | None) -> tuple[set[int], set[int]]:
-    nodes: set[int] = set()
-    edges: set[int] = set()
-    if not recall_result:
-        return nodes, edges
-    for node in recall_result.get("nodes", []):
-        if "node_id" in node:
-            nodes.add(int(node["node_id"]))
-    for edge in recall_result.get("edges", []):
-        if "edge_id" in edge:
-            edges.add(int(edge["edge_id"]))
-    origin = recall_result.get("origin_path") or {}
-    for node in origin.get("nodes", []):
-        if "node_id" in node:
-            nodes.add(int(node["node_id"]))
-    for edge in origin.get("edges", []):
-        if "edge_id" in edge:
-            edges.add(int(edge["edge_id"]))
-    return nodes, edges
-
-
 @dataclass(slots=True)
 class AgentLifecycle:
-    repository: GraphRepository
+    """Generic external-tool Agent loop with periodic graph checkpoints."""
+
+    repository: Any
     model: StructuredModel
-    discovery: GraphDiscoveryService
-    recall: GraphRecallService
-    memory_executor: FinalMemoryExecutor
     work_tools: list[WorkTool] = field(default_factory=list)
-    source_store: GraphSourceStore | None = None
+    source_store: Any | None = None
+    core_extension: AgentCoreExtension | None = None
+    graph_checkpoint_main_rounds: int = 3
+
+    def __post_init__(self) -> None:
+        if int(self.graph_checkpoint_main_rounds) < 1:
+            raise ValueError("graph_checkpoint_main_rounds must be at least 1")
 
     def run(
         self,
@@ -360,57 +243,53 @@ class AgentLifecycle:
         user_text: str,
         turn_id: str | None = None,
         attachment_paths: Iterable[str | Path] = (),
+        discovered_paths: Iterable[str | Path] = (),
+        attachment_evidence: Iterable[dict[str, Any]] = (),
     ) -> dict[str, Any]:
         clean_user = str(user_text).strip()
         if not clean_user:
             raise ValueError("user_text must be non-empty")
+
         resolved_turn_id = str(turn_id or uuid4())
         path_provenance = PathProvenance()
         path_provenance.add_many(attachment_paths)
+        path_provenance.add_many(discovered_paths)
+        context = WorkContext(
+            user_id=user_id,
+            turn_id=resolved_turn_id,
+            user_text=clean_user,
+            path_provenance=path_provenance,
+        )
         turn_started(resolved_turn_id)
 
+        extension_state: Any | None = None
         try:
-            with phase(resolved_turn_id, "turn_initialization"):
-                self.repository.ensure_user_anchor(
-                    user_id=user_id,
-                    turn_id=resolved_turn_id,
-                    source_text="turn initialization",
-                )
-
-            recall_results: list[dict[str, Any]] = []
-            candidate_ids: set[int] = set()
-            with phase(resolved_turn_id, "agent"):
-                fixed_answer, work_events = self._run_agent_phase(
-                    context=WorkContext(
+            if self.core_extension is not None:
+                with phase(resolved_turn_id, "turn_initialization"):
+                    extension_state = self.core_extension.begin_turn(
                         user_id=user_id,
                         turn_id=resolved_turn_id,
                         user_text=clean_user,
-                        path_provenance=path_provenance,
-                    ),
-                    candidate_ids=candidate_ids,
-                    recall_results=recall_results,
+                        attachment_evidence=attachment_evidence,
+                    )
+            with phase(resolved_turn_id, "agent"):
+                answer, work_events = self._run_agent_phase(
+                    context=context,
+                    extension_state=extension_state,
                 )
-
-            aggregate_recall = self._aggregate_recall(recall_results)
-            with phase(resolved_turn_id, "memory_mutation"):
-                memory_result = GraphCommitPhase(model=self.model, executor=self.memory_executor).run(
-                    user_id=user_id,
-                    turn_id=resolved_turn_id,
-                    user_text=clean_user,
-                    fixed_answer=fixed_answer,
-                    recall_result=aggregate_recall,
-                )
-            if memory_result.get("status") != "done":
-                raise RuntimeError("graph commit did not complete")
-
             result = {
                 "status": "completed",
                 "turn_id": resolved_turn_id,
-                "answer": fixed_answer,
-                "discovery": {"status": "agent_driven"},
+                "answer": answer,
                 "work_events": work_events,
-                "memory": memory_result,
             }
+            if extension_state is not None and hasattr(extension_state, "events"):
+                result["memory"] = {
+                    "status": "agent_managed",
+                    "events": list(extension_state.events),
+                    "new_node_count": int(getattr(extension_state, "new_node_count", 0)),
+                    "edge_mutations_by_node": dict(getattr(extension_state, "edge_mutations_by_node", {})),
+                }
         except Exception:
             turn_failed(resolved_turn_id)
             raise
@@ -422,162 +301,175 @@ class AgentLifecycle:
         self,
         *,
         context: WorkContext,
-        candidate_ids: set[int],
-        recall_results: list[dict[str, Any]],
+        extension_state: Any | None,
     ) -> tuple[str, list[dict[str, Any]]]:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
-        if _BUILTIN_TOOL_NAMES & set(tools):
-            raise ValueError("work tools may not shadow built-in agent tools")
+        reserved = {"tool_route"}
+        if self.core_extension is not None:
+            reserved.update(self.core_extension.tool_names)
+        if reserved & set(tools):
+            raise ValueError("work tools may not shadow built-in/core-extension tools")
         _validate_work_tool_contracts(tools)
 
-        catalog = _compact_tool_catalog(tools)
+        routes = ToolRouteRegistry.for_tools(tools.values())
+        available_tools = set(tools)
+        activated_tools: set[str] = set()
+        seen_progress: dict[str, set[str]] = {}
+        top_routes = routes.top_level(available_tools=available_tools)
+
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (
-                    "Operate as one agent loop using exactly one structured action per round. User-facing conversational "
-                    "output must only be delivered through the answer action; never use a file, terminal, web, or other "
-                    "work tool as a delivery channel for the answer. Use node_lookup and recall_memory only when "
-                    "conversation memory is useful. Recalled graph edges expose compact confidence and source_kind; "
-                    "inspect provenance with memory_source_summary and open raw evidence with memory_source_read only "
-                    "when needed. Work-tool schemas are deferred: the available tool catalog is "
-                    f"{catalog}. Call tool_manual for a tool before using that work tool. Durable graph memory is committed "
-                    "after the answer is fixed, in a separate narrow memory loop, so do not plan graph mutations in the "
-                    "answer. Existing-file actions may only use paths established by current-turn attachments, file_create, "
-                    "or file/code discovery tool results."
+                    "Operate as one agent loop using exactly one structured action per main round. "
+                    "User-facing conversational output must only be delivered through the answer action. "
+                    "Graph memory tools remain available during main work when their schemas are exposed. "
+                    "The framework periodically interrupts main work with graph-only checkpoints; those checkpoints "
+                    "must complete before main work can resume or a final answer can be returned. "
+                    "External tools are lazily discovered through exact registered tool_route paths. "
+                    f"Initial external namespaces are {top_routes}. A leaf exposes /manual and /use. "
+                    "If you already know a leaf route, request its exact /use path directly. "
+                    "Invalid routes are reported as errors and are never guessed or autocorrected. "
+                    "Existing-file actions may only use paths established by current-turn attachments or "
+                    "file/code discovery/create results."
                 ),
             },
             {"role": "user", "content": context.user_text},
         ]
         events: list[dict[str, Any]] = []
-        allow_lookup = True
-        available_tools = set(tools)
-        activated_tools: set[str] = set()
-        seen_progress: dict[str, set[str]] = {}
-        available_source_ids: set[int] = set()
+        main_rounds_since_checkpoint = 0
 
         while True:
-            aggregate_recall = self._aggregate_recall(recall_results)
-            recalled_node_ids, recalled_edge_ids = _recalled_ids(aggregate_recall)
-            variants = [_answer_schema()]
-            if allow_lookup:
-                variants.append(_lookup_schema())
-            if candidate_ids:
-                variants.append(_recall_schema(candidate_ids))
-            if self.source_store is not None and (recalled_node_ids or recalled_edge_ids):
-                variants.append(
-                    _memory_source_summary_schema(
-                        node_ids=recalled_node_ids,
-                        edge_ids=recalled_edge_ids,
-                    )
-                )
-            if self.source_store is not None and available_source_ids:
-                variants.append(_memory_source_read_schema(available_source_ids))
-            manual_targets = available_tools - activated_tools
-            if manual_targets:
-                variants.append(_tool_manual_schema(manual_targets))
+            external_enabled = (
+                self.core_extension is None
+                or self.core_extension.external_actions_enabled(extension_state)
+            )
+            variants: list[dict[str, Any]] = []
+            if self.core_extension is None:
+                variants.append(_answer_schema())
+            else:
+                answer_schema = self.core_extension.answer_schema(extension_state)
+                if answer_schema is not None:
+                    variants.append(answer_schema)
+                variants.extend(self.core_extension.schemas(extension_state))
+            if tools and external_enabled:
+                variants.append(tool_route_schema())
 
             exposed_tools: set[str] = set()
-            for name in sorted(activated_tools):
-                if name not in available_tools:
-                    continue
-                tool = tools[name]
-                tool_schema = _schema_for_context(tool, context)
-                if tool_schema is None:
-                    continue
-                variants.append(tool_schema)
-                exposed_tools.add(name)
+            if external_enabled:
+                for name in sorted(activated_tools):
+                    if name not in available_tools:
+                        continue
+                    tool = tools[name]
+                    schema = _schema_for_context(tool, context)
+                    if schema is None:
+                        continue
+                    variants.append(schema)
+                    exposed_tools.add(name)
 
-            action = self.model.structured(messages=messages, schema=_combined_schema(variants))
+            request_messages = self._with_extension_context(
+                messages=messages,
+                extension_state=extension_state,
+            )
+            action = self.model.structured(messages=request_messages, schema=_combined_schema(variants))
+            main_rounds_since_checkpoint += 1
 
             if action.get("action") == "answer":
                 content = str(action.get("content", "")).strip()
                 if not content:
                     raise ModelContractError("answer content must be non-empty")
+                if self.core_extension is not None:
+                    self.core_extension.validate_answer(state=extension_state, action=action)
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+                        }
+                    )
+                    self._run_graph_checkpoint(
+                        messages=messages,
+                        extension_state=extension_state,
+                        final=True,
+                    )
                 return content, events
 
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
                 raise ModelContractError("agent phase requires one tool action or one answer")
 
             tool_name = action.get("tool")
-            arguments = action["arguments"]
             if not isinstance(tool_name, str):
-                raise ModelContractError("work tool name must be a string")
+                raise ModelContractError("tool name must be a string")
+            arguments = action["arguments"]
 
             tool_started(tool_name)
             event_metadata: dict[str, Any] = {}
-            if tool_name == "node_lookup":
-                if not allow_lookup:
-                    raise ModelContractError("node_lookup is unavailable after a no-progress lookup")
-                previous_candidate_ids = set(candidate_ids)
-                result = self.discovery.node_lookup(user_id=context.user_id, queries=arguments["queries"])
-                for node in result.get("matches", []):
-                    candidate_ids.add(int(node["node_id"]))
-                allow_lookup = candidate_ids != previous_candidate_ids
-            elif tool_name == "recall_memory":
-                focus = int(arguments["focus_node_id"])
-                if focus not in candidate_ids:
-                    raise ModelContractError("focus_node_id is outside actual lookup candidate scope")
-                result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
-                recall_results.append(result)
-            elif tool_name == "memory_source_summary":
-                if self.source_store is None:
-                    raise ModelContractError("memory_source_summary is unavailable")
-                keys = set(arguments)
-                if keys == {"node_id"}:
-                    node_id = int(arguments["node_id"])
-                    if node_id not in recalled_node_ids:
-                        raise ModelContractError("node_id is outside current recalled source scope")
-                    result = self.source_store.provenance_summary(user_id=context.user_id, node_id=node_id)
-                elif keys == {"edge_id"}:
-                    edge_id = int(arguments["edge_id"])
-                    if edge_id not in recalled_edge_ids:
-                        raise ModelContractError("edge_id is outside current recalled source scope")
-                    result = self.source_store.provenance_summary(user_id=context.user_id, edge_id=edge_id)
-                else:
-                    raise ModelContractError("memory_source_summary requires one recalled node_id or edge_id")
-                for source in result.get("sources", []):
-                    if "source_id" in source:
-                        available_source_ids.add(int(source["source_id"]))
-            elif tool_name == "memory_source_read":
-                if self.source_store is None:
-                    raise ModelContractError("memory_source_read is unavailable")
-                source_id = int(arguments["source_id"])
-                if source_id not in available_source_ids:
-                    raise ModelContractError("source_id is outside inspected provenance scope")
-                result = self.source_store.read_source(
-                    user_id=context.user_id,
-                    source_id=source_id,
-                    start=int(arguments.get("start", 1)),
-                    limit=int(arguments.get("limit", 8000)),
+
+            if self.core_extension is not None and tool_name in self.core_extension.tool_names:
+                result = self.core_extension.execute(
+                    tool=tool_name,
+                    arguments=arguments,
+                    state=extension_state,
                 )
-            elif tool_name == "tool_manual":
-                requested = str(arguments["tool"])
-                if requested not in manual_targets:
-                    raise ModelContractError("tool_manual target is unavailable or already activated")
-                tool = tools[requested]
-                activated_tools.add(requested)
-                result = {
-                    "tool": requested,
-                    "description": tool.description,
-                    "input_schema": tool.schema()["properties"]["arguments"],
-                }
+
+            elif tool_name == "tool_route":
+                if not external_enabled:
+                    raise ModelContractError("external tools are unavailable until the core extension opens them")
+                path = str(arguments.get("path", ""))
+                resolved = routes.resolve(path=path, available_tools=available_tools)
+                if resolved.get("status") == "leaf_action":
+                    requested = str(resolved["tool"])
+                    operation = str(resolved["operation"])
+                    tool = tools[requested]
+                    schema = _schema_for_context(tool, context)
+                    if schema is None:
+                        result = {
+                            "status": "error",
+                            "reason": "tool_unavailable_in_current_scope",
+                            "path": path,
+                            "tool": requested,
+                        }
+                    else:
+                        activated_tools.add(requested)
+                        result = {
+                            "status": "activated",
+                            "path": path,
+                            "tool": requested,
+                            "operation": operation,
+                        }
+                        if operation == "manual":
+                            result.update(
+                                {
+                                    "description": tool.description,
+                                    "input_schema": schema["properties"]["arguments"],
+                                }
+                            )
+                else:
+                    result = resolved
+
             elif tool_name in tools:
+                if not external_enabled:
+                    raise ModelContractError("external tools are unavailable until the core extension opens them")
                 if tool_name not in activated_tools:
-                    raise ModelContractError(f"{tool_name} requires tool_manual before execution")
+                    route = routes.route_for_tool(tool_name)
+                    raise ModelContractError(
+                        f"{tool_name} requires activation through {route.path}/manual or {route.path}/use"
+                    )
                 if tool_name not in exposed_tools:
                     raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
+
                 tool = tools[tool_name]
                 for required_path in _required_paths(tool, arguments):
                     context.path_provenance.require(required_path)
                 result = tool.execute(arguments=arguments, context=context)
                 context.path_provenance.add_many(_discovered_paths(tool, result))
                 context.path_provenance.remove_many(_removed_paths(tool, result))
+
                 root = _working_root(tool, result)
                 if root is not None:
                     event_metadata["working_root"] = root
+
                 keys = _progress_keys(tool, result)
                 if keys is not None:
                     prior = seen_progress.setdefault(tool_name, set())
@@ -586,41 +478,106 @@ class AgentLifecycle:
                     if not new_keys:
                         available_tools.discard(tool_name)
                         activated_tools.discard(tool_name)
+
+                if self.core_extension is not None:
+                    route = routes.route_for_tool(tool_name)
+                    source_id = self.core_extension.observe_work_tool_result(
+                        state=extension_state,
+                        source_kind=route.source_kind,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        result=result,
+                    )
+                    event_metadata["source_id"] = source_id
             else:
                 raise ModelContractError("unexpected tool in agent phase")
-            tool_completed(tool_name)
 
+            tool_completed(tool_name)
             event = {"tool": tool_name, "arguments": arguments, "result": result, **event_metadata}
             events.append(event)
-            messages.append({"role": "assistant", "content": str(action)})
-            messages.append({"role": "tool", "content": str(event)})
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Framework tool result: "
+                    + json.dumps(event, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
 
-    @staticmethod
-    def _aggregate_recall(results: list[dict[str, Any]]) -> dict[str, Any] | None:
-        if not results:
-            return None
+            if (
+                self.core_extension is not None
+                and main_rounds_since_checkpoint >= int(self.graph_checkpoint_main_rounds)
+            ):
+                self._run_graph_checkpoint(
+                    messages=messages,
+                    extension_state=extension_state,
+                    final=False,
+                )
+                main_rounds_since_checkpoint = 0
 
-        nodes: dict[int, dict[str, Any]] = {}
-        edges: dict[int, dict[str, Any]] = {}
-        origin_nodes: dict[int, dict[str, Any]] = {}
-        origin_edges: dict[int, dict[str, Any]] = {}
+    def _with_extension_context(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        extension_state: Any | None,
+    ) -> list[dict[str, str]]:
+        request_messages = list(messages)
+        if self.core_extension is None:
+            return request_messages
+        dynamic_context = self.core_extension.round_context(extension_state)
+        if not dynamic_context:
+            return request_messages
+        return [
+            request_messages[0],
+            {"role": "system", "content": dynamic_context},
+            *request_messages[1:],
+        ]
 
-        for result in results:
-            for node in result.get("nodes", []):
-                nodes[int(node["node_id"])] = node
-            for edge in result.get("edges", []):
-                edges[int(edge["edge_id"])] = edge
-            origin = result.get("origin_path") or {}
-            for node in origin.get("nodes", []):
-                origin_nodes[int(node["node_id"])] = node
-            for edge in origin.get("edges", []):
-                origin_edges[int(edge["edge_id"])] = edge
+    def _run_graph_checkpoint(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        extension_state: Any,
+        final: bool,
+    ) -> None:
+        if self.core_extension is None:
+            raise RuntimeError("graph checkpoint requires a core extension")
 
-        return {
-            "nodes": [nodes[key] for key in sorted(nodes)],
-            "edges": [edges[key] for key in sorted(edges)],
-            "origin_path": {
-                "nodes": [origin_nodes[key] for key in sorted(origin_nodes)],
-                "edges": [origin_edges[key] for key in sorted(origin_edges)],
-            },
-        }
+        while True:
+            checkpoint_context = self.core_extension.graph_checkpoint_context(
+                extension_state,
+                final=final,
+            )
+            request_messages = [
+                messages[0],
+                {"role": "system", "content": checkpoint_context},
+                *messages[1:],
+            ]
+            action = self.model.structured(
+                messages=request_messages,
+                schema=self.core_extension.graph_checkpoint_schema(extension_state),
+            )
+            complete, checkpoint_result = self.core_extension.execute_graph_checkpoint(
+                state=extension_state,
+                action=action,
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Framework graph checkpoint result: "
+                    + json.dumps(checkpoint_result, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
+            if complete:
+                return

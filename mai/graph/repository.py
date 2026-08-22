@@ -1,18 +1,31 @@
 from __future__ import annotations
 
+import json
 import sqlite3
-from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+
+
+MAX_EDGE_VERSIONS = 3
 
 
 class GraphScopeError(RuntimeError):
     """Raised when a graph object is missing or owned by another user."""
 
 
+class GraphConflictError(RuntimeError):
+    """Raised when a structural graph constraint prevents an operation."""
+
+
 class GraphRepository:
-    """SQLite persistence and structural reads for the semantic graph."""
+    """SQLite persistence for the semantic graph.
+
+    Directed edges are logical connections. Their mutable semantic state lives
+    only in ``graph_edge_versions``; ``graph_edges`` stores stable endpoints
+    and the current-version pointer. The latest three versions are retained.
+    This schema intentionally does not migrate retired graph schemas.
+    """
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         path = Path(db_path)
@@ -32,48 +45,72 @@ class GraphRepository:
                 node_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
                 name TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'concept' CHECK (kind IN ('concept','composite')),
+                is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE INDEX IF NOT EXISTS idx_graph_nodes_user
-            ON graph_nodes(user_id, node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_nodes_user_active
+            ON graph_nodes(user_id, is_active, node_id);
+
+            CREATE TABLE IF NOT EXISTS graph_node_embeddings (
+                user_id TEXT NOT NULL,
+                node_id INTEGER NOT NULL,
+                model TEXT NOT NULL,
+                dimension INTEGER NOT NULL CHECK (dimension > 0),
+                vector_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(user_id, node_id),
+                FOREIGN KEY(node_id) REFERENCES graph_nodes(node_id) ON DELETE CASCADE
+            );
 
             CREATE TABLE IF NOT EXISTS graph_edges (
                 edge_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL,
-                subject_node_id INTEGER NOT NULL,
-                relation TEXT NOT NULL,
-                object_node_id INTEGER NOT NULL,
-                support_count INTEGER NOT NULL DEFAULT 1 CHECK (support_count >= 1),
+                start_node_id INTEGER NOT NULL,
+                end_node_id INTEGER NOT NULL,
+                current_version_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(subject_node_id) REFERENCES graph_nodes(node_id),
-                FOREIGN KEY(object_node_id) REFERENCES graph_nodes(node_id),
-                UNIQUE(user_id, subject_node_id, relation, object_node_id)
+                CHECK (start_node_id != end_node_id),
+                FOREIGN KEY(start_node_id) REFERENCES graph_nodes(node_id),
+                FOREIGN KEY(end_node_id) REFERENCES graph_nodes(node_id),
+                UNIQUE(user_id, start_node_id, end_node_id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_subject
-            ON graph_edges(user_id, subject_node_id);
-            CREATE INDEX IF NOT EXISTS idx_graph_edges_object
-            ON graph_edges(user_id, object_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_start
+            ON graph_edges(user_id, start_node_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edges_end
+            ON graph_edges(user_id, end_node_id);
 
-            CREATE TABLE IF NOT EXISTS graph_provenance (
-                provenance_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS graph_edge_versions (
+                version_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                edge_id INTEGER NOT NULL,
+                relation TEXT NOT NULL,
+                weight REAL NOT NULL CHECK (weight >= 0.0 AND weight <= 1.0),
+                personal_relevance REAL NOT NULL CHECK (personal_relevance IN (0.5,1.0)),
                 turn_id TEXT NOT NULL,
-                source_role TEXT NOT NULL CHECK (source_role IN ('user', 'assistant', 'turn')),
-                source_text TEXT NOT NULL,
-                node_id INTEGER,
-                edge_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK ((node_id IS NOT NULL) != (edge_id IS NOT NULL)),
-                FOREIGN KEY(node_id) REFERENCES graph_nodes(node_id),
-                FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id)
+                FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id) ON DELETE CASCADE
             );
 
-            CREATE INDEX IF NOT EXISTS idx_graph_provenance_turn
-            ON graph_provenance(user_id, turn_id);
+            CREATE INDEX IF NOT EXISTS idx_graph_edge_versions_edge
+            ON graph_edge_versions(edge_id, version_id DESC);
+
+            CREATE TABLE IF NOT EXISTS graph_composite_members (
+                user_id TEXT NOT NULL,
+                composite_node_id INTEGER NOT NULL,
+                member_node_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(user_id, composite_node_id, member_node_id),
+                CHECK (composite_node_id != member_node_id),
+                FOREIGN KEY(composite_node_id) REFERENCES graph_nodes(node_id),
+                FOREIGN KEY(member_node_id) REFERENCES graph_nodes(node_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_graph_composite_member
+            ON graph_composite_members(user_id, member_node_id);
 
             CREATE TABLE IF NOT EXISTS graph_user_anchors (
                 user_id TEXT PRIMARY KEY,
@@ -103,64 +140,29 @@ class GraphRepository:
             raise ValueError(f"{field} must be non-empty")
         return clean
 
-    def create_node(
-        self,
-        *,
-        user_id: str,
-        name: str,
-        turn_id: str,
-        source_role: str,
-        source_text: str,
-    ) -> dict:
-        user_id = self._required(user_id, "user_id")
-        name = self._required(name, "name")
-        turn_id = self._required(turn_id, "turn_id")
-        source_text = self._required(source_text, "source_text")
-        with self.transaction() as conn:
-            cursor = conn.execute(
-                "INSERT INTO graph_nodes (user_id, name) VALUES (?, ?)",
-                (user_id, name),
-            )
-            node_id = int(cursor.lastrowid)
-            self._insert_provenance(
-                conn,
-                user_id=user_id,
-                turn_id=turn_id,
-                source_role=source_role,
-                source_text=source_text,
-                node_id=node_id,
-            )
-        return self.get_node(user_id=user_id, node_id=node_id)
+    @staticmethod
+    def _validate_kind(kind: str) -> str:
+        value = str(kind).strip()
+        if value not in {"concept", "composite"}:
+            raise ValueError("node kind must be concept or composite")
+        return value
 
-    def ensure_user_anchor(
-        self,
-        *,
-        user_id: str,
-        turn_id: str,
-        source_text: str,
-    ) -> dict:
-        """Return the account's canonical user anchor, creating it once when absent."""
+    def ensure_user_anchor(self, *, user_id: str) -> dict:
         user_id = self._required(user_id, "user_id")
-        turn_id = self._required(turn_id, "turn_id")
-        source_text = self._required(source_text, "source_text")
-
-        existing = self._conn.execute(
+        row = self._conn.execute(
             "SELECT node_id FROM graph_user_anchors WHERE user_id=?",
             (user_id,),
         ).fetchone()
-        if existing is not None:
-            return self.get_node(user_id=user_id, node_id=int(existing["node_id"]))
-
+        if row is not None:
+            return self.get_node(user_id=user_id, node_id=int(row["node_id"]))
         with self.transaction() as conn:
-            existing = conn.execute(
+            row = conn.execute(
                 "SELECT node_id FROM graph_user_anchors WHERE user_id=?",
                 (user_id,),
             ).fetchone()
-            if existing is not None:
-                node_id = int(existing["node_id"])
-            else:
+            if row is None:
                 cursor = conn.execute(
-                    "INSERT INTO graph_nodes (user_id, name) VALUES (?, ?)",
+                    "INSERT INTO graph_nodes (user_id, name, kind) VALUES (?, ?, 'concept')",
                     (user_id, "사용자"),
                 )
                 node_id = int(cursor.lastrowid)
@@ -168,22 +170,14 @@ class GraphRepository:
                     "INSERT INTO graph_user_anchors (user_id, node_id) VALUES (?, ?)",
                     (user_id, node_id),
                 )
-                self._insert_provenance(
-                    conn,
-                    user_id=user_id,
-                    turn_id=turn_id,
-                    source_role="turn",
-                    source_text=source_text,
-                    node_id=node_id,
-                )
+            else:
+                node_id = int(row["node_id"])
         return self.get_node(user_id=user_id, node_id=node_id)
 
     def get_user_anchor(self, *, user_id: str) -> dict:
-        user_id = self._required(user_id, "user_id")
         row = self._conn.execute(
             """
-            SELECT n.*
-            FROM graph_user_anchors a
+            SELECT n.* FROM graph_user_anchors a
             JOIN graph_nodes n ON n.node_id=a.node_id AND n.user_id=a.user_id
             WHERE a.user_id=?
             """,
@@ -193,348 +187,474 @@ class GraphRepository:
             raise GraphScopeError(f"canonical user anchor is not initialized for user {user_id!r}")
         return dict(row)
 
-    def create_or_reinforce_edge(
-        self,
-        *,
-        user_id: str,
-        subject_node_id: int,
-        relation: str,
-        object_node_id: int,
-        turn_id: str,
-        source_role: str,
-        source_text: str,
-    ) -> dict:
+    def create_node(self, *, user_id: str, name: str, kind: str = "concept") -> dict:
         user_id = self._required(user_id, "user_id")
-        relation = self._required(relation, "relation")
-        turn_id = self._required(turn_id, "turn_id")
-        source_text = self._required(source_text, "source_text")
+        name = self._required(name, "name")
+        kind = self._validate_kind(kind)
         with self.transaction() as conn:
-            self._require_owned_node(conn, user_id=user_id, node_id=subject_node_id)
-            self._require_owned_node(conn, user_id=user_id, node_id=object_node_id)
-            conn.execute(
-                """
-                INSERT INTO graph_edges (user_id, subject_node_id, relation, object_node_id)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id, subject_node_id, relation, object_node_id)
-                DO UPDATE SET
-                    support_count = graph_edges.support_count + 1,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, subject_node_id, relation, object_node_id),
+            cursor = conn.execute(
+                "INSERT INTO graph_nodes (user_id, name, kind) VALUES (?, ?, ?)",
+                (user_id, name, kind),
             )
-            row = conn.execute(
-                """
-                SELECT edge_id FROM graph_edges
-                WHERE user_id=? AND subject_node_id=? AND relation=? AND object_node_id=?
-                """,
-                (user_id, subject_node_id, relation, object_node_id),
-            ).fetchone()
-            edge_id = int(row["edge_id"])
-            self._insert_provenance(
-                conn,
-                user_id=user_id,
-                turn_id=turn_id,
-                source_role=source_role,
-                source_text=source_text,
-                edge_id=edge_id,
-            )
-        return self.get_edge(user_id=user_id, edge_id=edge_id)
+            node_id = int(cursor.lastrowid)
+        return self.get_node(user_id=user_id, node_id=node_id)
 
-    def rename_node(
+    def rename_node(self, *, user_id: str, node_id: int, name: str) -> dict:
+        name = self._required(name, "name")
+        with self.transaction() as conn:
+            self._require_owned_active_node(conn, user_id=user_id, node_id=node_id)
+            if self._is_user_anchor(conn, user_id=user_id, node_id=node_id):
+                raise GraphScopeError("canonical user anchor is framework-managed and cannot be renamed")
+            conn.execute(
+                "UPDATE graph_nodes SET name=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND node_id=?",
+                (name, user_id, int(node_id)),
+            )
+        return self.get_node(user_id=user_id, node_id=node_id)
+
+    def set_node_embedding(
         self,
         *,
         user_id: str,
         node_id: int,
-        name: str,
-        turn_id: str,
-        source_role: str,
-        source_text: str,
-    ) -> dict:
-        name = self._required(name, "name")
-        turn_id = self._required(turn_id, "turn_id")
-        source_text = self._required(source_text, "source_text")
+        model: str,
+        vector: list[float],
+    ) -> None:
+        model = self._required(model, "embedding model")
+        if not vector:
+            raise ValueError("embedding vector must be non-empty")
+        values = [float(value) for value in vector]
         with self.transaction() as conn:
-            self._require_owned_node(conn, user_id=user_id, node_id=node_id)
-            if self._is_user_anchor(conn, user_id=user_id, node_id=node_id):
-                raise GraphScopeError("canonical user anchor is framework-managed and cannot be renamed")
+            self._require_owned_active_node(conn, user_id=user_id, node_id=node_id)
             conn.execute(
-                "UPDATE graph_nodes SET name=?, updated_at=CURRENT_TIMESTAMP WHERE node_id=? AND user_id=?",
-                (name, node_id, user_id),
+                """
+                INSERT INTO graph_node_embeddings (user_id, node_id, model, dimension, vector_json)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, node_id) DO UPDATE SET
+                    model=excluded.model,
+                    dimension=excluded.dimension,
+                    vector_json=excluded.vector_json,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (user_id, int(node_id), model, len(values), json.dumps(values, separators=(",", ":"))),
             )
-            self._insert_provenance(
-                conn,
-                user_id=user_id,
-                turn_id=turn_id,
-                source_role=source_role,
-                source_text=source_text,
-                node_id=node_id,
-            )
-        return self.get_node(user_id=user_id, node_id=node_id)
 
-    def revise_edge(
+    def active_node_embeddings(self, *, user_id: str, model: str) -> list[dict]:
+        rows = self._conn.execute(
+            """
+            SELECT n.node_id, n.name, n.kind, e.dimension, e.vector_json
+            FROM graph_nodes n
+            JOIN graph_node_embeddings e ON e.user_id=n.user_id AND e.node_id=n.node_id
+            WHERE n.user_id=? AND n.is_active=1 AND e.model=?
+            ORDER BY n.node_id
+            """,
+            (user_id, model),
+        ).fetchall()
+        return [
+            {
+                "node_id": int(row["node_id"]),
+                "name": str(row["name"]),
+                "kind": str(row["kind"]),
+                "dimension": int(row["dimension"]),
+                "vector": [float(value) for value in json.loads(str(row["vector_json"]))],
+            }
+            for row in rows
+        ]
+
+    def create_edge(
+        self,
+        *,
+        user_id: str,
+        start_node_id: int,
+        end_node_id: int,
+        relation: str,
+        weight: float,
+        personal_relevance: float,
+        turn_id: str,
+    ) -> dict:
+        relation = self._required(relation, "relation")
+        turn_id = self._required(turn_id, "turn_id")
+        weight = float(weight)
+        relevance = float(personal_relevance)
+        if not 0.0 < weight <= 1.0:
+            raise ValueError("new edge weight must be > 0 and <= 1")
+        if relevance not in {0.5, 1.0}:
+            raise ValueError("personal_relevance must be 0.5 or 1.0")
+        if int(start_node_id) == int(end_node_id):
+            raise GraphConflictError("self-loop semantic edges are not allowed")
+        try:
+            with self.transaction() as conn:
+                self._require_owned_active_node(conn, user_id=user_id, node_id=start_node_id)
+                self._require_owned_active_node(conn, user_id=user_id, node_id=end_node_id)
+                cursor = conn.execute(
+                    "INSERT INTO graph_edges (user_id, start_node_id, end_node_id) VALUES (?, ?, ?)",
+                    (user_id, int(start_node_id), int(end_node_id)),
+                )
+                edge_id = int(cursor.lastrowid)
+                version_id = self._append_edge_version(
+                    conn,
+                    edge_id=edge_id,
+                    relation=relation,
+                    weight=weight,
+                    personal_relevance=relevance,
+                    turn_id=turn_id,
+                )
+                conn.execute(
+                    "UPDATE graph_edges SET current_version_id=? WHERE edge_id=?",
+                    (version_id, edge_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            existing = self.edge_for_pair(
+                user_id=user_id,
+                start_node_id=start_node_id,
+                end_node_id=end_node_id,
+            )
+            if existing is not None:
+                raise GraphConflictError(
+                    f"directed edge already exists for ordered pair; existing_edge_id={existing['edge_id']}"
+                ) from exc
+            raise
+        return self.get_edge(user_id=user_id, edge_id=edge_id)
+
+    def update_edge(
         self,
         *,
         user_id: str,
         edge_id: int,
-        subject_node_id: int,
         relation: str,
-        object_node_id: int,
+        weight: float,
+        personal_relevance: float,
         turn_id: str,
-        source_role: str,
-        source_text: str,
     ) -> dict:
         relation = self._required(relation, "relation")
         turn_id = self._required(turn_id, "turn_id")
-        source_text = self._required(source_text, "source_text")
+        weight = float(weight)
+        relevance = float(personal_relevance)
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError("edge weight must be between 0 and 1")
+        if relevance not in {0.5, 1.0}:
+            raise ValueError("personal_relevance must be 0.5 or 1.0")
         with self.transaction() as conn:
             self._require_owned_edge(conn, user_id=user_id, edge_id=edge_id)
-            self._require_owned_node(conn, user_id=user_id, node_id=subject_node_id)
-            self._require_owned_node(conn, user_id=user_id, node_id=object_node_id)
-            conn.execute(
-                """
-                UPDATE graph_edges
-                SET subject_node_id=?, relation=?, object_node_id=?, updated_at=CURRENT_TIMESTAMP
-                WHERE edge_id=? AND user_id=?
-                """,
-                (subject_node_id, relation, object_node_id, edge_id, user_id),
-            )
-            self._insert_provenance(
+            version_id = self._append_edge_version(
                 conn,
-                user_id=user_id,
+                edge_id=int(edge_id),
+                relation=relation,
+                weight=weight,
+                personal_relevance=relevance,
                 turn_id=turn_id,
-                source_role=source_role,
-                source_text=source_text,
-                edge_id=edge_id,
             )
+            conn.execute(
+                "UPDATE graph_edges SET current_version_id=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?",
+                (version_id, user_id, int(edge_id)),
+            )
+            self._prune_edge_versions(conn, edge_id=int(edge_id), keep=MAX_EDGE_VERSIONS)
         return self.get_edge(user_id=user_id, edge_id=edge_id)
+
+    @staticmethod
+    def _append_edge_version(
+        conn: sqlite3.Connection,
+        *,
+        edge_id: int,
+        relation: str,
+        weight: float,
+        personal_relevance: float,
+        turn_id: str,
+    ) -> int:
+        cursor = conn.execute(
+            """
+            INSERT INTO graph_edge_versions
+                (edge_id, relation, weight, personal_relevance, turn_id)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (int(edge_id), relation, float(weight), float(personal_relevance), turn_id),
+        )
+        return int(cursor.lastrowid)
+
+    @staticmethod
+    def _prune_edge_versions(conn: sqlite3.Connection, *, edge_id: int, keep: int) -> None:
+        rows = conn.execute(
+            "SELECT version_id FROM graph_edge_versions WHERE edge_id=? ORDER BY version_id DESC",
+            (int(edge_id),),
+        ).fetchall()
+        stale = [int(row["version_id"]) for row in rows[int(keep):]]
+        if stale:
+            placeholders = ",".join("?" for _ in stale)
+            conn.execute(
+                f"DELETE FROM graph_edge_versions WHERE version_id IN ({placeholders})",
+                tuple(stale),
+            )
+
+    def edge_for_pair(self, *, user_id: str, start_node_id: int, end_node_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT edge_id FROM graph_edges WHERE user_id=? AND start_node_id=? AND end_node_id=?",
+            (user_id, int(start_node_id), int(end_node_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.get_edge(user_id=user_id, edge_id=int(row["edge_id"]))
 
     def get_node(self, *, user_id: str, node_id: int) -> dict:
         row = self._conn.execute(
-            "SELECT * FROM graph_nodes WHERE node_id=? AND user_id=?",
-            (node_id, user_id),
+            "SELECT * FROM graph_nodes WHERE user_id=? AND node_id=?",
+            (user_id, int(node_id)),
         ).fetchone()
         if row is None:
-            raise GraphScopeError(f"node_id {node_id} is not available for user {user_id!r}")
+            raise GraphScopeError(f"node_id {node_id} is outside user graph scope")
         return dict(row)
 
     def get_edge(self, *, user_id: str, edge_id: int) -> dict:
         row = self._conn.execute(
-            "SELECT * FROM graph_edges WHERE edge_id=? AND user_id=?",
-            (edge_id, user_id),
+            """
+            SELECT e.edge_id, e.user_id, e.start_node_id, e.end_node_id,
+                   e.current_version_id, e.created_at, e.updated_at,
+                   v.relation, v.weight, v.personal_relevance,
+                   v.turn_id AS version_turn_id, v.created_at AS version_created_at
+            FROM graph_edges e
+            JOIN graph_edge_versions v ON v.version_id=e.current_version_id AND v.edge_id=e.edge_id
+            WHERE e.user_id=? AND e.edge_id=?
+            """,
+            (user_id, int(edge_id)),
         ).fetchone()
         if row is None:
-            raise GraphScopeError(f"edge_id {edge_id} is not available for user {user_id!r}")
+            raise GraphScopeError(f"edge_id {edge_id} is outside user graph scope")
         return dict(row)
 
-    def lookup_nodes(
+    def edge_versions(
         self,
         *,
         user_id: str,
-        queries: list[str],
-        after_node_id: int | None = None,
-        limit: int = 50,
-    ) -> dict:
-        """Lexically find actual user-owned node names containing any supplied query."""
-        user_id = self._required(user_id, "user_id")
-        if not 1 <= len(queries) <= 3:
-            raise ValueError("queries must contain between 1 and 3 items")
-        clean_queries = [self._required(query, "query") for query in queries]
-        if not 1 <= int(limit) <= 100:
-            raise ValueError("limit must be between 1 and 100")
-
-        cursor = int(after_node_id or 0)
-        conditions = " OR ".join("instr(name, ?) > 0" for _ in clean_queries)
-        rows = self._conn.execute(
-            f"""
-            SELECT *
-            FROM graph_nodes
-            WHERE user_id=? AND node_id>? AND ({conditions})
-            ORDER BY node_id
-            LIMIT ?
-            """,
-            (user_id, cursor, *clean_queries, int(limit) + 1),
-        ).fetchall()
-
-        has_more = len(rows) > int(limit)
-        visible_rows = rows[: int(limit)]
-        matches = [dict(row) for row in visible_rows]
-        next_cursor = int(visible_rows[-1]["node_id"]) if has_more and visible_rows else None
-        return {
-            "queries": clean_queries,
-            "matches": matches,
-            "has_more": has_more,
-            "next_cursor": next_cursor,
-        }
-
-    def one_hop_neighborhood(self, *, user_id: str, focus_node_id: int) -> dict:
-        """Return exactly the focus node and its directly incident edges/nodes."""
-        focus = self.get_node(user_id=user_id, node_id=focus_node_id)
-        edge_rows = self._conn.execute(
-            """
-            SELECT *
-            FROM graph_edges
-            WHERE user_id=? AND (subject_node_id=? OR object_node_id=?)
-            ORDER BY edge_id
-            """,
-            (user_id, focus_node_id, focus_node_id),
-        ).fetchall()
-        edges = [dict(row) for row in edge_rows]
-
-        node_ids = {focus_node_id}
-        for edge in edges:
-            node_ids.add(int(edge["subject_node_id"]))
-            node_ids.add(int(edge["object_node_id"]))
-
-        placeholders = ",".join("?" for _ in node_ids)
-        node_rows = self._conn.execute(
-            f"""
-            SELECT *
-            FROM graph_nodes
-            WHERE user_id=? AND node_id IN ({placeholders})
-            ORDER BY node_id
-            """,
-            (user_id, *sorted(node_ids)),
-        ).fetchall()
-        nodes = [dict(row) for row in node_rows]
-
-        return {
-            "depth": 1,
-            "focus_node_id": focus_node_id,
-            "focus": focus,
-            "nodes": nodes,
-            "edges": edges,
-        }
-
-    def origin_path_to_user_anchor(self, *, user_id: str, focus_node_id: int) -> dict:
-        """Return one deterministic shortest structural path from focus to user anchor."""
-        focus = self.get_node(user_id=user_id, node_id=focus_node_id)
-        anchor = self.get_user_anchor(user_id=user_id)
-        anchor_id = int(anchor["node_id"])
-
-        if focus_node_id == anchor_id:
-            return {
-                "available": True,
-                "focus_node_id": focus_node_id,
-                "anchor_node_id": anchor_id,
-                "nodes": [focus],
-                "edges": [],
-            }
-
-        queue: deque[int] = deque([focus_node_id])
-        visited = {focus_node_id}
-        parent: dict[int, tuple[int, int]] = {}
-
-        while queue:
-            current = queue.popleft()
-            incident = self._conn.execute(
-                """
-                SELECT *
-                FROM graph_edges
-                WHERE user_id=? AND (subject_node_id=? OR object_node_id=?)
-                ORDER BY edge_id
-                """,
-                (user_id, current, current),
-            ).fetchall()
-
-            neighbors: list[tuple[int, int]] = []
-            for row in incident:
-                edge = dict(row)
-                subject = int(edge["subject_node_id"])
-                object_id = int(edge["object_node_id"])
-                neighbor = object_id if subject == current else subject
-                neighbors.append((int(edge["edge_id"]), neighbor))
-
-            for edge_id, neighbor in sorted(neighbors, key=lambda item: (item[0], item[1])):
-                if neighbor in visited:
-                    continue
-                visited.add(neighbor)
-                parent[neighbor] = (current, edge_id)
-                if neighbor == anchor_id:
-                    queue.clear()
-                    break
-                queue.append(neighbor)
-
-        if anchor_id not in parent:
-            return {
-                "available": False,
-                "focus_node_id": focus_node_id,
-                "anchor_node_id": anchor_id,
-                "reason": "disconnected",
-                "nodes": [],
-                "edges": [],
-            }
-
-        reverse_nodes = [anchor_id]
-        reverse_edges: list[int] = []
-        current = anchor_id
-        while current != focus_node_id:
-            previous, edge_id = parent[current]
-            reverse_edges.append(edge_id)
-            reverse_nodes.append(previous)
-            current = previous
-
-        node_ids = list(reversed(reverse_nodes))
-        edge_ids = list(reversed(reverse_edges))
-        return {
-            "available": True,
-            "focus_node_id": focus_node_id,
-            "anchor_node_id": anchor_id,
-            "nodes": [self.get_node(user_id=user_id, node_id=node_id) for node_id in node_ids],
-            "edges": [self.get_edge(user_id=user_id, edge_id=edge_id) for edge_id in edge_ids],
-        }
-
-    def provenance_for_turn(self, *, user_id: str, turn_id: str) -> list[dict]:
+        edge_id: int,
+        exclude_turn_id: str | None = None,
+        limit: int = MAX_EDGE_VERSIONS,
+    ) -> list[dict]:
+        self.get_edge(user_id=user_id, edge_id=edge_id)
+        clauses = ["edge_id=?"]
+        params: list[object] = [int(edge_id)]
+        if exclude_turn_id is not None:
+            clauses.append("turn_id<>?")
+            params.append(str(exclude_turn_id))
+        params.append(int(limit))
         rows = self._conn.execute(
             """
-            SELECT * FROM graph_provenance
-            WHERE user_id=? AND turn_id=?
-            ORDER BY provenance_id
-            """,
-            (user_id, turn_id),
+            SELECT version_id, edge_id, relation, weight, personal_relevance, turn_id, created_at
+            FROM graph_edge_versions
+            WHERE """ + " AND ".join(clauses) + " ORDER BY version_id DESC LIMIT ?",
+            tuple(params),
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def _insert_provenance(
-        self,
-        conn: sqlite3.Connection,
-        *,
-        user_id: str,
-        turn_id: str,
-        source_role: str,
-        source_text: str,
-        node_id: int | None = None,
-        edge_id: int | None = None,
-    ) -> None:
-        if source_role not in {"user", "assistant", "turn"}:
-            raise ValueError("source_role must be user, assistant, or turn")
-        conn.execute(
+    def one_hop_neighborhood(self, *, user_id: str, focus_node_id: int) -> dict:
+        focus = self.get_node(user_id=user_id, node_id=focus_node_id)
+        if not int(focus["is_active"]):
+            raise GraphScopeError(f"node_id {focus_node_id} is inactive")
+        edge_rows = self._conn.execute(
             """
-            INSERT INTO graph_provenance
-                (user_id, turn_id, source_role, source_text, node_id, edge_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            SELECT e.edge_id FROM graph_edges e
+            JOIN graph_edge_versions v ON v.version_id=e.current_version_id AND v.edge_id=e.edge_id
+            JOIN graph_nodes s ON s.node_id=e.start_node_id AND s.user_id=e.user_id
+            JOIN graph_nodes d ON d.node_id=e.end_node_id AND d.user_id=e.user_id
+            WHERE e.user_id=? AND v.weight>0
+              AND s.is_active=1 AND d.is_active=1
+              AND (e.start_node_id=? OR e.end_node_id=?)
+            ORDER BY e.edge_id
             """,
-            (user_id, turn_id, source_role, source_text, node_id, edge_id),
-        )
+            (user_id, int(focus_node_id), int(focus_node_id)),
+        ).fetchall()
+        edges = [self.get_edge(user_id=user_id, edge_id=int(row["edge_id"])) for row in edge_rows]
+        node_ids = {int(focus_node_id)}
+        for edge in edges:
+            node_ids.add(int(edge["start_node_id"]))
+            node_ids.add(int(edge["end_node_id"]))
+        placeholders = ",".join("?" for _ in node_ids)
+        node_rows = self._conn.execute(
+            f"SELECT * FROM graph_nodes WHERE user_id=? AND is_active=1 AND node_id IN ({placeholders}) ORDER BY node_id",
+            (user_id, *sorted(node_ids)),
+        ).fetchall()
+        return {
+            "depth": 1,
+            "focus_node_id": int(focus_node_id),
+            "nodes": [dict(row) for row in node_rows],
+            "edges": edges,
+        }
+
+    def composite_members(self, *, user_id: str, composite_node_id: int) -> list[int]:
+        rows = self._conn.execute(
+            "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+            (user_id, int(composite_node_id)),
+        ).fetchall()
+        return [int(row["member_node_id"]) for row in rows]
+
+    def set_composite_members(self, *, user_id: str, composite_node_id: int, member_node_ids: list[int]) -> None:
+        members = list(dict.fromkeys(int(value) for value in member_node_ids))
+        if len(members) < 2:
+            raise ValueError("composite node requires at least two members")
+        if int(composite_node_id) in members:
+            raise GraphConflictError("composite node cannot contain itself")
+        with self.transaction() as conn:
+            composite = self._require_owned_active_node(conn, user_id=user_id, node_id=composite_node_id)
+            if str(composite["kind"]) != "composite":
+                raise GraphConflictError("only composite nodes may have structural members")
+            for member_id in members:
+                self._require_owned_active_node(conn, user_id=user_id, node_id=member_id)
+                if self._composite_reaches(conn, user_id=user_id, start_node_id=member_id, target_node_id=composite_node_id):
+                    raise GraphConflictError("composite membership cycle is not allowed")
+            conn.execute(
+                "DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+                (user_id, int(composite_node_id)),
+            )
+            conn.executemany(
+                "INSERT INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                [(user_id, int(composite_node_id), member_id) for member_id in members],
+            )
+
+    def merge_node(self, *, user_id: str, source_node_id: int, target_node_id: int) -> dict:
+        source_id = int(source_node_id)
+        target_id = int(target_node_id)
+        if source_id == target_id:
+            raise GraphConflictError("merge source and target must differ")
+        with self.transaction() as conn:
+            source = self._require_owned_active_node(conn, user_id=user_id, node_id=source_id)
+            target = self._require_owned_active_node(conn, user_id=user_id, node_id=target_id)
+            if self._is_user_anchor(conn, user_id=user_id, node_id=source_id):
+                raise GraphScopeError("canonical user anchor cannot be merged away")
+
+            source_members = [int(row["member_node_id"]) for row in conn.execute(
+                "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                (user_id, source_id),
+            ).fetchall()]
+            target_members = [int(row["member_node_id"]) for row in conn.execute(
+                "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                (user_id, target_id),
+            ).fetchall()]
+            if source_members:
+                if str(source["kind"]) != "composite":
+                    raise GraphConflictError("non-composite source unexpectedly has composite members")
+                if str(target["kind"]) != "composite":
+                    raise GraphConflictError("merging a composite node into a non-composite node would lose structural members")
+                merged_members = list(dict.fromkeys([*target_members, *source_members]))
+                if target_id in merged_members:
+                    raise GraphConflictError("node merge would create composite self-membership")
+                for member_id in merged_members:
+                    self._require_owned_active_node(conn, user_id=user_id, node_id=member_id)
+                    if self._composite_reaches(conn, user_id=user_id, start_node_id=member_id, target_node_id=target_id):
+                        raise GraphConflictError("node merge would create a composite membership cycle")
+            else:
+                merged_members = target_members
+
+            parent_rows = conn.execute(
+                "SELECT composite_node_id FROM graph_composite_members WHERE user_id=? AND member_node_id=? ORDER BY composite_node_id",
+                (user_id, source_id),
+            ).fetchall()
+            parent_ids = [int(row["composite_node_id"]) for row in parent_rows]
+            for composite_id in parent_ids:
+                if composite_id == target_id:
+                    raise GraphConflictError("node merge would create composite self-membership")
+                current_members = [int(row["member_node_id"]) for row in conn.execute(
+                    "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                    (user_id, composite_id),
+                ).fetchall()]
+                replaced = {target_id if member_id == source_id else member_id for member_id in current_members}
+                if len(replaced) < 2:
+                    raise GraphConflictError("node merge would leave a parent composite with fewer than two members")
+                if self._composite_reaches(conn, user_id=user_id, start_node_id=target_id, target_node_id=composite_id):
+                    raise GraphConflictError("node merge would create a composite membership cycle")
+
+            incident = conn.execute(
+                "SELECT * FROM graph_edges WHERE user_id=? AND (start_node_id=? OR end_node_id=?) ORDER BY edge_id",
+                (user_id, source_id, source_id),
+            ).fetchall()
+            for row in incident:
+                edge = dict(row)
+                new_start = target_id if int(edge["start_node_id"]) == source_id else int(edge["start_node_id"])
+                new_end = target_id if int(edge["end_node_id"]) == source_id else int(edge["end_node_id"])
+                if new_start == new_end:
+                    raise GraphConflictError("node merge would create a self-loop; fix/disconnect that edge first")
+                conflict = conn.execute(
+                    "SELECT edge_id FROM graph_edges WHERE user_id=? AND start_node_id=? AND end_node_id=? AND edge_id<>?",
+                    (user_id, new_start, new_end, int(edge["edge_id"])),
+                ).fetchone()
+                if conflict is not None:
+                    raise GraphConflictError("node merge would collide with another directed edge; fix/disconnect the conflict first")
+
+            for row in incident:
+                edge = dict(row)
+                new_start = target_id if int(edge["start_node_id"]) == source_id else int(edge["start_node_id"])
+                new_end = target_id if int(edge["end_node_id"]) == source_id else int(edge["end_node_id"])
+                conn.execute(
+                    "UPDATE graph_edges SET start_node_id=?, end_node_id=?, updated_at=CURRENT_TIMESTAMP WHERE edge_id=?",
+                    (new_start, new_end, int(edge["edge_id"])),
+                )
+
+            for composite_id in parent_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                    (user_id, composite_id, target_id),
+                )
+            conn.execute("DELETE FROM graph_composite_members WHERE user_id=? AND member_node_id=?", (user_id, source_id))
+
+            if source_members:
+                conn.execute("DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?", (user_id, target_id))
+                conn.executemany(
+                    "INSERT INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                    [(user_id, target_id, member_id) for member_id in merged_members],
+                )
+            conn.execute("DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?", (user_id, source_id))
+            conn.execute(
+                "UPDATE graph_nodes SET is_active=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND node_id=?",
+                (user_id, source_id),
+            )
+        return self.get_node(user_id=user_id, node_id=target_id)
 
     @staticmethod
-    def _require_owned_node(conn: sqlite3.Connection, *, user_id: str, node_id: int) -> None:
-        row = conn.execute("SELECT user_id FROM graph_nodes WHERE node_id=?", (node_id,)).fetchone()
-        if row is None or row["user_id"] != user_id:
-            raise GraphScopeError(f"node_id {node_id} is outside user graph scope")
+    def _require_owned_active_node(conn: sqlite3.Connection, *, user_id: str, node_id: int) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM graph_nodes WHERE node_id=? AND user_id=? AND is_active=1",
+            (int(node_id), user_id),
+        ).fetchone()
+        if row is None:
+            raise GraphScopeError(f"node_id {node_id} is missing, inactive, or outside user graph scope")
+        return row
 
     @staticmethod
-    def _require_owned_edge(conn: sqlite3.Connection, *, user_id: str, edge_id: int) -> None:
-        row = conn.execute("SELECT user_id FROM graph_edges WHERE edge_id=?", (edge_id,)).fetchone()
-        if row is None or row["user_id"] != user_id:
+    def _require_owned_edge(conn: sqlite3.Connection, *, user_id: str, edge_id: int) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM graph_edges WHERE edge_id=? AND user_id=?",
+            (int(edge_id), user_id),
+        ).fetchone()
+        if row is None:
             raise GraphScopeError(f"edge_id {edge_id} is outside user graph scope")
+        return row
 
     @staticmethod
     def _is_user_anchor(conn: sqlite3.Connection, *, user_id: str, node_id: int) -> bool:
-        row = conn.execute(
+        return conn.execute(
             "SELECT 1 FROM graph_user_anchors WHERE user_id=? AND node_id=?",
-            (user_id, node_id),
-        ).fetchone()
-        return row is not None
+            (user_id, int(node_id)),
+        ).fetchone() is not None
+
+    @staticmethod
+    def _composite_reaches(
+        conn: sqlite3.Connection,
+        *,
+        user_id: str,
+        start_node_id: int,
+        target_node_id: int,
+    ) -> bool:
+        pending = [int(start_node_id)]
+        seen: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if current == int(target_node_id):
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            rows = conn.execute(
+                "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+                (user_id, current),
+            ).fetchall()
+            pending.extend(int(row["member_node_id"]) for row in rows)
+        return False
 
     def close(self) -> None:
         self._conn.close()
