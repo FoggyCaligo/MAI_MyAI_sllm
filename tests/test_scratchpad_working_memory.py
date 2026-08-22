@@ -100,28 +100,7 @@ def test_evidence_tracking_tool_adds_turn_scoped_evidence_id() -> None:
     assert stored.payload["result"] == {"value": 7}
 
 
-def test_scratchpad_accepts_model_working_note_without_evidence() -> None:
-    evidence = TurnEvidenceRegistry()
-    scratchpads = ScratchpadRegistry(evidence=evidence)
-    tool = ScratchpadPutTool(scratchpads=scratchpads, evidence=evidence)
-
-    result = tool.execute(
-        arguments={
-            "content": "다음에는 config.py를 확인한다",
-            "sources": [{"kind": "model"}],
-        },
-        context=SimpleNamespace(turn_id="turn-1"),
-    )
-
-    assert result == {
-        "status": "stored",
-        "scratchpad_id": "scratchpad:1",
-        "content": "다음에는 config.py를 확인한다",
-        "sources": [{"kind": "model"}],
-    }
-
-
-def test_scratchpad_rejects_filename_as_evidence_id() -> None:
+def test_scratchpad_rejects_unknown_evidence_source() -> None:
     evidence = TurnEvidenceRegistry()
     scratchpads = ScratchpadRegistry(evidence=evidence)
     tool = ScratchpadPutTool(scratchpads=scratchpads, evidence=evidence)
@@ -129,27 +108,8 @@ def test_scratchpad_rejects_filename_as_evidence_id() -> None:
 
     with pytest.raises(ModelContractError, match="outside current-turn evidence scope"):
         tool.execute(
-            arguments={
-                "content": "README에서 확인한 내용",
-                "sources": [{"kind": "internal_file", "evidence_id": "README.md"}],
-            },
+            arguments={"content": "important", "source_ids": ["tool:99"]},
             context=context,
-        )
-
-
-def test_scratchpad_rejects_source_kind_that_disagrees_with_evidence() -> None:
-    evidence = TurnEvidenceRegistry()
-    scratchpads = ScratchpadRegistry(evidence=evidence)
-    evidence.register_attachment(
-        turn_id="turn-1",
-        item={"evidence_id": "attachment:1", "status": "loaded", "content": "first"},
-    )
-
-    with pytest.raises(ModelContractError, match="does not match evidence provenance"):
-        scratchpads.put(
-            turn_id="turn-1",
-            content="wrong provenance",
-            sources=[{"kind": "web", "evidence_id": "attachment:1"}],
         )
 
 
@@ -167,7 +127,7 @@ def test_scratchpad_update_replaces_content_sources_and_preserves_id() -> None:
     created = scratchpads.put(
         turn_id="turn-1",
         content="old fact",
-        sources=[{"kind": "internal_file", "evidence_id": "attachment:1"}],
+        source_ids=["attachment:1"],
     )
     tool = ScratchpadUpdateTool(scratchpads=scratchpads, evidence=evidence)
 
@@ -175,7 +135,7 @@ def test_scratchpad_update_replaces_content_sources_and_preserves_id() -> None:
         arguments={
             "scratchpad_id": created.scratchpad_id,
             "content": "revised fact",
-            "sources": [{"kind": "internal_file", "evidence_id": "attachment:2"}],
+            "source_ids": ["attachment:2"],
         },
         context=SimpleNamespace(turn_id="turn-1"),
     )
@@ -183,13 +143,17 @@ def test_scratchpad_update_replaces_content_sources_and_preserves_id() -> None:
     assert result["status"] == "updated"
     assert result["scratchpad_id"] == created.scratchpad_id
     assert result["content"] == "revised fact"
-    assert result["sources"] == [{"kind": "internal_file", "evidence_id": "attachment:2"}]
+    assert result["source_ids"] == ["attachment:2"]
     assert scratchpads.get(turn_id="turn-1", scratchpad_id=created.scratchpad_id).content == "revised fact"
 
 
 def test_scratchpad_update_rejects_unknown_current_turn_id() -> None:
     evidence = TurnEvidenceRegistry()
     scratchpads = ScratchpadRegistry(evidence=evidence)
+    evidence.register_attachment(
+        turn_id="turn-1",
+        item={"evidence_id": "attachment:1", "status": "loaded", "content": "first"},
+    )
     tool = ScratchpadUpdateTool(scratchpads=scratchpads, evidence=evidence)
 
     with pytest.raises(ModelContractError, match="outside current-turn scope"):
@@ -197,7 +161,7 @@ def test_scratchpad_update_rejects_unknown_current_turn_id() -> None:
             arguments={
                 "scratchpad_id": "scratchpad:99",
                 "content": "revised fact",
-                "sources": [{"kind": "model"}],
+                "source_ids": ["attachment:1"],
             },
             context=SimpleNamespace(turn_id="turn-1"),
         )
@@ -213,12 +177,12 @@ def test_final_memory_uses_only_selected_scratchpad_context() -> None:
     first = scratchpads.put(
         turn_id="turn-1",
         content="selected fact",
-        sources=[{"kind": "internal_file", "evidence_id": "attachment:1"}],
+        source_ids=["attachment:1"],
     )
     scratchpads.put(
         turn_id="turn-1",
         content="unselected fact",
-        sources=[{"kind": "model"}],
+        source_ids=["attachment:1"],
     )
     writer = CapturingWriter()
     executor = FinalMemoryExecutor(writer=writer, reviser=UnusedReviser(), scratchpads=scratchpads)
@@ -245,7 +209,6 @@ def test_final_memory_uses_only_selected_scratchpad_context() -> None:
     source_context = writer.scopes[0].source_context()
     assert "selected fact" in source_context
     assert "unselected fact" not in source_context
-    assert "internal_file" in source_context
     assert "attachment:1" in source_context
 
 

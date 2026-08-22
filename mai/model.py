@@ -15,8 +15,8 @@ from .agent_stability import (
     grounding_review_messages,
     grounding_review_schema,
     has_real_tool_failure,
+    remove_answer_from_schema,
     remove_tool_from_schema,
-    restrict_schema_to_grounding_tools,
     schema_has_tool_actions,
     successful_action_identities,
     web_evidence_catalog,
@@ -38,7 +38,6 @@ class OllamaModel:
     model: str
     base_url: str = "http://127.0.0.1:11434"
     timeout_seconds: float = 180.0
-    grounding_tool_names: frozenset[str] = frozenset()
 
     @classmethod
     def from_env(cls) -> "OllamaModel":
@@ -47,9 +46,6 @@ class OllamaModel:
             base_url=os.getenv("MAI_OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
             timeout_seconds=float(os.getenv("MAI_OLLAMA_TIMEOUT", "180")),
         )
-
-    def configure_grounding_tools(self, tool_names: set[str] | frozenset[str]) -> None:
-        self.grounding_tool_names = frozenset(str(name) for name in tool_names)
 
     def structured(self, *, messages: list[dict[str, str]], schema: dict[str, Any]) -> dict[str, Any]:
         prepared = prepare_model_messages(messages)
@@ -115,14 +111,11 @@ class OllamaModel:
                     if not isinstance(selected, list) or not selected:
                         raise ModelContractError("grounding accept requires evidence_ids")
                     if any(not isinstance(item, str) or item not in evidence_catalog for item in selected):
-                        raise ModelContractError("grounding review selected evidence outside actual external evidence scope")
+                        raise ModelContractError("grounding review selected evidence outside actual web evidence scope")
                     return result
                 if decision == "needs_more_evidence":
                     try:
-                        current_schema = restrict_schema_to_grounding_tools(
-                            current_schema,
-                            self.grounding_tool_names,
-                        )
+                        current_schema = remove_answer_from_schema(current_schema)
                     except ValueError as exc:
                         raise ModelContractError(str(exc)) from exc
                     current_messages = [
