@@ -13,6 +13,7 @@ from ddgs import DDGS
 
 from .agent import WorkContext, WorkTool
 from .file_tools import _tool_schema
+from .naver_market import NaverMarketProvider
 
 
 _MAX_SEARCH_RESULTS = 8
@@ -323,7 +324,7 @@ class MarketProviderSettings:
     @classmethod
     def from_env(cls) -> "MarketProviderSettings":
         return cls(
-            kr_equity=os.getenv("MAI_MARKET_KR_EQUITY_PROVIDER", "yahoo").strip(),
+            kr_equity=os.getenv("MAI_MARKET_KR_EQUITY_PROVIDER", "naver").strip(),
             global_equity=os.getenv("MAI_MARKET_GLOBAL_EQUITY_PROVIDER", "yahoo").strip(),
             index=os.getenv("MAI_MARKET_INDEX_PROVIDER", "yahoo").strip(),
             fx=os.getenv("MAI_MARKET_FX_PROVIDER", "yahoo").strip(),
@@ -344,53 +345,42 @@ class MarketSnapshotTool:
     settings: MarketProviderSettings
     name: str = "market_snapshot"
     description: str = (
-        "Look up or fetch a market snapshot using an explicit provider_scope chosen by the model. The framework "
-        "does not infer asset type from query strings or symbols. Lookup returns actual provider symbols; snapshot "
-        "requires one of those provider symbols (or another explicit provider symbol supplied by the model)."
+        "Look up current market quotes and valuation data such as price, market cap, PER, PBR, EPS, index, and FX."
     )
 
     def schema(self) -> dict[str, Any]:
         scope = {"type": "string", "enum": ["kr_equity", "global_equity", "index", "fx"]}
-        lookup = {
+        lookup_arguments = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["operation", "provider_scope", "query"],
+            "properties": {
+                "operation": {"const": "lookup"},
+                "provider_scope": scope,
+                "query": {"type": "string", "minLength": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+        }
+        snapshot_arguments = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["operation", "provider_scope", "provider_symbol"],
+            "properties": {
+                "operation": {"const": "snapshot"},
+                "provider_scope": scope,
+                "provider_symbol": {"type": "string", "minLength": 1},
+            },
+        }
+        return {
             "type": "object",
             "additionalProperties": False,
             "required": ["action", "tool", "arguments"],
             "properties": {
                 "action": {"const": "tool"},
                 "tool": {"const": self.name},
-                "arguments": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["operation", "provider_scope", "query"],
-                    "properties": {
-                        "operation": {"const": "lookup"},
-                        "provider_scope": scope,
-                        "query": {"type": "string", "minLength": 1},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 10},
-                    },
-                },
+                "arguments": {"oneOf": [lookup_arguments, snapshot_arguments]},
             },
         }
-        snapshot = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["action", "tool", "arguments"],
-            "properties": {
-                "action": {"const": "tool"},
-                "tool": {"const": self.name},
-                "arguments": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["operation", "provider_scope", "provider_symbol"],
-                    "properties": {
-                        "operation": {"const": "snapshot"},
-                        "provider_scope": scope,
-                        "provider_symbol": {"type": "string", "minLength": 1},
-                    },
-                },
-            },
-        }
-        return {"oneOf": [lookup, snapshot]}
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> dict[str, Any]:
         operation = str(arguments["operation"])
@@ -441,7 +431,10 @@ def build_web_market_tools(
     market_settings: MarketProviderSettings | None = None,
 ) -> list[WorkTool]:
     resolved_search = search_provider or DdgSearchProvider()
-    resolved_market_providers = market_providers or {"yahoo": YahooMarketProvider()}
+    resolved_market_providers = market_providers or {
+        "naver": NaverMarketProvider(),
+        "yahoo": YahooMarketProvider(),
+    }
     resolved_settings = market_settings or MarketProviderSettings.from_env()
     return [
         LatestSearchTool(resolved_search),
