@@ -6,11 +6,13 @@ from typing import Any
 import pytest
 
 from mai.agent import WorkContext
+from mai.naver_market import NaverMarketProvider
 from mai.web_tools import (
     LatestSearchTool,
     MarketProviderSettings,
     MarketSnapshotTool,
     WebResearchTool,
+    YahooMarketProvider,
     build_web_market_tools,
 )
 
@@ -67,6 +69,20 @@ def test_build_web_market_tools_exposes_three_tools() -> None:
         market_settings=MarketProviderSettings("fake", "fake", "fake", "fake"),
     )
     assert [tool.name for tool in tools] == ["latest_search", "web_research", "market_snapshot"]
+
+
+def test_default_market_providers_split_korean_equity_from_other_scopes(monkeypatch) -> None:
+    monkeypatch.delenv("MAI_MARKET_KR_EQUITY_PROVIDER", raising=False)
+    monkeypatch.delenv("MAI_MARKET_GLOBAL_EQUITY_PROVIDER", raising=False)
+    monkeypatch.delenv("MAI_MARKET_INDEX_PROVIDER", raising=False)
+    monkeypatch.delenv("MAI_MARKET_FX_PROVIDER", raising=False)
+
+    settings = MarketProviderSettings.from_env()
+    market_tool = build_web_market_tools()[2]
+
+    assert settings == MarketProviderSettings("naver", "yahoo", "yahoo", "yahoo")
+    assert isinstance(market_tool.providers["naver"], NaverMarketProvider)
+    assert isinstance(market_tool.providers["yahoo"], YahooMarketProvider)
 
 
 def test_latest_search_passes_model_query_unchanged() -> None:
@@ -166,9 +182,10 @@ def test_market_schema_has_explicit_lookup_and_snapshot_variants() -> None:
         settings=MarketProviderSettings("fake", "fake", "fake", "fake"),
     )
     schema = tool.schema()
-    assert len(schema["oneOf"]) == 2
+    argument_variants = schema["properties"]["arguments"]["oneOf"]
+    assert len(argument_variants) == 2
     operations = {
-        variant["properties"]["arguments"]["properties"]["operation"]["const"]
-        for variant in schema["oneOf"]
+        variant["properties"]["operation"]["const"]
+        for variant in argument_variants
     }
     assert operations == {"lookup", "snapshot"}
