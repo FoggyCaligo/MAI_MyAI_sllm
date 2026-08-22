@@ -34,9 +34,6 @@ from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
 
 
-_TRIAL_WORK_TOOLS = frozenset({"latest_search", "web_research", "market_snapshot"})
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     owner_id: str
@@ -161,29 +158,31 @@ class ChatHistoryStore:
                 self._conn.commit()
 
     def list_messages(self, *, user_id: str, limit: int = 200) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
-            SELECT message_id, turn_id, role, content, created_at
-            FROM chat_messages
-            WHERE user_id=?
-            ORDER BY message_id DESC
-            LIMIT ?
-            """,
-            (user_id, int(limit)),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT message_id, turn_id, role, content, created_at
+                FROM chat_messages
+                WHERE user_id=?
+                ORDER BY message_id DESC
+                LIMIT ?
+                """,
+                (user_id, int(limit)),
+            ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
     def list_tool_operations(self, *, user_id: str, limit: int = 5) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            """
-            SELECT event_json
-            FROM tool_operations
-            WHERE user_id=?
-            ORDER BY operation_id DESC
-            LIMIT ?
-            """,
-            (user_id, int(limit)),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT event_json
+                FROM tool_operations
+                WHERE user_id=?
+                ORDER BY operation_id DESC
+                LIMIT ?
+                """,
+                (user_id, int(limit)),
+            ).fetchall()
         operations: list[dict[str, Any]] = []
         for row in reversed(rows):
             parsed = json.loads(str(row["event_json"]))
@@ -193,7 +192,8 @@ class ChatHistoryStore:
         return operations
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
 
 def build_lifecycle(
@@ -215,17 +215,14 @@ def build_lifecycle(
     reviser = ReviseMemoryTool(repository)
     memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser)
     web_tools = build_web_market_tools()
-    if role == "owner":
-        work_tools = [
-            *build_file_tools(owner_id=owner_id, default_root=default_root),
-            *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
-            *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
-            *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
-            *build_code_tools(owner_id=owner_id),
-            *web_tools,
-        ]
-    else:
-        work_tools = [tool for tool in web_tools if tool.name in _TRIAL_WORK_TOOLS]
+    work_tools = web_tools if role == "trial" else [
+        *build_file_tools(owner_id=owner_id, default_root=default_root),
+        *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+        *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
+        *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
+        *build_code_tools(owner_id=owner_id, default_root=default_root),
+        *web_tools,
+    ]
     return AgentLifecycle(
         repository=repository,
         model=model,
@@ -237,22 +234,17 @@ def build_lifecycle(
 
 
 def _next_working_root(*, current_root: str, work_events: list[dict[str, Any]]) -> str:
-    current = str(Path(current_root).expanduser().resolve())
-    initial = str(Path.cwd().resolve())
-    candidate = current
+    candidate = str(Path(current_root).expanduser().resolve())
     for event in work_events:
-        tool = event.get("tool")
-        arguments = event.get("arguments")
         result = event.get("result")
-        if not isinstance(arguments, dict) or not isinstance(result, dict):
+        if not isinstance(result, dict):
             continue
-        root = result.get("root")
-        if not isinstance(root, str) or not root.strip():
+        raw_root = result.get("root") or result.get("indexed_root")
+        if not isinstance(raw_root, str) or not raw_root.strip():
             continue
-        if tool == "file_tree" and "root" in arguments:
-            candidate = str(Path(root).expanduser().resolve())
-        elif current == initial and tool in {"file_search", "file_text_search"} and "root" in arguments:
-            candidate = str(Path(root).expanduser().resolve())
+        resolved = Path(raw_root).expanduser().resolve()
+        if resolved.exists() and resolved.is_dir():
+            candidate = str(resolved)
     return candidate
 
 
@@ -279,6 +271,8 @@ def create_app(
     jobs = PersistentChatJobStore(resolved.chat_db_path)
     user_locks: dict[str, Lock] = {}
     user_locks_guard = Lock()
+    lifecycle_cache: dict[tuple[str, str], AgentLifecycle] = {}
+    lifecycle_cache_guard = Lock()
     static_index = Path(__file__).with_name("static") / "index.html"
 
     def lock_for(user_id: str) -> Lock:
@@ -305,13 +299,25 @@ def create_app(
     app.state.download_grants = grants
 
     def require_session(request: Request) -> SessionRecord:
-        session = sessions.get(request.cookies.get(resolved.session_cookie))
+        token = request.cookies.get(resolved.session_cookie)
+        session = sessions.get(token)
         if session is None:
             raise HTTPException(status_code=401, detail="authentication required")
+        expected_role = "owner" if session.user_id == resolved.owner_id else "trial"
+        if session.user_id not in resolved.allowed_user_ids or session.role != expected_role:
+            sessions.delete(token)
+            raise HTTPException(status_code=401, detail="session account is no longer authorized")
         return session
 
-    def validated_attachment_paths(user_id: str, values: list[str]) -> list[Path]:
-        user_root = (resolved.upload_dir / user_id).resolve()
+    @staticmethod
+    def require_owner(session: SessionRecord) -> None:
+        if session.role != "owner":
+            raise HTTPException(status_code=403, detail="owner-only capability")
+
+    def validated_attachment_paths(session: SessionRecord, values: list[str]) -> list[Path]:
+        if values:
+            require_owner(session)
+        user_root = (resolved.upload_dir / session.user_id).resolve()
         paths: list[Path] = []
         for value in values:
             path = Path(value).expanduser().resolve()
@@ -328,16 +334,23 @@ def create_app(
         if lifecycle is not None:
             return lifecycle
         assert repository is not None
-        return build_lifecycle(
-            repository=repository,
-            model=resolved_model,
-            owner_id=resolved.owner_id,
-            terminal_encoding=resolved.terminal_encoding,
-            download_grants=grants,
-            image_analyzer=resolved_image_analyzer,
-            role=session.role,
-            default_root=Path(session.working_root),
-        )
+        root_key = str(Path(session.working_root).expanduser().resolve()) if session.role == "owner" else ""
+        key = (session.role, root_key)
+        with lifecycle_cache_guard:
+            cached = lifecycle_cache.get(key)
+            if cached is None:
+                cached = build_lifecycle(
+                    repository=repository,
+                    model=resolved_model,
+                    owner_id=resolved.owner_id,
+                    terminal_encoding=resolved.terminal_encoding,
+                    download_grants=grants,
+                    image_analyzer=resolved_image_analyzer,
+                    role=session.role,
+                    default_root=Path(root_key) if root_key else None,
+                )
+                lifecycle_cache[key] = cached
+            return cached
 
     def execute_chat_job(*, job_id: str, session: SessionRecord, message: str, attachment_paths: list[Path]) -> None:
         try:
@@ -351,6 +364,7 @@ def create_app(
                 with use_model_context(
                     recent_messages=recent_messages,
                     recent_tool_operations=recent_tool_operations,
+                    working_root=session.working_root if session.role == "owner" else None,
                 ):
                     result = lifecycle_for(session).run(
                         user_id=session.user_id,
@@ -423,6 +437,7 @@ def create_app(
             samesite="strict",
             secure=request.url.scheme == "https",
             max_age=resolved.session_ttl_seconds,
+            path="/",
         )
         return response
 
@@ -431,7 +446,7 @@ def create_app(
         token = request.cookies.get(resolved.session_cookie)
         sessions.delete(token)
         response = JSONResponse({"status": "ok"})
-        response.delete_cookie(resolved.session_cookie)
+        response.delete_cookie(resolved.session_cookie, path="/")
         return response
 
     @app.get("/history")
@@ -442,6 +457,7 @@ def create_app(
     @app.post("/upload")
     async def upload(request: Request, files: list[UploadFile] = File(...)) -> dict[str, Any]:
         session = require_session(request)
+        require_owner(session)
         user_dir = resolved.upload_dir / session.user_id
         user_dir.mkdir(parents=True, exist_ok=True)
         uploaded: list[dict[str, Any]] = []
@@ -467,6 +483,7 @@ def create_app(
     @app.get("/download/{token}")
     def download(token: str, request: Request) -> FileResponse:
         session = require_session(request)
+        require_owner(session)
         grant = grants.get(token)
         if grant is None:
             raise HTTPException(status_code=404, detail="download token not found")
@@ -487,7 +504,7 @@ def create_app(
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="message must be non-empty")
-        attachment_paths = validated_attachment_paths(session.user_id, payload.attachments)
+        attachment_paths = validated_attachment_paths(session, payload.attachments)
         job = jobs.create(
             user_id=session.user_id,
             session_id=session.session_id,
