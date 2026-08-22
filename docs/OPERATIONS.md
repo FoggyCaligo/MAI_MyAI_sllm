@@ -55,15 +55,34 @@ A graceful ASGI shutdown runs Mai's FastAPI lifespan cleanup, which closes chat/
 
 Do not shut the server down in the middle of an important chat job unless interruption is intended. Persisted active jobs are intentionally marked `interrupted` after a server restart rather than being guessed as successful or silently replayed.
 
-## Resetting development data
+## Resetting the graph for this memory revision
 
 Chat continuity and graph memory are deliberately separate:
 
-- `chat.sqlite3`: raw conversation history, tool-operation history, sessions, persisted chat-job state.
-- `graph.sqlite3`: durable semantic nodes, edges, support counts, and provenance.
+- `chat.sqlite3`: raw conversation history, tool-operation history, sessions, and persisted chat-job state.
+- `graph.sqlite3`: current semantic nodes/edges, node embeddings, composite membership, and durable source links.
 
-During early development, if the graph schema/creation contract was previously producing duplicated semantic nodes, starting with a new `graph.sqlite3` after the fix is the cleanest validation path.
+The live-Agent graph-memory revision intentionally does **not** migrate the retired post-answer memory schema. The graph repository stores a schema-version marker and fails visibly when it sees an older graph database instead of guessing how to reinterpret it.
 
-You may keep `chat.sqlite3` if you want to preserve visible conversation history, but recent raw chat context can then mention facts that are no longer present in a newly reset graph. For the cleanest end-to-end memory test, reset both databases and start a fresh conversation.
+Before first running this revision against an existing development checkout:
+
+1. stop Mai completely;
+2. keep `chat.sqlite3` if visible conversation/session history should remain;
+3. delete only the graph database WAL set;
+4. restart Mai and let it create the new graph schema.
+
+With the default paths on PowerShell:
+
+```powershell
+Remove-Item data/graph.sqlite3 -ErrorAction SilentlyContinue
+Remove-Item data/graph.sqlite3-wal -ErrorAction SilentlyContinue
+Remove-Item data/graph.sqlite3-shm -ErrorAction SilentlyContinue
+```
+
+Do **not** delete `data/chat.sqlite3` for this schema reset unless chat/session/job history should also be erased.
+
+If `MAI_GRAPH_DB` points somewhere else, apply the same reset to that configured graph path and its `-wal` / `-shm` companions.
+
+After a graph-only reset, recent raw chat context can still mention facts that have not yet been rebuilt into the new graph. That difference is expected: raw chat history and semantic graph memory are separate stores.
 
 Always stop Mai before deleting or replacing SQLite database files.
