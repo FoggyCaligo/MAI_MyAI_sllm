@@ -48,6 +48,11 @@ class ScriptedModel:
         return self.actions.pop(0)
 
 
+class NoScratchpadMemoryExecutor:
+    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
+        return frozenset()
+
+
 @dataclass
 class FakeTool:
     name: str = "fake_action"
@@ -93,7 +98,7 @@ def _lifecycle(model: ScriptedModel, tool: FakeTool) -> AgentLifecycle:
         model=model,
         discovery=EmptyDiscovery(),  # type: ignore[arg-type]
         recall=EmptyRecall(),  # type: ignore[arg-type]
-        memory_executor=None,  # type: ignore[arg-type]
+        memory_executor=NoScratchpadMemoryExecutor(),  # type: ignore[arg-type]
         work_tools=[tool],
     )
 
