@@ -55,7 +55,6 @@ class GraphRepository(BaseGraphRepository):
         meta_table = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='graph_schema_meta'"
         ).fetchone()
-
         if existing_graph is not None:
             if meta_table is None:
                 raise RuntimeError("graph database uses a retired schema; delete MAI_GRAPH_DB and restart")
@@ -69,16 +68,12 @@ class GraphRepository(BaseGraphRepository):
                 )
             self._create_schema()
             return
-
         if meta_table is not None:
             raise RuntimeError(
                 "graph database schema marker exists without graph tables; delete MAI_GRAPH_DB and restart"
             )
-
         self._create_schema()
-        conn.execute(
-            "CREATE TABLE graph_schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-        )
+        conn.execute("CREATE TABLE graph_schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute(
             "INSERT INTO graph_schema_meta (key, value) VALUES ('schema_version', ?)",
             (_GRAPH_SCHEMA_VERSION,),
@@ -116,14 +111,47 @@ class GraphRepository(BaseGraphRepository):
         personal_relevance: float,
         turn_id: str = _DIRECT_TURN_ID,
     ) -> dict:
-        return super().update_edge(
-            user_id=user_id,
-            edge_id=edge_id,
-            relation=relation,
-            weight=weight,
-            personal_relevance=personal_relevance,
-            turn_id=turn_id,
-        )
+        relation = self._required(relation, "relation")
+        turn_id = self._required(turn_id, "turn_id")
+        weight = float(weight)
+        relevance = float(personal_relevance)
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError("edge weight must be between 0 and 1")
+        if relevance not in {0.5, 1.0}:
+            raise ValueError("personal_relevance must be 0.5 or 1.0")
+        with self.transaction() as conn:
+            self._require_owned_edge(conn, user_id=user_id, edge_id=edge_id)
+            version_id = self._append_edge_version(
+                conn,
+                edge_id=int(edge_id),
+                relation=relation,
+                weight=weight,
+                personal_relevance=relevance,
+                turn_id=turn_id,
+            )
+            conn.execute(
+                "UPDATE graph_edges SET current_version_id=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?",
+                (version_id, user_id, int(edge_id)),
+            )
+            rows = conn.execute(
+                "SELECT version_id, turn_id FROM graph_edge_versions WHERE edge_id=? ORDER BY version_id DESC",
+                (int(edge_id),),
+            ).fetchall()
+            kept_turns: set[str] = set()
+            stale: list[int] = []
+            for row in rows:
+                version_turn = str(row["turn_id"])
+                if version_turn in kept_turns or len(kept_turns) >= 3:
+                    stale.append(int(row["version_id"]))
+                    continue
+                kept_turns.add(version_turn)
+            if stale:
+                placeholders = ",".join("?" for _ in stale)
+                conn.execute(
+                    f"DELETE FROM graph_edge_versions WHERE version_id IN ({placeholders})",
+                    tuple(stale),
+                )
+        return self.get_edge(user_id=user_id, edge_id=edge_id)
 
     def close(self) -> None:
         with self._connections_lock:
