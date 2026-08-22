@@ -19,6 +19,7 @@ README 내용 변경은 `README.ko.md`를 먼저 수정한 뒤 영어 `README.md
 
 - `contracts/AGENT_STABILITY_CONTRACT.md` — action dedup, autonomy, web grounding
 - `contracts/GRAPH_SOURCE_CONTRACT.md` — graph source provenance, confidence, lazy raw-source inspection
+- `contracts/MEMORY_MODEL_CONTRACT.md` — 대화 모델과 post-answer graph memory 모델의 분리 및 `.env` 설정
 - `contracts/MODEL_CONTEXT_CONTRACT.md` — 최근 대화/tool context와 compaction
 - `contracts/SESSION_RUNTIME_CONTRACT.md` — owner/trial, persistent session/job, working root
 - `contracts/WEB_MARKET_CONTRACT.md` — web/market tool 계약
