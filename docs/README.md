@@ -12,7 +12,6 @@ README 내용 변경은 `README.ko.md`를 먼저 수정한 뒤 영어 `README.md
 ## Operations
 
 - `OPERATIONS.md` — SQLite WAL/SHM, 정상 종료, 개발 DB 초기화
-- `MODEL_TEST_GUIDE.md` — DB 초기화 후 실제 모델의 JSON 계약, 기억, 파일/웹/시장 tool, 재실행 후 회상을 순서대로 검증하는 수동 테스트 가이드
 - `RUNTIME.md` — 런타임 상세
 - `REBUILD.md` — 전체 재구축/복구 참고
 
@@ -26,4 +25,4 @@ README 내용 변경은 `README.ko.md`를 먼저 수정한 뒤 영어 `README.md
 - `contracts/WORKING_MEMORY_CONTRACT.md` — attachment evidence와 scratchpad
 - `contracts/WORK_TOOL_CONTRACT.md` — work-tool 공통 계약
 
-과거 PR 범위 메모, migration 완료 목록, roadmap 중복 메모처럼 현재 구현을 설명하지 않는 임시 문서는 유지하지 않는다.
+과거 PR 범위 메모, 일회성 테스트 순서, migration 완료 목록, roadmap 중복 메모처럼 현재 구현을 설명하지 않는 임시 문서는 유지하지 않는다.
