@@ -42,6 +42,22 @@ def use_model_context(
 
 
 @contextmanager
+def use_isolated_model_context() -> Iterator[None]:
+    """Temporarily suppress ambient conversation/tool/attachment context.
+
+    Dedicated narrow model phases use this when their complete evidence contract is
+    already carried in their explicit messages. The standard date suffix remains part
+    of ``prepare_model_messages``; ambient chat/tool/file context does not leak in.
+    """
+
+    token: Token[ModelContext] = _model_context.set(ModelContext())
+    try:
+        yield
+    finally:
+        _model_context.reset(token)
+
+
+@contextmanager
 def use_attachment_evidence(items: list[dict[str, Any]]) -> Iterator[None]:
     current = _model_context.get()
     token: Token[ModelContext] = _model_context.set(
