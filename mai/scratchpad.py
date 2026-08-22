@@ -204,6 +204,18 @@ class ScratchpadRegistry:
             self._counters.pop(str(turn_id), None)
 
 
+def _delegated_work_kind(delegate: Any) -> str:
+    explicit = getattr(delegate, "work_kind", None)
+    if explicit is not None:
+        kind = str(explicit)
+        if kind not in {"inspection", "action"}:
+            raise ValueError(f"work tool {delegate.name} has invalid work_kind: {kind}")
+        return kind
+    if callable(getattr(delegate, "progress_keys", None)):
+        return "inspection"
+    raise ValueError(f"work tool {delegate.name} must declare work_kind")
+
+
 @dataclass(slots=True)
 class EvidenceKindToolAdapter:
     """Declare the provenance kind produced by a work tool without naming heuristics."""
@@ -221,7 +233,7 @@ class EvidenceKindToolAdapter:
 
     @property
     def work_kind(self) -> str:
-        return str(self.delegate.work_kind)
+        return _delegated_work_kind(self.delegate)
 
     def schema(self) -> dict[str, Any]:
         return self.delegate.schema()
@@ -248,7 +260,7 @@ class EvidenceTrackingTool:
 
     @property
     def work_kind(self) -> str:
-        return str(self.delegate.work_kind)
+        return _delegated_work_kind(self.delegate)
 
     def schema(self) -> dict[str, Any]:
         return self.delegate.schema()
