@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 from time import sleep, time
 from typing import Iterable
 
@@ -14,7 +15,8 @@ from mai.web import RuntimeSettings, create_app
 class FakeLifecycle:
     answer: str = "응답"
     fail: bool = False
-    delay_seconds: float = 0.0
+    block_until: Event | None = None
+    started: Event | None = None
     calls: list[dict] = field(default_factory=list)
 
     def run(
@@ -33,8 +35,11 @@ class FakeLifecycle:
                 "attachment_paths": [str(Path(path).resolve()) for path in attachment_paths],
             }
         )
-        if self.delay_seconds:
-            sleep(self.delay_seconds)
+        if self.started is not None:
+            self.started.set()
+        if self.block_until is not None:
+            if not self.block_until.wait(timeout=3.0):
+                raise RuntimeError("test lifecycle release event was not set")
         if self.fail:
             raise RuntimeError("lifecycle failed")
         return {
@@ -110,10 +115,10 @@ def test_unknown_login_is_rejected(tmp_path) -> None:
         assert response.status_code == 403
 
 
-def test_upload_is_saved_under_authenticated_user_directory(tmp_path) -> None:
+def test_owner_upload_is_saved_under_authenticated_user_directory(tmp_path) -> None:
     app = create_app(settings=settings(tmp_path), lifecycle=FakeLifecycle(), model=FakeModel())
     with TestClient(app) as client:
-        login(client, "member")
+        login(client)
         response = client.post(
             "/upload",
             files={"files": ("../note.txt", b"hello", "text/plain")},
@@ -123,8 +128,20 @@ def test_upload_is_saved_under_authenticated_user_directory(tmp_path) -> None:
         path = Path(uploaded["path"])
         assert path.exists()
         assert path.read_bytes() == b"hello"
-        assert path.parent == (tmp_path / "uploads" / "member").resolve()
+        assert path.parent == (tmp_path / "uploads" / "secret-owner").resolve()
         assert path.name.endswith("_note.txt")
+
+
+def test_trial_upload_is_rejected_before_file_write(tmp_path) -> None:
+    app = create_app(settings=settings(tmp_path), lifecycle=FakeLifecycle(), model=FakeModel())
+    with TestClient(app) as client:
+        login(client, "member")
+        response = client.post(
+            "/upload",
+            files={"files": ("note.txt", b"hello", "text/plain")},
+        )
+        assert response.status_code == 403
+        assert not (tmp_path / "uploads" / "member").exists()
 
 
 def test_upload_limit_fails_and_partial_file_is_removed(tmp_path) -> None:
@@ -141,21 +158,25 @@ def test_upload_limit_fails_and_partial_file_is_removed(tmp_path) -> None:
 
 
 def test_chat_job_is_request_detached_and_records_completed_turn(tmp_path) -> None:
-    lifecycle = FakeLifecycle(answer="완료", delay_seconds=0.12)
+    started = Event()
+    release = Event()
+    lifecycle = FakeLifecycle(answer="완료", started=started, block_until=release)
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
     with TestClient(app) as client:
         login(client)
-        started_at = time()
         response = client.post("/chat", json={"message": "기억해", "attachments": []})
-        elapsed = time() - started_at
         assert response.status_code == 200
-        assert elapsed < 0.1
         job_id = response.json()["job_id"]
         assert response.json()["status"] == "pending"
+        assert started.wait(timeout=1.0)
 
         active = client.get("/chat/jobs").json()["jobs"]
         assert any(job["job_id"] == job_id for job in active)
+        running = client.get(f"/chat/jobs/{job_id}").json()
+        assert running["status"] == "running"
+        assert client.get("/history").json()["messages"] == []
 
+        release.set()
         job = wait_job(client, job_id)
         assert job["status"] == "completed"
         assert job["response"]["answer"] == "완료"
