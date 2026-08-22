@@ -236,8 +236,13 @@ class GraphCommitPhase:
             elif tool == "revise_memory":
                 if not revise_scope.eligible_edge_ids:
                     raise ModelContractError("revise_memory is unavailable without an eligible turn edge")
+                execution_scope = ReviseMemoryScope(
+                    turn=mutation_turn,
+                    eligible_node_ids=revise_scope.eligible_node_ids,
+                    eligible_edge_ids=revise_scope.eligible_edge_ids,
+                )
                 tool_started("revise_memory")
-                result = self.executor.reviser.execute(arguments=action["arguments"], scope=revise_scope)
+                result = self.executor.reviser.execute(arguments=action["arguments"], scope=execution_scope)
                 tool_completed("revise_memory")
             else:
                 raise ModelContractError("unexpected tool in graph commit phase")
