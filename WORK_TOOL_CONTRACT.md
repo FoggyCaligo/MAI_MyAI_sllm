@@ -2,6 +2,31 @@
 
 Mai work tools are structurally divided by execution behavior rather than by natural-language or tool-name heuristics.
 
+## Deferred tool manuals
+
+Mai follows the MK4 deferred-tool pattern: the model does not receive every work tool's full JSON schema on the first agent round.
+
+The agent always receives:
+
+- the final `answer` schema;
+- built-in memory actions (`node_lookup`, and `recall_memory` when candidates exist);
+- `tool_manual`;
+- a compact catalog containing each registered work tool's name and short purpose.
+
+A registered work tool's full action schema is exposed only after the model calls:
+
+```text
+tool_manual(tool=<registered tool name>)
+```
+
+The manual result contains the selected tool's full description and argument schema. From the following round onward, that tool may be exposed as an executable action while it remains available under the other framework contracts.
+
+`tool_manual` activation does not bypass path provenance, inspection progress gating, ownership, or any other execution contract. For example, reading the manual for `file_update` does not expose an executable `file_update` schema until a concrete current-turn path has also been established.
+
+User-facing conversational text must be delivered only through the final `answer` action. Work tools are not answer-delivery channels.
+
+The framework does not inspect the user's natural-language text to decide which tool to activate. The model chooses whether to read a tool manual.
+
 ## Inspection tools
 
 Inspection tools obtain information without intentionally changing external state.
@@ -52,6 +77,6 @@ Action failures remain visible. The framework does not silently retry, redirect,
 
 ## File path provenance
 
-The existing current-turn path provenance contract remains independent from progress gating.
+The existing current-turn path provenance contract remains independent from manual activation and progress gating.
 
-Discovery and creation may establish concrete paths. Existing-file actions are only exposed for established paths, and execution re-checks the same scope. Progress gating answers a different question: whether an inspection tool is still obtaining new structural information.
+Discovery and creation may establish concrete paths. Existing-file actions are only exposed for established paths, and execution re-checks the same scope. Manual activation answers whether the model has explicitly requested a tool's full contract. Progress gating answers whether an inspection tool is still obtaining new structural information.

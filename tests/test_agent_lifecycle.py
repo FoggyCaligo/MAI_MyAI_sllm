@@ -41,6 +41,10 @@ def _answer(content: str, *, object_endpoint: dict | None = None) -> dict:
     }
 
 
+def _manual(tool: str) -> dict:
+    return {"action": "tool", "tool": "tool_manual", "arguments": {"tool": tool}}
+
+
 def _node(repo: GraphRepository, name: str) -> dict:
     return repo.create_node(
         user_id="owner",
@@ -78,6 +82,16 @@ def _lifecycle(repo, model, tools=None, memory_executor=None):
     )
 
 
+def _tool_names(schema: dict) -> set[str]:
+    variants = schema.get("oneOf", [schema])
+    names = set()
+    for variant in variants:
+        tool = (variant.get("properties") or {}).get("tool") or {}
+        if "const" in tool:
+            names.add(str(tool["const"]))
+    return names
+
+
 def test_plain_answer_uses_one_model_round_and_mutates_memory_before_release(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
@@ -95,7 +109,7 @@ def test_plain_answer_uses_one_model_round_and_mutates_memory_before_release(tmp
         repo.close()
 
 
-def test_work_tool_is_selected_by_structured_action_and_result_returns_to_model(tmp_path) -> None:
+def test_work_tool_requires_manual_then_result_returns_to_model(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "g.db")
     try:
         calls = []
@@ -116,18 +130,20 @@ def test_work_tool_is_selected_by_structured_action_and_result_returns_to_model(
             handler=handler,
         )
         model = FakeModel([
+            _manual("double"),
             {"action": "tool", "tool": "double", "arguments": {"value": 4}},
             _answer("8"),
         ])
 
         result = _lifecycle(repo, model, [tool]).run(user_id="owner", user_text="double", turn_id="t1")
 
-        assert len(model.schemas) == 2
+        assert len(model.schemas) == 3
         assert calls == [({"value": 4}, "t1")]
-        assert result["work_events"][0]["result"] == {"value": 8}
-        first_schema = model.schemas[0]
-        variants = first_schema["oneOf"]
-        assert any(v.get("properties", {}).get("tool") == {"const": "double"} for v in variants)
+        assert [event["tool"] for event in result["work_events"]] == ["tool_manual", "double"]
+        assert result["work_events"][1]["result"] == {"value": 8}
+        assert "tool_manual" in _tool_names(model.schemas[0])
+        assert "double" not in _tool_names(model.schemas[0])
+        assert "double" in _tool_names(model.schemas[1])
     finally:
         repo.close()
 
@@ -218,7 +234,7 @@ def test_agent_loop_has_no_arbitrary_round_cap(tmp_path) -> None:
             },
             handler=handler,
         )
-        actions = [
+        actions = [_manual("echo_number")] + [
             {"action": "tool", "tool": "echo_number", "arguments": {"n": n}}
             for n in range(count)
         ] + [_answer("done")]
@@ -228,6 +244,6 @@ def test_agent_loop_has_no_arbitrary_round_cap(tmp_path) -> None:
 
         assert calls == list(range(count))
         assert result["answer"] == "done"
-        assert len(model.schemas) == count + 1
+        assert len(model.schemas) == count + 2
     finally:
         repo.close()

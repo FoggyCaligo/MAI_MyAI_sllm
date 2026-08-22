@@ -11,6 +11,9 @@ from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
 
 
+_TOOL_SUMMARY_LIMIT = 120
+
+
 class PathProvenanceError(PermissionError):
     """Raised when a file action targets a path not established by this turn."""
 
@@ -130,6 +133,29 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
     }
 
 
+def _tool_manual_schema(tool_names: set[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", "tool", "arguments"],
+        "properties": {
+            "action": {"const": "tool"},
+            "tool": {"const": "tool_manual"},
+            "arguments": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["tool"],
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "enum": sorted(tool_names),
+                    }
+                },
+            },
+        },
+    }
+
+
 def _combined_schema(variants: list[dict[str, Any]]) -> dict[str, Any]:
     if len(variants) == 1:
         return variants[0]
@@ -193,6 +219,20 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
     if callable(builder):
         return builder(set(context.path_provenance.paths))
     return tool.schema()
+
+
+def _compact_tool_summary(description: str) -> str:
+    one_line = " ".join(str(description or "").split())
+    if len(one_line) <= _TOOL_SUMMARY_LIMIT:
+        return one_line
+    return one_line[: _TOOL_SUMMARY_LIMIT - 3] + "..."
+
+
+def _compact_tool_catalog(tools: dict[str, WorkTool]) -> list[dict[str, str]]:
+    return [
+        {"name": name, "summary": _compact_tool_summary(tool.description)}
+        for name, tool in sorted(tools.items())
+    ]
 
 
 @dataclass(slots=True)
@@ -280,20 +320,23 @@ class AgentLifecycle:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
-        if {"node_lookup", "recall_memory"} & set(tools):
-            raise ValueError("work tools may not shadow built-in memory tools")
+        if {"node_lookup", "recall_memory", "tool_manual"} & set(tools):
+            raise ValueError("work tools may not shadow built-in agent tools")
         _validate_work_tool_contracts(tools)
 
+        catalog = _compact_tool_catalog(tools)
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (
-                    "Operate as one agent loop using exactly one structured action per round. Use node_lookup and "
-                    "recall_memory only when conversation memory is useful, use available work tools when needed, "
-                    "or produce the final answer directly. A final answer must include at least one semantic memory "
-                    "mutation plan. The framework fixes the answer text before executing that plan, and releases the "
-                    "answer only after memory mutation succeeds. Existing-file actions may only use paths established "
-                    "by current-turn attachments, file_create, or file/code discovery tool results."
+                    "Operate as one agent loop using exactly one structured action per round. User-facing conversational "
+                    "output must only be delivered through the answer action; never use a file, terminal, web, or other "
+                    "work tool as a delivery channel for the answer. Use node_lookup and recall_memory only when "
+                    "conversation memory is useful. Work-tool schemas are deferred: the available tool catalog is "
+                    f"{catalog}. Call tool_manual for a tool before using that work tool. A final answer must include at "
+                    "least one semantic memory mutation plan. The framework fixes the answer text before executing that "
+                    "plan and releases the answer only after memory mutation succeeds. Existing-file actions may only "
+                    "use paths established by current-turn attachments, file_create, or file/code discovery tool results."
                 ),
             },
             {"role": "user", "content": context.user_text},
@@ -301,6 +344,7 @@ class AgentLifecycle:
         events: list[dict[str, Any]] = []
         allow_lookup = True
         available_tools = set(tools)
+        activated_tools: set[str] = set()
         seen_progress: dict[str, set[str]] = {}
 
         while True:
@@ -310,15 +354,21 @@ class AgentLifecycle:
                 variants.append(_lookup_schema())
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
+            manual_targets = available_tools - activated_tools
+            if manual_targets:
+                variants.append(_tool_manual_schema(manual_targets))
+
             exposed_tools: set[str] = set()
-            for name, tool in tools.items():
+            for name in sorted(activated_tools):
                 if name not in available_tools:
                     continue
+                tool = tools[name]
                 tool_schema = _schema_for_context(tool, context)
                 if tool_schema is None:
                     continue
                 variants.append(tool_schema)
                 exposed_tools.add(name)
+
             action = self.model.structured(messages=messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
@@ -353,7 +403,20 @@ class AgentLifecycle:
                     raise ModelContractError("focus_node_id is outside actual lookup candidate scope")
                 result = self.recall.recall_one_depth(user_id=context.user_id, focus_node_id=focus)
                 recall_results.append(result)
+            elif tool_name == "tool_manual":
+                requested = str(arguments["tool"])
+                if requested not in manual_targets:
+                    raise ModelContractError("tool_manual target is unavailable or already activated")
+                tool = tools[requested]
+                activated_tools.add(requested)
+                result = {
+                    "tool": requested,
+                    "description": tool.description,
+                    "input_schema": tool.schema()["properties"]["arguments"],
+                }
             elif tool_name in tools:
+                if tool_name not in activated_tools:
+                    raise ModelContractError(f"{tool_name} requires tool_manual before execution")
                 if tool_name not in exposed_tools:
                     raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
                 tool = tools[tool_name]
@@ -369,6 +432,7 @@ class AgentLifecycle:
                     prior.update(keys)
                     if not new_keys:
                         available_tools.discard(tool_name)
+                        activated_tools.discard(tool_name)
             else:
                 raise ModelContractError("unexpected tool in agent phase")
             tool_completed(tool_name)
