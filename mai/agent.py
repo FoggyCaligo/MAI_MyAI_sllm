@@ -378,20 +378,6 @@ class AgentLifecycle:
             messages.append({"role": "assistant", "content": str(action)})
             messages.append({"role": "tool", "content": str(event)})
 
-    # Temporary alias for focused tests and callers while the old method name is retired.
-    def _run_work_phase(
-        self,
-        *,
-        context: WorkContext,
-        candidate_ids: set[int],
-        recall_results: list[dict[str, Any]],
-    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
-        return self._run_agent_phase(
-            context=context,
-            candidate_ids=candidate_ids,
-            recall_results=recall_results,
-        )
-
     @staticmethod
     def _aggregate_recall(results: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not results:
