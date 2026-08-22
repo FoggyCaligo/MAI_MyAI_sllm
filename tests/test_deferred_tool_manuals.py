@@ -117,7 +117,7 @@ def test_first_round_defers_full_work_tool_schema() -> None:
     assert tool.calls == []
 
 
-def test_tool_manual_activates_only_requested_work_tool() -> None:
+def test_tool_manual_activates_only_requested_work_tool_once() -> None:
     model = ScriptedModel(
         actions=[
             {"action": "tool", "tool": "tool_manual", "arguments": {"tool": "fake_action"}},
@@ -135,7 +135,9 @@ def test_tool_manual_activates_only_requested_work_tool() -> None:
 
     assert answer == "done"
     assert "fake_action" not in _tool_names(model.schemas[0])
+    assert "tool_manual" in _tool_names(model.schemas[0])
     assert "fake_action" in _tool_names(model.schemas[1])
+    assert "tool_manual" not in _tool_names(model.schemas[1])
     assert tool.calls == [{"value": "x"}]
     assert events[0]["tool"] == "tool_manual"
     assert events[0]["result"]["tool"] == "fake_action"
