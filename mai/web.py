@@ -7,13 +7,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
@@ -28,9 +28,13 @@ from .memory_revise import ReviseMemoryTool
 from .memory_write import WriteMemoryTool
 from .model import OllamaModel
 from .model_context import use_model_context
+from .runtime_state import PersistentChatJobStore, PersistentSessionStore, SessionRecord, public_job
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
+
+
+_TRIAL_WORK_TOOLS = frozenset({"latest_search", "web_research", "market_snapshot"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,7 @@ class RuntimeSettings:
     max_upload_bytes: int
     terminal_encoding: str = "utf-8"
     session_cookie: str = "mai_session"
+    session_ttl_seconds: int = 30 * 24 * 3600
 
     @classmethod
     def from_env(cls) -> "RuntimeSettings":
@@ -66,6 +71,7 @@ class RuntimeSettings:
             upload_dir=Path(os.getenv("MAI_UPLOAD_DIR", ".mai_uploads")),
             max_upload_bytes=int(os.getenv("MAI_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
             terminal_encoding=terminal_encoding,
+            session_ttl_seconds=int(os.getenv("MAI_SESSION_TTL_SECONDS", str(30 * 24 * 3600))),
         )
 
 
@@ -190,30 +196,6 @@ class ChatHistoryStore:
         self._conn.close()
 
 
-class SessionStore:
-    def __init__(self) -> None:
-        self._sessions: dict[str, str] = {}
-        self._lock = Lock()
-
-    def create(self, user_id: str) -> str:
-        token = str(uuid4())
-        with self._lock:
-            self._sessions[token] = user_id
-        return token
-
-    def get(self, token: str | None) -> str | None:
-        if not token:
-            return None
-        with self._lock:
-            return self._sessions.get(token)
-
-    def delete(self, token: str | None) -> None:
-        if not token:
-            return
-        with self._lock:
-            self._sessions.pop(token, None)
-
-
 def build_lifecycle(
     *,
     repository: GraphRepository,
@@ -222,20 +204,28 @@ def build_lifecycle(
     terminal_encoding: str,
     download_grants: DownloadGrantStore,
     image_analyzer: ImageAnalyzer,
+    role: str = "owner",
+    default_root: Path | None = None,
 ) -> AgentLifecycle:
+    if role not in {"owner", "trial"}:
+        raise ValueError(f"unsupported account role: {role}")
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository)
     writer = WriteMemoryTool(repository)
     reviser = ReviseMemoryTool(repository)
     memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser)
-    work_tools = [
-        *build_file_tools(owner_id=owner_id),
-        *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
-        *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
-        *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
-        *build_code_tools(owner_id=owner_id),
-        *build_web_market_tools(),
-    ]
+    web_tools = build_web_market_tools()
+    if role == "owner":
+        work_tools = [
+            *build_file_tools(owner_id=owner_id, default_root=default_root),
+            *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+            *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
+            *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
+            *build_code_tools(owner_id=owner_id),
+            *web_tools,
+        ]
+    else:
+        work_tools = [tool for tool in web_tools if tool.name in _TRIAL_WORK_TOOLS]
     return AgentLifecycle(
         repository=repository,
         model=model,
@@ -244,6 +234,26 @@ def build_lifecycle(
         memory_executor=memory_executor,
         work_tools=work_tools,
     )
+
+
+def _next_working_root(*, current_root: str, work_events: list[dict[str, Any]]) -> str:
+    current = str(Path(current_root).expanduser().resolve())
+    initial = str(Path.cwd().resolve())
+    candidate = current
+    for event in work_events:
+        tool = event.get("tool")
+        arguments = event.get("arguments")
+        result = event.get("result")
+        if not isinstance(arguments, dict) or not isinstance(result, dict):
+            continue
+        root = result.get("root")
+        if not isinstance(root, str) or not root.strip():
+            continue
+        if tool == "file_tree" and "root" in arguments:
+            candidate = str(Path(root).expanduser().resolve())
+        elif current == initial and tool in {"file_search", "file_text_search"} and "root" in arguments:
+            candidate = str(Path(root).expanduser().resolve())
+    return candidate
 
 
 def create_app(
@@ -260,37 +270,45 @@ def create_app(
     resolved_model = model or OllamaModel.from_env()
     resolved_image_analyzer = image_analyzer or OllamaVisionModel.from_env()
     grants = download_grants or DownloadGrantStore()
-    resolved_lifecycle = lifecycle or build_lifecycle(
-        repository=repository,
-        model=resolved_model,
-        owner_id=resolved.owner_id,
-        terminal_encoding=resolved.terminal_encoding,
-        download_grants=grants,
-        image_analyzer=resolved_image_analyzer,
-    )
     history = ChatHistoryStore(resolved.chat_db_path)
-    sessions = SessionStore()
+    sessions = PersistentSessionStore(
+        resolved.chat_db_path,
+        ttl_seconds=resolved.session_ttl_seconds,
+        default_root=Path.cwd(),
+    )
+    jobs = PersistentChatJobStore(resolved.chat_db_path)
+    user_locks: dict[str, Lock] = {}
+    user_locks_guard = Lock()
     static_index = Path(__file__).with_name("static") / "index.html"
+
+    def lock_for(user_id: str) -> Lock:
+        with user_locks_guard:
+            lock = user_locks.get(user_id)
+            if lock is None:
+                lock = Lock()
+                user_locks[user_id] = lock
+            return lock
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
+        jobs.close()
+        sessions.close()
         history.close()
         if repository is not None:
             repository.close()
 
     app = FastAPI(title="Mai", lifespan=lifespan)
     app.state.settings = resolved
-    app.state.lifecycle = resolved_lifecycle
     app.state.model_name = resolved_model.model
     app.state.image_model_name = resolved_image_analyzer.model
     app.state.download_grants = grants
 
-    def require_user(request: Request) -> str:
-        user_id = sessions.get(request.cookies.get(resolved.session_cookie))
-        if user_id is None:
+    def require_session(request: Request) -> SessionRecord:
+        session = sessions.get(request.cookies.get(resolved.session_cookie))
+        if session is None:
             raise HTTPException(status_code=401, detail="authentication required")
-        return user_id
+        return session
 
     def validated_attachment_paths(user_id: str, values: list[str]) -> list[Path]:
         user_root = (resolved.upload_dir / user_id).resolve()
@@ -306,6 +324,72 @@ def create_app(
             paths.append(path)
         return paths
 
+    def lifecycle_for(session: SessionRecord) -> AgentLifecycle:
+        if lifecycle is not None:
+            return lifecycle
+        assert repository is not None
+        return build_lifecycle(
+            repository=repository,
+            model=resolved_model,
+            owner_id=resolved.owner_id,
+            terminal_encoding=resolved.terminal_encoding,
+            download_grants=grants,
+            image_analyzer=resolved_image_analyzer,
+            role=session.role,
+            default_root=Path(session.working_root),
+        )
+
+    def execute_chat_job(*, job_id: str, session: SessionRecord, message: str, attachment_paths: list[Path]) -> None:
+        try:
+            with lock_for(session.user_id):
+                jobs.mark_running(job_id)
+                agent_input = message
+                if attachment_paths:
+                    agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_paths)
+                recent_messages = history.list_messages(user_id=session.user_id, limit=10)
+                recent_tool_operations = history.list_tool_operations(user_id=session.user_id, limit=5)
+                with use_model_context(
+                    recent_messages=recent_messages,
+                    recent_tool_operations=recent_tool_operations,
+                ):
+                    result = lifecycle_for(session).run(
+                        user_id=session.user_id,
+                        user_text=agent_input,
+                        attachment_paths=attachment_paths,
+                    )
+
+                answer = str(result["answer"])
+                turn_id = str(result["turn_id"])
+                work_events = list(result.get("work_events", []))
+                history.append_turn(
+                    user_id=session.user_id,
+                    turn_id=turn_id,
+                    user_text=message,
+                    assistant_text=answer,
+                )
+                history.append_tool_operations(
+                    user_id=session.user_id,
+                    turn_id=turn_id,
+                    events=work_events,
+                )
+                if session.role == "owner":
+                    next_root = _next_working_root(
+                        current_root=session.working_root,
+                        work_events=work_events,
+                    )
+                    if next_root != str(Path(session.working_root).expanduser().resolve()):
+                        sessions.update_working_root(session_id=session.session_id, working_root=next_root)
+                jobs.complete(
+                    job_id=job_id,
+                    response={
+                        "answer": answer,
+                        "turn_id": turn_id,
+                        "work_events": work_events,
+                    },
+                )
+        except Exception as exc:
+            jobs.fail(job_id=job_id, error=f"{type(exc).__name__}: {exc}")
+
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(static_index)
@@ -316,11 +400,12 @@ def create_app(
 
     @app.get("/runtime")
     def runtime(request: Request) -> dict[str, Any]:
-        user_id = require_user(request)
+        session = require_session(request)
         return {
             "model": app.state.model_name,
-            "user_id": user_id,
-            "role": "owner" if user_id == resolved.owner_id else "user",
+            "user_id": session.user_id,
+            "role": session.role,
+            "working_root": session.working_root if session.role == "owner" else None,
         }
 
     @app.post("/auth/login")
@@ -328,16 +413,16 @@ def create_app(
         user_id = payload.user_id.strip()
         if user_id not in resolved.allowed_user_ids:
             raise HTTPException(status_code=403, detail="user is not allowed")
-        token = sessions.create(user_id)
-        from fastapi.responses import JSONResponse
-
-        response = JSONResponse({"user_id": user_id, "role": "owner" if user_id == resolved.owner_id else "user"})
+        role = "owner" if user_id == resolved.owner_id else "trial"
+        token, session = sessions.create(user_id=user_id, role=role)
+        response = JSONResponse({"user_id": user_id, "role": session.role})
         response.set_cookie(
             resolved.session_cookie,
             token,
             httponly=True,
             samesite="strict",
             secure=request.url.scheme == "https",
+            max_age=resolved.session_ttl_seconds,
         )
         return response
 
@@ -345,21 +430,19 @@ def create_app(
     def logout(request: Request):
         token = request.cookies.get(resolved.session_cookie)
         sessions.delete(token)
-        from fastapi.responses import JSONResponse
-
         response = JSONResponse({"status": "ok"})
         response.delete_cookie(resolved.session_cookie)
         return response
 
     @app.get("/history")
     def get_history(request: Request) -> dict[str, Any]:
-        user_id = require_user(request)
-        return {"messages": history.list_messages(user_id=user_id)}
+        session = require_session(request)
+        return {"messages": history.list_messages(user_id=session.user_id)}
 
     @app.post("/upload")
     async def upload(request: Request, files: list[UploadFile] = File(...)) -> dict[str, Any]:
-        user_id = require_user(request)
-        user_dir = resolved.upload_dir / user_id
+        session = require_session(request)
+        user_dir = resolved.upload_dir / session.user_id
         user_dir.mkdir(parents=True, exist_ok=True)
         uploaded: list[dict[str, Any]] = []
         for item in files:
@@ -383,14 +466,14 @@ def create_app(
 
     @app.get("/download/{token}")
     def download(token: str, request: Request) -> FileResponse:
-        user_id = require_user(request)
+        session = require_session(request)
         grant = grants.get(token)
         if grant is None:
             raise HTTPException(status_code=404, detail="download token not found")
         if datetime.now(timezone.utc) >= grant.expires_at:
             grants.revoke(token)
             raise HTTPException(status_code=410, detail="download token expired")
-        if user_id != grant.user_id:
+        if session.user_id != grant.user_id:
             raise HTTPException(status_code=403, detail="download token belongs to another user")
         if not grant.path.exists():
             raise HTTPException(status_code=404, detail="download file no longer exists")
@@ -400,46 +483,46 @@ def create_app(
 
     @app.post("/chat")
     def chat(payload: ChatRequest, request: Request) -> dict[str, Any]:
-        user_id = require_user(request)
+        session = require_session(request)
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="message must be non-empty")
-        attachment_paths = validated_attachment_paths(user_id, payload.attachments)
-        agent_input = message
-        if attachment_paths:
-            agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_paths)
-
-        recent_messages = history.list_messages(user_id=user_id, limit=10)
-        recent_tool_operations = history.list_tool_operations(user_id=user_id, limit=5)
-        with use_model_context(
-            recent_messages=recent_messages,
-            recent_tool_operations=recent_tool_operations,
-        ):
-            result = resolved_lifecycle.run(
-                user_id=user_id,
-                user_text=agent_input,
-                attachment_paths=attachment_paths,
-            )
-
-        answer = str(result["answer"])
-        turn_id = str(result["turn_id"])
-        work_events = list(result.get("work_events", []))
-        history.append_turn(
-            user_id=user_id,
-            turn_id=turn_id,
-            user_text=message,
-            assistant_text=answer,
+        attachment_paths = validated_attachment_paths(session.user_id, payload.attachments)
+        job = jobs.create(
+            user_id=session.user_id,
+            session_id=session.session_id,
+            request={
+                "message": message,
+                "attachments": [str(path) for path in attachment_paths],
+            },
         )
-        history.append_tool_operations(
-            user_id=user_id,
-            turn_id=turn_id,
-            events=work_events,
+        thread = Thread(
+            target=execute_chat_job,
+            kwargs={
+                "job_id": job.job_id,
+                "session": session,
+                "message": message,
+                "attachment_paths": attachment_paths,
+            },
+            daemon=True,
+            name=f"mai-chat-{job.job_id[:8]}",
         )
-        return {
-            "answer": answer,
-            "turn_id": turn_id,
-            "work_events": work_events,
-        }
+        thread.start()
+        return {"job_id": job.job_id, "status": job.status}
+
+    @app.get("/chat/jobs/{job_id}")
+    def chat_job(job_id: str, request: Request) -> dict[str, Any]:
+        session = require_session(request)
+        try:
+            snapshot = jobs.get_for(job_id=job_id, user_id=session.user_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="chat job not found") from exc
+        return public_job(snapshot)
+
+    @app.get("/chat/jobs")
+    def active_chat_jobs(request: Request) -> dict[str, Any]:
+        session = require_session(request)
+        return {"jobs": [public_job(job) for job in jobs.list_active_for(user_id=session.user_id)]}
 
     return app
 
