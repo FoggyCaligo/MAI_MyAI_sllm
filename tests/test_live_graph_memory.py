@@ -7,7 +7,6 @@ import pytest
 from mai.agent import AgentLifecycle, FunctionWorkTool
 from mai.graph import GraphRepository, GraphSourceStore, SourceRecord
 from mai.memory_agent_adapter import MemoryAgentAdapter
-from mai.model import ModelContractError
 from mai.working_graph_memory import WorkingGraphMemoryExtension
 
 
@@ -28,9 +27,11 @@ class FakeEmbedding:
 class FakeModel:
     actions: list[dict]
     schemas: list[dict] = field(default_factory=list)
+    messages: list[list[dict[str, str]]] = field(default_factory=list)
 
     def structured(self, *, messages, schema):
         self.schemas.append(schema)
+        self.messages.append([dict(item) for item in messages])
         if not self.actions:
             raise AssertionError("unexpected model round")
         return self.actions.pop(0)
@@ -61,6 +62,13 @@ def _tool_names(schema: dict) -> set[str]:
 def _has_answer(schema: dict) -> bool:
     return any(
         ((variant.get("properties") or {}).get("action") or {}).get("const") == "answer"
+        for variant in _variants(schema)
+    )
+
+
+def _has_sync_complete(schema: dict) -> bool:
+    return any(
+        ((variant.get("properties") or {}).get("action") or {}).get("const") == "sync_complete"
         for variant in _variants(schema)
     )
 
@@ -249,7 +257,7 @@ def test_abort_discards_staged_semantic_changes(tmp_path) -> None:
         repo.close()
 
 
-def test_agent_first_round_requires_recall_and_final_graph_sync(tmp_path) -> None:
+def test_agent_first_round_requires_recall_and_final_checkpoint(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
@@ -263,36 +271,85 @@ def test_agent_first_round_requires_recall_and_final_graph_sync(tmp_path) -> Non
         )
         model = FakeModel([
             {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past"}},
-            {"action": "answer", "outcome": "completed", "content": "done", "graph_synced": True},
+            {"action": "answer", "outcome": "completed", "content": "done"},
+            {"action": "sync_complete"},
         ])
         agent = AgentLifecycle(
             repository=repo, model=model, source_store=sources, core_extension=adapter, work_tools=[noop],
         )
         result = agent.run(user_id="u", user_text="question", turn_id="t1")
         assert result["answer"] == "done"
+        assert len(model.schemas) == 3
         assert _has_answer(model.schemas[0]) is False
         assert _tool_names(model.schemas[0]) == {"memory/recall"}
         assert _has_answer(model.schemas[1]) is True
+        assert _has_sync_complete(model.schemas[2]) is True
         memory.abort_turn(turn_id="t1")
     finally:
         sources.close()
         repo.close()
 
 
-def test_agent_rejects_answer_without_graph_sync(tmp_path) -> None:
+def test_periodic_checkpoint_runs_after_three_main_rounds_before_main_continues(tmp_path) -> None:
     path = tmp_path / "graph.db"
     repo = GraphRepository(path)
     sources = GraphSourceStore(path)
     try:
-        memory = _memory(repo, sources, {"사용자": [1.0, 0.0], "past": [1.0, 0.0]})
+        memory = _memory(repo, sources, {
+            "사용자": [1.0, 0.0],
+            "q1": [1.0, 0.0],
+            "q2": [1.0, 0.0],
+            "q3": [1.0, 0.0],
+        })
         adapter = MemoryAgentAdapter(memory)
         model = FakeModel([
-            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "past"}},
+            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "q1"}},
+            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "q2"}},
+            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "q3"}},
+            {"action": "sync_complete"},
             {"action": "answer", "outcome": "completed", "content": "done"},
+            {"action": "sync_complete"},
         ])
         agent = AgentLifecycle(repository=repo, model=model, source_store=sources, core_extension=adapter)
-        with pytest.raises(ModelContractError, match="graph_synced=true"):
-            agent.run(user_id="u", user_text="question", turn_id="t1")
+        result = agent.run(user_id="u", user_text="question", turn_id="t1")
+        assert result["answer"] == "done"
+        assert len(model.schemas) == 6
+        assert _has_sync_complete(model.schemas[3]) is True
+        assert _has_answer(model.schemas[4]) is True
+        assert _has_sync_complete(model.schemas[5]) is True
+        assert any(
+            message["role"] == "user" and message["content"].startswith("Framework graph checkpoint result:")
+            for message in model.messages[4]
+        )
+        memory.abort_turn(turn_id="t1")
+    finally:
+        sources.close()
+        repo.close()
+
+
+def test_answer_on_third_main_round_uses_one_final_checkpoint_not_periodic_plus_final(tmp_path) -> None:
+    path = tmp_path / "graph.db"
+    repo = GraphRepository(path)
+    sources = GraphSourceStore(path)
+    try:
+        memory = _memory(repo, sources, {
+            "사용자": [1.0, 0.0],
+            "q1": [1.0, 0.0],
+            "q2": [1.0, 0.0],
+        })
+        adapter = MemoryAgentAdapter(memory)
+        model = FakeModel([
+            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "q1"}},
+            {"action": "tool", "tool": "memory/recall", "arguments": {"query": "q2"}},
+            {"action": "answer", "outcome": "completed", "content": "done"},
+            {"action": "sync_complete"},
+        ])
+        agent = AgentLifecycle(repository=repo, model=model, source_store=sources, core_extension=adapter)
+        result = agent.run(user_id="u", user_text="question", turn_id="t1")
+        assert result["answer"] == "done"
+        assert len(model.schemas) == 4
+        assert _has_answer(model.schemas[2]) is True
+        assert _has_sync_complete(model.schemas[3]) is True
         memory.abort_turn(turn_id="t1")
     finally:
         sources.close()
