@@ -23,7 +23,7 @@ from .context import compact_tool_event
 from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
-from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
+from .graph import GraphRepository, GraphSourceStore
 from .model import OllamaModel
 from .model_context import use_model_context
 from .runtime_state import PersistentChatJobStore, PersistentSessionStore, SessionRecord, public_job
@@ -211,8 +211,6 @@ def build_lifecycle(
     if role not in {"owner", "trial"}:
         raise ValueError(f"unsupported account role: {role}")
 
-    discovery = GraphDiscoveryService(repository)
-    recall = GraphRecallService(repository, source_store=source_store)
     web_tools = build_web_market_tools()
 
     if role == "trial":
@@ -238,8 +236,6 @@ def build_lifecycle(
     base = AgentLifecycle(
         repository=repository,
         model=model,
-        discovery=discovery,
-        recall=recall,
         work_tools=work_tools,
         source_store=source_store,
     )
