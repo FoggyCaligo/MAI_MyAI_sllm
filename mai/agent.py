@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
@@ -47,6 +48,37 @@ class WorkTool(Protocol):
     def schema(self) -> dict[str, Any]: ...
 
     def execute(self, *, arguments: dict[str, Any], context: "WorkContext") -> Any: ...
+
+
+class AgentCoreExtension(Protocol):
+    tool_names: frozenset[str]
+
+    def begin_turn(
+        self,
+        *,
+        user_id: str,
+        turn_id: str,
+        user_text: str,
+        attachment_evidence: Iterable[dict[str, Any]] = (),
+    ) -> Any: ...
+
+    def answer_schema(self, state: Any) -> dict[str, Any] | None: ...
+
+    def schemas(self, state: Any) -> list[dict[str, Any]]: ...
+
+    def round_context(self, state: Any) -> str: ...
+
+    def execute(self, *, tool: str, arguments: dict[str, Any], state: Any) -> dict[str, Any]: ...
+
+    def observe_work_tool_result(
+        self,
+        *,
+        state: Any,
+        source_kind: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,15 +208,7 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
 
 @dataclass(slots=True)
 class AgentLifecycle:
-    """Memory-free Agent baseline.
-
-    This class intentionally contains no graph recall/generate/fix behavior.
-    The memory subsystem is layered onto this external-tool/answer loop by a
-    separate component after the baseline has been stabilized.
-
-    The legacy constructor fields are temporarily accepted so runtime assembly
-    can be migrated without reintroducing their behavior.
-    """
+    """Generic external-tool Agent loop with an optional core extension."""
 
     repository: Any
     model: StructuredModel
@@ -193,6 +217,7 @@ class AgentLifecycle:
     memory_executor: Any | None = None
     work_tools: list[WorkTool] = field(default_factory=list)
     source_store: Any | None = None
+    core_extension: AgentCoreExtension | None = None
 
     def run(
         self,
@@ -202,6 +227,7 @@ class AgentLifecycle:
         turn_id: str | None = None,
         attachment_paths: Iterable[str | Path] = (),
         discovered_paths: Iterable[str | Path] = (),
+        attachment_evidence: Iterable[dict[str, Any]] = (),
     ) -> dict[str, Any]:
         clean_user = str(user_text).strip()
         if not clean_user:
@@ -211,17 +237,28 @@ class AgentLifecycle:
         path_provenance = PathProvenance()
         path_provenance.add_many(attachment_paths)
         path_provenance.add_many(discovered_paths)
+        context = WorkContext(
+            user_id=user_id,
+            turn_id=resolved_turn_id,
+            user_text=clean_user,
+            path_provenance=path_provenance,
+        )
         turn_started(resolved_turn_id)
 
+        extension_state: Any | None = None
         try:
-            with phase(resolved_turn_id, "agent"):
-                answer, work_events = self._run_agent_phase(
-                    context=WorkContext(
+            if self.core_extension is not None:
+                with phase(resolved_turn_id, "turn_initialization"):
+                    extension_state = self.core_extension.begin_turn(
                         user_id=user_id,
                         turn_id=resolved_turn_id,
                         user_text=clean_user,
-                        path_provenance=path_provenance,
+                        attachment_evidence=attachment_evidence,
                     )
+            with phase(resolved_turn_id, "agent"):
+                answer, work_events = self._run_agent_phase(
+                    context=context,
+                    extension_state=extension_state,
                 )
             result = {
                 "status": "completed",
@@ -229,6 +266,13 @@ class AgentLifecycle:
                 "answer": answer,
                 "work_events": work_events,
             }
+            if extension_state is not None and hasattr(extension_state, "events"):
+                result["memory"] = {
+                    "status": "agent_managed",
+                    "events": list(extension_state.events),
+                    "new_node_count": int(getattr(extension_state, "new_node_count", 0)),
+                    "edge_mutations_by_node": dict(getattr(extension_state, "edge_mutations_by_node", {})),
+                }
         except Exception:
             turn_failed(resolved_turn_id)
             raise
@@ -236,12 +280,20 @@ class AgentLifecycle:
         turn_completed(resolved_turn_id)
         return result
 
-    def _run_agent_phase(self, *, context: WorkContext) -> tuple[str, list[dict[str, Any]]]:
+    def _run_agent_phase(
+        self,
+        *,
+        context: WorkContext,
+        extension_state: Any | None,
+    ) -> tuple[str, list[dict[str, Any]]]:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
-        if "tool_route" in tools:
-            raise ValueError("work tools may not shadow built-in tool_route")
+        reserved = {"tool_route"}
+        if self.core_extension is not None:
+            reserved.update(self.core_extension.tool_names)
+        if reserved & set(tools):
+            raise ValueError("work tools may not shadow built-in/core-extension tools")
         _validate_work_tool_contracts(tools)
 
         routes = ToolRouteRegistry.for_tools(tools.values())
@@ -257,7 +309,7 @@ class AgentLifecycle:
                     "Operate as one agent loop using exactly one structured action per round. "
                     "User-facing conversational output must only be delivered through the answer action. "
                     "External tools are lazily discovered through exact registered tool_route paths. "
-                    f"Initial namespaces are {top_routes}. A leaf exposes /manual and /use. "
+                    f"Initial external namespaces are {top_routes}. A leaf exposes /manual and /use. "
                     "If you already know a leaf route, request its exact /use path directly. "
                     "Invalid routes are reported as errors and are never guessed or autocorrected. "
                     "Existing-file actions may only use paths established by current-turn attachments or "
@@ -269,7 +321,14 @@ class AgentLifecycle:
         events: list[dict[str, Any]] = []
 
         while True:
-            variants = [_answer_schema()]
+            variants: list[dict[str, Any]] = []
+            if self.core_extension is None:
+                variants.append(_answer_schema())
+            else:
+                answer_schema = self.core_extension.answer_schema(extension_state)
+                if answer_schema is not None:
+                    variants.append(answer_schema)
+                variants.extend(self.core_extension.schemas(extension_state))
             if tools:
                 variants.append(tool_route_schema())
 
@@ -284,7 +343,16 @@ class AgentLifecycle:
                 variants.append(schema)
                 exposed_tools.add(name)
 
-            action = self.model.structured(messages=messages, schema=_combined_schema(variants))
+            request_messages = list(messages)
+            if self.core_extension is not None:
+                dynamic_context = self.core_extension.round_context(extension_state)
+                if dynamic_context:
+                    request_messages = [
+                        request_messages[0],
+                        {"role": "system", "content": dynamic_context},
+                        *request_messages[1:],
+                    ]
+            action = self.model.structured(messages=request_messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
                 content = str(action.get("content", "")).strip()
@@ -303,7 +371,14 @@ class AgentLifecycle:
             tool_started(tool_name)
             event_metadata: dict[str, Any] = {}
 
-            if tool_name == "tool_route":
+            if self.core_extension is not None and tool_name in self.core_extension.tool_names:
+                result = self.core_extension.execute(
+                    tool=tool_name,
+                    arguments=arguments,
+                    state=extension_state,
+                )
+
+            elif tool_name == "tool_route":
                 path = str(arguments.get("path", ""))
                 resolved = routes.resolve(path=path, available_tools=available_tools)
                 if resolved.get("status") == "leaf_action":
@@ -364,11 +439,33 @@ class AgentLifecycle:
                     if not new_keys:
                         available_tools.discard(tool_name)
                         activated_tools.discard(tool_name)
+
+                if self.core_extension is not None:
+                    route = routes.route_for_tool(tool_name)
+                    source_id = self.core_extension.observe_work_tool_result(
+                        state=extension_state,
+                        source_kind=route.source_kind,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        result=result,
+                    )
+                    event_metadata["source_id"] = source_id
             else:
                 raise ModelContractError("unexpected tool in agent phase")
 
             tool_completed(tool_name)
             event = {"tool": tool_name, "arguments": arguments, "result": result, **event_metadata}
             events.append(event)
-            messages.append({"role": "assistant", "content": str(action)})
-            messages.append({"role": "tool", "content": str(event)})
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Framework tool result: "
+                    + json.dumps(event, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
