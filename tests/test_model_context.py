@@ -110,7 +110,7 @@ def test_recent_tool_operations_are_limited_to_five() -> None:
     assert '"pattern": "6"' in context_message["content"]
 
 
-def test_current_tool_message_is_compacted_without_mutating_original() -> None:
+def test_current_tool_message_is_compacted_into_assistant_context_without_mutating_original() -> None:
     content = "x" * 10000
     event = {
         "tool": "file_read",
@@ -127,7 +127,11 @@ def test_current_tool_message_is_compacted_without_mutating_original() -> None:
     with use_model_context(recent_messages=[], recent_tool_operations=[]):
         prepared = prepare_model_messages(messages)
 
+    assert all(item["role"] != "tool" for item in prepared)
     compacted = prepared[-1]["content"]
+    assert prepared[-1]["role"] == "assistant"
+    assert "{'action': 'tool'}" in compacted
+    assert "Framework tool result:" in compacted
     assert len(compacted) < 4000
     assert "...[truncated]..." in compacted
     assert messages[-1]["content"] == str(event)
@@ -148,3 +152,20 @@ def test_non_structured_tool_message_fails_visibly() -> None:
             assert "cannot be compacted" in str(exc)
         else:
             raise AssertionError("expected a visible compaction failure")
+
+
+def test_tool_message_without_preceding_assistant_action_fails_visibly() -> None:
+    event = {"tool": "file_read", "arguments": {}, "result": {"ok": True}}
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "read"},
+        {"role": "tool", "content": str(event)},
+    ]
+
+    with use_model_context(recent_messages=[], recent_tool_operations=[]):
+        try:
+            prepare_model_messages(messages)
+        except ValueError as exc:
+            assert "preceding assistant action" in str(exc)
+        else:
+            raise AssertionError("expected a visible tool-history contract failure")
