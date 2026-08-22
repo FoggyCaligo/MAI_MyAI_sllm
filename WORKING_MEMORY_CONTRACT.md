@@ -58,7 +58,9 @@ Evidence ID 생성 여부를 tool/error 문자열 heuristic으로 판단하지 �
 
 ## 4. Model-managed scratchpad
 
-`scratchpad_put`은 normal work-tool contract를 사용한다.
+Scratchpad 작성과 갱신은 별도 구조화된 work tool이다.
+
+새 항목 생성:
 
 ```text
 scratchpad_put(
@@ -67,9 +69,19 @@ scratchpad_put(
 )
 ```
 
-Framework는 `source_ids`가 같은 turn의 실제 evidence registry에 존재하는지 검증한다.
+기존 current-turn 항목 갱신:
 
-성공하면:
+```text
+scratchpad_update(
+  scratchpad_id="scratchpad:1",
+  content,
+  source_ids=[attachment/tool evidence ids]
+)
+```
+
+Framework는 모든 `source_ids`가 같은 turn의 실제 evidence registry에 존재하는지 검증한다.
+
+`scratchpad_put` 성공 시:
 
 ```text
 scratchpad:1
@@ -77,7 +89,9 @@ scratchpad:2
 ...
 ```
 
-형태의 turn-local ID를 반환한다.
+형태의 turn-local ID를 만든다.
+
+`scratchpad_update`는 기존 current-turn ID가 실제 존재해야 하며 ID 자체는 바꾸지 않는다. Content와 evidence source set만 교체한다. 존재하지 않는 ID를 update로 암묵 생성하지 않는다.
 
 Scratchpad item은 concise working memory이며 durable semantic graph가 아니다.
 
@@ -129,6 +143,7 @@ Lifecycle가 completed/failed 어느 쪽으로 끝나도 wrapper `finally`에서
 - image model failure -> model failure
 - unknown evidence ID -> model contract failure
 - unknown scratchpad ID -> model contract failure
+- `scratchpad_update` on unknown current-turn ID -> model contract failure
 - evidence-tracked tool returning a non-object result -> tool contract failure
 
 Phase 4는 evidence와 working memory를 추가하지만 기존 fail-visible 원칙을 완화하지 않는다.
