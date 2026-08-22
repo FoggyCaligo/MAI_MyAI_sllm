@@ -28,9 +28,10 @@ class ViewedGraph:
             self.edges[int(edge["edge_id"])] = dict(edge)
 
     def remove_node(self, node_id: int) -> None:
-        self.nodes.pop(int(node_id), None)
+        node_id = int(node_id)
+        self.nodes.pop(node_id, None)
         for edge_id, edge in list(self.edges.items()):
-            if int(edge["start_node_id"]) == int(node_id) or int(edge["end_node_id"]) == int(node_id):
+            if int(edge["start_node_id"]) == node_id or int(edge["end_node_id"]) == node_id:
                 self.edges.pop(edge_id, None)
 
     def remove_edge(self, edge_id: int) -> None:
@@ -60,7 +61,7 @@ class MemoryTurnState:
 
 
 class LiveGraphMemory:
-    """Persistent graph memory used directly by the single Agent loop."""
+    """Persistent graph memory used directly inside the single Agent loop."""
 
     def __init__(
         self,
@@ -76,116 +77,6 @@ class LiveGraphMemory:
         self.candidate_limit = int(candidate_limit)
         if not 1 <= self.candidate_limit <= 32:
             raise ValueError("memory candidate_limit must be between 1 and 32")
-        self._ensure_schema()
-        self._migrate_legacy_current_edges()
-
-    def _ensure_schema(self) -> None:
-        with self.repository.transaction() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS live_memory_node_state (
-                    user_id TEXT NOT NULL,
-                    node_id INTEGER NOT NULL,
-                    kind TEXT NOT NULL DEFAULT 'concept'
-                        CHECK (kind IN ('concept','composite')),
-                    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(user_id, node_id),
-                    FOREIGN KEY(node_id) REFERENCES graph_nodes(node_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS live_memory_edge_state (
-                    user_id TEXT NOT NULL,
-                    edge_id INTEGER NOT NULL,
-                    weight REAL NOT NULL DEFAULT 1.0 CHECK (weight >= 0.0 AND weight <= 1.0),
-                    personal_relevance REAL NOT NULL DEFAULT 0.5
-                        CHECK (personal_relevance IN (0.5,1.0)),
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(user_id, edge_id),
-                    FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS live_memory_current_edges (
-                    user_id TEXT NOT NULL,
-                    start_node_id INTEGER NOT NULL,
-                    end_node_id INTEGER NOT NULL,
-                    edge_id INTEGER NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(user_id, start_node_id, end_node_id),
-                    UNIQUE(user_id, edge_id),
-                    CHECK (start_node_id != end_node_id),
-                    FOREIGN KEY(start_node_id) REFERENCES graph_nodes(node_id),
-                    FOREIGN KEY(end_node_id) REFERENCES graph_nodes(node_id),
-                    FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_live_memory_current_edge_start
-                ON live_memory_current_edges(user_id, start_node_id);
-
-                CREATE INDEX IF NOT EXISTS idx_live_memory_current_edge_end
-                ON live_memory_current_edges(user_id, end_node_id);
-
-                CREATE TABLE IF NOT EXISTS live_memory_composite_members (
-                    user_id TEXT NOT NULL,
-                    composite_node_id INTEGER NOT NULL,
-                    member_node_id INTEGER NOT NULL,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(user_id, composite_node_id, member_node_id),
-                    CHECK (composite_node_id != member_node_id),
-                    FOREIGN KEY(composite_node_id) REFERENCES graph_nodes(node_id),
-                    FOREIGN KEY(member_node_id) REFERENCES graph_nodes(node_id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_live_memory_composite_member
-                ON live_memory_composite_members(user_id, member_node_id);
-
-                CREATE TABLE IF NOT EXISTS live_memory_node_embeddings (
-                    user_id TEXT NOT NULL,
-                    node_id INTEGER NOT NULL,
-                    model TEXT NOT NULL,
-                    node_updated_at TEXT NOT NULL,
-                    dimension INTEGER NOT NULL CHECK (dimension > 0),
-                    vector_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(user_id, node_id, model),
-                    FOREIGN KEY(node_id) REFERENCES graph_nodes(node_id)
-                );
-                """
-            )
-
-    def _migrate_legacy_current_edges(self) -> None:
-        with self.repository.transaction() as conn:
-            rows = conn.execute(
-                """
-                SELECT user_id, subject_node_id, object_node_id, MAX(edge_id) AS edge_id
-                FROM graph_edges
-                WHERE subject_node_id != object_node_id
-                GROUP BY user_id, subject_node_id, object_node_id
-                ORDER BY user_id, subject_node_id, object_node_id
-                """
-            ).fetchall()
-            for row in rows:
-                user_id = str(row["user_id"])
-                start_id = int(row["subject_node_id"])
-                end_id = int(row["object_node_id"])
-                edge_id = int(row["edge_id"])
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO live_memory_current_edges
-                        (user_id, start_node_id, end_node_id, edge_id)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (user_id, start_id, end_id, edge_id),
-                )
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO live_memory_edge_state
-                        (user_id, edge_id, weight, personal_relevance)
-                    VALUES (?, ?, 1.0, 0.5)
-                    """,
-                    (user_id, edge_id),
-                )
 
     def begin_turn(
         self,
@@ -340,45 +231,51 @@ class LiveGraphMemory:
         if not node_ids or (self.source_store is not None and not source_ids):
             return None
         source_schema = self._source_ids_schema(source_ids)
-        rename = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["operation", "node_id", "name", "source_ids"],
-            "properties": {
-                "operation": {"const": "rename"},
-                "node_id": {"type": "integer", "enum": node_ids},
-                "name": {"type": "string", "minLength": 1},
-                "source_ids": source_schema,
+        return self._tool_schema(
+            "memory/fix/node",
+            {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["operation", "node_id", "name", "source_ids"],
+                        "properties": {
+                            "operation": {"const": "rename"},
+                            "node_id": {"type": "integer", "enum": node_ids},
+                            "name": {"type": "string", "minLength": 1},
+                            "source_ids": source_schema,
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["operation", "node_id", "member_node_ids", "source_ids"],
+                        "properties": {
+                            "operation": {"const": "set_members"},
+                            "node_id": {"type": "integer", "enum": node_ids},
+                            "member_node_ids": {
+                                "type": "array",
+                                "minItems": 2,
+                                "uniqueItems": True,
+                                "items": {"type": "integer", "enum": node_ids},
+                            },
+                            "source_ids": source_schema,
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["operation", "source_node_id", "target_node_id", "source_ids"],
+                        "properties": {
+                            "operation": {"const": "merge"},
+                            "source_node_id": {"type": "integer", "enum": node_ids},
+                            "target_node_id": {"type": "integer", "enum": node_ids},
+                            "source_ids": source_schema,
+                        },
+                    },
+                ]
             },
-        }
-        members = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["operation", "node_id", "member_node_ids", "source_ids"],
-            "properties": {
-                "operation": {"const": "set_members"},
-                "node_id": {"type": "integer", "enum": node_ids},
-                "member_node_ids": {
-                    "type": "array",
-                    "minItems": 2,
-                    "uniqueItems": True,
-                    "items": {"type": "integer", "enum": node_ids},
-                },
-                "source_ids": source_schema,
-            },
-        }
-        merge = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["operation", "source_node_id", "target_node_id", "source_ids"],
-            "properties": {
-                "operation": {"const": "merge"},
-                "source_node_id": {"type": "integer", "enum": node_ids},
-                "target_node_id": {"type": "integer", "enum": node_ids},
-                "source_ids": source_schema,
-            },
-        }
-        return self._tool_schema("memory/fix/node", {"oneOf": [rename, members, merge]})
+        )
 
     def fix_edge_schema(self, state: MemoryTurnState) -> dict[str, Any] | None:
         edge_ids = sorted(state.viewed_graph.edges)
@@ -386,34 +283,45 @@ class LiveGraphMemory:
         if not edge_ids or (self.source_store is not None and not source_ids):
             return None
         source_schema = self._source_ids_schema(source_ids)
-        update = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["operation", "edge_id", "relation", "weight_delta", "personal_relevance", "source_ids"],
-            "properties": {
-                "operation": {"const": "update"},
-                "edge_id": {"type": "integer", "enum": edge_ids},
-                "relation": {"type": "string", "minLength": 1},
-                "weight_delta": {"type": "number", "minimum": -1.0, "maximum": 1.0},
-                "personal_relevance": {"type": "string", "enum": sorted(_RELEVANCE)},
-                "source_ids": source_schema,
+        return self._tool_schema(
+            "memory/fix/edge",
+            {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["operation", "edge_id", "relation", "weight_delta", "personal_relevance", "source_ids"],
+                        "properties": {
+                            "operation": {"const": "update"},
+                            "edge_id": {"type": "integer", "enum": edge_ids},
+                            "relation": {"type": "string", "minLength": 1},
+                            "weight_delta": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+                            "personal_relevance": {"type": "string", "enum": sorted(_RELEVANCE)},
+                            "source_ids": source_schema,
+                        },
+                    },
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["operation", "edge_id", "source_ids"],
+                        "properties": {
+                            "operation": {"const": "disconnect"},
+                            "edge_id": {"type": "integer", "enum": edge_ids},
+                            "source_ids": source_schema,
+                        },
+                    },
+                ]
             },
-        }
-        disconnect = {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["operation", "edge_id", "source_ids"],
-            "properties": {
-                "operation": {"const": "disconnect"},
-                "edge_id": {"type": "integer", "enum": edge_ids},
-                "source_ids": source_schema,
-            },
-        }
-        return self._tool_schema("memory/fix/edge", {"oneOf": [update, disconnect]})
+        )
 
     def schemas(self, state: MemoryTurnState) -> list[dict[str, Any]]:
         schemas = [self.recall_schema()]
-        for schema in (self.generate_node_schema(state), self.generate_edge_schema(state), self.fix_node_schema(state), self.fix_edge_schema(state)):
+        for schema in (
+            self.generate_node_schema(state),
+            self.generate_edge_schema(state),
+            self.fix_node_schema(state),
+            self.fix_edge_schema(state),
+        ):
             if schema is not None:
                 schemas.append(schema)
         return schemas
@@ -447,33 +355,43 @@ class LiveGraphMemory:
         if not query:
             raise ModelContractError("memory/recall query must be non-empty")
         query_vector = self.embedding.embed([query])[0]
-        nodes = self._active_nodes(user_id=state.user_id)
+        nodes = self.repository.active_nodes(user_id=state.user_id)
         self._ensure_node_embeddings(user_id=state.user_id, nodes=nodes)
         scored: list[tuple[float, dict[str, Any]]] = []
         with self.repository.transaction() as conn:
             for node in nodes:
-                vector = self._embedding_for_node_in_connection(conn, user_id=state.user_id, node_id=int(node["node_id"]))
+                vector = self._embedding_for_node_in_connection(
+                    conn,
+                    user_id=state.user_id,
+                    node_id=int(node["node_id"]),
+                )
                 scored.append((self._cosine_similarity(query_vector, vector), node))
         scored.sort(key=lambda item: (-item[0], int(item[1]["node_id"])))
         state.recall_counter += 1
         recall_id = f"recall:{state.recall_counter}"
-        candidates: list[dict[str, Any]] = []
-        candidate_ids: list[int] = []
-        for score, node in scored[: self.candidate_limit]:
-            node_id = int(node["node_id"])
-            candidate_ids.append(node_id)
-            candidates.append({
-                "node_id": node_id,
+        candidates = [
+            {
+                "node_id": int(node["node_id"]),
                 "name": str(node["name"]),
-                "kind": self._node_kind(user_id=state.user_id, node_id=node_id),
+                "kind": str(node["kind"]),
                 "similarity": round(float(score), 6),
-            })
-        state.query_recalls[recall_id] = tuple(candidate_ids)
+            }
+            for score, node in scored[: self.candidate_limit]
+        ]
+        state.query_recalls[recall_id] = tuple(int(item["node_id"]) for item in candidates)
         state.first_query_recall_done = True
-        return {"mode": "candidates", "recall_id": recall_id, "query": query, "candidates": candidates, "viewed_graph": state.viewed_graph.payload()}
+        return {
+            "mode": "candidates",
+            "recall_id": recall_id,
+            "query": query,
+            "candidates": candidates,
+            "viewed_graph": state.viewed_graph.payload(),
+        }
 
     def _open_node(self, *, node_id: int, state: MemoryTurnState) -> dict[str, Any]:
-        self._require_owned_active_node_id(user_id=state.user_id, node_id=node_id)
+        node = self.repository.get_node(user_id=state.user_id, node_id=node_id)
+        if not bool(int(node["is_active"])):
+            raise ModelContractError(f"memory node_id {node_id} is inactive")
         before_nodes = set(state.viewed_graph.nodes)
         before_edges = set(state.viewed_graph.edges)
         state.viewed_graph.merge(self._one_hop(user_id=state.user_id, focus_node_id=node_id))
@@ -491,7 +409,7 @@ class LiveGraphMemory:
             raise ModelContractError("memory new-node budget exhausted for this turn")
         recall_id = str(arguments.get("recall_id", ""))
         if recall_id not in state.query_recalls:
-            raise ModelContractError("memory/generate/node requires a valid current-turn query recall_id")
+            raise ModelContractError("memory/generate/node requires a valid current-turn recall_id")
         kind = str(arguments.get("kind", ""))
         if kind not in {"concept", "composite"}:
             raise ModelContractError("memory node kind must be concept or composite")
@@ -506,26 +424,51 @@ class LiveGraphMemory:
             self._require_viewed_nodes(member_ids, state)
         elif member_ids:
             raise ModelContractError("concept node cannot declare composite members")
+
         vector = self.embedding.embed([name])[0]
         with self.repository.transaction() as conn:
-            duplicate = conn.execute("SELECT node_id FROM graph_nodes WHERE user_id=? AND name=? ORDER BY node_id LIMIT 1", (state.user_id, name)).fetchone()
-            if duplicate is not None and self._node_active_in_connection(conn, state.user_id, int(duplicate["node_id"])):
-                raise ModelContractError(f"memory node already exists as node_id {int(duplicate['node_id'])}; reuse or fix the existing node")
-            cursor = conn.execute("INSERT INTO graph_nodes (user_id, name) VALUES (?, ?)", (state.user_id, name))
+            exact = conn.execute(
+                "SELECT node_id FROM graph_nodes WHERE user_id=? AND name=? AND is_active=1 ORDER BY node_id LIMIT 1",
+                (state.user_id, name),
+            ).fetchone()
+            if exact is not None:
+                raise ModelContractError(
+                    f"memory node already exists as node_id {int(exact['node_id'])}; reuse or fix it"
+                )
+            cursor = conn.execute(
+                "INSERT INTO graph_nodes (user_id, name, kind, is_active) VALUES (?, ?, ?, 1)",
+                (state.user_id, name, kind),
+            )
             node_id = int(cursor.lastrowid)
-            row = conn.execute("SELECT updated_at FROM graph_nodes WHERE user_id=? AND node_id=?", (state.user_id, node_id)).fetchone()
-            conn.execute("INSERT INTO live_memory_node_state (user_id, node_id, kind, is_active) VALUES (?, ?, ?, 1)", (state.user_id, node_id, kind))
+            row = conn.execute(
+                "SELECT updated_at FROM graph_nodes WHERE user_id=? AND node_id=?",
+                (state.user_id, node_id),
+            ).fetchone()
             if kind == "composite":
-                self._validate_composite_members(conn, user_id=state.user_id, composite_id=node_id, member_ids=member_ids)
+                self._validate_composite_members(
+                    conn,
+                    user_id=state.user_id,
+                    composite_id=node_id,
+                    member_ids=member_ids,
+                )
                 for member_id in dict.fromkeys(member_ids):
-                    conn.execute("INSERT INTO live_memory_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)", (state.user_id, node_id, member_id))
-            self._save_embedding_in_connection(conn, user_id=state.user_id, node_id=node_id, node_updated_at=str(row["updated_at"]), vector=vector)
+                    conn.execute(
+                        "INSERT INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                        (state.user_id, node_id, member_id),
+                    )
+            self._save_embedding_in_connection(
+                conn,
+                user_id=state.user_id,
+                node_id=node_id,
+                node_updated_at=str(row["updated_at"]),
+                vector=vector,
+            )
             self._link_sources(conn, state=state, source_ids=source_ids, node_id=node_id)
-            self._insert_legacy_provenance(conn, state=state, source_ids=source_ids, node_id=node_id)
+
         state.new_node_count += 1
         node = self._node_payload(user_id=state.user_id, node_id=node_id)
         state.viewed_graph.nodes[node_id] = node
-        state.available_source_ids.update(node.get("source_ids", []))
+        self._absorb_sources_from_view(state)
         return {"status": "generated", "node": node, "viewed_graph": state.viewed_graph.payload()}
 
     def generate_edge(self, *, arguments: dict[str, Any], state: MemoryTurnState) -> dict[str, Any]:
@@ -543,19 +486,29 @@ class LiveGraphMemory:
         relevance = self._relevance(arguments.get("personal_relevance"))
         source_ids = self._validated_source_ids(arguments.get("source_ids"), state)
         self._require_edge_budget(state, start_id, end_id)
+
         with self.repository.transaction() as conn:
             self._require_owned_active_node(conn, user_id=state.user_id, node_id=start_id)
             self._require_owned_active_node(conn, user_id=state.user_id, node_id=end_id)
-            existing = conn.execute("SELECT edge_id FROM live_memory_current_edges WHERE user_id=? AND start_node_id=? AND end_node_id=?", (state.user_id, start_id, end_id)).fetchone()
+            existing = conn.execute(
+                "SELECT edge_id FROM graph_edges WHERE user_id=? AND start_node_id=? AND end_node_id=?",
+                (state.user_id, start_id, end_id),
+            ).fetchone()
             if existing is not None:
-                edge_id = int(existing["edge_id"])
-                raise ModelContractError(f"directed memory edge already exists for {start_id}->{end_id} as edge_id {edge_id}; use memory/fix/edge")
-            cursor = conn.execute("INSERT INTO graph_edges (user_id, subject_node_id, relation, object_node_id) VALUES (?, ?, ?, ?)", (state.user_id, start_id, relation, end_id))
+                raise ModelContractError(
+                    f"directed memory edge already exists for {start_id}->{end_id} as edge_id {int(existing['edge_id'])}; use memory/fix/edge"
+                )
+            cursor = conn.execute(
+                """
+                INSERT INTO graph_edges
+                    (user_id, start_node_id, end_node_id, relation, weight, personal_relevance)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (state.user_id, start_id, end_id, relation, weight, relevance),
+            )
             edge_id = int(cursor.lastrowid)
-            conn.execute("INSERT INTO live_memory_current_edges (user_id, start_node_id, end_node_id, edge_id) VALUES (?, ?, ?, ?)", (state.user_id, start_id, end_id, edge_id))
-            conn.execute("INSERT INTO live_memory_edge_state (user_id, edge_id, weight, personal_relevance) VALUES (?, ?, ?, ?)", (state.user_id, edge_id, weight, relevance))
             self._link_sources(conn, state=state, source_ids=source_ids, edge_id=edge_id)
-            self._insert_legacy_provenance(conn, state=state, source_ids=source_ids, edge_id=edge_id)
+
         self._count_edge_mutation(state, start_id, end_id)
         edge = self._edge_payload(user_id=state.user_id, edge_id=edge_id)
         state.viewed_graph.edges[edge_id] = edge
@@ -567,6 +520,7 @@ class LiveGraphMemory:
     def fix_node(self, *, arguments: dict[str, Any], state: MemoryTurnState) -> dict[str, Any]:
         operation = str(arguments.get("operation", ""))
         source_ids = self._validated_source_ids(arguments.get("source_ids"), state)
+
         if operation == "rename":
             node_id = int(arguments["node_id"])
             self._require_viewed_nodes([node_id], state)
@@ -576,16 +530,33 @@ class LiveGraphMemory:
             vector = self.embedding.embed([name])[0]
             with self.repository.transaction() as conn:
                 self._require_fixable_node(conn, state.user_id, node_id)
-                duplicate = conn.execute("SELECT node_id FROM graph_nodes WHERE user_id=? AND name=? AND node_id<>? ORDER BY node_id LIMIT 1", (state.user_id, name, node_id)).fetchone()
-                if duplicate is not None and self._node_active_in_connection(conn, state.user_id, int(duplicate["node_id"])):
-                    raise ModelContractError(f"rename would duplicate active node_id {int(duplicate['node_id'])}; use memory/fix/node merge")
-                conn.execute("UPDATE graph_nodes SET name=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND node_id=?", (name, state.user_id, node_id))
-                row = conn.execute("SELECT updated_at FROM graph_nodes WHERE user_id=? AND node_id=?", (state.user_id, node_id)).fetchone()
-                self._save_embedding_in_connection(conn, user_id=state.user_id, node_id=node_id, node_updated_at=str(row["updated_at"]), vector=vector)
+                duplicate = conn.execute(
+                    "SELECT node_id FROM graph_nodes WHERE user_id=? AND name=? AND node_id<>? AND is_active=1 ORDER BY node_id LIMIT 1",
+                    (state.user_id, name, node_id),
+                ).fetchone()
+                if duplicate is not None:
+                    raise ModelContractError(
+                        f"rename would duplicate active node_id {int(duplicate['node_id'])}; merge instead"
+                    )
+                conn.execute(
+                    "UPDATE graph_nodes SET name=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND node_id=?",
+                    (name, state.user_id, node_id),
+                )
+                row = conn.execute(
+                    "SELECT updated_at FROM graph_nodes WHERE user_id=? AND node_id=?",
+                    (state.user_id, node_id),
+                ).fetchone()
+                self._save_embedding_in_connection(
+                    conn,
+                    user_id=state.user_id,
+                    node_id=node_id,
+                    node_updated_at=str(row["updated_at"]),
+                    vector=vector,
+                )
                 self._link_sources(conn, state=state, source_ids=source_ids, node_id=node_id)
-                self._insert_legacy_provenance(conn, state=state, source_ids=source_ids, node_id=node_id)
             self._refresh_viewed_node(state=state, node_id=node_id)
             return {"status": "fixed", "node": state.viewed_graph.nodes[node_id], "viewed_graph": state.viewed_graph.payload()}
+
         if operation == "set_members":
             node_id = int(arguments["node_id"])
             member_ids = [int(value) for value in arguments["member_node_ids"]]
@@ -596,15 +567,29 @@ class LiveGraphMemory:
                 raise ModelContractError("composite node cannot contain itself")
             with self.repository.transaction() as conn:
                 self._require_fixable_node(conn, state.user_id, node_id)
-                self._validate_composite_members(conn, user_id=state.user_id, composite_id=node_id, member_ids=member_ids)
-                conn.execute("INSERT INTO live_memory_node_state (user_id, node_id, kind, is_active) VALUES (?, ?, 'composite', 1) ON CONFLICT(user_id, node_id) DO UPDATE SET kind='composite', is_active=1, updated_at=CURRENT_TIMESTAMP", (state.user_id, node_id))
-                conn.execute("DELETE FROM live_memory_composite_members WHERE user_id=? AND composite_node_id=?", (state.user_id, node_id))
+                self._validate_composite_members(
+                    conn,
+                    user_id=state.user_id,
+                    composite_id=node_id,
+                    member_ids=member_ids,
+                )
+                conn.execute(
+                    "UPDATE graph_nodes SET kind='composite', updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND node_id=?",
+                    (state.user_id, node_id),
+                )
+                conn.execute(
+                    "DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+                    (state.user_id, node_id),
+                )
                 for member_id in dict.fromkeys(member_ids):
-                    conn.execute("INSERT INTO live_memory_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)", (state.user_id, node_id, member_id))
+                    conn.execute(
+                        "INSERT INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                        (state.user_id, node_id, member_id),
+                    )
                 self._link_sources(conn, state=state, source_ids=source_ids, node_id=node_id)
-                self._insert_legacy_provenance(conn, state=state, source_ids=source_ids, node_id=node_id)
             self._refresh_viewed_node(state=state, node_id=node_id)
             return {"status": "fixed", "node": state.viewed_graph.nodes[node_id], "viewed_graph": state.viewed_graph.payload()}
+
         if operation == "merge":
             source_node_id = int(arguments["source_node_id"])
             target_node_id = int(arguments["target_node_id"])
@@ -618,101 +603,238 @@ class LiveGraphMemory:
                 target_kind = self._node_kind_in_connection(conn, state.user_id, target_node_id)
                 if source_kind != target_kind:
                     raise ModelContractError("memory node merge requires the same structural kind")
-                self._merge_current_edges(conn, state=state, source_node_id=source_node_id, target_node_id=target_node_id)
-                self._merge_composites(conn, user_id=state.user_id, source_node_id=source_node_id, target_node_id=target_node_id)
-                self._move_node_sources(conn, state=state, source_node_id=source_node_id, target_node_id=target_node_id)
+                self._merge_edges(
+                    conn,
+                    state=state,
+                    source_node_id=source_node_id,
+                    target_node_id=target_node_id,
+                )
+                self._merge_composites(
+                    conn,
+                    user_id=state.user_id,
+                    source_node_id=source_node_id,
+                    target_node_id=target_node_id,
+                )
+                self._move_node_sources(
+                    conn,
+                    state=state,
+                    source_node_id=source_node_id,
+                    target_node_id=target_node_id,
+                )
                 self._link_sources(conn, state=state, source_ids=source_ids, node_id=target_node_id)
-                conn.execute("INSERT INTO live_memory_node_state (user_id, node_id, kind, is_active) VALUES (?, ?, ?, 0) ON CONFLICT(user_id, node_id) DO UPDATE SET is_active=0, updated_at=CURRENT_TIMESTAMP", (state.user_id, source_node_id, source_kind))
-                self._insert_legacy_provenance(conn, state=state, source_ids=source_ids, node_id=target_node_id)
+                conn.execute(
+                    "UPDATE graph_nodes SET is_active=0, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND node_id=?",
+                    (state.user_id, source_node_id),
+                )
             state.viewed_graph.remove_node(source_node_id)
             self._rebuild_viewed_graph(state)
-            return {"status": "merged", "merged_node_id": source_node_id, "node": self._node_payload(user_id=state.user_id, node_id=target_node_id), "viewed_graph": state.viewed_graph.payload()}
+            return {
+                "status": "merged",
+                "merged_node_id": source_node_id,
+                "node": self._node_payload(user_id=state.user_id, node_id=target_node_id),
+                "viewed_graph": state.viewed_graph.payload(),
+            }
+
         raise ModelContractError("memory/fix/node operation must be rename, set_members, or merge")
 
     def fix_edge(self, *, arguments: dict[str, Any], state: MemoryTurnState) -> dict[str, Any]:
         operation = str(arguments.get("operation", ""))
         edge_id = int(arguments["edge_id"])
         if edge_id not in state.viewed_graph.edges:
-            raise ModelContractError("memory/fix/edge requires an edge present in the current ViewedGraph")
+            raise ModelContractError("memory/fix/edge requires an edge in the current ViewedGraph")
         source_ids = self._validated_source_ids(arguments.get("source_ids"), state)
+
         with self.repository.transaction() as conn:
-            row = conn.execute("SELECT c.start_node_id, c.end_node_id, e.relation FROM live_memory_current_edges c JOIN graph_edges e ON e.edge_id=c.edge_id AND e.user_id=c.user_id WHERE c.user_id=? AND c.edge_id=?", (state.user_id, edge_id)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM graph_edges WHERE user_id=? AND edge_id=?",
+                (state.user_id, edge_id),
+            ).fetchone()
             if row is None:
-                raise ModelContractError(f"memory edge_id {edge_id} is not a current edge for this user")
+                raise ModelContractError(f"memory edge_id {edge_id} is outside user graph scope")
             start_id = int(row["start_node_id"])
             end_id = int(row["end_node_id"])
             self._require_edge_budget(state, start_id, end_id)
-            current_weight, current_relevance = self._edge_state_in_connection(conn, state.user_id, edge_id)
+
             if operation == "disconnect":
-                new_weight = 0.0
-                new_relevance = current_relevance
+                conn.execute(
+                    "UPDATE graph_edges SET weight=0.0, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?",
+                    (state.user_id, edge_id),
+                )
+                status = "disconnected"
             elif operation == "update":
                 relation = str(arguments.get("relation", "")).strip()
                 if not relation:
                     raise ModelContractError("memory edge relation must be non-empty")
                 delta = float(arguments["weight_delta"])
-                new_weight = max(0.0, min(1.0, current_weight + delta))
-                new_relevance = max(current_relevance, self._relevance(arguments.get("personal_relevance")))
-                conn.execute("UPDATE graph_edges SET relation=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?", (relation, state.user_id, edge_id))
+                new_weight = max(0.0, min(1.0, float(row["weight"]) + delta))
+                new_relevance = max(
+                    float(row["personal_relevance"]),
+                    self._relevance(arguments.get("personal_relevance")),
+                )
+                conn.execute(
+                    """
+                    UPDATE graph_edges
+                    SET relation=?, weight=?, personal_relevance=?, updated_at=CURRENT_TIMESTAMP
+                    WHERE user_id=? AND edge_id=?
+                    """,
+                    (relation, new_weight, new_relevance, state.user_id, edge_id),
+                )
+                status = "fixed"
             else:
                 raise ModelContractError("memory/fix/edge operation must be update or disconnect")
-            conn.execute("INSERT INTO live_memory_edge_state (user_id, edge_id, weight, personal_relevance) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, edge_id) DO UPDATE SET weight=excluded.weight, personal_relevance=excluded.personal_relevance, updated_at=CURRENT_TIMESTAMP", (state.user_id, edge_id, new_weight, new_relevance))
             self._link_sources(conn, state=state, source_ids=source_ids, edge_id=edge_id)
-            self._insert_legacy_provenance(conn, state=state, source_ids=source_ids, edge_id=edge_id)
+
         self._count_edge_mutation(state, start_id, end_id)
         edge = self._edge_payload(user_id=state.user_id, edge_id=edge_id)
         if float(edge["weight"]) <= 0.0:
             state.viewed_graph.remove_edge(edge_id)
-            status = "disconnected"
         else:
             state.viewed_graph.edges[edge_id] = edge
-            status = "fixed"
         self._refresh_viewed_node(state=state, node_id=start_id)
         self._refresh_viewed_node(state=state, node_id=end_id)
         self._absorb_sources_from_view(state)
         return {"status": status, "edge": edge, "viewed_graph": state.viewed_graph.payload()}
 
-    def register_tool_source(self, *, state: MemoryTurnState, source_kind: str, source_key: str, tool_name: str, arguments: dict[str, Any], result: Any) -> int | None:
+    def register_tool_source(
+        self,
+        *,
+        state: MemoryTurnState,
+        source_kind: str,
+        source_key: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: Any,
+    ) -> int | None:
         if self.source_store is None:
             return None
         record = SourceRecord(
             source_kind=str(source_kind),
             source_key=str(source_key),
-            content=json.dumps({"tool": str(tool_name), "arguments": arguments, "result": result}, ensure_ascii=False, sort_keys=True, default=str),
+            content=json.dumps(
+                {"tool": str(tool_name), "arguments": arguments, "result": result},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
             metadata={"tool": str(tool_name)},
         )
         source_id = self._ensure_sources(state=state, records=[record])[0]
         state.available_source_ids.add(source_id)
         return source_id
 
-    def _active_nodes(self, *, user_id: str) -> list[dict[str, Any]]:
+    def _one_hop(self, *, user_id: str, focus_node_id: int) -> dict[str, Any]:
+        raw = self.repository.one_hop_neighborhood(user_id=user_id, focus_node_id=focus_node_id)
+        nodes = [self._node_payload(user_id=user_id, node_id=int(node["node_id"])) for node in raw["nodes"]]
+        edges = [self._edge_payload(user_id=user_id, edge_id=int(edge["edge_id"])) for edge in raw["edges"]]
+        return {"depth": 1, "focus_node_id": focus_node_id, "nodes": nodes, "edges": edges}
+
+    def _node_payload(self, *, user_id: str, node_id: int) -> dict[str, Any]:
+        node = self.repository.get_node(user_id=user_id, node_id=node_id)
         with self.repository.transaction() as conn:
-            rows = conn.execute("SELECT n.* FROM graph_nodes n LEFT JOIN live_memory_node_state s ON s.user_id=n.user_id AND s.node_id=n.node_id WHERE n.user_id=? AND COALESCE(s.is_active, 1)=1 ORDER BY n.node_id", (user_id,)).fetchall()
-            return [dict(row) for row in rows]
+            members = conn.execute(
+                "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                (user_id, node_id),
+            ).fetchall()
+            source_ids = self._source_ids_in_connection(conn, user_id=user_id, node_id=node_id)
+        return {
+            **node,
+            "member_node_ids": [int(row["member_node_id"]) for row in members],
+            "source_ids": source_ids,
+        }
+
+    def _edge_payload(self, *, user_id: str, edge_id: int) -> dict[str, Any]:
+        edge = self.repository.get_edge(user_id=user_id, edge_id=edge_id)
+        with self.repository.transaction() as conn:
+            source_ids = self._source_ids_in_connection(conn, user_id=user_id, edge_id=edge_id)
+        return {**edge, "source_ids": source_ids}
+
+    def _refresh_viewed_node(self, *, state: MemoryTurnState, node_id: int) -> None:
+        if node_id not in state.viewed_graph.nodes:
+            return
+        node = self._node_payload(user_id=state.user_id, node_id=node_id)
+        if bool(int(node["is_active"])):
+            state.viewed_graph.nodes[node_id] = node
+        else:
+            state.viewed_graph.remove_node(node_id)
+
+    def _rebuild_viewed_graph(self, state: MemoryTurnState) -> None:
+        focus_ids = [
+            node_id
+            for node_id in sorted(state.viewed_graph.nodes)
+            if bool(int(self.repository.get_node(user_id=state.user_id, node_id=node_id)["is_active"]))
+        ]
+        rebuilt = ViewedGraph()
+        for node_id in focus_ids:
+            rebuilt.merge(self._one_hop(user_id=state.user_id, focus_node_id=node_id))
+        state.viewed_graph = rebuilt
+        self._absorb_sources_from_view(state)
+
+    def _absorb_sources_from_view(self, state: MemoryTurnState) -> None:
+        for node in state.viewed_graph.nodes.values():
+            state.available_source_ids.update(int(value) for value in node.get("source_ids", []))
+        for edge in state.viewed_graph.edges.values():
+            state.available_source_ids.update(int(value) for value in edge.get("source_ids", []))
 
     def _ensure_node_embeddings(self, *, user_id: str, nodes: list[dict[str, Any]]) -> None:
         missing: list[dict[str, Any]] = []
         with self.repository.transaction() as conn:
             for node in nodes:
-                row = conn.execute("SELECT node_updated_at FROM live_memory_node_embeddings WHERE user_id=? AND node_id=? AND model=?", (user_id, int(node["node_id"]), self.embedding.model)).fetchone()
+                row = conn.execute(
+                    "SELECT node_updated_at FROM graph_node_embeddings WHERE user_id=? AND node_id=? AND model=?",
+                    (user_id, int(node["node_id"]), self.embedding.model),
+                ).fetchone()
                 if row is None or str(row["node_updated_at"]) != str(node["updated_at"]):
                     missing.append(node)
         if not missing:
             return
         vectors = self.embedding.embed([str(node["name"]) for node in missing])
-        if len(vectors) != len(missing):
-            raise ModelContractError("embedding provider returned unexpected node vector count")
         with self.repository.transaction() as conn:
             for node, vector in zip(missing, vectors):
-                self._save_embedding_in_connection(conn, user_id=user_id, node_id=int(node["node_id"]), node_updated_at=str(node["updated_at"]), vector=vector)
+                self._save_embedding_in_connection(
+                    conn,
+                    user_id=user_id,
+                    node_id=int(node["node_id"]),
+                    node_updated_at=str(node["updated_at"]),
+                    vector=vector,
+                )
 
-    def _save_embedding_in_connection(self, conn: Any, *, user_id: str, node_id: int, node_updated_at: str, vector: list[float]) -> None:
+    def _save_embedding_in_connection(
+        self,
+        conn: Any,
+        *,
+        user_id: str,
+        node_id: int,
+        node_updated_at: str,
+        vector: list[float],
+    ) -> None:
         if not vector or any(not math.isfinite(float(value)) for value in vector):
             raise ModelContractError("invalid node embedding vector")
-        conn.execute("INSERT INTO live_memory_node_embeddings (user_id, node_id, model, node_updated_at, dimension, vector_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, node_id, model) DO UPDATE SET node_updated_at=excluded.node_updated_at, dimension=excluded.dimension, vector_json=excluded.vector_json, updated_at=CURRENT_TIMESTAMP", (user_id, int(node_id), self.embedding.model, str(node_updated_at), len(vector), json.dumps([float(value) for value in vector], separators=(",", ":"))))
+        conn.execute(
+            """
+            INSERT INTO graph_node_embeddings
+                (user_id, node_id, model, node_updated_at, dimension, vector_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, node_id, model)
+            DO UPDATE SET node_updated_at=excluded.node_updated_at,
+                          dimension=excluded.dimension,
+                          vector_json=excluded.vector_json,
+                          updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                user_id,
+                int(node_id),
+                self.embedding.model,
+                str(node_updated_at),
+                len(vector),
+                json.dumps([float(value) for value in vector], separators=(",", ":")),
+            ),
+        )
 
     def _embedding_for_node_in_connection(self, conn: Any, *, user_id: str, node_id: int) -> list[float]:
-        row = conn.execute("SELECT vector_json FROM live_memory_node_embeddings WHERE user_id=? AND node_id=? AND model=?", (user_id, node_id, self.embedding.model)).fetchone()
+        row = conn.execute(
+            "SELECT vector_json FROM graph_node_embeddings WHERE user_id=? AND node_id=? AND model=?",
+            (user_id, node_id, self.embedding.model),
+        ).fetchone()
         if row is None:
             raise ModelContractError(f"node_id {node_id} has no embedding for {self.embedding.model!r}")
         raw = json.loads(str(row["vector_json"]))
@@ -731,71 +853,23 @@ class LiveGraphMemory:
             raise ModelContractError("embedding vector norm must be non-zero")
         return dot / (left_norm * right_norm)
 
-    def _one_hop(self, *, user_id: str, focus_node_id: int) -> dict[str, Any]:
-        focus = self._node_payload(user_id=user_id, node_id=focus_node_id)
-        if not bool(focus["is_active"]):
-            raise ModelContractError(f"memory node_id {focus_node_id} is inactive")
-        with self.repository.transaction() as conn:
-            rows = conn.execute("SELECT edge_id FROM live_memory_current_edges WHERE user_id=? AND (start_node_id=? OR end_node_id=?) ORDER BY edge_id", (user_id, focus_node_id, focus_node_id)).fetchall()
-        edges: list[dict[str, Any]] = []
-        node_ids = {focus_node_id}
-        for row in rows:
-            edge = self._edge_payload(user_id=user_id, edge_id=int(row["edge_id"]))
-            if float(edge["weight"]) <= 0.0:
-                continue
-            edges.append(edge)
-            node_ids.add(int(edge["start_node_id"]))
-            node_ids.add(int(edge["end_node_id"]))
-        nodes = []
-        for node_id in sorted(node_ids):
-            node = self._node_payload(user_id=user_id, node_id=node_id)
-            if bool(node["is_active"]):
-                nodes.append(node)
-        return {"depth": 1, "focus_node_id": focus_node_id, "nodes": nodes, "edges": edges}
-
-    def _refresh_viewed_node(self, *, state: MemoryTurnState, node_id: int) -> None:
-        if node_id not in state.viewed_graph.nodes:
-            return
-        node = self._node_payload(user_id=state.user_id, node_id=node_id)
-        if bool(node["is_active"]):
-            state.viewed_graph.nodes[node_id] = node
-        else:
-            state.viewed_graph.remove_node(node_id)
-
-    def _rebuild_viewed_graph(self, state: MemoryTurnState) -> None:
-        focus_ids = [node_id for node_id in sorted(state.viewed_graph.nodes) if self._node_active(user_id=state.user_id, node_id=node_id)]
-        rebuilt = ViewedGraph()
-        for node_id in focus_ids:
-            rebuilt.merge(self._one_hop(user_id=state.user_id, focus_node_id=node_id))
-        state.viewed_graph = rebuilt
-        self._absorb_sources_from_view(state)
-
-    def _absorb_sources_from_view(self, state: MemoryTurnState) -> None:
-        for node in state.viewed_graph.nodes.values():
-            state.available_source_ids.update(int(value) for value in node.get("source_ids", []))
-        for edge in state.viewed_graph.edges.values():
-            state.available_source_ids.update(int(value) for value in edge.get("source_ids", []))
-
-    def _node_payload(self, *, user_id: str, node_id: int) -> dict[str, Any]:
-        node = self.repository.get_node(user_id=user_id, node_id=node_id)
-        with self.repository.transaction() as conn:
-            kind = self._node_kind_in_connection(conn, user_id, node_id)
-            active = self._node_active_in_connection(conn, user_id, node_id)
-            members = conn.execute("SELECT member_node_id FROM live_memory_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id", (user_id, node_id)).fetchall()
-            source_ids = self._source_ids_in_connection(conn, user_id=user_id, node_id=node_id)
-        return {**node, "kind": kind, "is_active": active, "member_node_ids": [int(row["member_node_id"]) for row in members], "source_ids": source_ids}
-
-    def _edge_payload(self, *, user_id: str, edge_id: int) -> dict[str, Any]:
-        with self.repository.transaction() as conn:
-            row = conn.execute("SELECT c.start_node_id, c.end_node_id, e.* FROM live_memory_current_edges c JOIN graph_edges e ON e.edge_id=c.edge_id AND e.user_id=c.user_id WHERE c.user_id=? AND c.edge_id=?", (user_id, edge_id)).fetchone()
-            if row is None:
-                raise ModelContractError(f"edge_id {edge_id} is not a current memory edge for user")
-            weight, relevance = self._edge_state_in_connection(conn, user_id, edge_id)
-            source_ids = self._source_ids_in_connection(conn, user_id=user_id, edge_id=edge_id)
-            return {"edge_id": edge_id, "user_id": user_id, "start_node_id": int(row["start_node_id"]), "end_node_id": int(row["end_node_id"]), "relation": str(row["relation"]), "weight": weight, "personal_relevance": relevance, "source_ids": source_ids, "created_at": row["created_at"], "updated_at": row["updated_at"]}
-
-    def _merge_current_edges(self, conn: Any, *, state: MemoryTurnState, source_node_id: int, target_node_id: int) -> None:
-        rows = conn.execute("SELECT edge_id, start_node_id, end_node_id FROM live_memory_current_edges WHERE user_id=? AND (start_node_id=? OR end_node_id=?) ORDER BY edge_id", (state.user_id, source_node_id, source_node_id)).fetchall()
+    def _merge_edges(
+        self,
+        conn: Any,
+        *,
+        state: MemoryTurnState,
+        source_node_id: int,
+        target_node_id: int,
+    ) -> None:
+        rows = conn.execute(
+            """
+            SELECT edge_id, start_node_id, end_node_id
+            FROM graph_edges
+            WHERE user_id=? AND (start_node_id=? OR end_node_id=?)
+            ORDER BY edge_id
+            """,
+            (state.user_id, source_node_id, source_node_id),
+        ).fetchall()
         changes: list[tuple[int, int, int, int, int]] = []
         for row in rows:
             edge_id = int(row["edge_id"])
@@ -804,42 +878,78 @@ class LiveGraphMemory:
             new_start = target_node_id if old_start == source_node_id else old_start
             new_end = target_node_id if old_end == source_node_id else old_end
             if new_start == new_end:
-                raise ModelContractError(f"node merge would create self-loop edge_id {edge_id}; disconnect/fix that edge before merging")
-            conflict = conn.execute("SELECT edge_id FROM live_memory_current_edges WHERE user_id=? AND start_node_id=? AND end_node_id=? AND edge_id<>?", (state.user_id, new_start, new_end, edge_id)).fetchone()
+                raise ModelContractError(
+                    f"node merge would create self-loop edge_id {edge_id}; disconnect/fix it first"
+                )
+            conflict = conn.execute(
+                """
+                SELECT edge_id FROM graph_edges
+                WHERE user_id=? AND start_node_id=? AND end_node_id=? AND edge_id<>?
+                """,
+                (state.user_id, new_start, new_end, edge_id),
+            ).fetchone()
             if conflict is not None:
-                raise ModelContractError("node merge would collapse two current directed edges; fix/disconnect the conflict before merging")
+                raise ModelContractError(
+                    "node merge would collapse two directed edges; fix/disconnect the conflict first"
+                )
             self._require_edge_budget(state, old_start, old_end)
             changes.append((edge_id, old_start, old_end, new_start, new_end))
         for edge_id, old_start, old_end, new_start, new_end in changes:
-            conn.execute("UPDATE graph_edges SET subject_node_id=?, object_node_id=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?", (new_start, new_end, state.user_id, edge_id))
-            conn.execute("UPDATE live_memory_current_edges SET start_node_id=?, end_node_id=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?", (new_start, new_end, state.user_id, edge_id))
+            conn.execute(
+                "UPDATE graph_edges SET start_node_id=?, end_node_id=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=? AND edge_id=?",
+                (new_start, new_end, state.user_id, edge_id),
+            )
             self._count_edge_mutation(state, old_start, old_end)
 
-    def _merge_composites(self, conn: Any, *, user_id: str, source_node_id: int, target_node_id: int) -> None:
-        containing = conn.execute("SELECT composite_node_id FROM live_memory_composite_members WHERE user_id=? AND member_node_id=?", (user_id, source_node_id)).fetchall()
+    def _merge_composites(
+        self,
+        conn: Any,
+        *,
+        user_id: str,
+        source_node_id: int,
+        target_node_id: int,
+    ) -> None:
+        containing = conn.execute(
+            "SELECT composite_node_id FROM graph_composite_members WHERE user_id=? AND member_node_id=?",
+            (user_id, source_node_id),
+        ).fetchall()
         for row in containing:
             composite_id = int(row["composite_node_id"])
             if composite_id == target_node_id:
                 raise ModelContractError("node merge would create composite self-membership")
-            conn.execute("INSERT OR IGNORE INTO live_memory_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)", (user_id, composite_id, target_node_id))
-        conn.execute("DELETE FROM live_memory_composite_members WHERE user_id=? AND member_node_id=?", (user_id, source_node_id))
-        source_members = conn.execute("SELECT member_node_id FROM live_memory_composite_members WHERE user_id=? AND composite_node_id=?", (user_id, source_node_id)).fetchall()
+            conn.execute(
+                "INSERT OR IGNORE INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                (user_id, composite_id, target_node_id),
+            )
+        conn.execute(
+            "DELETE FROM graph_composite_members WHERE user_id=? AND member_node_id=?",
+            (user_id, source_node_id),
+        )
+        source_members = conn.execute(
+            "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+            (user_id, source_node_id),
+        ).fetchall()
         for row in source_members:
             member_id = int(row["member_node_id"])
             if member_id == target_node_id:
                 raise ModelContractError("node merge would create composite self-membership")
-            conn.execute("INSERT OR IGNORE INTO live_memory_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)", (user_id, target_node_id, member_id))
-        conn.execute("DELETE FROM live_memory_composite_members WHERE user_id=? AND composite_node_id=?", (user_id, source_node_id))
+            conn.execute(
+                "INSERT OR IGNORE INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                (user_id, target_node_id, member_id),
+            )
+        conn.execute(
+            "DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+            (user_id, source_node_id),
+        )
 
-    def _move_node_sources(self, conn: Any, *, state: MemoryTurnState, source_node_id: int, target_node_id: int) -> None:
-        if self.source_store is None:
-            return
-        rows = conn.execute("SELECT source_id FROM graph_source_links WHERE user_id=? AND node_id=? ORDER BY source_id", (state.user_id, source_node_id)).fetchall()
-        for row in rows:
-            self.source_store.link_sources_in_connection(conn, user_id=state.user_id, turn_id=state.turn_id, source_ids=[int(row["source_id"])], node_id=target_node_id)
-        conn.execute("DELETE FROM graph_source_links WHERE user_id=? AND node_id=?", (state.user_id, source_node_id))
-
-    def _validate_composite_members(self, conn: Any, *, user_id: str, composite_id: int, member_ids: list[int]) -> None:
+    def _validate_composite_members(
+        self,
+        conn: Any,
+        *,
+        user_id: str,
+        composite_id: int,
+        member_ids: list[int],
+    ) -> None:
         for member_id in member_ids:
             self._require_owned_active_node(conn, user_id=user_id, node_id=member_id)
             queue = [member_id]
@@ -851,8 +961,38 @@ class LiveGraphMemory:
                 visited.add(current)
                 if current == composite_id:
                     raise ModelContractError("composite membership cycle is not allowed")
-                rows = conn.execute("SELECT member_node_id FROM live_memory_composite_members WHERE user_id=? AND composite_node_id=?", (user_id, current)).fetchall()
+                rows = conn.execute(
+                    "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+                    (user_id, current),
+                ).fetchall()
                 queue.extend(int(row["member_node_id"]) for row in rows)
+
+    def _move_node_sources(
+        self,
+        conn: Any,
+        *,
+        state: MemoryTurnState,
+        source_node_id: int,
+        target_node_id: int,
+    ) -> None:
+        if self.source_store is None:
+            return
+        rows = conn.execute(
+            "SELECT source_id FROM graph_source_links WHERE user_id=? AND node_id=? ORDER BY source_id",
+            (state.user_id, source_node_id),
+        ).fetchall()
+        for row in rows:
+            self.source_store.link_sources_in_connection(
+                conn,
+                user_id=state.user_id,
+                turn_id=state.turn_id,
+                source_ids=[int(row["source_id"])],
+                node_id=target_node_id,
+            )
+        conn.execute(
+            "DELETE FROM graph_source_links WHERE user_id=? AND node_id=?",
+            (state.user_id, source_node_id),
+        )
 
     def _ensure_sources(self, *, state: MemoryTurnState, records: Iterable[SourceRecord]) -> list[int]:
         if self.source_store is None:
@@ -861,7 +1001,12 @@ class LiveGraphMemory:
         if not records:
             return []
         with self.repository.transaction() as conn:
-            return self.source_store.ensure_sources_in_connection(conn, user_id=state.user_id, turn_id=state.turn_id, records=records)
+            return self.source_store.ensure_sources_in_connection(
+                conn,
+                user_id=state.user_id,
+                turn_id=state.turn_id,
+                records=records,
+            )
 
     def _validated_source_ids(self, raw: Any, state: MemoryTurnState) -> list[int]:
         if self.source_store is None:
@@ -874,24 +1019,44 @@ class LiveGraphMemory:
             raise ModelContractError(f"memory mutation cited unavailable source_ids: {sorted(unknown)}")
         return source_ids
 
-    def _link_sources(self, conn: Any, *, state: MemoryTurnState, source_ids: list[int], node_id: int | None = None, edge_id: int | None = None) -> None:
+    def _link_sources(
+        self,
+        conn: Any,
+        *,
+        state: MemoryTurnState,
+        source_ids: list[int],
+        node_id: int | None = None,
+        edge_id: int | None = None,
+    ) -> None:
         if self.source_store is None or not source_ids:
             return
-        self.source_store.link_sources_in_connection(conn, user_id=state.user_id, turn_id=state.turn_id, source_ids=source_ids, node_id=node_id, edge_id=edge_id)
+        self.source_store.link_sources_in_connection(
+            conn,
+            user_id=state.user_id,
+            turn_id=state.turn_id,
+            source_ids=source_ids,
+            node_id=node_id,
+            edge_id=edge_id,
+        )
 
-    @staticmethod
-    def _insert_legacy_provenance(conn: Any, *, state: MemoryTurnState, source_ids: list[int], node_id: int | None = None, edge_id: int | None = None) -> None:
-        marker = "source_refs:" + ",".join(str(source_id) for source_id in source_ids) if source_ids else state.user_text
-        conn.execute("INSERT INTO graph_provenance (user_id, turn_id, source_role, source_text, node_id, edge_id) VALUES (?, ?, 'turn', ?, ?, ?)", (state.user_id, state.turn_id, marker, node_id, edge_id))
-
-    def _source_ids_in_connection(self, conn: Any, *, user_id: str, node_id: int | None = None, edge_id: int | None = None) -> list[int]:
+    def _source_ids_in_connection(
+        self,
+        conn: Any,
+        *,
+        user_id: str,
+        node_id: int | None = None,
+        edge_id: int | None = None,
+    ) -> list[int]:
         if self.source_store is None:
             return []
         if (node_id is None) == (edge_id is None):
             return []
         field = "node_id" if node_id is not None else "edge_id"
         value = int(node_id if node_id is not None else edge_id)
-        rows = conn.execute(f"SELECT source_id FROM graph_source_links WHERE user_id=? AND {field}=? ORDER BY source_id", (user_id, value)).fetchall()
+        rows = conn.execute(
+            f"SELECT source_id FROM graph_source_links WHERE user_id=? AND {field}=? ORDER BY source_id",
+            (user_id, value),
+        ).fetchall()
         return [int(row["source_id"]) for row in rows]
 
     @staticmethod
@@ -901,50 +1066,36 @@ class LiveGraphMemory:
             raise ModelContractError("personal_relevance must be user_centered or general_knowledge")
         return _RELEVANCE[key]
 
-    def _node_kind(self, *, user_id: str, node_id: int) -> str:
-        with self.repository.transaction() as conn:
-            return self._node_kind_in_connection(conn, user_id, node_id)
-
     @staticmethod
     def _node_kind_in_connection(conn: Any, user_id: str, node_id: int) -> str:
-        row = conn.execute("SELECT kind FROM live_memory_node_state WHERE user_id=? AND node_id=?", (user_id, node_id)).fetchone()
-        return "concept" if row is None else str(row["kind"])
-
-    def _node_active(self, *, user_id: str, node_id: int) -> bool:
-        with self.repository.transaction() as conn:
-            row = conn.execute("SELECT 1 FROM graph_nodes WHERE user_id=? AND node_id=?", (user_id, node_id)).fetchone()
-            return row is not None and self._node_active_in_connection(conn, user_id, node_id)
-
-    @staticmethod
-    def _node_active_in_connection(conn: Any, user_id: str, node_id: int) -> bool:
-        row = conn.execute("SELECT is_active FROM live_memory_node_state WHERE user_id=? AND node_id=?", (user_id, node_id)).fetchone()
-        return row is None or bool(int(row["is_active"]))
-
-    def _require_owned_active_node_id(self, *, user_id: str, node_id: int) -> None:
-        with self.repository.transaction() as conn:
-            self._require_owned_active_node(conn, user_id=user_id, node_id=node_id)
+        row = conn.execute(
+            "SELECT kind FROM graph_nodes WHERE user_id=? AND node_id=?",
+            (user_id, node_id),
+        ).fetchone()
+        if row is None:
+            raise ModelContractError(f"memory node_id {node_id} is outside user graph scope")
+        return str(row["kind"])
 
     @staticmethod
     def _require_owned_active_node(conn: Any, *, user_id: str, node_id: int) -> None:
-        row = conn.execute("SELECT user_id FROM graph_nodes WHERE node_id=?", (node_id,)).fetchone()
+        row = conn.execute(
+            "SELECT user_id, is_active FROM graph_nodes WHERE node_id=?",
+            (node_id,),
+        ).fetchone()
         if row is None or str(row["user_id"]) != user_id:
             raise ModelContractError(f"memory node_id {node_id} is outside user graph scope")
-        if not LiveGraphMemory._node_active_in_connection(conn, user_id, node_id):
+        if not bool(int(row["is_active"])):
             raise ModelContractError(f"memory node_id {node_id} is inactive")
 
     @staticmethod
     def _require_fixable_node(conn: Any, user_id: str, node_id: int) -> None:
         LiveGraphMemory._require_owned_active_node(conn, user_id=user_id, node_id=node_id)
-        anchor = conn.execute("SELECT 1 FROM graph_user_anchors WHERE user_id=? AND node_id=?", (user_id, node_id)).fetchone()
+        anchor = conn.execute(
+            "SELECT 1 FROM graph_user_anchors WHERE user_id=? AND node_id=?",
+            (user_id, node_id),
+        ).fetchone()
         if anchor is not None:
             raise ModelContractError("canonical user anchor is framework-managed and cannot be fixed")
-
-    @staticmethod
-    def _edge_state_in_connection(conn: Any, user_id: str, edge_id: int) -> tuple[float, float]:
-        row = conn.execute("SELECT weight, personal_relevance FROM live_memory_edge_state WHERE user_id=? AND edge_id=?", (user_id, edge_id)).fetchone()
-        if row is None:
-            return 1.0, 0.5
-        return float(row["weight"]), float(row["personal_relevance"])
 
     @staticmethod
     def _require_viewed_nodes(node_ids: Iterable[int], state: MemoryTurnState) -> None:
