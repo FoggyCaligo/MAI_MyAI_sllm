@@ -50,8 +50,36 @@ Current action tools include:
 
 Action failures remain visible. The framework does not silently retry, redirect, or rewrite an action into another tool.
 
+## Successful structured action deduplication
+
+A successful structured tool action is identified by exact JSON structure:
+
+```text
+(tool name, arguments object)
+```
+
+Once that exact action succeeds in the current turn:
+
+- the same arguments object is excluded from that tool's schema in later rounds;
+- a different arguments object for the same tool remains available;
+- if a model nevertheless emits the exact already-successful action, the framework rejects it before executing the tool again;
+- failed actions are not recorded as successful and are not converted into success;
+- the framework does not compare natural-language meaning, path similarity, command similarity, or substrings.
+
+This contract applies to built-in memory tools and registered work tools. It is independent from inspection progress gating. Inspection progress asks whether new structural information was obtained; successful-action dedup asks whether an identical successful operation is being requested again.
+
+Example:
+
+```text
+file_create(path=A, content=X) -> success
+file_create(path=A, content=X) -> excluded/rejected
+file_create(path=B, content=Y) -> still available
+```
+
+The framework does not automatically reinterpret the second create as `file_update`, does not ignore `FileExistsError`, and does not replay a cached success result.
+
 ## File path provenance
 
-The existing current-turn path provenance contract remains independent from progress gating.
+The existing current-turn path provenance contract remains independent from progress gating and successful-action deduplication.
 
 Discovery and creation may establish concrete paths. Existing-file actions are only exposed for established paths, and execution re-checks the same scope. Progress gating answers a different question: whether an inspection tool is still obtaining new structural information.
