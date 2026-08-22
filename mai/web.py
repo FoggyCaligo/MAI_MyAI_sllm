@@ -24,13 +24,13 @@ from .document_tools import ImageAnalyzer, build_document_image_tools
 from .file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from .file_tools import build_file_tools
 from .final_memory import FinalMemoryExecutor
-from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
+from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
 from .memory_revise import ReviseMemoryTool
 from .memory_write import WriteMemoryTool
 from .model import OllamaModel
 from .model_context import use_model_context
 from .runtime_state import PersistentChatJobStore, PersistentSessionStore, SessionRecord, public_job
-from .scratchpad import ScratchpadRegistry, TurnEvidenceRegistry
+from .scratchpad import EvidenceKindToolAdapter, ScratchpadRegistry, TurnEvidenceRegistry
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
@@ -200,6 +200,10 @@ class ChatHistoryStore:
             self._conn.close()
 
 
+def _with_evidence_kind(tools: list[Any], kind: str) -> list[Any]:
+    return [EvidenceKindToolAdapter(tool, kind) for tool in tools]
+
+
 def build_lifecycle(
     *,
     repository: GraphRepository,
@@ -208,34 +212,53 @@ def build_lifecycle(
     terminal_encoding: str,
     download_grants: DownloadGrantStore,
     image_analyzer: ImageAnalyzer,
+    source_store: GraphSourceStore | None = None,
     role: str = "owner",
     default_root: Path | None = None,
 ) -> WorkingMemoryLifecycle:
     if role not in {"owner", "trial"}:
         raise ValueError(f"unsupported account role: {role}")
     discovery = GraphDiscoveryService(repository)
-    recall = GraphRecallService(repository)
-    writer = WriteMemoryTool(repository)
-    reviser = ReviseMemoryTool(repository)
+    recall = GraphRecallService(repository, source_store=source_store)
+    writer = WriteMemoryTool(repository, source_store=source_store)
+    reviser = ReviseMemoryTool(repository, source_store=source_store)
     evidence = TurnEvidenceRegistry()
     scratchpads = ScratchpadRegistry(evidence=evidence)
-    memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser, scratchpads=scratchpads)
-    web_tools = build_web_market_tools()
+    memory_executor = FinalMemoryExecutor(
+        writer=writer,
+        reviser=reviser,
+        scratchpads=scratchpads,
+        evidence=evidence,
+        source_store=source_store,
+    )
+    web_tools = _with_evidence_kind(build_web_market_tools(), "web_evidence")
     if role == "trial":
         work_tools = web_tools
     else:
-        file_tools = [
-            WorkingRootToolAdapter(tool, "root")
-            for tool in build_file_tools(owner_id=owner_id, default_root=default_root)
-        ]
-        code_tools = [
-            WorkingRootToolAdapter(tool, "indexed_root")
-            for tool in build_code_tools(owner_id=owner_id, default_root=default_root)
-        ]
+        file_tools = _with_evidence_kind(
+            [
+                WorkingRootToolAdapter(tool, "root")
+                for tool in build_file_tools(owner_id=owner_id, default_root=default_root)
+            ],
+            "file_evidence",
+        )
+        code_tools = _with_evidence_kind(
+            [
+                WorkingRootToolAdapter(tool, "indexed_root")
+                for tool in build_code_tools(owner_id=owner_id, default_root=default_root)
+            ],
+            "file_evidence",
+        )
         work_tools = [
             *file_tools,
-            *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
-            *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
+            *_with_evidence_kind(
+                build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+                "file_evidence",
+            ),
+            *_with_evidence_kind(
+                build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
+                "file_evidence",
+            ),
             *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
             *code_tools,
             *web_tools,
@@ -247,6 +270,7 @@ def build_lifecycle(
         recall=recall,
         memory_executor=memory_executor,
         work_tools=work_tools,
+        source_store=source_store,
     )
     return WorkingMemoryLifecycle(
         delegate=base,
@@ -280,6 +304,7 @@ def create_app(
     resolved = settings or RuntimeSettings.from_env()
     resolved.upload_dir.mkdir(parents=True, exist_ok=True)
     repository = None if lifecycle is not None else GraphRepository(resolved.graph_db_path)
+    source_store = None if lifecycle is not None else GraphSourceStore(resolved.graph_db_path)
     resolved_model = model or OllamaModel.from_env()
     resolved_image_analyzer = image_analyzer or OllamaVisionModel.from_env()
     grants = download_grants or DownloadGrantStore()
@@ -304,12 +329,23 @@ def create_app(
                 user_locks[user_id] = lock
             return lock
 
+    def upload_root_for(user_id: str) -> Path:
+        base = resolved.upload_dir.resolve()
+        user_root = (base / str(user_id)).resolve()
+        try:
+            user_root.relative_to(base)
+        except ValueError as exc:
+            raise ValueError("authenticated user id maps outside configured upload root") from exc
+        return user_root
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
         jobs.close()
         sessions.close()
         history.close()
+        if source_store is not None:
+            source_store.close()
         if repository is not None:
             repository.close()
 
@@ -338,9 +374,7 @@ def create_app(
             raise HTTPException(status_code=403, detail="owner-only capability")
 
     def validated_attachment_paths(session: SessionRecord, values: list[str]) -> list[Path]:
-        if values:
-            require_owner(session)
-        user_root = (resolved.upload_dir / session.user_id).resolve()
+        user_root = upload_root_for(session.user_id)
         paths: list[Path] = []
         for value in values:
             path = Path(value).expanduser().resolve()
@@ -357,6 +391,7 @@ def create_app(
         if lifecycle is not None:
             return lifecycle
         assert repository is not None
+        assert source_store is not None
         root_key = str(Path(session.working_root).expanduser().resolve()) if session.role == "owner" else ""
         key = (session.role, root_key)
         with lifecycle_cache_guard:
@@ -369,6 +404,7 @@ def create_app(
                     terminal_encoding=resolved.terminal_encoding,
                     download_grants=grants,
                     image_analyzer=resolved_image_analyzer,
+                    source_store=source_store,
                     role=session.role,
                     default_root=Path(root_key) if root_key else None,
                 )
@@ -486,8 +522,7 @@ def create_app(
     @app.post("/upload")
     async def upload(request: Request, files: list[UploadFile] = File(...)) -> dict[str, Any]:
         session = require_session(request)
-        require_owner(session)
-        user_dir = resolved.upload_dir / session.user_id
+        user_dir = upload_root_for(session.user_id)
         user_dir.mkdir(parents=True, exist_ok=True)
         uploaded: list[dict[str, Any]] = []
         for item in files:
