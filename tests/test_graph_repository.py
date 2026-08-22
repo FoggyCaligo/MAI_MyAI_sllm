@@ -1,164 +1,160 @@
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
-from mai.graph.repository import GraphRepository, GraphScopeError
+from mai.graph import GraphConflictError, GraphRepository
 
 
-def _node(repo: GraphRepository, user: str, name: str, turn: str = "t1") -> dict:
-    return repo.create_node(
-        user_id=user,
-        name=name,
-        turn_id=turn,
-        source_role="user",
-        source_text=f"source:{name}",
-    )
-
-
-def test_node_creation_is_user_scoped_and_records_provenance(tmp_path) -> None:
+def test_directed_pair_allows_one_current_edge_and_reverse_is_distinct(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
-        node = _node(repo, "owner", "로봇공학")
-        assert node["name"] == "로봇공학"
-        assert node["user_id"] == "owner"
-        provenance = repo.provenance_for_turn(user_id="owner", turn_id="t1")
-        assert len(provenance) == 1
-        assert provenance[0]["node_id"] == node["node_id"]
-        assert provenance[0]["source_role"] == "user"
-    finally:
-        repo.close()
-
-
-def test_same_node_name_is_not_implicitly_semantically_merged(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "graph.db")
-    try:
-        first = _node(repo, "owner", "Python")
-        second = _node(repo, "owner", "Python", turn="t2")
-        assert first["node_id"] != second["node_id"]
-    finally:
-        repo.close()
-
-
-def test_edge_reinforcement_is_scoped_and_increments_support(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "graph.db")
-    try:
-        user = _node(repo, "owner", "사용자")
-        tea = _node(repo, "owner", "차")
-        first = repo.create_or_reinforce_edge(
-            user_id="owner",
-            subject_node_id=user["node_id"],
-            relation="좋아한다",
-            object_node_id=tea["node_id"],
-            turn_id="t3",
-            source_role="turn",
-            source_text="사용자는 차를 좋아한다",
+        a = repo.create_node(user_id="u", name="A")
+        b = repo.create_node(user_id="u", name="B")
+        first = repo.create_edge(
+            user_id="u",
+            start_node_id=a["node_id"],
+            end_node_id=b["node_id"],
+            relation="first relation",
+            weight=0.8,
+            personal_relevance=0.5,
         )
-        second = repo.create_or_reinforce_edge(
-            user_id="owner",
-            subject_node_id=user["node_id"],
-            relation="좋아한다",
-            object_node_id=tea["node_id"],
-            turn_id="t4",
-            source_role="turn",
-            source_text="사용자는 여전히 차를 좋아한다",
-        )
-        assert first["edge_id"] == second["edge_id"]
-        assert second["support_count"] == 2
-        assert len(repo.provenance_for_turn(user_id="owner", turn_id="t4")) == 1
-    finally:
-        repo.close()
 
-
-def test_cross_user_edge_is_rejected(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "graph.db")
-    try:
-        left = _node(repo, "owner", "A")
-        right = _node(repo, "other", "B")
-        with pytest.raises(GraphScopeError):
-            repo.create_or_reinforce_edge(
-                user_id="owner",
-                subject_node_id=left["node_id"],
-                relation="knows",
-                object_node_id=right["node_id"],
-                turn_id="t2",
-                source_role="turn",
-                source_text="A knows B",
+        with pytest.raises(GraphConflictError, match="directed edge already exists"):
+            repo.create_edge(
+                user_id="u",
+                start_node_id=a["node_id"],
+                end_node_id=b["node_id"],
+                relation="different wording",
+                weight=0.7,
+                personal_relevance=1.0,
             )
+
+        reverse = repo.create_edge(
+            user_id="u",
+            start_node_id=b["node_id"],
+            end_node_id=a["node_id"],
+            relation="reverse relation",
+            weight=0.6,
+            personal_relevance=0.5,
+        )
+
+        assert first["edge_id"] != reverse["edge_id"]
     finally:
         repo.close()
 
 
-def test_edge_revision_preserves_id_and_rejects_collision(tmp_path) -> None:
+def test_zero_weight_edge_is_excluded_from_active_one_hop(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
-        user = _node(repo, "owner", "사용자")
-        coffee = _node(repo, "owner", "커피")
-        tea = _node(repo, "owner", "차")
-        edge = repo.create_or_reinforce_edge(
-            user_id="owner",
-            subject_node_id=user["node_id"],
-            relation="좋아한다",
-            object_node_id=coffee["node_id"],
-            turn_id="t1",
-            source_role="turn",
-            source_text="커피를 좋아한다",
+        a = repo.create_node(user_id="u", name="A")
+        b = repo.create_node(user_id="u", name="B")
+        edge = repo.create_edge(
+            user_id="u",
+            start_node_id=a["node_id"],
+            end_node_id=b["node_id"],
+            relation="connected",
+            weight=0.5,
+            personal_relevance=0.5,
         )
-        revised = repo.revise_edge(
-            user_id="owner",
+        repo.update_edge(
+            user_id="u",
             edge_id=edge["edge_id"],
-            subject_node_id=user["node_id"],
-            relation="좋아한다",
-            object_node_id=tea["node_id"],
-            turn_id="t2",
-            source_role="turn",
-            source_text="커피가 아니라 차를 좋아한다",
+            relation="connected",
+            weight=0.0,
+            personal_relevance=0.5,
         )
-        assert revised["edge_id"] == edge["edge_id"]
-        assert revised["object_node_id"] == tea["node_id"]
 
-        repo.create_or_reinforce_edge(
-            user_id="owner",
-            subject_node_id=user["node_id"],
-            relation="싫어한다",
-            object_node_id=coffee["node_id"],
-            turn_id="t3",
-            source_role="turn",
-            source_text="커피를 싫어한다",
+        neighborhood = repo.one_hop_neighborhood(user_id="u", focus_node_id=a["node_id"])
+
+        assert neighborhood["edges"] == []
+        assert [node["node_id"] for node in neighborhood["nodes"]] == [a["node_id"]]
+    finally:
+        repo.close()
+
+
+def test_node_embeddings_are_stored_per_configured_model(tmp_path) -> None:
+    repo = GraphRepository(tmp_path / "graph.db")
+    try:
+        node = repo.create_node(user_id="u", name="Mai")
+        repo.set_node_embedding(
+            user_id="u",
+            node_id=node["node_id"],
+            model="embed-test",
+            vector=[0.1, 0.2, 0.3],
         )
-        with pytest.raises(sqlite3.IntegrityError):
-            repo.revise_edge(
-                user_id="owner",
-                edge_id=edge["edge_id"],
-                subject_node_id=user["node_id"],
-                relation="싫어한다",
-                object_node_id=coffee["node_id"],
-                turn_id="t4",
-                source_role="turn",
-                source_text="collision",
+
+        rows = repo.active_node_embeddings(user_id="u", model="embed-test")
+
+        assert rows == [
+            {
+                "node_id": node["node_id"],
+                "name": "Mai",
+                "kind": "concept",
+                "dimension": 3,
+                "vector": [0.1, 0.2, 0.3],
+            }
+        ]
+    finally:
+        repo.close()
+
+
+def test_composite_membership_rejects_cycles(tmp_path) -> None:
+    repo = GraphRepository(tmp_path / "graph.db")
+    try:
+        a = repo.create_node(user_id="u", name="A", kind="concept")
+        b = repo.create_node(user_id="u", name="B", kind="concept")
+        c1 = repo.create_node(user_id="u", name="C1", kind="composite")
+        c2 = repo.create_node(user_id="u", name="C2", kind="composite")
+
+        repo.set_composite_members(
+            user_id="u",
+            composite_node_id=c1["node_id"],
+            member_node_ids=[a["node_id"], b["node_id"]],
+        )
+        repo.set_composite_members(
+            user_id="u",
+            composite_node_id=c2["node_id"],
+            member_node_ids=[c1["node_id"], a["node_id"]],
+        )
+
+        with pytest.raises(GraphConflictError, match="cycle"):
+            repo.set_composite_members(
+                user_id="u",
+                composite_node_id=c1["node_id"],
+                member_node_ids=[c2["node_id"], b["node_id"]],
             )
     finally:
         repo.close()
 
 
-def test_foreign_node_and_edge_reads_fail_explicitly(tmp_path) -> None:
+def test_merge_refuses_semantic_edge_collision_instead_of_choosing(tmp_path) -> None:
     repo = GraphRepository(tmp_path / "graph.db")
     try:
-        a = _node(repo, "a", "A")
-        b = _node(repo, "a", "B")
-        edge = repo.create_or_reinforce_edge(
-            user_id="a",
-            subject_node_id=a["node_id"],
-            relation="rel",
-            object_node_id=b["node_id"],
-            turn_id="t1",
-            source_role="turn",
-            source_text="A rel B",
+        source = repo.create_node(user_id="u", name="duplicate")
+        target = repo.create_node(user_id="u", name="canonical")
+        other = repo.create_node(user_id="u", name="other")
+        repo.create_edge(
+            user_id="u",
+            start_node_id=source["node_id"],
+            end_node_id=other["node_id"],
+            relation="source relation",
+            weight=0.5,
+            personal_relevance=0.5,
         )
-        with pytest.raises(GraphScopeError):
-            repo.get_node(user_id="b", node_id=a["node_id"])
-        with pytest.raises(GraphScopeError):
-            repo.get_edge(user_id="b", edge_id=edge["edge_id"])
+        repo.create_edge(
+            user_id="u",
+            start_node_id=target["node_id"],
+            end_node_id=other["node_id"],
+            relation="target relation",
+            weight=0.5,
+            personal_relevance=0.5,
+        )
+
+        with pytest.raises(GraphConflictError, match="collide"):
+            repo.merge_node(
+                user_id="u",
+                source_node_id=source["node_id"],
+                target_node_id=target["node_id"],
+            )
     finally:
         repo.close()
