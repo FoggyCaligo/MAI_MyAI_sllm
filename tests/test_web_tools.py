@@ -166,9 +166,9 @@ def test_market_schema_has_explicit_lookup_and_snapshot_variants() -> None:
         settings=MarketProviderSettings("fake", "fake", "fake", "fake"),
     )
     schema = tool.schema()
-    assert len(schema["oneOf"]) == 2
+    variants = schema["properties"]["arguments"]["oneOf"]
     operations = {
-        variant["properties"]["arguments"]["properties"]["operation"]["const"]
-        for variant in schema["oneOf"]
+        variant["properties"]["operation"]["const"]
+        for variant in variants
     }
     assert operations == {"lookup", "snapshot"}
