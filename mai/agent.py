@@ -302,9 +302,12 @@ def _working_root(tool: WorkTool, result: Any) -> str | None:
 
 
 def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] | None:
-    builder = getattr(tool, "schema_for_paths", None)
-    if callable(builder):
-        return builder(set(context.path_provenance.paths))
+    context_builder = getattr(tool, "schema_for_context", None)
+    if callable(context_builder):
+        return context_builder(context)
+    path_builder = getattr(tool, "schema_for_paths", None)
+    if callable(path_builder):
+        return path_builder(set(context.path_provenance.paths))
     return tool.schema()
 
 
@@ -559,10 +562,15 @@ class AgentLifecycle:
                     raise ModelContractError("tool_manual target is unavailable or already activated")
                 tool = tools[requested]
                 activated_tools.add(requested)
+                contextual_schema = _schema_for_context(tool, context)
                 result = {
                     "tool": requested,
                     "description": tool.description,
-                    "input_schema": tool.schema()["properties"]["arguments"],
+                    "input_schema": (
+                        None
+                        if contextual_schema is None
+                        else contextual_schema["properties"]["arguments"]
+                    ),
                 }
             elif tool_name in tools:
                 if tool_name not in activated_tools:
