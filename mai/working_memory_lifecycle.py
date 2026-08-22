@@ -7,19 +7,30 @@ from uuid import uuid4
 
 from .agent import AgentLifecycle
 from .attachment_evidence import AttachmentEvidenceBuilder
+from .memory_embedding import OllamaEmbeddingModel
+from .memory_extension import AgentGraphMemoryExtension
 from .model_context import use_attachment_evidence
 
 
 @dataclass(slots=True)
 class WorkingMemoryLifecycle:
-    """Attachment-aware wrapper around the Agent loop.
-
-    The class name is retained for compatibility, but working memory itself is
-    supplied by the Agent core extension rather than by this wrapper.
-    """
+    """Attachment-aware integration layer that installs graph memory as an Agent extension."""
 
     delegate: AgentLifecycle
     attachments: AttachmentEvidenceBuilder
+
+    def __post_init__(self) -> None:
+        if self.delegate.core_extension is not None:
+            return
+        if self.delegate.repository is None or self.delegate.source_store is None:
+            raise ValueError("graph memory requires repository and source_store")
+        embedding = OllamaEmbeddingModel.from_env()
+        self.delegate.core_extension = AgentGraphMemoryExtension(
+            repository=self.delegate.repository,
+            source_store=self.delegate.source_store,
+            embedding=embedding,
+            embedding_model_name=embedding.model,
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
