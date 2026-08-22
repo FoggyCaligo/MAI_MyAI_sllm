@@ -193,6 +193,10 @@ class ScratchpadRegistry:
             for scratchpad_id in dict.fromkeys(str(item) for item in scratchpad_ids)
         ]
 
+    def ids_for(self, *, turn_id: str) -> frozenset[str]:
+        with self._lock:
+            return frozenset(self._items.get(str(turn_id), {}))
+
     def snapshot(self, *, turn_id: str) -> list[dict[str, Any]]:
         with self._lock:
             items = list(self._items.get(str(turn_id), {}).values())
@@ -312,28 +316,55 @@ class EvidenceTrackingTool:
         return getattr(self.delegate, name)
 
 
-def _scratchpad_arguments_schema(*, include_id: bool) -> dict[str, Any]:
+def _scratchpad_arguments_schema(
+    *,
+    include_id: bool,
+    source_ids: Iterable[str] | None = None,
+    scratchpad_ids: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    source_items: dict[str, Any] = {"type": "string", "minLength": 1}
+    if source_ids is not None:
+        source_items = {"type": "string", "enum": sorted(set(str(item) for item in source_ids))}
     properties: dict[str, Any] = {
         "content": {"type": "string", "minLength": 1, "maxLength": 2400},
         "source_ids": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": True,
-            "items": {"type": "string", "minLength": 1},
+            "items": source_items,
         },
     }
     required = ["content", "source_ids"]
     if include_id:
-        properties["scratchpad_id"] = {
-            "type": "string",
-            "pattern": r"^scratchpad:[1-9][0-9]*$",
-        }
+        if scratchpad_ids is None:
+            properties["scratchpad_id"] = {
+                "type": "string",
+                "pattern": r"^scratchpad:[1-9][0-9]*$",
+            }
+        else:
+            properties["scratchpad_id"] = {
+                "type": "string",
+                "enum": sorted(set(str(item) for item in scratchpad_ids)),
+            }
         required.insert(0, "scratchpad_id")
     return {
         "type": "object",
         "additionalProperties": False,
         "required": required,
         "properties": properties,
+    }
+
+
+def _scratchpad_tool_schema(*, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["action", "tool", "arguments"],
+        "properties": {
+            "action": {"const": "tool"},
+            "tool": {"const": name},
+            "arguments": arguments,
+        },
     }
 
 
@@ -349,16 +380,19 @@ class ScratchpadPutTool:
     )
 
     def schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["action", "tool", "arguments"],
-            "properties": {
-                "action": {"const": "tool"},
-                "tool": {"const": self.name},
-                "arguments": _scratchpad_arguments_schema(include_id=False),
-            },
-        }
+        return _scratchpad_tool_schema(
+            name=self.name,
+            arguments=_scratchpad_arguments_schema(include_id=False),
+        )
+
+    def schema_for_context(self, context: Any) -> dict[str, Any] | None:
+        source_ids = self.evidence.ids_for(turn_id=context.turn_id)
+        if not source_ids:
+            return None
+        return _scratchpad_tool_schema(
+            name=self.name,
+            arguments=_scratchpad_arguments_schema(include_id=False, source_ids=source_ids),
+        )
 
     def execute(self, *, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         item = self.scratchpads.put(
@@ -380,16 +414,24 @@ class ScratchpadUpdateTool:
     )
 
     def schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["action", "tool", "arguments"],
-            "properties": {
-                "action": {"const": "tool"},
-                "tool": {"const": self.name},
-                "arguments": _scratchpad_arguments_schema(include_id=True),
-            },
-        }
+        return _scratchpad_tool_schema(
+            name=self.name,
+            arguments=_scratchpad_arguments_schema(include_id=True),
+        )
+
+    def schema_for_context(self, context: Any) -> dict[str, Any] | None:
+        source_ids = self.evidence.ids_for(turn_id=context.turn_id)
+        scratchpad_ids = self.scratchpads.ids_for(turn_id=context.turn_id)
+        if not source_ids or not scratchpad_ids:
+            return None
+        return _scratchpad_tool_schema(
+            name=self.name,
+            arguments=_scratchpad_arguments_schema(
+                include_id=True,
+                source_ids=source_ids,
+                scratchpad_ids=scratchpad_ids,
+            ),
+        )
 
     def execute(self, *, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
         item = self.scratchpads.update(
