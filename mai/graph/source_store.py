@@ -40,7 +40,7 @@ class SourceRecord:
 
 
 class GraphSourceStore:
-    """Durable evidence units and relational links for graph nodes/edges."""
+    """Durable evidence units linked to nodes or specific edge versions."""
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         path = Path(db_path)
@@ -78,21 +78,21 @@ class GraphSourceStore:
                 turn_id TEXT NOT NULL,
                 source_id INTEGER NOT NULL,
                 node_id INTEGER,
-                edge_id INTEGER,
+                edge_version_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK ((node_id IS NOT NULL) != (edge_id IS NOT NULL)),
+                CHECK ((node_id IS NOT NULL) != (edge_version_id IS NOT NULL)),
                 FOREIGN KEY(source_id) REFERENCES graph_sources(source_id),
                 FOREIGN KEY(node_id) REFERENCES graph_nodes(node_id),
-                FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id)
+                FOREIGN KEY(edge_version_id) REFERENCES graph_edge_versions(version_id) ON DELETE CASCADE
             );
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_source_link_node_unique
             ON graph_source_links(user_id, source_id, node_id)
             WHERE node_id IS NOT NULL;
 
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_source_link_edge_unique
-            ON graph_source_links(user_id, source_id, edge_id)
-            WHERE edge_id IS NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_source_link_edge_version_unique
+            ON graph_source_links(user_id, source_id, edge_version_id)
+            WHERE edge_version_id IS NOT NULL;
             """
         )
         self._conn.commit()
@@ -182,7 +182,7 @@ class GraphSourceStore:
         turn_id: str,
         source_ids: Iterable[int],
         node_id: int | None = None,
-        edge_id: int | None = None,
+        edge_version_id: int | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -193,7 +193,7 @@ class GraphSourceStore:
                     turn_id=turn_id,
                     source_ids=source_ids,
                     node_id=node_id,
-                    edge_id=edge_id,
+                    edge_version_id=edge_version_id,
                 )
             except Exception:
                 self._conn.rollback()
@@ -209,33 +209,45 @@ class GraphSourceStore:
         turn_id: str,
         source_ids: Iterable[int],
         node_id: int | None = None,
-        edge_id: int | None = None,
+        edge_version_id: int | None = None,
     ) -> None:
-        if (node_id is None) == (edge_id is None):
+        if (node_id is None) == (edge_version_id is None):
             raise ValueError("exactly one graph source link target is required")
         for source_id in dict.fromkeys(int(value) for value in source_ids):
-            row = conn.execute(
-                "SELECT user_id FROM graph_sources WHERE source_id=?",
-                (source_id,),
-            ).fetchone()
+            row = conn.execute("SELECT user_id FROM graph_sources WHERE source_id=?", (source_id,)).fetchone()
             if row is None or str(row["user_id"]) != user_id:
                 raise PermissionError(f"source_id {source_id} is outside user source scope")
             conn.execute(
                 """
                 INSERT OR IGNORE INTO graph_source_links
-                    (user_id, turn_id, source_id, node_id, edge_id)
+                    (user_id, turn_id, source_id, node_id, edge_version_id)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (user_id, turn_id, source_id, node_id, edge_id),
+                (user_id, turn_id, source_id, node_id, edge_version_id),
             )
 
     def source_ids_for_node(self, *, user_id: str, node_id: int) -> list[int]:
         return self._source_ids(user_id=user_id, field="node_id", target_id=node_id)
 
+    def source_ids_for_edge_version(self, *, user_id: str, edge_version_id: int) -> list[int]:
+        return self._source_ids(user_id=user_id, field="edge_version_id", target_id=edge_version_id)
+
     def source_ids_for_edge(self, *, user_id: str, edge_id: int) -> list[int]:
-        return self._source_ids(user_id=user_id, field="edge_id", target_id=edge_id)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT current_version_id FROM graph_edges WHERE user_id=? AND edge_id=?",
+                (user_id, int(edge_id)),
+            ).fetchone()
+        if row is None or row["current_version_id"] is None:
+            return []
+        return self.source_ids_for_edge_version(
+            user_id=user_id,
+            edge_version_id=int(row["current_version_id"]),
+        )
 
     def _source_ids(self, *, user_id: str, field: str, target_id: int) -> list[int]:
+        if field not in {"node_id", "edge_version_id"}:
+            raise ValueError("unsupported graph source target field")
         with self._lock:
             rows = self._conn.execute(
                 f"SELECT source_id FROM graph_source_links WHERE user_id=? AND {field}=? ORDER BY link_id",
