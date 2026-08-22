@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Iterable
 
 from .memory_extension import AgentGraphMemoryExtension, MemoryTurnState
@@ -44,8 +45,6 @@ class MemoryAgentAdapter:
     def validate_answer(*, state: MemoryTurnState, action: dict[str, Any]) -> None:
         if not state.query_recall_performed:
             raise ModelContractError("answer is unavailable before the mandatory vector recall")
-        if action.get("graph_synced") is not True:
-            raise ModelContractError("final answer requires graph_synced=true")
 
     def round_context(self, state: MemoryTurnState) -> str:
         return self.memory.round_context(state)
@@ -59,67 +58,66 @@ class MemoryAgentAdapter:
     ) -> dict[str, Any]:
         return self.memory.execute(tool=tool, arguments=arguments, state=state)
 
-    def graph_sync_schema(self, state: MemoryTurnState) -> dict[str, Any]:
-        builder = getattr(self.memory, "sync_schemas", None)
-        variants = builder(state) if callable(builder) else self.memory.schemas(state)
-        if not variants:
-            raise RuntimeError("graph sync has no available memory operation schema")
-        item_schema: dict[str, Any]
-        if len(variants) == 1:
-            item_schema = variants[0]
-        else:
-            item_schema = {"oneOf": variants}
-        return {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["sync", "operations"],
-            "properties": {
-                "sync": {"const": "graph_sync"},
-                "operations": {
-                    "type": "array",
-                    "maxItems": 20,
-                    "items": item_schema,
-                },
-            },
-        }
+    def graph_checkpoint_schema(self, state: MemoryTurnState) -> dict[str, Any]:
+        """Only memory actions or an explicit no-change completion are legal here."""
+        variants: list[dict[str, Any]] = [self._checkpoint_complete_schema()]
+        for schema in self.memory.schemas(state):
+            checkpoint_tool = deepcopy(schema)
+            required = list(checkpoint_tool.get("required") or [])
+            if "sync_complete" not in required:
+                required.append("sync_complete")
+            checkpoint_tool["required"] = required
+            properties = checkpoint_tool.setdefault("properties", {})
+            properties["sync_complete"] = {"type": "boolean"}
+            variants.append(checkpoint_tool)
+        return {"oneOf": variants}
 
-    def execute_graph_sync(
+    def execute_graph_checkpoint(
         self,
         *,
         state: MemoryTurnState,
-        payload: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        if payload.get("sync") != "graph_sync":
-            raise ModelContractError("graph sync round requires sync=graph_sync")
-        operations = payload.get("operations")
-        if not isinstance(operations, list):
-            raise ModelContractError("graph sync operations must be an array")
-        if len(operations) > 20:
-            raise ModelContractError("graph sync operation batch exceeds 20 operations")
+        action: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
+        if action.get("action") == "sync_complete":
+            if set(action) != {"action"}:
+                raise ModelContractError("sync_complete action may not contain extra fields")
+            return True, {"status": "complete", "changed": False}
 
-        results: list[dict[str, Any]] = []
-        for operation in operations:
-            if not isinstance(operation, dict):
-                raise ModelContractError("graph sync operation must be an object")
-            if operation.get("action") != "tool":
-                raise ModelContractError("graph sync may contain only memory tool actions")
-            tool = operation.get("tool")
-            arguments = operation.get("arguments")
-            if not isinstance(tool, str) or tool not in self.tool_names:
-                raise ModelContractError("graph sync may contain only registered memory tools")
-            if not isinstance(arguments, dict):
-                raise ModelContractError("graph sync memory tool arguments must be an object")
-            result = self.memory.execute(tool=tool, arguments=arguments, state=state)
-            results.append({"tool": tool, "arguments": dict(arguments), "result": result})
-        return results
+        if action.get("action") != "tool":
+            raise ModelContractError("graph checkpoint requires one memory tool action or sync_complete")
+        tool = action.get("tool")
+        arguments = action.get("arguments")
+        sync_complete = action.get("sync_complete")
+        if not isinstance(tool, str) or tool not in self.tool_names:
+            raise ModelContractError("graph checkpoint may use only registered memory tools")
+        if not isinstance(arguments, dict):
+            raise ModelContractError("graph checkpoint memory tool arguments must be an object")
+        if not isinstance(sync_complete, bool):
+            raise ModelContractError("graph checkpoint memory action requires sync_complete boolean")
 
-    def graph_sync_context(self, state: MemoryTurnState) -> str:
+        result = self.memory.execute(tool=tool, arguments=arguments, state=state)
+        return sync_complete, {
+            "status": "complete" if sync_complete else "continue",
+            "changed": True,
+            "tool": tool,
+            "arguments": dict(arguments),
+            "result": result,
+        }
+
+    def graph_checkpoint_context(self, state: MemoryTurnState, *, final: bool) -> str:
+        purpose = (
+            "This is the mandatory final graph checkpoint before the frozen answer can be committed and returned. "
+            if final
+            else "This is a mandatory periodic graph checkpoint before the main Agent may continue. "
+        )
         return (
-            "Mandatory graph-sync-only round. Do not answer the user and do not select external work tools. "
-            "Review the user message, the complete current-turn transcript through the immediately preceding "
-            "main action/result, and the current Working Graph. Use only memory operations to synchronize "
-            "durable information into the Working Graph. Return an empty operations array only when no graph "
-            "change is warranted. This round must finish before the next main Agent round can begin.\n"
+            purpose
+            + "Do not answer the user and do not use external work tools. Compare the current Working Graph with "
+            "the durable understanding established by the current-turn transcript so far. Use exactly one memory "
+            "action when recall or a graph change is needed. Set sync_complete=false when another checkpoint action "
+            "is still needed after this action; set sync_complete=true only when applying this action is sufficient. "
+            "If no memory action is needed, return the explicit sync_complete action. The Working Graph is current "
+            "turn state, not past-memory evidence.\n"
             + self.memory.round_context(state)
         )
 
@@ -150,6 +148,15 @@ class MemoryAgentAdapter:
         abort = getattr(self.memory, "abort_turn", None)
         if callable(abort):
             abort(turn_id=turn_id)
+
+    @staticmethod
+    def _checkpoint_complete_schema() -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action"],
+            "properties": {"action": {"const": "sync_complete"}},
+        }
 
     @staticmethod
     def _initial_query_recall_schema() -> dict[str, Any]:
