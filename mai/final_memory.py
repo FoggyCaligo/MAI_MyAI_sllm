@@ -46,9 +46,10 @@ def answer_with_memory_schema(recall_result: dict[str, Any] | None) -> dict[str,
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["action", "content", "memory_mutations"],
+        "required": ["action", "outcome", "content", "memory_mutations"],
         "properties": {
             "action": {"const": "answer"},
+            "outcome": {"type": "string", "enum": ["completed", "blocked"]},
             "content": {"type": "string", "minLength": 1},
             "memory_mutations": {
                 "type": "array",
