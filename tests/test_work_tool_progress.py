@@ -38,6 +38,10 @@ def _answer(content: str = "done") -> dict[str, Any]:
     }
 
 
+def _manual(tool: str) -> dict[str, Any]:
+    return {"action": "tool", "tool": "tool_manual", "arguments": {"tool": tool}}
+
+
 @dataclass
 class ScriptedModel:
     actions: list[dict[str, Any]]
@@ -142,6 +146,7 @@ def _lifecycle(model: ScriptedModel, tool: Any) -> AgentLifecycle:
 def test_progress_aware_tool_is_removed_after_no_new_keys() -> None:
     model = ScriptedModel(
         actions=[
+            _manual("progress_tool"),
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
             _answer(),
@@ -158,14 +163,16 @@ def test_progress_aware_tool_is_removed_after_no_new_keys() -> None:
     )
 
     assert answer == "done"
-    assert "progress_tool" in _tool_names(model.schemas[0])
+    assert "progress_tool" not in _tool_names(model.schemas[0])
     assert "progress_tool" in _tool_names(model.schemas[1])
-    assert "progress_tool" not in _tool_names(model.schemas[2])
+    assert "progress_tool" in _tool_names(model.schemas[2])
+    assert "progress_tool" not in _tool_names(model.schemas[3])
 
 
 def test_progress_aware_tool_stays_available_when_new_keys_arrive() -> None:
     model = ScriptedModel(
         actions=[
+            _manual("progress_tool"),
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
             _answer(),
@@ -181,7 +188,7 @@ def test_progress_aware_tool_stays_available_when_new_keys_arrive() -> None:
         recall_results=[],
     )
 
-    assert "progress_tool" in _tool_names(model.schemas[2])
+    assert "progress_tool" in _tool_names(model.schemas[3])
 
 
 def test_inspection_tool_without_progress_keys_is_rejected_before_model_round() -> None:
