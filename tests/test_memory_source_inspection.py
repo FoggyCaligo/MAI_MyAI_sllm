@@ -14,25 +14,11 @@ class ScriptedModel:
 
 
 class NoScratchpadMemoryExecutor:
-    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
-        return frozenset()
+    pass
 
 
 def _answer() -> dict[str, Any]:
-    return {
-        "action": "answer",
-        "content": "done",
-        "memory_mutations": [
-            {
-                "kind": "write_memory",
-                "arguments": {
-                    "subject": {"kind": "user"},
-                    "relation": "turn_memory",
-                    "object": {"new_node": {"name": "done"}},
-                },
-            }
-        ],
-    }
+    return {"action": "answer", "outcome": "completed", "content": "done"}
 
 
 def test_agent_opens_graph_sources_only_after_summary(tmp_path) -> None:
@@ -110,7 +96,7 @@ def test_agent_opens_graph_sources_only_after_summary(tmp_path) -> None:
             source_store=sources,
         )
 
-        answer, _, events = lifecycle._run_agent_phase(
+        answer, events = lifecycle._run_agent_phase(
             context=WorkContext(user_id="u", turn_id="turn", user_text="project?"),
             candidate_ids=set(),
             recall_results=[],
