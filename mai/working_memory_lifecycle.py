@@ -19,7 +19,7 @@ from .scratchpad import (
 
 @dataclass(slots=True)
 class WorkingMemoryLifecycle:
-    """Compose attachment evidence and turn-local scratchpad around the agent lifecycle."""
+    """Compose attachment evidence and turn-local scratchpad around the existing agent lifecycle."""
 
     delegate: AgentLifecycle
     attachments: AttachmentEvidenceBuilder
