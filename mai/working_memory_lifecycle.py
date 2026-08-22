@@ -10,12 +10,12 @@ from .attachment_evidence import AttachmentEvidenceBuilder
 from .memory_agent_adapter import MemoryAgentAdapter
 from .memory_embedding import EmbeddingModel, OllamaEmbeddingModel
 from .model_context import use_attachment_evidence
-from .versioned_memory_extension import VersionedAgentGraphMemoryExtension
+from .working_graph_memory import WorkingGraphMemoryExtension
 
 
 @dataclass(slots=True)
 class WorkingMemoryLifecycle:
-    """Attachment-aware integration layer that installs graph memory as an Agent extension."""
+    """Attachment-aware lifecycle with turn-local Working Graph memory."""
 
     delegate: AgentLifecycle
     attachments: AttachmentEvidenceBuilder
@@ -37,7 +37,7 @@ class WorkingMemoryLifecycle:
         elif not model_name:
             raise ValueError("embedding_model_name is required when injecting an embedding implementation")
 
-        memory = VersionedAgentGraphMemoryExtension(
+        memory = WorkingGraphMemoryExtension(
             repository=self.delegate.repository,
             source_store=self.delegate.source_store,
             embedding=embedding,
@@ -76,15 +76,31 @@ class WorkingMemoryLifecycle:
         resolved_turn_id = str(turn_id or uuid4())
         paths = [Path(path).expanduser().resolve() for path in attachment_paths]
         evidence_items = self.attachments.build(paths)
+        extension = self.delegate.core_extension
+        if not isinstance(extension, MemoryAgentAdapter):
+            raise RuntimeError("WorkingMemoryLifecycle requires MemoryAgentAdapter")
 
-        with use_attachment_evidence(evidence_items):
-            result = self.delegate.run(
-                user_id=user_id,
-                user_text=clean_user,
-                turn_id=resolved_turn_id,
-                attachment_paths=paths,
-                discovered_paths=self._initial_discovered_paths(),
-                attachment_evidence=evidence_items,
-            )
+        try:
+            with use_attachment_evidence(evidence_items):
+                # The Agent result contains the frozen answer, but it has not yet
+                # crossed this wrapper boundary to the UI/caller.
+                result = self.delegate.run(
+                    user_id=user_id,
+                    user_text=clean_user,
+                    turn_id=resolved_turn_id,
+                    attachment_paths=paths,
+                    discovered_paths=self._initial_discovered_paths(),
+                    attachment_evidence=evidence_items,
+                )
+            commit = extension.commit_turn(turn_id=resolved_turn_id)
+        except Exception:
+            extension.abort_turn(turn_id=resolved_turn_id)
+            raise
 
-        return {**result, "attachment_evidence": evidence_items}
+        memory_info = dict(result.get("memory") or {})
+        memory_info["commit"] = commit
+        return {
+            **result,
+            "memory": memory_info,
+            "attachment_evidence": evidence_items,
+        }
