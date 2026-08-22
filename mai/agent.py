@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
-from .agent_memory import AgentGraphMemoryService, AgentMemoryTurnState
-from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore, SourceRecord
 from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
 from .tool_routes import ToolRouteRegistry, tool_route_schema
@@ -177,31 +174,25 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
     return tool.schema()
 
 
-_MEMORY_TOOLS = frozenset(
-    {
-        "memory/recall",
-        "memory/generate/node",
-        "memory/generate/edge",
-        "memory/fix/node",
-        "memory/fix/edge",
-    }
-)
-
-
 @dataclass(slots=True)
 class AgentLifecycle:
-    repository: GraphRepository
-    model: StructuredModel
-    discovery: GraphDiscoveryService
-    recall: GraphRecallService
-    memory_executor: Any | None = None  # legacy constructor compatibility; no runtime use
-    work_tools: list[WorkTool] = field(default_factory=list)
-    source_store: GraphSourceStore | None = None
-    memory: AgentGraphMemoryService | None = None
+    """Memory-free Agent baseline.
 
-    def __post_init__(self) -> None:
-        if self.memory is None:
-            self.memory = AgentGraphMemoryService(self.repository, source_store=self.source_store)
+    This class intentionally contains no graph recall/generate/fix behavior.
+    The memory subsystem is layered onto this external-tool/answer loop by a
+    separate component after the baseline has been stabilized.
+
+    The legacy constructor fields are temporarily accepted so runtime assembly
+    can be migrated without reintroducing their behavior.
+    """
+
+    repository: Any
+    model: StructuredModel
+    discovery: Any | None = None
+    recall: Any | None = None
+    memory_executor: Any | None = None
+    work_tools: list[WorkTool] = field(default_factory=list)
+    source_store: Any | None = None
 
     def run(
         self,
@@ -211,11 +202,11 @@ class AgentLifecycle:
         turn_id: str | None = None,
         attachment_paths: Iterable[str | Path] = (),
         discovered_paths: Iterable[str | Path] = (),
-        source_records: Iterable[SourceRecord] = (),
     ) -> dict[str, Any]:
         clean_user = str(user_text).strip()
         if not clean_user:
             raise ValueError("user_text must be non-empty")
+
         resolved_turn_id = str(turn_id or uuid4())
         path_provenance = PathProvenance()
         path_provenance.add_many(attachment_paths)
@@ -223,43 +214,20 @@ class AgentLifecycle:
         turn_started(resolved_turn_id)
 
         try:
-            with phase(resolved_turn_id, "turn_initialization"):
-                assert self.memory is not None
-                memory_state = self.memory.begin_turn(
-                    user_id=user_id,
-                    turn_id=resolved_turn_id,
-                    user_text=clean_user,
-                    source_records=source_records,
-                )
-
             with phase(resolved_turn_id, "agent"):
-                fixed_answer, work_events = self._run_agent_phase(
+                answer, work_events = self._run_agent_phase(
                     context=WorkContext(
                         user_id=user_id,
                         turn_id=resolved_turn_id,
                         user_text=clean_user,
                         path_provenance=path_provenance,
-                    ),
-                    memory_state=memory_state,
+                    )
                 )
-
             result = {
                 "status": "completed",
                 "turn_id": resolved_turn_id,
-                "answer": fixed_answer,
-                "discovery": {"status": "agent_driven"},
+                "answer": answer,
                 "work_events": work_events,
-                "memory": {
-                    "status": "agent_managed",
-                    "mutation_count": sum(
-                        1
-                        for event in memory_state.memory_events
-                        if event["tool"] != "memory/recall"
-                    ),
-                    "events": memory_state.memory_events,
-                    "new_node_count": memory_state.new_node_count,
-                    "edge_mutations_by_node": dict(memory_state.edge_mutations_by_node),
-                },
             }
         except Exception:
             turn_failed(resolved_turn_id)
@@ -268,54 +236,40 @@ class AgentLifecycle:
         turn_completed(resolved_turn_id)
         return result
 
-    def _run_agent_phase(
-        self,
-        *,
-        context: WorkContext,
-        memory_state: AgentMemoryTurnState,
-    ) -> tuple[str, list[dict[str, Any]]]:
+    def _run_agent_phase(self, *, context: WorkContext) -> tuple[str, list[dict[str, Any]]]:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
-        if {"tool_route", *_MEMORY_TOOLS} & set(tools):
-            raise ValueError("work tools may not shadow built-in agent tools")
+        if "tool_route" in tools:
+            raise ValueError("work tools may not shadow built-in tool_route")
         _validate_work_tool_contracts(tools)
+
         routes = ToolRouteRegistry.for_tools(tools.values())
         available_tools = set(tools)
         activated_tools: set[str] = set()
         seen_progress: dict[str, set[str]] = {}
-
-        assert self.memory is not None
-        source_hint = sorted(memory_state.available_source_ids)
         top_routes = routes.top_level(available_tools=available_tools)
+
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (
-                    "Operate as one agent loop using exactly one structured action per round. The persistent graph is "
-                    "both working memory and long-term memory: memory mutations commit immediately and may be recalled "
-                    "again in later rounds. Prefer recalling and fixing existing nodes/edges over generating new ones. "
-                    "Before generating a node, use memory/recall with a semantic query and reuse an existing node when "
-                    "it represents the same meaning. When past user context may exist outside the recent dialogue, call "
-                    "memory/recall before claiming that you do not remember it. memory/recall returns one hop; call it "
-                    "again from another node when more traversal is useful. User-facing output is delivered only through "
-                    "the answer action. External tools are lazily discovered through exact registered tool_route paths; "
-                    f"initial namespaces are {top_routes}. A leaf offers /manual and /use. If you already know a leaf "
-                    "route you may request its exact /use path directly. Invalid paths are not guessed or corrected. "
-                    "Existing-file actions may only use paths established by current-turn attachments or file/code "
-                    "discovery/create results."
+                    "Operate as one agent loop using exactly one structured action per round. "
+                    "User-facing conversational output must only be delivered through the answer action. "
+                    "External tools are lazily discovered through exact registered tool_route paths. "
+                    f"Initial namespaces are {top_routes}. A leaf exposes /manual and /use. "
+                    "If you already know a leaf route, request its exact /use path directly. "
+                    "Invalid routes are reported as errors and are never guessed or autocorrected. "
+                    "Existing-file actions may only use paths established by current-turn attachments or "
+                    "file/code discovery/create results."
                 ),
-            },
-            {
-                "role": "system",
-                "content": f"Current-turn source ids available for graph provenance: {source_hint}",
             },
             {"role": "user", "content": context.user_text},
         ]
         events: list[dict[str, Any]] = []
 
         while True:
-            variants = [_answer_schema(), *self.memory.schemas(memory_state)]
+            variants = [_answer_schema()]
             if tools:
                 variants.append(tool_route_schema())
 
@@ -340,6 +294,7 @@ class AgentLifecycle:
 
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
                 raise ModelContractError("agent phase requires one tool action or one answer")
+
             tool_name = action.get("tool")
             if not isinstance(tool_name, str):
                 raise ModelContractError("tool name must be a string")
@@ -348,10 +303,7 @@ class AgentLifecycle:
             tool_started(tool_name)
             event_metadata: dict[str, Any] = {}
 
-            if tool_name in _MEMORY_TOOLS:
-                result = self.memory.execute(tool=tool_name, arguments=arguments, state=memory_state)
-
-            elif tool_name == "tool_route":
+            if tool_name == "tool_route":
                 path = str(arguments.get("path", ""))
                 resolved = routes.resolve(path=path, available_tools=available_tools)
                 if resolved.get("status") == "leaf_action":
@@ -387,18 +339,23 @@ class AgentLifecycle:
             elif tool_name in tools:
                 if tool_name not in activated_tools:
                     route = routes.route_for_tool(tool_name)
-                    raise ModelContractError(f"{tool_name} requires activation through {route.path}/manual or {route.path}/use")
+                    raise ModelContractError(
+                        f"{tool_name} requires activation through {route.path}/manual or {route.path}/use"
+                    )
                 if tool_name not in exposed_tools:
                     raise ModelContractError(f"{tool_name} is unavailable in the current work scope")
+
                 tool = tools[tool_name]
                 for required_path in _required_paths(tool, arguments):
                     context.path_provenance.require(required_path)
                 result = tool.execute(arguments=arguments, context=context)
                 context.path_provenance.add_many(_discovered_paths(tool, result))
                 context.path_provenance.remove_many(_removed_paths(tool, result))
+
                 root = _working_root(tool, result)
                 if root is not None:
                     event_metadata["working_root"] = root
+
                 keys = _progress_keys(tool, result)
                 if keys is not None:
                     prior = seen_progress.setdefault(tool_name, set())
@@ -407,18 +364,6 @@ class AgentLifecycle:
                     if not new_keys:
                         available_tools.discard(tool_name)
                         activated_tools.discard(tool_name)
-
-                route = routes.route_for_tool(tool_name)
-                source_id = self.memory.register_tool_source(
-                    state=memory_state,
-                    source_kind=route.source_kind,
-                    source_key=f"tool:{len(events) + 1}",
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    result=result,
-                )
-                if source_id is not None:
-                    event_metadata["source_id"] = source_id
             else:
                 raise ModelContractError("unexpected tool in agent phase")
 
@@ -427,21 +372,3 @@ class AgentLifecycle:
             events.append(event)
             messages.append({"role": "assistant", "content": str(action)})
             messages.append({"role": "tool", "content": str(event)})
-
-    @staticmethod
-    def _aggregate_recall(results: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Legacy helper retained for callers/tests that aggregate recalled payloads."""
-        if not results:
-            return None
-        nodes: dict[int, dict[str, Any]] = {}
-        edges: dict[int, dict[str, Any]] = {}
-        for result in results:
-            for node in result.get("nodes", []):
-                nodes[int(node["node_id"])] = node
-            for edge in result.get("edges", []):
-                edges[int(edge["edge_id"])] = edge
-        return {
-            "nodes": [nodes[key] for key in sorted(nodes)],
-            "edges": [edges[key] for key in sorted(edges)],
-            "origin_path": {"nodes": [], "edges": []},
-        }
