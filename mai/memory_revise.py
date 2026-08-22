@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .graph import GraphRepository, GraphScopeError, GraphSourceStore
-from .memory_write import MemoryTurnScope
+from .memory_write import MemorySelfLoopRejected, MemoryTurnScope
 from .model import ModelContractError
 
 
@@ -131,7 +131,8 @@ class ReviseMemoryTool:
     def description(self) -> str:
         return (
             "Revise one semantic graph edge that was actually recalled or created in this turn. "
-            "Endpoints may use the user anchor, eligible existing nodes, or new model-authored nodes."
+            "Endpoints may use the user anchor, eligible existing nodes, or new model-authored nodes. "
+            "Subject and object must resolve to distinct graph nodes; self-loops are rejected."
         )
 
     def schema(self, *, scope: ReviseMemoryScope) -> dict[str, Any]:
@@ -179,6 +180,10 @@ class ReviseMemoryTool:
                 source_text=source_text,
                 created_node_ids=created_node_ids,
             )
+            if subject_id == object_id:
+                raise MemorySelfLoopRejected(
+                    f"revise_memory rejected self-loop on node_id {subject_id}: subject and object must be distinct"
+                )
 
             conn.execute(
                 """

@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 from .final_memory import FinalMemoryExecutor, _scratchpad_context
 from .memory_revise import ReviseMemoryScope
-from .memory_write import MemoryTurnScope
+from .memory_write import MemorySelfLoopRejected, MemoryTurnScope
 from .model import ModelContractError, StructuredModel
 from .model_context import use_isolated_model_context
 from .progress import tool_completed, tool_started
@@ -43,6 +43,16 @@ def _with_continue_and_scratchpad(
         }
     variant["required"] = required
     return variant
+
+
+def _mutation_identity(*, tool: str, arguments: dict[str, Any]) -> str:
+    return json.dumps(
+        {"tool": str(tool), "arguments": arguments},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
 
 
 @dataclass(slots=True)
@@ -86,10 +96,11 @@ class GraphCommitPhase:
                 "content": (
                     "The user-facing answer is already fixed and must not be rewritten. "
                     "Focus only on durable semantic graph memory for this turn. Use exactly one write_memory or "
-                    "revise_memory action per round. Preserve concrete semantic entities and useful relations rather "
-                    "than collapsing distinct facts into a self-loop. A node or edge created in an earlier memory "
-                    "round is available to later rounds. Set continue_memory=true only when another distinct useful "
-                    "mutation remains; set it to false on the final useful mutation. There is no separate done action."
+                    "revise_memory action per round. Preserve concrete semantic entities and useful relations. "
+                    "Self-loops are structurally forbidden: subject and object must resolve to distinct graph nodes. "
+                    "A node or edge created in an earlier memory round is available to later rounds. "
+                    "Set continue_memory=true only when another distinct useful mutation remains; set it to false on "
+                    "the final useful mutation. There is no separate done action."
                 ),
             },
             {
@@ -109,6 +120,7 @@ class GraphCommitPhase:
         ]
 
         results: list[dict[str, Any]] = []
+        rejected_mutations: set[str] = set()
         while True:
             revise_scope = ReviseMemoryScope.from_turn(
                 turn=current_turn,
@@ -163,23 +175,41 @@ class GraphCommitPhase:
             )
 
             tool = action.get("tool")
-            if tool == "write_memory":
-                tool_started("write_memory")
-                result = self.executor.writer.execute(arguments=action["arguments"], scope=mutation_turn)
-                tool_completed("write_memory")
-            elif tool == "revise_memory":
-                if not revise_scope.eligible_edge_ids:
-                    raise ModelContractError("revise_memory is unavailable without an eligible turn edge")
-                execution_scope = ReviseMemoryScope(
-                    turn=mutation_turn,
-                    eligible_node_ids=revise_scope.eligible_node_ids,
-                    eligible_edge_ids=revise_scope.eligible_edge_ids,
-                )
-                tool_started("revise_memory")
-                result = self.executor.reviser.execute(arguments=action["arguments"], scope=execution_scope)
-                tool_completed("revise_memory")
-            else:
-                raise ModelContractError("unexpected tool in graph commit phase")
+            if not isinstance(tool, str):
+                raise ModelContractError("graph commit tool name must be a string")
+            identity = _mutation_identity(tool=tool, arguments=action["arguments"])
+            if identity in rejected_mutations:
+                raise ModelContractError("graph commit repeated an already rejected self-loop mutation")
+
+            try:
+                if tool == "write_memory":
+                    tool_started("write_memory")
+                    result = self.executor.writer.execute(arguments=action["arguments"], scope=mutation_turn)
+                    tool_completed("write_memory")
+                elif tool == "revise_memory":
+                    if not revise_scope.eligible_edge_ids:
+                        raise ModelContractError("revise_memory is unavailable without an eligible turn edge")
+                    execution_scope = ReviseMemoryScope(
+                        turn=mutation_turn,
+                        eligible_node_ids=revise_scope.eligible_node_ids,
+                        eligible_edge_ids=revise_scope.eligible_edge_ids,
+                    )
+                    tool_started("revise_memory")
+                    result = self.executor.reviser.execute(arguments=action["arguments"], scope=execution_scope)
+                    tool_completed("revise_memory")
+                else:
+                    raise ModelContractError("unexpected tool in graph commit phase")
+            except MemorySelfLoopRejected as exc:
+                tool_completed(tool)
+                rejected_mutations.add(identity)
+                rejected = {
+                    "status": "rejected",
+                    "reason": "self_loop",
+                    "error": str(exc),
+                }
+                messages.append({"role": "assistant", "content": str(action)})
+                messages.append({"role": "tool", "content": str({"tool": tool, "result": rejected})})
+                continue
 
             results.append(result)
             current_turn = self.executor._promote_created_nodes(current_turn, result)
