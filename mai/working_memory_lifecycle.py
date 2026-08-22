@@ -33,6 +33,9 @@ class WorkingMemoryLifecycle:
         wrapped_tools.append(ScratchpadPutTool(scratchpads=self.scratchpads, evidence=self.evidence))
         self.delegate.work_tools = wrapped_tools
 
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.delegate, name)
+
     def run(
         self,
         *,
