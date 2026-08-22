@@ -467,6 +467,21 @@ class GraphRepository:
             for composite_id in parent_ids:
                 if composite_id == target_id:
                     raise GraphConflictError("node merge would create composite self-membership")
+                current_parent_members = [
+                    int(row["member_node_id"])
+                    for row in conn.execute(
+                        "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                        (user_id, composite_id),
+                    ).fetchall()
+                ]
+                replaced_members = {
+                    target_id if member_id == source_id else member_id
+                    for member_id in current_parent_members
+                }
+                if len(replaced_members) < 2:
+                    raise GraphConflictError(
+                        "node merge would leave a parent composite with fewer than two members"
+                    )
                 if self._composite_reaches(
                     conn,
                     user_id=user_id,
