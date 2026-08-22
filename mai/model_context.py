@@ -125,7 +125,14 @@ def prepare_model_messages(messages: list[dict[str, str]]) -> list[dict[str, str
             raise ValueError("tool message requires a preceding assistant action")
 
         compacted = dump_context(compact_tool_event(event))
-        prior = str(normalized[-1].get("content", ""))
-        normalized[-1]["content"] = f"{prior}\nFramework tool result: {compacted}"
+        normalized.append(
+            {
+                "role": "user",
+                "content": (
+                    "Framework tool result for the preceding structured action: "
+                    f"{compacted}\nChoose the next structured action using the current schema."
+                ),
+            }
+        )
 
     return normalized
