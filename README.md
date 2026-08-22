@@ -13,11 +13,11 @@ Mai aims to provide an experience where it can:
 - continue ordinary conversations naturally,
 - remember important information across many conversations,
 - understand more of the user's situation, background, preferences, and ongoing work over time,
-- answer the same question differently when accumulated personal context makes a more relevant answer possible,
+- tailor answers to accumulated personal context,
 - use real tools for files, documents, images, code, terminals, and web search,
-- store memory in local SQLite databases that the user can back up and own directly instead of tying that memory only to an external service account.
+- store memory in local SQLite databases that the user can back up and own directly.
 
-In short, Mai is designed as a **personal local AI that does not require the user to repeatedly explain everything to one small model, but instead exposes only the memory and tools that are needed at the moment**.
+In short, Mai is designed as a **personal local AI that does not require the user to repeatedly explain everything to one small model, but instead exposes only the memory and tools needed at the moment**.
 
 ---
 
@@ -53,26 +53,26 @@ Mai separates memory by lifetime and purpose.
 
 ```text
 1. Recent chat / turn memory
-   → maintains immediate conversation continuity
+   → immediate conversation continuity
 
 2. Scratchpad
    → temporary working memory for the current task
 
 3. Semantic graph memory
-   → long-term memory that survives across turns and restarts
+   → long-term memory across turns and restarts
 ```
 
-## 2.1 Recent chat — immediate conversation context
+## 2.1 Recent chat
 
 Recent user/assistant messages are stored as raw text in `chat.sqlite3`.
 
-By default, only about the latest 10 messages are injected back into the model. This keeps context size bounded while still supporting natural references such as “what I said earlier.”
+By default, only about the latest 10 messages are injected back into the model. This keeps context bounded while still supporting natural references such as “what I said earlier.”
 
 Raw chat and long-term graph memory serve different purposes. Mai does not automatically copy every sentence into the graph.
 
-## 2.2 Scratchpad — temporary working memory
+## 2.2 Scratchpad
 
-Information that is useful only during the current task—such as file contents, attachments, web results, or tool outputs—can be held in the scratchpad.
+Information useful only during the current task—file contents, attachments, web results, or tool outputs—can be held in the scratchpad.
 
 ```text
 attachment / tool evidence
@@ -86,11 +86,9 @@ further investigation / work
 scratchpad_update
 ```
 
-The scratchpad disappears when the current turn ends.
+The scratchpad disappears when the turn ends. Only scratchpad items selected by the final memory mutation can be used as durable-memory evidence.
 
-Only important scratchpad items explicitly selected by the final memory mutation can be used as evidence for durable memory. Unselected scratchpad content is not copied into long-term graph memory.
-
-## 2.3 Semantic graph — personal long-term memory
+## 2.3 Semantic graph
 
 Long-term memory is stored in `data/graph.sqlite3` as node/edge relationships.
 
@@ -98,15 +96,7 @@ Long-term memory is stored in `data/graph.sqlite3` as node/edge relationships.
 node ─relation→ node
 ```
 
-Examples:
-
-```text
-user ─current project→ Mai
-user ─preference→ a working style
-Mai ─purpose→ local personal AI
-```
-
-Within one user scope, if an exact same canonical node name already exists, Mai reuses the existing node. If the same `(subject, relation, object)` relationship is confirmed again, Mai reinforces the edge by increasing `support_count` instead of duplicating it.
+Within one user scope, if an exact same canonical node name already exists, Mai reuses it. If the same `(subject, relation, object)` relationship is confirmed again, Mai increases `support_count` instead of duplicating the edge.
 
 The framework does not merge different strings merely because they appear semantically similar.
 
@@ -114,39 +104,25 @@ The framework does not merge different strings merely because they appear semant
 
 # 3. Why Mai can understand the user better over time
 
-Mai's long-term memory does not disappear when one conversation ends.
+Mai's long-term memory survives individual conversations.
 
-Across multiple days, a user may reveal information such as:
+Information such as the user's PC environment, ongoing projects, preferences, past decisions, and recurring requirements can accumulate as semantic relationships when the model selects them as durably meaningful.
 
-```text
-PC environment
-ongoing projects
-preferred working style
-past decisions
-recurring requirements
-```
+Later, Mai recalls only the relevant graph neighborhood instead of dumping the whole graph into the model. As a result, **the user needs to repeat less background information over time, while Mai gains a stronger basis for answers tailored to that user's actual context.**
 
-Relationships that the model selects as durably meaningful accumulate in the semantic graph.
-
-Later, when a related question appears, Mai does not dump the entire graph into the model. It recalls only the relevant neighborhood. As a result, **the user needs to repeat less background information over time, while Mai gains a stronger basis for answers tailored to that user's actual context.**
-
-This memory is not merely account state stored on a model provider's server. It is kept in local SQLite files that the user can copy and back up directly.
+This memory is stored locally:
 
 ```text
 data/graph.sqlite3
 ```
 
-This file stores Mai's long-term semantic memory and durable source evidence connected to that memory. Restoring the file into the same Mai environment preserves that personal long-term memory.
+The file contains long-term semantic memory and durable source evidence linked to that memory. Because it can be copied and backed up directly, long-term AI memory can be treated as **personal data owned and managed by the user**.
 
-This makes it possible to treat long-term AI memory as **personal data that the user can own and manage directly**.
-
-Raw conversation history and runtime sessions are stored separately in `chat.sqlite3`. For a complete backup, the simplest approach is to shut Mai down normally and back up the entire `data/` directory.
+Raw conversation history and sessions are stored separately in `data/chat.sqlite3`. For a complete backup, shut Mai down normally and back up the entire `data/` directory.
 
 ---
 
-# 4. How long-term memory is created
-
-A turn roughly follows this flow:
+# 4. How long-term memory is created and recalled
 
 ```text
 current user message
@@ -162,20 +138,14 @@ final answer + memory mutation plan
         ↓
 Framework validates node / edge / scratchpad / source scope
         ↓
-only selected semantic relations are written/revised in the graph
+only selected semantic relations are written/revised
         ↓
 selected source evidence is linked to graph provenance
 ```
 
-The important rule is that **Mai does not automatically pour all raw text into the long-term graph**.
+Mai does not automatically pour all raw text into the long-term graph.
 
-Only semantic relationships selected by the model at the final stage are stored. If a memory is based on scratchpad evidence, it can be linked through the scratchpad to the actual attachment/tool/web evidence that supported it.
-
----
-
-# 5. How long-term memory is recalled
-
-The model does not receive all of `graph.sqlite3` on every turn.
+Recall is also compact:
 
 ```text
 Current question
@@ -191,103 +161,81 @@ recall_memory
 + source_kind
 ```
 
-Default recall stays compact.
-
 Detailed evidence is opened only when needed:
 
 ```text
 memory_source_summary
   ↓
-source kind / reliability / stability / support / conflict / source ID
-  ↓
-only when necessary
 memory_source_read
   ↓
 selected raw evidence range
 ```
 
-Like `tool_manual` for tools, memory provenance uses **lazy disclosure**.
-
-Confidence is not an arbitrary feeling generated by the model. It compresses structural signals such as:
-
-- baseline reliability for the source kind,
-- `support_count` for repeatedly confirmed edges,
-- revision/conflict count,
-- stability associated with the source kind.
-
-The framework does not inspect sentence content with rules such as `if text contains ...` to decide confidence.
+Confidence compresses structural signals such as source-kind reliability, `support_count`, revision/conflict count, and stability. The framework does not inspect sentence contents with string heuristics to invent confidence.
 
 ---
 
-# 6. Reducing load on a small sLLM
+# 5. Reducing load on a small sLLM
 
-Mai reduces context pressure at several layers so that a smaller local model is less likely to lose track of instructions under long prompts and large tool schemas.
+Mai reduces context pressure at several layers.
 
-## 6.1 Tool manuals are lazy-loaded
+## 5.1 Lazy tool manuals
 
-Mai does not expose every tool's full JSON schema from the beginning.
-
-Initially the model sees only:
+The model initially sees only:
 
 ```text
 tool name + short summary
 ```
 
-When actual usage details are needed, the model calls:
+When detailed usage is needed, it calls:
 
 ```text
 tool_manual(tool_name)
 ```
 
-The tool's full description and argument schema then become available.
+and only that tool's full schema is exposed.
 
-A tool whose manual has already been read does not remain a manual target again in the same turn.
+## 5.2 Tool-result compaction
 
-## 6.2 Tool result compaction
+Full runtime events remain available for execution/debugging records, while the copy reinjected into the next model round is compacted.
 
-The full runtime event remains available for debugging and execution records, but the copy reinjected into the next model round is compacted.
+## 5.3 Bounded recent context
 
-This helps prevent a single large file or web page from crowding out the rest of the context window.
+Normal model input is roughly limited to:
 
-## 6.3 Only recent context is injected
-
-The normal model input is roughly limited to:
-
-- the current user message,
-- the latest 10 raw chat messages,
-- the latest 5 compact tool operations,
-- the current date,
+- current user message,
+- latest 10 raw chat messages,
+- latest 5 compact tool operations,
+- current date,
 - graph recall when needed,
 - current-turn compact tool history,
 - compact tool catalog,
 - JSON output contract.
 
-## 6.4 Successful actions are not repeated blindly
+## 5.4 Successful-action deduplication
 
-If the exact same tool with the exact same JSON arguments has already succeeded in the current turn, Mai prevents the identical side effect from being executed again.
+If the exact same tool with the exact same JSON arguments has already succeeded in the current turn, the same side effect is not blindly executed again.
 
-## 6.5 Web grounding
+## 5.5 Web grounding
 
-Final answers that rely on web evidence pass through a separate grounding review tied to actual evidence IDs.
-
-The grounding reviewer does not rewrite the answer. It returns only `accept` or `needs_more_evidence`.
+Final answers based on web evidence are checked against actual evidence IDs. The grounding reviewer returns only `accept` or `needs_more_evidence`; it does not rewrite the final answer.
 
 ---
 
-# 7. Current tool list
+# 6. Current tool list
 
 ## Memory / agent built-ins
 
 | Capability | Purpose |
 | --- | --- |
 | `node_lookup` | Find candidate nodes in the current user's graph |
-| `recall_memory` | Recall actual graph relationships around a candidate node |
+| `recall_memory` | Recall graph relationships around a candidate node |
 | `memory_source_summary` | Inspect compact provenance for recalled nodes/edges |
-| `memory_source_read` | Read a bounded raw-evidence range from a source exposed by the summary |
-| `tool_manual` | Load the detailed description and JSON schema for a work tool |
-| `scratchpad_put` | Create turn-local working memory from current evidence |
+| `memory_source_read` | Read a bounded raw-evidence range from a selected source |
+| `tool_manual` | Load a work tool's detailed description and schema |
+| `scratchpad_put` | Create turn-local working memory from evidence |
 | `scratchpad_update` | Update an existing scratchpad item |
-| final memory mutation | Write/revise final semantic graph memory |
+| final memory mutation | Write/revise semantic graph memory |
 
 ## File / workspace — owner
 
@@ -302,21 +250,21 @@ The grounding reviewer does not rewrite the answer. It returns only `accept` or 
 | `file_delete` | Delete a file |
 | `file_download_link` | Create a temporary browser download link |
 
-Existing-file mutations require concrete path provenance established in the current turn. The final boundary for owner filesystem access is the actual OS/filesystem permission model.
+Existing direct-child files of the validated session working root are seeded into read provenance at turn start. Nested files still require normal discovery through tools such as `file_tree`, `file_search`, or `code_search`.
 
-## Document / image — owner work tools
+## Document / image — owner
 
 | Tool | Purpose |
 | --- | --- |
 | `document_read` | Read PDF / DOCX / TXT / MD / MARKDOWN |
-| `image_analyze` | Analyze images with the independent vision model configured in `.env` |
+| `image_analyze` | Analyze images with the vision model configured in `.env` |
 
 ## Code — owner
 
 | Tool | Purpose |
 | --- | --- |
-| `code_index` | Build a compact structural index of a Python repository |
-| `code_search` | Search files/symbols through the structural code index |
+| `code_index` | Build a compact Python repository index |
+| `code_search` | Search files/symbols through the structural index |
 
 ## Terminal — owner
 
@@ -324,107 +272,85 @@ Existing-file mutations require concrete path provenance established in the curr
 | --- | --- |
 | `terminal_command` | Execute a shell command on the current PC |
 
-Terminal output encoding is controlled by `MAI_TERMINAL_ENCODING` in `.env`, not by the model.
-
 ## Web / market — owner + trial
 
 | Tool | Purpose |
 | --- | --- |
 | `latest_search` | Recency-focused public search |
 | `web_research` | Search → public page reading → evidence package |
-| `market_snapshot` | Market lookup/snapshot through explicitly configured providers |
+| `market_snapshot` | Market lookup/snapshot through configured providers |
 
 ---
 
-# 8. Owner and Trial accounts
-
-Mai login IDs are assigned either the `owner` or `trial` role.
+# 7. Owner and Trial accounts
 
 ## Owner
 
-- access to the full work-tool catalog,
+- full work-tool catalog,
 - PC filesystem / code / terminal access,
-- direct document and image tool calls,
+- direct document and image tools,
 - upload/download,
-- multiple persistent sessions allowed.
+- multiple persistent sessions.
 
 ## Trial
 
-- an independent per-user graph memory,
+- independent per-user graph memory,
 - core memory capabilities,
 - web/market tools,
-- **attachment upload and automatic text/document/image analysis for those uploaded attachments**,
-- no host filesystem browsing/modification, terminal, or code tools,
+- attachment upload and automatic text/document/image analysis for uploaded attachments,
+- no arbitrary host filesystem browsing/modification, terminal, or code tools,
 - no download-link capability,
-- only one active persistent session per trial ID.
+- one active persistent session per trial ID.
 
-Trial uploads are separated by account directory.
+Trial uploads are separated by account directory:
 
 ```text
 .mai_uploads/
 ├─ friend/
-│  └─ ...
 └─ family/
-   └─ ...
 ```
 
-A trial account cannot submit an attachment path outside its own upload directory. This preserves the boundary: **a trial user can ask Mai to analyze files they uploaded, but cannot use that capability to browse arbitrary files on the host PC.**
-
-If the same trial ID logs in from another browser, the previous session is revoked.
+A new login using the same trial ID revokes the previous session.
 
 ---
 
-# 9. Work continues even if the browser leaves
+# 8. Work continues if the browser leaves
 
-`POST /chat` does not hold the HTTP request open until a long model task finishes.
+Chats run as persistent jobs:
 
 ```text
 /chat
-→ create persistent chat job
-→ execute in worker thread
-→ browser polls by job ID
+→ persistent chat job
+→ worker thread
+→ browser polls job ID
 ```
 
-The server task continues even if the user switches to another app or refreshes the page.
-
-When the UI reconnects, completed messages are restored from `/history` and active work from `/chat/jobs`.
-
-If the server process itself stops, active jobs are not guessed to have succeeded; they remain marked as `interrupted`.
+The server task continues if the user switches apps or refreshes the page. Completed messages are restored from `/history`, and active work from `/chat/jobs`.
 
 ---
 
-# 10. First-time installation — Windows, including non-developers
+# 9. First-time installation — Windows, including non-developers
 
-The steps below assume the PC has no development environment installed yet.
+## 9.1 Install Git
 
-## 10.1 Install Git
-
-Install Git for Windows.
-
-Open a new PowerShell window and verify:
+Install Git for Windows, then verify in a new PowerShell window:
 
 ```powershell
 git --version
 ```
 
-If a version is printed, Git is available.
+## 9.2 Install Python
 
-## 10.2 Install Python
-
-Install Python 3. If the installer offers it, enable **Add Python to PATH**.
-
-Open a new PowerShell window and verify:
+Install Python 3 and enable **Add Python to PATH** if available.
 
 ```powershell
 python --version
 pip --version
 ```
 
-## 10.3 Install Ollama
+## 9.3 Install Ollama
 
 Install and launch Ollama for Windows.
-
-Verify:
 
 ```powershell
 ollama --version
@@ -432,125 +358,159 @@ ollama --version
 
 ### Minimum model requirement
 
-The **minimum conversational model that has been confirmed to work with Mai is `gemma4:e4b`**.
+The **minimum conversational model confirmed to work with Mai is `gemma4:e4b`**.
 
-A model smaller/weaker than `gemma4:e4b` may still generate ordinary text, but can become unreliable at Mai's structured JSON contracts, tool selection, `tool_manual` flow, multi-round context retention, and long-term-memory mutations. For actual use, **`gemma4:e4b` or a stronger model is recommended.**
-
-If Mai behaves strangely after configuring a smaller model, first verify that the selected model meets this minimum capability level.
-
-Download the default example models:
+A smaller/weaker model may still generate ordinary text, but can become unreliable at Mai's structured JSON contracts, tool selection, `tool_manual`, multi-round context retention, and long-term-memory mutations. For actual use, **`gemma4:e4b` or a stronger model is recommended.**
 
 ```powershell
 ollama pull gemma4:e4b
 ollama pull gemma4:12b
 ```
 
-`gemma4:e4b` is the default conversational-model example and `gemma4:12b` is the default image-analysis-model example. If your hardware allows it, a stronger conversational model can be selected through `MAI_OLLAMA_MODEL` in `.env`.
+`gemma4:12b` is the default image-analysis example.
 
-If the Ollama service is not already running in your environment:
+If the Ollama service needs to be started manually:
 
 ```powershell
 ollama serve
 ```
 
-Run it in a separate terminal.
-
-## 10.4 Clone the Mai repository
-
-Move to the directory where you want the project, then run:
+## 9.4 Clone the repository
 
 ```powershell
 git clone https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
 cd MAI_MyAI_sllm
 ```
 
-## 10.5 Create a Python virtual environment
+## 9.5 Create a virtual environment
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-If PowerShell blocks `Activate.ps1`, use a shell/venv activation method that is permitted in your environment rather than silently changing system-wide execution policy.
-
-## 10.6 Install Python packages
+## 9.6 Install packages
 
 ```powershell
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For development and pytest dependencies:
+For development/pytest:
 
 ```powershell
 pip install -r requirements-dev.txt
 ```
 
-## 10.7 Create `.env`
+## 9.7 Create `.env`
 
 ```powershell
 Copy-Item .env.example .env
 ```
-
-Open `.env` in Notepad, VS Code, or another text editor and configure the accounts.
 
 Example:
 
 ```dotenv
 MAI_OWNER_ID=owner
 MAI_ALLOWED_USER_IDS=friend,family
-
 MAI_OLLAMA_MODEL=gemma4:e4b
 MAI_OLLAMA_IMAGE_MODEL=gemma4:12b
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
 ```
 
-`MAI_OWNER_ID` is the account allowed to use the full PC toolset.
-
-`MAI_ALLOWED_USER_IDS` accepts multiple trial account IDs separated by commas.
-
-```dotenv
-MAI_ALLOWED_USER_IDS=friend,family
-```
-
-## 10.8 Run Mai
-
-From the project directory with the virtual environment activated:
+## 9.8 Run locally
 
 ```powershell
 python run_server.py
 ```
 
-Default address:
+Open:
 
 ```text
 http://127.0.0.1:8000/
 ```
 
-Open it in a browser and log in with an ID configured in `.env`.
+---
 
-## 10.9 External access — optional
+# 10. Configure Tailscale for remote access — optional
 
-If Tailscale is already configured:
+Skip this section if Mai is used only on the same PC.
+
+## 10.1 Install and sign in to Tailscale
+
+Install Tailscale for Windows, then sign in from the Tailscale system-tray menu.
+
+Verify:
+
+```powershell
+tailscale version
+tailscale status
+```
+
+The local machine should appear connected in `tailscale status`.
+
+## 10.2 Serve vs Funnel
+
+- **Tailscale Serve** exposes Mai only to devices/users inside the same tailnet.
+- **Tailscale Funnel** publishes Mai through a public HTTPS address reachable from the broader internet.
+
+Mai's `start_public_tailscale.cmd` uses **Funnel**. Because Funnel is public internet exposure, configure owner/trial IDs carefully.
+
+On first use, Tailscale may present a browser URL asking you to enable required HTTPS/MagicDNS/Funnel permissions for the tailnet. Follow the Tailscale setup flow shown by the CLI.
+
+## 10.3 Run Mai with Funnel
+
+From the project directory:
 
 ```powershell
 .\start_public_tailscale.cmd
 ```
 
-can be used for external HTTPS access.
+The script performs:
 
-Publishing the service externally increases the attack surface compared with local-only use, so configure the owner ID and allowed IDs carefully.
+```text
+check Tailscale connection
+→ configure Funnel
+→ print Funnel status/address
+→ run Mai in the same terminal foreground
+```
+
+Because the Python server stays attached to that terminal, **pressing `Ctrl+C` in that window now shuts Mai down normally.**
+
+Check Funnel status separately with:
+
+```powershell
+tailscale funnel status
+```
+
+If you want tailnet-only access instead, use Tailscale's official `serve` command to share `http://127.0.0.1:8000`. Serve/Funnel CLI behavior may change between Tailscale releases, so consult current Tailscale documentation if the CLI reports a different setup flow.
 
 ---
 
 # 11. Graceful shutdown
 
-The intended shutdown method is from the terminal running Mai:
+## When started with `python run_server.py`
+
+Press:
 
 ```text
 Ctrl+C
 ```
+
+in the same terminal.
+
+## When started with `start_public_tailscale.cmd`
+
+The current launcher also runs Python in the foreground. Press:
+
+```text
+Ctrl+C
+```
+
+in that launcher window.
+
+Expected shutdown flow:
 
 ```text
 Ctrl+C
@@ -560,11 +520,18 @@ Ctrl+C
 → process exits
 ```
 
-If your Windows terminal does not deliver `Ctrl+C`, `Ctrl+Break` can also be tried.
+### If an older launcher already left a background server running
 
-Closing the terminal window directly is not a graceful shutdown and is not recommended.
+Find the PID listening on port 8000 and terminate it once:
 
-SQLite runs in WAL mode, so these files may appear while Mai is running:
+```powershell
+$pid = (Get-NetTCPConnection -LocalPort 8000 -State Listen).OwningProcess
+Stop-Process -Id $pid
+```
+
+Then restart with the current launcher.
+
+SQLite runs in WAL mode, so these runtime companion files may appear:
 
 ```text
 graph.sqlite3
@@ -575,9 +542,9 @@ chat.sqlite3-wal
 chat.sqlite3-shm
 ```
 
-`-wal` and `-shm` are SQLite runtime companion files, not separate logical databases. Do not manually delete them while Mai is running.
+Do not manually delete `-wal` or `-shm` while Mai is running.
 
-See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for more details.
+See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for details.
 
 ---
 
@@ -585,37 +552,28 @@ See [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for more details.
 
 ## `data/graph.sqlite3`
 
-This is the main file for personal long-term memory.
+Contains the core personal long-term memory:
 
-It contains:
-
-- semantic graph nodes,
-- semantic graph edges,
+- semantic graph nodes/edges,
 - user anchor,
 - support/conflict signals,
 - durable graph source evidence,
 - graph → source links.
 
-If you want to preserve only the long-term memory layer, shut Mai down normally and back up this file.
-
 ## `data/chat.sqlite3`
 
-It contains:
+Contains:
 
 - raw conversation history,
 - compact recent tool-operation history,
 - authenticated sessions,
 - persistent chat jobs.
 
-To preserve the full Mai state, shut Mai down normally and back up the entire `data/` directory.
-
-The database files are created automatically on first run after cloning. Personal memory therefore begins accumulating locally from the first use, and the user can copy those files elsewhere at any time for personal backup and ownership.
+For a complete state backup, shut Mai down normally and back up the entire `data/` directory.
 
 ---
 
 # 13. Development testing
-
-If development dependencies are installed:
 
 ```powershell
 python -m pytest -q
@@ -625,17 +583,12 @@ runs the full contract test suite.
 
 Mai does not hide failures behind fallback behavior merely to make tests pass. When a runtime contract changes, test fixtures should explicitly satisfy the new required contract.
 
-For an ordered live-model regression check after resetting the databases, follow [`docs/MODEL_TEST_GUIDE.md`](docs/MODEL_TEST_GUIDE.md).
-
 ---
 
 # 14. Documentation
-
-The repository root keeps only the documents needed to understand the project initially.
 
 - [`README.md`](README.md) — English default README
 - [`README.ko.md`](README.ko.md) — canonical Korean README
 - [`CONTRACT.md`](CONTRACT.md) — core runtime/product contract
 - [`ROADMAP.md`](ROADMAP.md) — remaining development plan
-
-Detailed documents are under [`docs/`](docs/).
+- [`docs/`](docs/) — detailed operation and contract documents
