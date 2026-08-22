@@ -490,13 +490,21 @@ Tailscale 연결 확인
 
 이제 이 터미널이 Mai 서버 프로세스를 직접 붙잡고 있으므로 **이 창에서 `Ctrl+C`를 누르면 Mai 서버가 정상 종료된다.**
 
-Funnel 상태는 별도로:
+Funnel 상태는:
 
 ```powershell
 tailscale funnel status
 ```
 
 으로 확인할 수 있다.
+
+Mai 종료 후 이 장치의 Funnel 구성을 전부 제거하고 싶다면:
+
+```powershell
+tailscale funnel reset
+```
+
+을 사용할 수 있다. 이 명령은 해당 장치의 Funnel 구성을 초기화하므로 다른 Funnel 설정도 함께 사용하는 장치라면 먼저 `tailscale funnel status`로 확인한다.
 
 Tailnet 내부에서만 쓸 경우에는 Tailscale 공식 `serve` 명령을 사용해 `http://127.0.0.1:8000`을 공유할 수 있다. Serve/Funnel CLI는 Tailscale 버전에 따라 변경될 수 있으므로 문제가 있으면 최신 Tailscale 공식 문서를 확인한다.
 
