@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .agent import AgentLifecycle
+from .attachment_evidence import AttachmentEvidenceBuilder
 from .code_search_tool import build_code_tools
 from .context import compact_tool_event
 from .document_tools import ImageAnalyzer, build_document_image_tools
@@ -29,10 +30,12 @@ from .memory_write import WriteMemoryTool
 from .model import OllamaModel
 from .model_context import use_model_context
 from .runtime_state import PersistentChatJobStore, PersistentSessionStore, SessionRecord, public_job
+from .scratchpad import ScratchpadRegistry, TurnEvidenceRegistry
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
 from .working_context import WorkingRootToolAdapter
+from .working_memory_lifecycle import WorkingMemoryLifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,14 +210,16 @@ def build_lifecycle(
     image_analyzer: ImageAnalyzer,
     role: str = "owner",
     default_root: Path | None = None,
-) -> AgentLifecycle:
+) -> WorkingMemoryLifecycle:
     if role not in {"owner", "trial"}:
         raise ValueError(f"unsupported account role: {role}")
     discovery = GraphDiscoveryService(repository)
     recall = GraphRecallService(repository)
     writer = WriteMemoryTool(repository)
     reviser = ReviseMemoryTool(repository)
-    memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser)
+    evidence = TurnEvidenceRegistry()
+    scratchpads = ScratchpadRegistry(evidence=evidence)
+    memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser, scratchpads=scratchpads)
     web_tools = build_web_market_tools()
     if role == "trial":
         work_tools = web_tools
@@ -235,13 +240,19 @@ def build_lifecycle(
             *code_tools,
             *web_tools,
         ]
-    return AgentLifecycle(
+    base = AgentLifecycle(
         repository=repository,
         model=model,
         discovery=discovery,
         recall=recall,
         memory_executor=memory_executor,
         work_tools=work_tools,
+    )
+    return WorkingMemoryLifecycle(
+        delegate=base,
+        attachments=AttachmentEvidenceBuilder(analyzer=image_analyzer),
+        evidence=evidence,
+        scratchpads=scratchpads,
     )
 
 
@@ -281,7 +292,7 @@ def create_app(
     jobs = PersistentChatJobStore(resolved.chat_db_path)
     user_locks: dict[str, Lock] = {}
     user_locks_guard = Lock()
-    lifecycle_cache: dict[tuple[str, str], AgentLifecycle] = {}
+    lifecycle_cache: dict[tuple[str, str], Any] = {}
     lifecycle_cache_guard = Lock()
     static_index = Path(__file__).with_name("static") / "index.html"
 
@@ -342,7 +353,7 @@ def create_app(
             paths.append(path)
         return paths
 
-    def lifecycle_for(session: SessionRecord) -> AgentLifecycle:
+    def lifecycle_for(session: SessionRecord):
         if lifecycle is not None:
             return lifecycle
         assert repository is not None
@@ -374,9 +385,6 @@ def create_app(
                     raise PermissionError("chat job session is no longer authorized")
 
                 jobs.mark_running(job_id)
-                agent_input = message
-                if attachment_paths:
-                    agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_paths)
                 recent_messages = history.list_messages(user_id=current_session.user_id, limit=10)
                 recent_tool_operations = history.list_tool_operations(user_id=current_session.user_id, limit=5)
                 with use_model_context(
@@ -386,7 +394,7 @@ def create_app(
                 ):
                     result = lifecycle_for(current_session).run(
                         user_id=current_session.user_id,
-                        user_text=agent_input,
+                        user_text=message,
                         attachment_paths=attachment_paths,
                     )
 

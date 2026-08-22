@@ -11,8 +11,24 @@ from mai.model import ModelContractError
 
 def test_answer_schema_requires_at_least_one_memory_mutation() -> None:
     schema = answer_with_memory_schema(None)
-    assert schema["required"] == ["action", "content", "memory_mutations"]
+    assert schema["required"] == ["action", "outcome", "content", "memory_mutations"]
     assert schema["properties"]["memory_mutations"]["minItems"] == 1
+
+
+def test_answer_schema_exposes_only_actual_scratchpad_ids() -> None:
+    without_scratchpad = answer_with_memory_schema(None)
+    item_without = without_scratchpad["properties"]["memory_mutations"]["items"]
+    assert "scratchpad_ids" not in item_without["properties"]
+
+    with_scratchpad = answer_with_memory_schema(
+        None,
+        scratchpad_ids=["scratchpad:2", "scratchpad:1"],
+    )
+    item_with = with_scratchpad["properties"]["memory_mutations"]["items"]
+    assert item_with["properties"]["scratchpad_ids"]["items"] == {
+        "type": "string",
+        "enum": ["scratchpad:1", "scratchpad:2"],
+    }
 
 
 def test_answer_schema_exposes_revise_only_for_recalled_edges() -> None:

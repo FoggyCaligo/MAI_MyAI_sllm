@@ -1,48 +1,59 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import Any, Iterable
 
 from .memory_revise import ReviseMemoryScope, ReviseMemoryTool, revise_memory_schema
 from .memory_write import MemoryTurnScope, WriteMemoryTool, write_memory_schema
 from .model import ModelContractError
 from .progress import tool_completed, tool_started
+from .scratchpad import ScratchpadItem, ScratchpadRegistry
 
 
-def _mutation_item_schema(*, recalled_node_ids: list[int], recalled_edge_ids: list[int]) -> dict[str, Any]:
+def _mutation_item_schema(
+    *,
+    recalled_node_ids: list[int],
+    recalled_edge_ids: list[int],
+    scratchpad_ids: list[str],
+) -> dict[str, Any]:
     write_arguments = write_memory_schema(recalled_node_ids)["properties"]["arguments"]
-    variants: list[dict[str, Any]] = [
-        {
+
+    def mutation_variant(kind: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        properties: dict[str, Any] = {
+            "kind": {"const": kind},
+            "arguments": arguments,
+        }
+        if scratchpad_ids:
+            properties["scratchpad_ids"] = {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": scratchpad_ids},
+            }
+        return {
             "type": "object",
             "additionalProperties": False,
             "required": ["kind", "arguments"],
-            "properties": {
-                "kind": {"const": "write_memory"},
-                "arguments": write_arguments,
-            },
+            "properties": properties,
         }
-    ]
+
+    variants: list[dict[str, Any]] = [mutation_variant("write_memory", write_arguments)]
     if recalled_edge_ids:
         revise_arguments = revise_memory_schema(
             eligible_node_ids=recalled_node_ids,
             eligible_edge_ids=recalled_edge_ids,
         )["properties"]["arguments"]
-        variants.append(
-            {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["kind", "arguments"],
-                "properties": {
-                    "kind": {"const": "revise_memory"},
-                    "arguments": revise_arguments,
-                },
-            }
-        )
+        variants.append(mutation_variant("revise_memory", revise_arguments))
     return variants[0] if len(variants) == 1 else {"oneOf": variants}
 
 
-def answer_with_memory_schema(recall_result: dict[str, Any] | None) -> dict[str, Any]:
+def answer_with_memory_schema(
+    recall_result: dict[str, Any] | None,
+    *,
+    scratchpad_ids: Iterable[str] = (),
+) -> dict[str, Any]:
     recalled_node_ids, recalled_edge_ids = _recalled_scope_ids(recall_result)
+    available_scratchpad_ids = sorted(set(str(item) for item in scratchpad_ids))
     return {
         "type": "object",
         "additionalProperties": False,
@@ -57,6 +68,7 @@ def answer_with_memory_schema(recall_result: dict[str, Any] | None) -> dict[str,
                 "items": _mutation_item_schema(
                     recalled_node_ids=sorted(recalled_node_ids),
                     recalled_edge_ids=sorted(recalled_edge_ids),
+                    scratchpad_ids=available_scratchpad_ids,
                 ),
             },
         },
@@ -84,10 +96,26 @@ def _recalled_scope_ids(recall_result: dict[str, Any] | None) -> tuple[set[int],
     return node_ids, edge_ids
 
 
+def _scratchpad_context(items: list[ScratchpadItem]) -> tuple[str, ...]:
+    return tuple(
+        f"{item.scratchpad_id} sources={list(item.source_ids)}\n{item.content}"
+        for item in items
+    )
+
+
 @dataclass(slots=True)
 class FinalMemoryExecutor:
     writer: WriteMemoryTool
     reviser: ReviseMemoryTool
+    scratchpads: ScratchpadRegistry | None = None
+
+    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
+        if self.scratchpads is None:
+            return frozenset()
+        return frozenset(
+            str(item["scratchpad_id"])
+            for item in self.scratchpads.snapshot(turn_id=turn_id)
+        )
 
     def execute(
         self,
@@ -117,14 +145,25 @@ class FinalMemoryExecutor:
                 raise ModelContractError("memory mutation must contain structured arguments")
             kind = mutation.get("kind")
             arguments = mutation["arguments"]
+            raw_scratchpad_ids = mutation.get("scratchpad_ids", [])
+            if not isinstance(raw_scratchpad_ids, list):
+                raise ModelContractError("scratchpad_ids must be an array when provided")
+            if raw_scratchpad_ids and self.scratchpads is None:
+                raise ModelContractError("memory mutation cites scratchpad without a configured scratchpad registry")
+            selected = (
+                []
+                if self.scratchpads is None
+                else self.scratchpads.select(turn_id=turn_id, scratchpad_ids=raw_scratchpad_ids)
+            )
+            mutation_turn = replace(current_turn, evidence_context=_scratchpad_context(selected))
 
             if kind == "write_memory":
                 tool_started("write_memory")
-                result = self.writer.execute(arguments=arguments, scope=current_turn)
+                result = self.writer.execute(arguments=arguments, scope=mutation_turn)
                 tool_completed("write_memory")
             elif kind == "revise_memory":
                 revise_scope = ReviseMemoryScope.from_turn(
-                    turn=current_turn,
+                    turn=mutation_turn,
                     recall_result=recall_result,
                     write_results=results,
                 )
@@ -151,10 +190,4 @@ class FinalMemoryExecutor:
         for node in result.get("created_nodes", []):
             if "node_id" in node:
                 eligible.add(int(node["node_id"]))
-        return MemoryTurnScope(
-            user_id=turn.user_id,
-            turn_id=turn.turn_id,
-            user_text=turn.user_text,
-            assistant_text=turn.assistant_text,
-            recalled_node_ids=frozenset(eligible),
-        )
+        return replace(turn, recalled_node_ids=frozenset(eligible), evidence_context=())

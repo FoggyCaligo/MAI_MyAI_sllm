@@ -80,6 +80,7 @@ class MemoryTurnScope:
     user_text: str
     assistant_text: str
     recalled_node_ids: frozenset[int]
+    evidence_context: tuple[str, ...] = ()
 
     @classmethod
     def from_recall(
@@ -113,7 +114,10 @@ class MemoryTurnScope:
             raise ValueError("user_text must be non-empty")
         if not assistant_text:
             raise ValueError("assistant_text must be non-empty fixed answer text")
-        return f"user:\n{user_text}\n\nassistant:\n{assistant_text}"
+        sections = [f"user:\n{user_text}", f"assistant:\n{assistant_text}"]
+        if self.evidence_context:
+            sections.append("selected scratchpad evidence:\n" + "\n\n".join(self.evidence_context))
+        return "\n\n".join(sections)
 
 
 @dataclass(slots=True)

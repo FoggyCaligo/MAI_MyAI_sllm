@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Iterator
 
@@ -15,6 +15,7 @@ class ModelContext:
     recent_messages: tuple[dict[str, Any], ...] = ()
     recent_tool_operations: tuple[dict[str, Any], ...] = ()
     working_root: str | None = None
+    attachment_evidence: tuple[dict[str, Any], ...] = ()
 
 
 _model_context: ContextVar[ModelContext] = ContextVar("mai_model_context", default=ModelContext())
@@ -33,6 +34,18 @@ def use_model_context(
             recent_tool_operations=tuple(recent_tool_operations),
             working_root=str(working_root).strip() if working_root else None,
         )
+    )
+    try:
+        yield
+    finally:
+        _model_context.reset(token)
+
+
+@contextmanager
+def use_attachment_evidence(items: list[dict[str, Any]]) -> Iterator[None]:
+    current = _model_context.get()
+    token: Token[ModelContext] = _model_context.set(
+        replace(current, attachment_evidence=tuple(dict(item) for item in items))
     )
     try:
         yield
@@ -64,6 +77,13 @@ def prepare_model_messages(messages: list[dict[str, str]]) -> list[dict[str, str
             {
                 "role": "system",
                 "content": "Recent tool operations from earlier turns: " + dump_context(recent_operations),
+            }
+        )
+    if context.attachment_evidence:
+        insertion.append(
+            {
+                "role": "system",
+                "content": "Current attachment evidence: " + dump_context(list(context.attachment_evidence)),
             }
         )
     insertion.extend(recent_messages)

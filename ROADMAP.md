@@ -81,7 +81,7 @@ Web grounding은 실제 web evidence ID/reference와 proposed final answer의 �
 
 ## Phase 3 — Session, authorization, and working context
 
-이 branch에서 구현:
+구현됨:
 
 - owner/trial별 tool 제한
 - persistent authenticated session
@@ -100,19 +100,29 @@ Session별 working directory/root는 file/code discovery default root와 합친�
 
 ## Phase 4 — Attachment and working memory
 
-필수/권장:
+구현됨:
 
 - attachment automatic read/analyze
-- model-managed scratchpad
-- file/tool evidence → scratchpad working-memory carryover
-- final graph mutation에서 scratchpad 참고 가능
-- scratchpad source provenance
+- attachment evidence의 model-only context 주입
+- normal work-tool success result에 turn-local evidence ID 부여
+- model-managed `scratchpad_put` / `scratchpad_update`
+- attachment/tool evidence -> scratchpad working-memory carryover
+- final memory mutation의 optional `scratchpad_ids` reference
+- current-turn evidence/scratchpad scope validation
+- 선택된 scratchpad만 기존 graph provenance source context에 포함
+- turn 종료 시 evidence/scratchpad registry 제거
 
-첨부파일 자동 처리는 파일 종류라는 구조적 정보로 reader/analyzer capability를 결정하며 사용자 문장의 의미를 문자열 휴리스틱으로 route하지 않는다.
+첨부파일 자동 처리는 파일 suffix/type이라는 구조적 정보로 reader/analyzer capability를 결정하며 사용자 문장의 의미를 문자열 휴리스틱으로 route하지 않는다.
 
-Scratchpad는 현재 작업용 temporary state다. 모델이 tool evidence에서 중요한 내용을 scratchpad에 기록/갱신할 수 있어야 하며, final answer/memory plan을 만들 때 읽을 수 있어야 한다.
+Attachment evidence는 raw user text에 합치지 않고 model context에만 주입한다. 따라서 첨부 원문 전체가 모든 graph mutation provenance에 자동 포함되지 않는다.
 
-Scratchpad 전체를 자동으로 durable graph에 저장하지 않는다. Final graph mutation에서 모델이 선택한 semantic facts만 graph에 들어간다. Graph provenance는 그 mutation이 참조한 scratchpad/source까지 역추적 가능해야 한다.
+Scratchpad item은 실제 current-turn `attachment:N` / `tool:N` evidence ID를 source로 가져야 한다. 존재하지 않는 source ID는 contract failure다. `scratchpad_update`는 존재하는 current-turn scratchpad ID만 갱신하며 암묵적으로 새 항목을 만들지 않는다.
+
+Scratchpad 전체를 durable graph에 자동 저장하지 않는다. Final graph mutation에서 모델이 명시적으로 `scratchpad_ids`로 선택한 항목만 해당 mutation의 evidence context가 된다.
+
+현재 Phase 4는 선택된 scratchpad evidence를 기존 `graph_provenance.source_text`에 포함한다. Graph source를 stable raw-source foreign key/reference로 영속 연결하는 작업은 Phase 5에서 한 번에 정식화한다.
+
+자세한 계약은 `WORKING_MEMORY_CONTRACT.md`를 참조한다.
 
 ## Phase 5 — Graph provenance, confidence, and source inspection
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mai.context import compact_tool_event
-from mai.model_context import prepare_model_messages, use_model_context
+from mai.model_context import prepare_model_messages, use_attachment_evidence, use_model_context
 
 
 def test_recent_dialogue_date_and_working_root_are_injected_before_current_user(tmp_path) -> None:
@@ -28,6 +28,33 @@ def test_recent_dialogue_date_and_working_root_are_injected_before_current_user(
     assert prepared[2] == {"role": "assistant", "content": "previous answer"}
     assert prepared[3] == {"role": "user", "content": "current"}
     assert messages[0]["content"] == "system"
+
+
+def test_attachment_evidence_is_model_context_not_user_text() -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "original user text"},
+    ]
+    evidence = [
+        {
+            "evidence_id": "attachment:1",
+            "path": "/tmp/note.txt",
+            "status": "loaded",
+            "content": "attachment body",
+        }
+    ]
+
+    with use_model_context(recent_messages=[], recent_tool_operations=[]):
+        with use_attachment_evidence(evidence):
+            prepared = prepare_model_messages(messages)
+
+    assert prepared[-1] == {"role": "user", "content": "original user text"}
+    attachment_context = next(
+        item for item in prepared if item["role"] == "system" and "Current attachment evidence" in item["content"]
+    )
+    assert "attachment:1" in attachment_context["content"]
+    assert "attachment body" in attachment_context["content"]
+    assert messages[-1]["content"] == "original user text"
 
 
 def test_recent_tool_operations_are_limited_to_five() -> None:
