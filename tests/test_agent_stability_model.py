@@ -96,9 +96,11 @@ def test_duplicate_successful_tool_is_removed_before_retry(monkeypatch) -> None:
 
     monkeypatch.setattr("mai.model.httpx.post", fake_post)
     model = OllamaModel(model="test")
+    action = {"action": "tool", "tool": "file_create", "arguments": {"path": "a.txt"}}
     messages = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "create"},
+        {"role": "assistant", "content": str(action)},
         {
             "role": "tool",
             "content": str({"tool": "file_create", "arguments": {"path": "a.txt"}, "result": {"path": "a.txt"}}),
@@ -154,6 +156,7 @@ def test_web_answer_requires_grounding_acceptance(monkeypatch) -> None:
 
     monkeypatch.setattr("mai.model.httpx.post", fake_post)
     model = OllamaModel(model="test")
+    action = {"action": "tool", "tool": "latest_search", "arguments": {"query": "x"}}
     web_event = {
         "tool": "latest_search",
         "arguments": {"query": "x"},
@@ -163,6 +166,7 @@ def test_web_answer_requires_grounding_acceptance(monkeypatch) -> None:
         messages=[
             {"role": "system", "content": "system"},
             {"role": "user", "content": "latest"},
+            {"role": "assistant", "content": str(action)},
             {"role": "tool", "content": str(web_event)},
         ],
         schema=_combined(_answer_schema(), _tool_schema("latest_search")),
@@ -189,6 +193,7 @@ def test_grounding_rejection_forces_non_answer_next_action(monkeypatch) -> None:
 
     monkeypatch.setattr("mai.model.httpx.post", fake_post)
     model = OllamaModel(model="test")
+    action = {"action": "tool", "tool": "latest_search", "arguments": {"query": "x"}}
     web_event = {
         "tool": "latest_search",
         "arguments": {"query": "x"},
@@ -198,6 +203,7 @@ def test_grounding_rejection_forces_non_answer_next_action(monkeypatch) -> None:
         messages=[
             {"role": "system", "content": "system"},
             {"role": "user", "content": "latest"},
+            {"role": "assistant", "content": str(action)},
             {"role": "tool", "content": str(web_event)},
         ],
         schema=_combined(_answer_schema(), _tool_schema("web_research")),
