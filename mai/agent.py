@@ -66,6 +66,10 @@ class AgentCoreExtension(Protocol):
 
     def schemas(self, state: Any) -> list[dict[str, Any]]: ...
 
+    def external_actions_enabled(self, state: Any) -> bool: ...
+
+    def validate_answer(self, *, state: Any, action: dict[str, Any]) -> None: ...
+
     def round_context(self, state: Any) -> str: ...
 
     def execute(self, *, tool: str, arguments: dict[str, Any], state: Any) -> dict[str, Any]: ...
@@ -318,6 +322,10 @@ class AgentLifecycle:
         events: list[dict[str, Any]] = []
 
         while True:
+            external_enabled = (
+                self.core_extension is None
+                or self.core_extension.external_actions_enabled(extension_state)
+            )
             variants: list[dict[str, Any]] = []
             if self.core_extension is None:
                 variants.append(_answer_schema())
@@ -326,19 +334,20 @@ class AgentLifecycle:
                 if answer_schema is not None:
                     variants.append(answer_schema)
                 variants.extend(self.core_extension.schemas(extension_state))
-            if tools:
+            if tools and external_enabled:
                 variants.append(tool_route_schema())
 
             exposed_tools: set[str] = set()
-            for name in sorted(activated_tools):
-                if name not in available_tools:
-                    continue
-                tool = tools[name]
-                schema = _schema_for_context(tool, context)
-                if schema is None:
-                    continue
-                variants.append(schema)
-                exposed_tools.add(name)
+            if external_enabled:
+                for name in sorted(activated_tools):
+                    if name not in available_tools:
+                        continue
+                    tool = tools[name]
+                    schema = _schema_for_context(tool, context)
+                    if schema is None:
+                        continue
+                    variants.append(schema)
+                    exposed_tools.add(name)
 
             request_messages = list(messages)
             if self.core_extension is not None:
@@ -355,6 +364,8 @@ class AgentLifecycle:
                 content = str(action.get("content", "")).strip()
                 if not content:
                     raise ModelContractError("answer content must be non-empty")
+                if self.core_extension is not None:
+                    self.core_extension.validate_answer(state=extension_state, action=action)
                 return content, events
 
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
@@ -376,6 +387,8 @@ class AgentLifecycle:
                 )
 
             elif tool_name == "tool_route":
+                if not external_enabled:
+                    raise ModelContractError("external tools are unavailable until the core extension opens them")
                 path = str(arguments.get("path", ""))
                 resolved = routes.resolve(path=path, available_tools=available_tools)
                 if resolved.get("status") == "leaf_action":
@@ -409,6 +422,8 @@ class AgentLifecycle:
                     result = resolved
 
             elif tool_name in tools:
+                if not external_enabled:
+                    raise ModelContractError("external tools are unavailable until the core extension opens them")
                 if tool_name not in activated_tools:
                     route = routes.route_for_tool(tool_name)
                     raise ModelContractError(
