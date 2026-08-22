@@ -9,6 +9,7 @@ from .final_memory import FinalMemoryExecutor, _scratchpad_context
 from .memory_revise import ReviseMemoryScope
 from .memory_write import MemoryTurnScope
 from .model import ModelContractError, StructuredModel
+from .model_context import use_isolated_model_context
 from .progress import tool_completed, tool_started
 
 
@@ -129,7 +130,8 @@ class GraphCommitPhase:
                     )
                 )
 
-            action = self.model.structured(messages=messages, schema=_combined_schema(variants))
+            with use_isolated_model_context():
+                action = self.model.structured(messages=messages, schema=_combined_schema(variants))
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
                 raise ModelContractError("graph commit requires exactly one write_memory or revise_memory action")
             if not isinstance(action.get("continue_memory"), bool):
