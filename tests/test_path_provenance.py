@@ -104,7 +104,7 @@ def test_undiscovered_file_action_cannot_execute_without_scope(tmp_path: Path) -
         ]
     )
 
-    with pytest.raises(ModelContractError, match="unexpected tool|unavailable"):
+    with pytest.raises(ModelContractError, match="requires activation|unavailable"):
         _run(lifecycle(model, [FileReadTool(access)]), ctx=context())
 
 
