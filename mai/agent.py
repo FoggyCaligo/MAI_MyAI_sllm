@@ -212,9 +212,6 @@ class AgentLifecycle:
 
     repository: Any
     model: StructuredModel
-    discovery: Any | None = None
-    recall: Any | None = None
-    memory_executor: Any | None = None
     work_tools: list[WorkTool] = field(default_factory=list)
     source_store: Any | None = None
     core_extension: AgentCoreExtension | None = None
