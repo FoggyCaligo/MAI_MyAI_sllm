@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import sleep, time
 from typing import Iterable
 
-import pytest
 from fastapi.testclient import TestClient
 
 from mai.web import RuntimeSettings, create_app
@@ -14,6 +14,7 @@ from mai.web import RuntimeSettings, create_app
 class FakeLifecycle:
     answer: str = "응답"
     fail: bool = False
+    delay_seconds: float = 0.0
     calls: list[dict] = field(default_factory=list)
 
     def run(
@@ -32,6 +33,8 @@ class FakeLifecycle:
                 "attachment_paths": [str(Path(path).resolve()) for path in attachment_paths],
             }
         )
+        if self.delay_seconds:
+            sleep(self.delay_seconds)
         if self.fail:
             raise RuntimeError("lifecycle failed")
         return {
@@ -55,12 +58,25 @@ def settings(tmp_path: Path) -> RuntimeSettings:
         chat_db_path=tmp_path / "chat.db",
         upload_dir=tmp_path / "uploads",
         max_upload_bytes=1024,
+        session_ttl_seconds=3600,
     )
 
 
 def login(client: TestClient, user_id: str = "secret-owner") -> None:
     response = client.post("/auth/login", json={"user_id": user_id})
     assert response.status_code == 200
+
+
+def wait_job(client: TestClient, job_id: str, *, timeout: float = 3.0) -> dict:
+    deadline = time() + timeout
+    while time() < deadline:
+        job = client.get(f"/chat/jobs/{job_id}")
+        assert job.status_code == 200
+        payload = job.json()
+        if payload["status"] not in {"pending", "running"}:
+            return payload
+        sleep(0.02)
+    raise AssertionError(f"chat job did not finish: {job_id}")
 
 
 def test_runtime_requires_authentication_and_reports_env_model(tmp_path) -> None:
@@ -71,11 +87,20 @@ def test_runtime_requires_authentication_and_reports_env_model(tmp_path) -> None
         login(client)
         runtime = client.get("/runtime")
         assert runtime.status_code == 200
-        assert runtime.json() == {
-            "model": "gemma4:e4b",
-            "user_id": "secret-owner",
-            "role": "owner",
-        }
+        payload = runtime.json()
+        assert payload["model"] == "gemma4:e4b"
+        assert payload["user_id"] == "secret-owner"
+        assert payload["role"] == "owner"
+        assert Path(payload["working_root"]).is_absolute()
+
+
+def test_non_owner_login_is_trial(tmp_path) -> None:
+    app = create_app(settings=settings(tmp_path), lifecycle=FakeLifecycle(), model=FakeModel())
+    with TestClient(app) as client:
+        login(client, "member")
+        runtime = client.get("/runtime").json()
+        assert runtime["role"] == "trial"
+        assert runtime["working_root"] is None
 
 
 def test_unknown_login_is_rejected(tmp_path) -> None:
@@ -115,6 +140,32 @@ def test_upload_limit_fails_and_partial_file_is_removed(tmp_path) -> None:
         assert list(upload_dir.glob("*")) == []
 
 
+def test_chat_job_is_request_detached_and_records_completed_turn(tmp_path) -> None:
+    lifecycle = FakeLifecycle(answer="완료", delay_seconds=0.12)
+    app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
+    with TestClient(app) as client:
+        login(client)
+        started_at = time()
+        response = client.post("/chat", json={"message": "기억해", "attachments": []})
+        elapsed = time() - started_at
+        assert response.status_code == 200
+        assert elapsed < 0.1
+        job_id = response.json()["job_id"]
+        assert response.json()["status"] == "pending"
+
+        active = client.get("/chat/jobs").json()["jobs"]
+        assert any(job["job_id"] == job_id for job in active)
+
+        job = wait_job(client, job_id)
+        assert job["status"] == "completed"
+        assert job["response"]["answer"] == "완료"
+        history = client.get("/history").json()["messages"]
+        assert [(item["role"], item["content"]) for item in history] == [
+            ("user", "기억해"),
+            ("assistant", "완료"),
+        ]
+
+
 def test_chat_seeds_lifecycle_with_validated_uploaded_attachment(tmp_path) -> None:
     lifecycle = FakeLifecycle(answer="완료")
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
@@ -129,17 +180,11 @@ def test_chat_seeds_lifecycle_with_validated_uploaded_attachment(tmp_path) -> No
             "/chat",
             json={"message": "파일을 봐줘", "attachments": [attachment]},
         )
-        assert response.status_code == 200
-        assert response.json()["answer"] == "완료"
+        job = wait_job(client, response.json()["job_id"])
+        assert job["status"] == "completed"
         assert "[attached files]" in lifecycle.calls[0]["user_text"]
         assert str(Path(attachment).resolve()) in lifecycle.calls[0]["user_text"]
         assert lifecycle.calls[0]["attachment_paths"] == [str(Path(attachment).resolve())]
-
-        history = client.get("/history").json()["messages"]
-        assert [(item["role"], item["content"]) for item in history] == [
-            ("user", "파일을 봐줘"),
-            ("assistant", "완료"),
-        ]
 
 
 def test_chat_rejects_attachment_path_outside_authenticated_upload_scope(tmp_path) -> None:
@@ -157,33 +202,37 @@ def test_chat_rejects_attachment_path_outside_authenticated_upload_scope(tmp_pat
         assert lifecycle.calls == []
 
 
-def test_session_and_history_survive_page_reentry_with_same_cookie(tmp_path) -> None:
-    lifecycle = FakeLifecycle(answer="완료")
+def test_persistent_session_survives_app_recreation(tmp_path) -> None:
+    configured = settings(tmp_path)
+    first_app = create_app(settings=configured, lifecycle=FakeLifecycle(), model=FakeModel())
+    with TestClient(first_app) as first:
+        login(first)
+        token = first.cookies.get(configured.session_cookie)
+        assert token
+        assert first.get("/runtime").status_code == 200
+
+    second_app = create_app(settings=configured, lifecycle=FakeLifecycle(), model=FakeModel())
+    with TestClient(second_app) as second:
+        second.cookies.set(configured.session_cookie, token)
+        runtime = second.get("/runtime")
+        assert runtime.status_code == 200
+        assert runtime.json()["user_id"] == "secret-owner"
+
+
+def test_failed_lifecycle_is_visible_in_job_and_not_recorded_as_success(tmp_path) -> None:
+    lifecycle = FakeLifecycle(fail=True)
     app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
     with TestClient(app) as client:
         login(client)
-        assert client.post("/chat", json={"message": "기억해", "attachments": []}).status_code == 200
-
-        assert client.get("/runtime").status_code == 200
-        history = client.get("/history").json()["messages"]
-        assert [(item["role"], item["content"]) for item in history] == [
-            ("user", "기억해"),
-            ("assistant", "완료"),
-        ]
-
-
-def test_failed_lifecycle_does_not_record_fake_success_history(tmp_path) -> None:
-    lifecycle = FakeLifecycle(fail=True)
-    app = create_app(settings=settings(tmp_path), lifecycle=lifecycle, model=FakeModel())
-    with TestClient(app, raise_server_exceptions=False) as client:
-        login(client)
         response = client.post("/chat", json={"message": "실패해야 함", "attachments": []})
-        assert response.status_code == 500
-        history = client.get("/history").json()["messages"]
-        assert history == []
+        assert response.status_code == 200
+        job = wait_job(client, response.json()["job_id"])
+        assert job["status"] == "failed"
+        assert "RuntimeError: lifecycle failed" in job["error"]
+        assert client.get("/history").json()["messages"] == []
 
 
-def test_logout_invalidates_session(tmp_path) -> None:
+def test_logout_invalidates_persistent_session(tmp_path) -> None:
     app = create_app(settings=settings(tmp_path), lifecycle=FakeLifecycle(), model=FakeModel())
     with TestClient(app) as client:
         login(client)
