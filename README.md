@@ -430,12 +430,22 @@ Windows용 Ollama를 설치하고 실행한다.
 ollama --version
 ```
 
-기본 모델을 미리 받는다.
+### 모델 최소 기준
+
+Mai에서 **작동이 확인된 최소 기준 대화 모델은 `gemma4:e4b`**다.
+
+`gemma4:e4b`보다 작은 모델은 단순 문장 생성 자체는 가능하더라도, Mai가 요구하는 구조화 JSON 계약 유지, tool 선택, `tool_manual` 사용, 여러 round의 문맥 유지, 장기기억 mutation 같은 동작이 불안정할 수 있다. 따라서 **실제 사용에는 `gemma4:e4b` 또는 그 이상의 성능을 가진 모델을 권장한다.**
+
+즉 더 작은 모델을 임의로 설정한 뒤 Mai의 동작이 이상해지는 경우, 먼저 모델 성능이 최소 기준을 충족하는지 확인해야 한다.
+
+기본 예시 모델을 미리 받는다.
 
 ```powershell
 ollama pull gemma4:e4b
 ollama pull gemma4:12b
 ```
+
+`gemma4:e4b`는 기본 대화 모델 예시이고, `gemma4:12b`는 기본 이미지 분석 모델 예시다. 하드웨어 여유가 있다면 더 높은 성능의 대화 모델을 `.env`의 `MAI_OLLAMA_MODEL`에 지정하는 것을 권장한다.
 
 Ollama 서비스가 실행되지 않는 환경에서는:
 
@@ -461,7 +471,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-PowerShell 정책 때문에 Activate.ps1 실행이 차단되면 정책을 임의로 시스템 전체 변경하기보다, Python venv 사용법에 맞춰 현재 환경에서 허용되는 shell을 사용한다.
+PowerShell 정책 때문에 `Activate.ps1` 실행이 차단되면 정책을 임의로 시스템 전체 변경하기보다, Python venv 사용법에 맞춰 현재 환경에서 허용되는 shell을 사용한다.
 
 ## 10.6 Python package 설치
 
@@ -612,6 +622,8 @@ python -m pytest -q
 으로 전체 contract test를 실행한다.
 
 오류를 테스트 통과용 fallback으로 숨기지 않는다. Runtime contract가 바뀌었다면 테스트 fixture도 새 필수 계약을 명시적으로 충족하도록 수정한다.
+
+DB를 초기화한 뒤 실제 모델을 순서대로 검증하려면 [`docs/MODEL_TEST_GUIDE.md`](docs/MODEL_TEST_GUIDE.md)를 따른다.
 
 ---
 
