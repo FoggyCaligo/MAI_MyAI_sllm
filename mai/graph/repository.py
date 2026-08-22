@@ -418,10 +418,62 @@ class GraphRepository:
         if source_id == target_id:
             raise GraphConflictError("merge source and target must differ")
         with self.transaction() as conn:
-            self._require_owned_active_node(conn, user_id=user_id, node_id=source_id)
-            self._require_owned_active_node(conn, user_id=user_id, node_id=target_id)
+            source = self._require_owned_active_node(conn, user_id=user_id, node_id=source_id)
+            target = self._require_owned_active_node(conn, user_id=user_id, node_id=target_id)
             if self._is_user_anchor(conn, user_id=user_id, node_id=source_id):
                 raise GraphScopeError("canonical user anchor cannot be merged away")
+
+            source_members = [
+                int(row["member_node_id"])
+                for row in conn.execute(
+                    "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                    (user_id, source_id),
+                ).fetchall()
+            ]
+            target_members = [
+                int(row["member_node_id"])
+                for row in conn.execute(
+                    "SELECT member_node_id FROM graph_composite_members WHERE user_id=? AND composite_node_id=? ORDER BY member_node_id",
+                    (user_id, target_id),
+                ).fetchall()
+            ]
+            if source_members:
+                if str(source["kind"]) != "composite":
+                    raise GraphConflictError("non-composite source unexpectedly has composite members")
+                if str(target["kind"]) != "composite":
+                    raise GraphConflictError(
+                        "merging a composite node into a non-composite node would lose structural members"
+                    )
+                merged_members = list(dict.fromkeys([*target_members, *source_members]))
+                if target_id in merged_members:
+                    raise GraphConflictError("node merge would create composite self-membership")
+                for member_id in merged_members:
+                    self._require_owned_active_node(conn, user_id=user_id, node_id=member_id)
+                    if self._composite_reaches(
+                        conn,
+                        user_id=user_id,
+                        start_node_id=member_id,
+                        target_node_id=target_id,
+                    ):
+                        raise GraphConflictError("node merge would create a composite membership cycle")
+            else:
+                merged_members = target_members
+
+            parent_rows = conn.execute(
+                "SELECT composite_node_id FROM graph_composite_members WHERE user_id=? AND member_node_id=? ORDER BY composite_node_id",
+                (user_id, source_id),
+            ).fetchall()
+            parent_ids = [int(row["composite_node_id"]) for row in parent_rows]
+            for composite_id in parent_ids:
+                if composite_id == target_id:
+                    raise GraphConflictError("node merge would create composite self-membership")
+                if self._composite_reaches(
+                    conn,
+                    user_id=user_id,
+                    start_node_id=target_id,
+                    target_node_id=composite_id,
+                ):
+                    raise GraphConflictError("node merge would create a composite membership cycle")
 
             incident = conn.execute(
                 "SELECT * FROM graph_edges WHERE user_id=? AND (start_node_id=? OR end_node_id=?) ORDER BY edge_id",
@@ -454,14 +506,7 @@ class GraphRepository:
                     (new_start, new_end, int(edge["edge_id"])),
                 )
 
-            member_rows = conn.execute(
-                "SELECT composite_node_id FROM graph_composite_members WHERE user_id=? AND member_node_id=?",
-                (user_id, source_id),
-            ).fetchall()
-            for row in member_rows:
-                composite_id = int(row["composite_node_id"])
-                if composite_id == target_id:
-                    raise GraphConflictError("node merge would create composite self-membership")
+            for composite_id in parent_ids:
                 conn.execute(
                     "INSERT OR IGNORE INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
                     (user_id, composite_id, target_id),
@@ -470,6 +515,16 @@ class GraphRepository:
                 "DELETE FROM graph_composite_members WHERE user_id=? AND member_node_id=?",
                 (user_id, source_id),
             )
+
+            if source_members:
+                conn.execute(
+                    "DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
+                    (user_id, target_id),
+                )
+                conn.executemany(
+                    "INSERT INTO graph_composite_members (user_id, composite_node_id, member_node_id) VALUES (?, ?, ?)",
+                    [(user_id, target_id, member_id) for member_id in merged_members],
+                )
             conn.execute(
                 "DELETE FROM graph_composite_members WHERE user_id=? AND composite_node_id=?",
                 (user_id, source_id),
