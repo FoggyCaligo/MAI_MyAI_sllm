@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import pytest
-
 from mai.agent import AgentLifecycle, FunctionWorkTool
-from mai.graph import GraphDiscoveryService, GraphRecallService, GraphRepository, GraphSourceStore
-from mai.model import ModelContractError
 
 
 @dataclass
@@ -37,185 +33,118 @@ def _tool_names(schema: dict) -> set[str]:
     return names
 
 
-def _lifecycle(repo: GraphRepository, sources: GraphSourceStore, model: FakeModel, tools=None) -> AgentLifecycle:
-    return AgentLifecycle(
-        repository=repo,
-        model=model,
-        discovery=GraphDiscoveryService(repo),
-        recall=GraphRecallService(repo, source_store=sources),
-        work_tools=tools or [],
-        source_store=sources,
+def _lifecycle(model: FakeModel, tools=None) -> AgentLifecycle:
+    return AgentLifecycle(repository=None, model=model, work_tools=tools or [])
+
+
+def test_plain_agent_answer_has_one_model_round() -> None:
+    model = FakeModel([_answer("fixed")])
+
+    result = _lifecycle(model).run(user_id="owner", user_text="hello", turn_id="t1")
+
+    assert result["answer"] == "fixed"
+    assert result["status"] == "completed"
+    assert "memory" not in result
+    assert len(model.schemas) == 1
+
+
+def test_external_tool_can_be_directly_activated_by_exact_route() -> None:
+    calls = []
+
+    def handler(arguments, context):
+        calls.append(arguments["value"])
+        return {"value": arguments["value"] * 2}
+
+    tool = FunctionWorkTool(
+        name="double",
+        description="Double a number",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["value"],
+            "properties": {"value": {"type": "integer"}},
+        },
+        handler=handler,
     )
-
-
-def test_plain_answer_has_no_post_answer_memory_model_round(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "g.db")
-    sources = GraphSourceStore(tmp_path / "g.db")
-    try:
-        model = FakeModel([_answer("fixed")])
-
-        result = _lifecycle(repo, sources, model).run(user_id="owner", user_text="hello", turn_id="t1")
-
-        assert result["answer"] == "fixed"
-        assert result["status"] == "completed"
-        assert result["memory"]["status"] == "agent_managed"
-        assert result["memory"]["mutation_count"] == 0
-        assert len(model.schemas) == 1
-    finally:
-        sources.close()
-        repo.close()
-
-
-def test_generated_memory_is_recallable_in_later_agent_round(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "g.db")
-    sources = GraphSourceStore(tmp_path / "g.db")
-    try:
-        model = FakeModel(
-            [
-                {"action": "tool", "tool": "memory/recall", "arguments": {"query": "Mai"}},
-                {
-                    "action": "tool",
-                    "tool": "memory/generate/node",
-                    "arguments": {"kind": "concept", "name": "Mai", "source_ids": [1]},
-                },
-                {"action": "tool", "tool": "memory/recall", "arguments": {"node_id": 2}},
-                _answer("stored"),
-            ]
-        )
-
-        result = _lifecycle(repo, sources, model).run(
-            user_id="owner",
-            user_text="나는 Mai 프로젝트를 진행하고 있어.",
-            turn_id="t1",
-        )
-
-        assert len(model.schemas) == 4
-        assert result["memory"]["mutation_count"] == 1
-        assert result["memory"]["new_node_count"] == 1
-        recalled = result["work_events"][2]["result"]
-        assert any(node["name"] == "Mai" for node in recalled["nodes"])
-
-        matches = repo.lookup_nodes(user_id="owner", queries=["Mai"])["matches"]
-        assert [node["name"] for node in matches] == ["Mai"]
-    finally:
-        sources.close()
-        repo.close()
-
-
-def test_generate_node_requires_prior_query_recall(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "g.db")
-    sources = GraphSourceStore(tmp_path / "g.db")
-    try:
-        lifecycle = _lifecycle(repo, sources, FakeModel([_answer("unused")]))
-        assert lifecycle.memory is not None
-        state = lifecycle.memory.begin_turn(
-            user_id="owner",
-            turn_id="t1",
-            user_text="new concept",
-        )
-
-        with pytest.raises(ModelContractError, match="requires a query recall first"):
-            lifecycle.memory.generate_node(
-                arguments={"kind": "concept", "name": "new concept", "source_ids": [1]},
-                state=state,
-            )
-    finally:
-        sources.close()
-        repo.close()
-
-
-def test_external_tool_can_be_directly_activated_by_exact_route(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "g.db")
-    sources = GraphSourceStore(tmp_path / "g.db")
-    calls = []
-    try:
-        def handler(arguments, context):
-            calls.append(arguments["value"])
-            return {"value": arguments["value"] * 2}
-
-        tool = FunctionWorkTool(
-            name="double",
-            description="Double a number",
-            input_schema={
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["value"],
-                "properties": {"value": {"type": "integer"}},
-            },
-            handler=handler,
-        )
-        model = FakeModel(
-            [
-                {
-                    "action": "tool",
-                    "tool": "tool_route",
-                    "arguments": {"path": "/file/extension/double/use"},
-                },
-                {"action": "tool", "tool": "double", "arguments": {"value": 4}},
-                _answer("8"),
-            ]
-        )
-
-        result = _lifecycle(repo, sources, model, [tool]).run(
-            user_id="owner",
-            user_text="double",
-            turn_id="t1",
-        )
-
-        assert calls == [4]
-        assert result["answer"] == "8"
-        assert result["work_events"][0]["result"]["status"] == "activated"
-        assert "double" not in _tool_names(model.schemas[0])
-        assert "double" in _tool_names(model.schemas[1])
-    finally:
-        sources.close()
-        repo.close()
-
-
-def test_agent_loop_still_has_no_arbitrary_round_cap(tmp_path) -> None:
-    repo = GraphRepository(tmp_path / "g.db")
-    sources = GraphSourceStore(tmp_path / "g.db")
-    calls = []
-    try:
-        def handler(arguments, context):
-            calls.append(arguments["n"])
-            return {"n": arguments["n"]}
-
-        tool = FunctionWorkTool(
-            name="echo_number",
-            description="Echo a number",
-            input_schema={
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["n"],
-                "properties": {"n": {"type": "integer"}},
-            },
-            handler=handler,
-        )
-        count = 25
-        actions = [
+    model = FakeModel(
+        [
             {
                 "action": "tool",
                 "tool": "tool_route",
-                "arguments": {"path": "/file/extension/echo_number/use"},
+                "arguments": {"path": "/file/extension/double/use"},
             },
-            *[
-                {"action": "tool", "tool": "echo_number", "arguments": {"n": n}}
-                for n in range(count)
-            ],
+            {"action": "tool", "tool": "double", "arguments": {"value": 4}},
+            _answer("8"),
+        ]
+    )
+
+    result = _lifecycle(model, [tool]).run(user_id="owner", user_text="double", turn_id="t1")
+
+    assert calls == [4]
+    assert result["answer"] == "8"
+    assert result["work_events"][0]["result"]["status"] == "activated"
+    assert "double" not in _tool_names(model.schemas[0])
+    assert "double" in _tool_names(model.schemas[1])
+
+
+def test_framework_tool_result_uses_user_transport_not_native_tool_role() -> None:
+    tool = FunctionWorkTool(
+        name="echo",
+        description="Echo text",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["value"],
+            "properties": {"value": {"type": "string"}},
+        },
+        handler=lambda arguments, context: {"value": arguments["value"]},
+    )
+    model = FakeModel(
+        [
+            {"action": "tool", "tool": "tool_route", "arguments": {"path": "/file/extension/echo/use"}},
+            {"action": "tool", "tool": "echo", "arguments": {"value": "x"}},
             _answer("done"),
         ]
-        model = FakeModel(actions)
+    )
 
-        result = _lifecycle(repo, sources, model, [tool]).run(
-            user_id="owner",
-            user_text="loop",
-            turn_id="t1",
-        )
+    _lifecycle(model, [tool]).run(user_id="owner", user_text="echo", turn_id="t1")
 
-        assert calls == list(range(count))
-        assert result["answer"] == "done"
-        assert len(model.schemas) == count + 2
-    finally:
-        sources.close()
-        repo.close()
+    final_messages = model.messages[-1]
+    assert all(message["role"] != "tool" for message in final_messages)
+    assert any(
+        message["role"] == "user" and message["content"].startswith("Framework tool result:")
+        for message in final_messages
+    )
+
+
+def test_agent_loop_has_no_arbitrary_round_cap() -> None:
+    calls = []
+
+    def handler(arguments, context):
+        calls.append(arguments["n"])
+        return {"n": arguments["n"]}
+
+    tool = FunctionWorkTool(
+        name="echo_number",
+        description="Echo a number",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["n"],
+            "properties": {"n": {"type": "integer"}},
+        },
+        handler=handler,
+    )
+    count = 25
+    actions = [
+        {"action": "tool", "tool": "tool_route", "arguments": {"path": "/file/extension/echo_number/use"}},
+        *[{"action": "tool", "tool": "echo_number", "arguments": {"n": n}} for n in range(count)],
+        _answer("done"),
+    ]
+    model = FakeModel(actions)
+
+    result = _lifecycle(model, [tool]).run(user_id="owner", user_text="loop", turn_id="t1")
+
+    assert calls == list(range(count))
+    assert result["answer"] == "done"
+    assert len(model.schemas) == count + 2
