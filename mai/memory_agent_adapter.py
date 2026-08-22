@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from typing import Any, Iterable
 
 from .memory_extension import AgentGraphMemoryExtension, MemoryTurnState
 from .model import ModelContractError
+
+
+_logger = logging.getLogger("uvicorn.error")
 
 
 class MemoryAgentAdapter:
@@ -85,7 +89,13 @@ class MemoryAgentAdapter:
             properties = sync_tool.setdefault("properties", {})
             properties["sync_complete"] = {"type": "boolean"}
             variants.append(sync_tool)
-        return {"oneOf": variants}
+        combined = {"oneOf": variants}
+        _logger.info(
+            "[Mai][turn=%s][final_graph_sync] schema=%s",
+            state.turn_id,
+            json.dumps(combined, ensure_ascii=False, sort_keys=True, default=str),
+        )
+        return combined
 
     def execute_graph_sync(
         self,
@@ -93,10 +103,22 @@ class MemoryAgentAdapter:
         state: MemoryTurnState,
         action: dict[str, Any],
     ) -> tuple[bool, dict[str, Any]]:
+        _logger.info(
+            "[Mai][turn=%s][final_graph_sync] model_action=%s",
+            state.turn_id,
+            json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+        )
+
         if action.get("action") == "sync_complete":
             if set(action) != {"action"}:
                 raise ModelContractError("sync_complete action may not contain extra fields")
-            return True, {"status": "complete", "changed": False}
+            result = {"status": "complete", "changed": False}
+            _logger.info(
+                "[Mai][turn=%s][final_graph_sync] completed_without_memory_change result=%s",
+                state.turn_id,
+                json.dumps(result, ensure_ascii=False, sort_keys=True, default=str),
+            )
+            return True, result
 
         if action.get("action") != "tool":
             raise ModelContractError("final graph sync requires one memory tool action or sync_complete")
@@ -110,14 +132,32 @@ class MemoryAgentAdapter:
         if not isinstance(sync_complete, bool):
             raise ModelContractError("final graph sync memory action requires sync_complete boolean")
 
+        before = self._memory_context_payload(state)
+        _logger.info(
+            "[Mai][turn=%s][final_graph_sync] before_memory_action tool=%s arguments=%s working_context=%s",
+            state.turn_id,
+            tool,
+            json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str),
+            json.dumps(before, ensure_ascii=False, sort_keys=True, default=str),
+        )
+
         result = self.memory.execute(tool=tool, arguments=arguments, state=state)
-        return sync_complete, {
+        payload = {
             "status": "complete" if sync_complete else "continue",
             "changed": True,
             "tool": tool,
             "arguments": dict(arguments),
             "result": result,
         }
+        after = self._memory_context_payload(state)
+        _logger.info(
+            "[Mai][turn=%s][final_graph_sync] after_memory_action sync_complete=%s result=%s working_context=%s",
+            state.turn_id,
+            sync_complete,
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+            json.dumps(after, ensure_ascii=False, sort_keys=True, default=str),
+        )
+        return sync_complete, payload
 
     def graph_sync_context(self, state: MemoryTurnState) -> str:
         payload = self._memory_context_payload(state)
@@ -130,7 +170,7 @@ class MemoryAgentAdapter:
                 "working_state_is_not_past_memory_evidence": True,
             }
         )
-        return (
+        context = (
             "This is the mandatory Final Graph Sync phase after the answer has been frozen. "
             "Do not answer the user, revise the frozen answer, or use external work tools. Review the user message, "
             "the complete current-turn Main Agent action/result transcript, the frozen answer, recall candidates, "
@@ -141,6 +181,12 @@ class MemoryAgentAdapter:
             "is needed, return the explicit sync_complete action.\n"
             + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
         )
+        _logger.info(
+            "[Mai][turn=%s][final_graph_sync] model_context=%s",
+            state.turn_id,
+            context,
+        )
+        return context
 
     def observe_work_tool_result(
         self,
@@ -163,7 +209,14 @@ class MemoryAgentAdapter:
         commit = getattr(self.memory, "commit_turn", None)
         if not callable(commit):
             raise RuntimeError("configured memory extension does not support final working-graph commit")
-        return commit(turn_id=turn_id)
+        _logger.info("[Mai][turn=%s][final_graph_sync] atomic_commit_started", turn_id)
+        result = commit(turn_id=turn_id)
+        _logger.info(
+            "[Mai][turn=%s][final_graph_sync] atomic_commit_completed result=%s",
+            turn_id,
+            json.dumps(result, ensure_ascii=False, sort_keys=True, default=str),
+        )
+        return result
 
     def abort_turn(self, *, turn_id: str) -> None:
         abort = getattr(self.memory, "abort_turn", None)
