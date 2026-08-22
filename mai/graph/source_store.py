@@ -9,13 +9,7 @@ from typing import Any, Iterable
 
 
 _ALLOWED_SOURCE_KINDS = frozenset(
-    {
-        "user_message",
-        "assistant_message",
-        "web_evidence",
-        "file_evidence",
-        "tool_operation",
-    }
+    {"user_message", "assistant_message", "web_evidence", "file_evidence", "tool_operation"}
 )
 
 
@@ -183,6 +177,7 @@ class GraphSourceStore:
         source_ids: Iterable[int],
         node_id: int | None = None,
         edge_version_id: int | None = None,
+        edge_id: int | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -194,6 +189,7 @@ class GraphSourceStore:
                     source_ids=source_ids,
                     node_id=node_id,
                     edge_version_id=edge_version_id,
+                    edge_id=edge_id,
                 )
             except Exception:
                 self._conn.rollback()
@@ -210,9 +206,20 @@ class GraphSourceStore:
         source_ids: Iterable[int],
         node_id: int | None = None,
         edge_version_id: int | None = None,
+        edge_id: int | None = None,
     ) -> None:
-        if (node_id is None) == (edge_version_id is None):
+        targets = sum(value is not None for value in (node_id, edge_version_id, edge_id))
+        if targets != 1:
             raise ValueError("exactly one graph source link target is required")
+        resolved_version_id = edge_version_id
+        if edge_id is not None:
+            row = conn.execute(
+                "SELECT current_version_id FROM graph_edges WHERE user_id=? AND edge_id=?",
+                (user_id, int(edge_id)),
+            ).fetchone()
+            if row is None or row["current_version_id"] is None:
+                raise PermissionError(f"edge_id {edge_id} is outside user graph scope")
+            resolved_version_id = int(row["current_version_id"])
         for source_id in dict.fromkeys(int(value) for value in source_ids):
             row = conn.execute("SELECT user_id FROM graph_sources WHERE source_id=?", (source_id,)).fetchone()
             if row is None or str(row["user_id"]) != user_id:
@@ -223,7 +230,7 @@ class GraphSourceStore:
                     (user_id, turn_id, source_id, node_id, edge_version_id)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (user_id, turn_id, source_id, node_id, edge_version_id),
+                (user_id, turn_id, source_id, node_id, resolved_version_id),
             )
 
     def source_ids_for_node(self, *, user_id: str, node_id: int) -> list[int]:
