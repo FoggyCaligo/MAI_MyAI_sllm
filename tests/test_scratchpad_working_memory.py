@@ -10,6 +10,7 @@ from mai.attachment_evidence import AttachmentEvidenceBuilder
 from mai.final_memory import FinalMemoryExecutor
 from mai.model import ModelContractError
 from mai.scratchpad import (
+    EvidenceKindToolAdapter,
     EvidenceTrackingTool,
     ScratchpadPutTool,
     ScratchpadRegistry,
@@ -98,6 +99,17 @@ def test_evidence_tracking_tool_adds_turn_scoped_evidence_id() -> None:
     stored = evidence.require(turn_id="turn-1", evidence_id="tool:1")
     assert stored.payload["tool"] == "dummy_tool"
     assert stored.payload["result"] == {"value": 7}
+
+
+def test_evidence_tracking_tool_preserves_explicit_evidence_kind() -> None:
+    evidence = TurnEvidenceRegistry()
+    declared = EvidenceKindToolAdapter(DummyTool(), "web_evidence")
+    tool = EvidenceTrackingTool(declared, evidence)
+
+    result = tool.execute(arguments={"value": 7}, context=SimpleNamespace(turn_id="turn-1"))
+
+    assert result["evidence_id"] == "tool:1"
+    assert result["evidence_kind"] == "web_evidence"
 
 
 def test_scratchpad_rejects_unknown_evidence_source() -> None:
