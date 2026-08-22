@@ -52,7 +52,7 @@ Level 2와 Level 3은 모델이 필요할 때만 구조화된 source/provenance 
 
 ## Phase 1 — Model context parity
 
-필수:
+구현됨:
 
 - 최근 대화 context
 - tool result compaction
@@ -67,9 +67,9 @@ Level 2와 Level 3은 모델이 필요할 때만 구조화된 source/provenance 
 
 ## Phase 2 — Agent stability parity
 
-필수:
+구현됨:
 
-- 동일 successful action 반복 계약 (#31 재작성)
+- 동일 successful action 반복 계약
 - Autonomy retry
 - web evidence grounding pass
 
@@ -81,16 +81,22 @@ Web grounding은 실제 web evidence ID/reference와 proposed final answer의 �
 
 ## Phase 3 — Session, authorization, and working context
 
-필수:
+이 branch에서 구현:
 
 - owner/trial별 tool 제한
 - persistent authenticated session
 - 다른 앱/탭을 보고 돌아와도 chat/job 상태가 끊기지 않는 request-detached execution
 - session별 file working context/root
 
-권한은 Framework가 구조적으로 강제한다. 모델이 user text를 보고 owner/trial을 추론하지 않는다.
+권한은 Framework가 authenticated identity에서 구조적으로 강제한다. 모델이 user text를 보고 owner/trial을 추론하지 않는다.
 
-Session별 working directory/root는 file tool의 discovery root와 합쳐 하나의 working-context abstraction으로 관리한다.
+Trial은 host filesystem/terminal/code/document/image tool을 catalog에서부터 받지 않는다. Core graph recall/final memory capability와 web/market work tools만 유지한다.
+
+Session token 원문은 DB에 저장하지 않고 hash만 저장한다. Session TTL은 `MAI_SESSION_TTL_SECONDS`로 관리한다.
+
+Chat job은 persistent `pending/running/completed/failed/interrupted` 상태를 가지며 HTTP request와 독립적으로 실행된다. 프로세스 재시작 시 이전 active job을 성공으로 추측하거나 자동 재실행하지 않고 `interrupted`로 남긴다.
+
+Session별 working directory/root는 file tool discovery default root와 합친다. 실제 성공한 explicit-root file discovery result만 working root를 승격할 수 있다. Working root는 convenience base이지 owner filesystem sandbox가 아니다.
 
 ## Phase 4 — Attachment and working memory
 
@@ -126,7 +132,7 @@ Graph recall은 원문 전체를 기본 payload에 포함하지 않는다. 상�
 다음은 위 핵심 작업 이후 재평가한다.
 
 - model-friendly tool-name adapter
-- richer account/session controls (TTL, maximum active sessions)
+- maximum active sessions / explicit session revocation controls
 - voice STT/TTS
 
 MK4의 global round cap, hidden fallback synthesis, parse-success fallback처럼 현재 Mai의 fail-visible contract와 충돌하는 기능은 parity 대상으로 간주하지 않는다.
