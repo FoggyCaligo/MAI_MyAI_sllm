@@ -10,8 +10,7 @@ Mai는 **로컬 sLLM에 장기 graph memory와 실제 PC/web 도구를 붙여 �
 
 > **모델이 의미를 결정하고, Framework는 구조를 강제한다.**
 
-현재 브랜치는 새 memory architecture를 문서로 먼저 확정한 뒤 구현을 재구축하는 단계다.
-구현은 기존 memory 영역을 통째로 걷어내고, memory 이외의 runtime을 최대한 유지한 상태에서 새 memory subsystem을 다시 얹는 방식으로 진행한다.
+현재 브랜치는 memory architecture를 **Actual Graph + turn-local Working Graph + periodic graph checkpoint** 구조로 재구축한다.
 
 Memory 상세 기준 문서:
 
@@ -26,66 +25,82 @@ Memory 상세 기준 문서:
  ↓
 최근 대화 context
  ↓
-Mai single Agent loop
+Mai Agent lifecycle
  ├─ mandatory vector memory recall
- ├─ turn ViewedGraph
- ├─ persistent graph generate/fix
+ ├─ turn-local Working Graph
+ ├─ memory recall / generate / fix
  ├─ file / document / image / code / terminal
  ├─ web / market / current info
- └─ answer
+ ├─ periodic graph checkpoint
+ └─ final graph checkpoint → answer
 ```
 
-별도 post-answer Memory LLM은 사용하지 않는다.
-Scratchpad도 target architecture에서는 제거한다.
+별도 post-answer Memory LLM과 Scratchpad는 사용하지 않는다.
+같은 main model이 일반 Agent round와 graph-only checkpoint에 사용된다.
 
-Graph는 동시에 두 역할을 가진다.
+Graph는 두 층으로 나뉜다.
 
-1. 여러 turn과 재실행을 넘어 유지되는 long-term memory
-2. Agent가 현재 turn 동안 직접 조회/수정하는 working-memory substrate
+1. **Actual Graph**: 이전에 성공적으로 완료된 turn에서 commit된 durable long-term memory
+2. **Working Graph**: 현재 turn에서 실제로 recall해서 연 Actual Graph 영역 + 아직 commit되지 않은 현재 turn 변경사항
+
+Working Graph는 이번 turn의 현재 인지/작업 공간이며 과거 기억의 증거로 취급하지 않는다.
 
 ---
 
 # 2. 한 turn의 memory 흐름
 
-첫 Agent round에서는 바로 답변할 수 없다.
+첫 Main round에서는 바로 답변할 수 없다.
 최소 한 번 `memory/recall(query)`를 사용해야 한다.
 
 ```text
 User message
  ↓
-Agent round 1
+Main round 1
  ↓
 memory/recall(query)
  ↓
 Embedding vector similarity search
  ↓
 관련 node 후보 여러 개
- ↓
-Agent가 필요한 node_id 선택
- ↓
-memory/recall(node_id)
- ↓
-선택 node + active one-hop
- ↓
-ViewedGraph에 누적
 ```
 
-이후 다른 node를 recall하면 이전 조회 결과를 지우지 않는다.
+Query recall은 candidate만 반환하며 Working Graph를 자동으로 열지 않는다.
+모델이 필요하다고 판단한 candidate를 `memory/recall(node_id)`로 열면 그 node와 active one-hop이 Working Graph에 누적된다.
 
 ```text
-ViewedGraph(next)
-= ViewedGraph(current)
-+ 새로 조회한 node/edge
+recall A
+→ Working = A + A active one-hop
+
+recall B
+→ Working = previous Working + B + B active one-hop
 ```
 
-Turn이 끝나면 ViewedGraph 자체는 초기화된다.
-Persistent graph DB에 commit된 memory는 남는다.
+Main round 중 `memory/generate/*`, `memory/fix/*`를 사용하면 변경은 Actual Graph가 아니라 Working Graph에만 staging된다.
+새 Working node는 framework가 발급한 음수 temporary ID를 사용하며 같은 turn의 이후 round에서 참조할 수 있다.
+
+Main LLM 호출이 설정된 간격만큼 누적되면 framework가 graph-only checkpoint를 강제한다.
+현재 기본 간격은 **Main LLM 3회**다.
+
+```text
+Main #1
+Main #2
+Main #3
+ ↓
+Graph Checkpoint
+ ↓
+Main #4 ...
+```
+
+Answer candidate가 나오면 호출 수와 관계없이 Final Graph Checkpoint를 반드시 거친다.
+Periodic checkpoint 경계와 final checkpoint가 겹치면 한 번만 실행한다.
+
+Final checkpoint 완료 후 Working Graph mutation set을 **LLM 호출 없이 하나의 atomic transaction**으로 Actual Graph에 commit한 뒤 answer를 반환한다.
 
 ---
 
 # 3. Vector recall
 
-`memory/recall(query)`는 lexical substring 검색이 아니라 embedding vector similarity로 candidate node를 찾는 것을 목표로 한다.
+`memory/recall(query)`는 lexical substring 검색이 아니라 embedding vector similarity로 candidate node를 찾는다.
 
 Embedding model은 `.env`에서 별도로 지정한다.
 
@@ -119,15 +134,14 @@ memory/
 
 ## `memory/recall`
 
-두 mode를 가진다.
-
 - `query`: vector-similar node 후보 조회
-- `node_id`: 특정 node와 active one-hop 열기
+- `node_id`: 특정 Actual node와 active one-hop을 Working Graph에 열기
+- `edge_id`: edge의 Actual/Working/history 상태 조회
 
 ## `memory/generate/node`
 
-새 semantic node 또는 composite node를 만든다.
-새 node 생성 전에는 relevant query recall이 선행되어야 한다.
+새 semantic node 또는 composite node를 Working Graph에 만든다.
+새 node 생성 전에는 fresh relevant query recall이 선행되어야 한다.
 모델이 후보 중 동일 의미 node가 있다고 판단하면 새로 만들지 않고 기존 node를 재사용해야 한다.
 
 한 turn 신규 node 상한은 **10개**다.
@@ -142,14 +156,13 @@ A -> B
 B -> A
 ```
 
-는 서로 다른 edge다.
-
-동일 `(start_node_id, end_node_id)`에는 current semantic edge 하나만 존재한다.
+는 서로 다른 logical edge다.
+동일 `(start_node_id, end_node_id)`에는 logical edge 하나만 존재한다.
 Relation wording이 달라졌다는 이유로 parallel edge를 추가하지 않는다.
 
 ## `memory/fix/node`
 
-- node 이름/상태 수정
+- node 상태 수정
 - composite membership 수정
 - duplicate node merge
 
@@ -162,7 +175,7 @@ Relation wording이 달라졌다는 이유로 parallel edge를 추가하지 않�
 - disconnect
 
 Disconnect는 edge를 지우는 대신 weight를 `0`으로 만든다.
-Zero-weight edge는 provenance/debug에는 남지만 normal recall에서는 active connection으로 보지 않는다.
+Zero-weight edge는 provenance/debug/history에는 남지만 normal active recall에서는 제외한다.
 
 ---
 
@@ -175,10 +188,13 @@ node_id
 name
 kind: concept | composite
 source_ids[]
+member_node_ids[]
+pending
+graph_created_at
+graph_updated_at
 ```
 
-Composite node는 여러 기존 node를 하나의 새 개념으로 지칭한다.
-Membership은 일반 relation 문자열이 아니라 Framework-owned structural data다.
+Composite membership은 일반 relation 문자열이 아니라 Framework-owned structural data다.
 Self-membership과 membership cycle은 허용하지 않는다.
 
 ## Edge
@@ -190,11 +206,10 @@ end_node_id
 relation
 weight
 personal_relevance
-source_ids[]
+current_version_id
 ```
 
 Node가 lifetime 동안 가질 수 있는 edge 총량에는 제한이 없다.
-
 Turn execution budget만 둔다.
 
 - 신규 node: 최대 10개 / turn
@@ -232,59 +247,80 @@ Source reliability/confidence와 personal relevance는 별도 축이다.
 
 ---
 
-# 7. Source / provenance
+# 7. Source / provenance / history
 
-Node와 edge 모두 source sentence/tool evidence의 ID를 독립적으로 가질 수 있다.
+Node와 edge는 source evidence를 relational link로 가진다.
+Edge source는 특정 committed edge version에 연결된다.
 
-모델에게는:
+현재 turn의 Working edge와 이전 Actual history는 구분된다.
 
 ```text
-source_ids: [12, 18, 44]
+actual_current
+working_current
+past_versions
+working_state_is_past_evidence: false
 ```
 
-형태로 보여줄 수 있다.
+같은 turn에서 edge를 여러 번 수정해도 최종 commit 시에는 그 turn의 최종 상태 하나만 새 committed version이 된다.
+각 logical edge는 최근 **3개의 committed turn state**를 보존한다.
 
-DB는 JSON list 하나에 묻지 않고 relational source/link table로 관리한다.
-
-과거 edge를 3겹으로 쌓는 history 구조는 사용하지 않는다.
-현재 graph는 현재 이해를 표현하고, provenance가 그 상태의 근거를 보존한다.
+이 구조는 현재 turn에서 방금 만든 Working 상태를 과거 기억의 근거처럼 재사용하는 것을 막는다.
 
 ---
 
-# 8. Graph mutation은 즉시 commit
+# 8. Working Graph mutation과 최종 commit
 
-Memory는 최종 답변 뒤에 따로 저장하지 않는다.
+Memory semantic mutation은 Main/checkpoint 도중 **Working Graph에 즉시 반영**되지만 Actual Graph에는 즉시 commit하지 않는다.
 
 ```text
-Agent round N
-→ memory/generate or memory/fix
-→ SQLite 즉시 commit
-
-Agent round N+1
-→ 변경된 graph를 바로 recall 가능
+Main / Checkpoint
+→ memory/generate 또는 memory/fix
+→ Working Graph 변경
+→ 다음 round에서 변경된 Working Graph를 바로 사용
 ```
 
-미래 turn에서도 동일 graph를 다시 볼 수 있다.
+따라서 같은 turn의 다음 Main round는 새 node/edge와 수정된 상태를 즉시 볼 수 있다.
+하지만 durability boundary는 Final Graph Checkpoint 뒤의 atomic commit이다.
 
-이 때문에 intermediate 판단이 잘못된 상태로 commit될 수 있다.
-새 구조에서는 이를 숨기거나 rollback하기보다, Agent가 이해를 수정했을 때 `memory/fix/*`로 현재 graph를 다시 맞추는 것을 기본으로 한다.
+```text
+Final Graph Checkpoint 완료
+ ↓
+Working Graph mutation set
+ ↓
+SQLite atomic transaction
+ ↓
+Actual Graph
+ ↓
+frozen answer 반환
+```
+
+Agent/checkpoint 실패 또는 commit 실패 시 Working semantic change는 Actual Graph에 승격되지 않는다.
+Commit 실패는 숨기지 않으며 frozen answer도 반환하지 않는다.
 
 ---
 
-# 9. Final graph-sync gate
+# 9. Periodic / Final Graph Checkpoint
 
-별도 Memory reviewer 모델을 다시 붙이지 않는다.
+Graph checkpoint는 별도 Memory reviewer model이 아니라 **같은 main model을 graph-only cognition state로 다시 호출**하는 구조다.
 
-같은 Agent loop의 마지막 answer 전에:
+Checkpoint에서는 answer와 external work tool을 사용할 수 없다.
+허용되는 것은 memory action 또는 explicit `sync_complete`뿐이다.
 
-> 현재 persistent graph / ViewedGraph가 이번 turn에서 얻은 최신 durable understanding과 일치하는가?
+한 checkpoint LLM 호출도 여전히 **action 하나만** 낸다.
 
-를 Agent가 명시적으로 확인한다.
+```text
+Checkpoint LLM
+→ memory action 1개
+→ 실제 결과를 Working Graph에 반영
+→ sync_complete=false면 다음 checkpoint LLM
+→ 완료될 때까지 Main으로 복귀 불가
+```
 
-일치하지 않으면 memory fix/generate를 수행하고 다음 round로 진행한다.
-일치한다고 확인된 상태에서만 answer로 종료한다.
+변경할 것이 없으면 `sync_complete` action으로 종료한다.
+마지막 memory action 하나로 충분하면 그 action에 `sync_complete=true`를 붙여 별도 done 호출을 생략할 수 있다.
 
-Framework가 answer text와 graph 의미를 문자열 비교하지 않는다.
+Framework는 문자열 비교나 topic heuristic으로 무엇을 기억할지 결정하지 않는다.
+Framework는 checkpoint 시점과 허용 action, commit 경계만 강제한다.
 
 ---
 
@@ -341,21 +377,17 @@ Trial은 user별 독립 graph memory와 허용된 web/attachment 기능만 사�
 
 ---
 
-# 12. 제거할 이전 memory 구조
-
-새 memory 구현 단계에서 제거 대상:
+# 12. 제거된 이전 memory 구조
 
 - dedicated `MAI_OLLAMA_MEMORY_MODEL`
 - post-answer `GraphCommitPhase`
 - `continue_memory`
-- final-answer 뒤 memory loop
+- 별도 final-answer 뒤 Memory-model loop
 - `ScratchpadRegistry`
 - `scratchpad_put`
 - `scratchpad_update`
 - scratchpad → durable memory promotion
 - old `node_lookup` + `recall_memory` split API
-
-Memory 외 runtime은 먼저 보존한 뒤 새 memory 구조를 덧입힌다.
 
 ---
 
@@ -382,9 +414,9 @@ data/graph.sqlite3
 ```
 
 - semantic nodes/edges
-- graph state
+- edge versions
 - source/provenance links
-- long-term memory
+- long-term Actual Graph
 
 ```text
 data/chat.sqlite3
@@ -409,5 +441,6 @@ Mai는 실패를 성공처럼 숨기지 않는다.
 - no hidden model retry
 - no silent generate→fix conversion
 - no silent duplicate graph creation
+- no silent Working→Actual commit failure
 
 구조 위반은 명확한 contract error로 드러낸다.
