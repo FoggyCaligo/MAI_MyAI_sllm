@@ -112,7 +112,13 @@ class ScratchpadRegistry:
         self._items: dict[str, dict[str, ScratchpadItem]] = {}
         self._counters: dict[str, int] = {}
 
-    def put(self, *, turn_id: str, content: str, source_ids: Iterable[str]) -> ScratchpadItem:
+    def _validated_payload(
+        self,
+        *,
+        turn_id: str,
+        content: str,
+        source_ids: Iterable[str],
+    ) -> tuple[str, tuple[str, ...]]:
         text = str(content).strip()
         if not text:
             raise ModelContractError("scratchpad content must be non-empty")
@@ -121,6 +127,14 @@ class ScratchpadRegistry:
             raise ModelContractError("scratchpad item requires at least one evidence source")
         for source_id in resolved_sources:
             self._evidence.require(turn_id=turn_id, evidence_id=source_id)
+        return text, resolved_sources
+
+    def put(self, *, turn_id: str, content: str, source_ids: Iterable[str]) -> ScratchpadItem:
+        text, resolved_sources = self._validated_payload(
+            turn_id=turn_id,
+            content=content,
+            source_ids=source_ids,
+        )
         with self._lock:
             next_index = self._counters.get(str(turn_id), 0) + 1
             self._counters[str(turn_id)] = next_index
@@ -131,6 +145,31 @@ class ScratchpadRegistry:
                 source_ids=resolved_sources,
             )
             self._items.setdefault(str(turn_id), {})[scratchpad_id] = item
+        return item
+
+    def update(
+        self,
+        *,
+        turn_id: str,
+        scratchpad_id: str,
+        content: str,
+        source_ids: Iterable[str],
+    ) -> ScratchpadItem:
+        text, resolved_sources = self._validated_payload(
+            turn_id=turn_id,
+            content=content,
+            source_ids=source_ids,
+        )
+        with self._lock:
+            turn_items = self._items.get(str(turn_id), {})
+            if str(scratchpad_id) not in turn_items:
+                raise ModelContractError(f"scratchpad_id is outside current-turn scope: {scratchpad_id}")
+            item = ScratchpadItem(
+                scratchpad_id=str(scratchpad_id),
+                content=text,
+                source_ids=resolved_sources,
+            )
+            turn_items[item.scratchpad_id] = item
         return item
 
     def get(self, *, turn_id: str, scratchpad_id: str) -> ScratchpadItem:
@@ -193,6 +232,31 @@ class EvidenceTrackingTool:
         return getattr(self.delegate, name)
 
 
+def _scratchpad_arguments_schema(*, include_id: bool) -> dict[str, Any]:
+    properties: dict[str, Any] = {
+        "content": {"type": "string", "minLength": 1, "maxLength": 2400},
+        "source_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+    }
+    required = ["content", "source_ids"]
+    if include_id:
+        properties["scratchpad_id"] = {
+            "type": "string",
+            "pattern": r"^scratchpad:[1-9][0-9]*$",
+        }
+        required.insert(0, "scratchpad_id")
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": required,
+        "properties": properties,
+    }
+
+
 @dataclass(slots=True)
 class ScratchpadPutTool:
     scratchpads: ScratchpadRegistry
@@ -212,20 +276,7 @@ class ScratchpadPutTool:
             "properties": {
                 "action": {"const": "tool"},
                 "tool": {"const": self.name},
-                "arguments": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["content", "source_ids"],
-                    "properties": {
-                        "content": {"type": "string", "minLength": 1, "maxLength": 2400},
-                        "source_ids": {
-                            "type": "array",
-                            "minItems": 1,
-                            "uniqueItems": True,
-                            "items": {"type": "string", "minLength": 1},
-                        },
-                    },
-                },
+                "arguments": _scratchpad_arguments_schema(include_id=False),
             },
         }
 
@@ -235,7 +286,36 @@ class ScratchpadPutTool:
             content=str(arguments["content"]),
             source_ids=arguments["source_ids"],
         )
+        return {"status": "stored", **item.as_dict()}
+
+
+@dataclass(slots=True)
+class ScratchpadUpdateTool:
+    scratchpads: ScratchpadRegistry
+    evidence: TurnEvidenceRegistry
+    name: str = "scratchpad_update"
+    work_kind: str = "action"
+    description: str = (
+        "Replace one existing current-turn scratchpad item with revised concise content and validated evidence sources."
+    )
+
+    def schema(self) -> dict[str, Any]:
         return {
-            "status": "stored",
-            **item.as_dict(),
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action", "tool", "arguments"],
+            "properties": {
+                "action": {"const": "tool"},
+                "tool": {"const": self.name},
+                "arguments": _scratchpad_arguments_schema(include_id=True),
+            },
         }
+
+    def execute(self, *, arguments: dict[str, Any], context: Any) -> dict[str, Any]:
+        item = self.scratchpads.update(
+            turn_id=context.turn_id,
+            scratchpad_id=str(arguments["scratchpad_id"]),
+            content=str(arguments["content"]),
+            source_ids=arguments["source_ids"],
+        )
+        return {"status": "updated", **item.as_dict()}
