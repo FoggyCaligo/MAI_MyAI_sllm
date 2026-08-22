@@ -13,6 +13,7 @@ from mai.scratchpad import (
     EvidenceTrackingTool,
     ScratchpadPutTool,
     ScratchpadRegistry,
+    ScratchpadUpdateTool,
     TurnEvidenceRegistry,
 )
 
@@ -109,6 +110,60 @@ def test_scratchpad_rejects_unknown_evidence_source() -> None:
         tool.execute(
             arguments={"content": "important", "source_ids": ["tool:99"]},
             context=context,
+        )
+
+
+def test_scratchpad_update_replaces_content_sources_and_preserves_id() -> None:
+    evidence = TurnEvidenceRegistry()
+    scratchpads = ScratchpadRegistry(evidence=evidence)
+    evidence.register_attachment(
+        turn_id="turn-1",
+        item={"evidence_id": "attachment:1", "status": "loaded", "content": "first"},
+    )
+    evidence.register_attachment(
+        turn_id="turn-1",
+        item={"evidence_id": "attachment:2", "status": "loaded", "content": "second"},
+    )
+    created = scratchpads.put(
+        turn_id="turn-1",
+        content="old fact",
+        source_ids=["attachment:1"],
+    )
+    tool = ScratchpadUpdateTool(scratchpads=scratchpads, evidence=evidence)
+
+    result = tool.execute(
+        arguments={
+            "scratchpad_id": created.scratchpad_id,
+            "content": "revised fact",
+            "source_ids": ["attachment:2"],
+        },
+        context=SimpleNamespace(turn_id="turn-1"),
+    )
+
+    assert result["status"] == "updated"
+    assert result["scratchpad_id"] == created.scratchpad_id
+    assert result["content"] == "revised fact"
+    assert result["source_ids"] == ["attachment:2"]
+    assert scratchpads.get(turn_id="turn-1", scratchpad_id=created.scratchpad_id).content == "revised fact"
+
+
+def test_scratchpad_update_rejects_unknown_current_turn_id() -> None:
+    evidence = TurnEvidenceRegistry()
+    scratchpads = ScratchpadRegistry(evidence=evidence)
+    evidence.register_attachment(
+        turn_id="turn-1",
+        item={"evidence_id": "attachment:1", "status": "loaded", "content": "first"},
+    )
+    tool = ScratchpadUpdateTool(scratchpads=scratchpads, evidence=evidence)
+
+    with pytest.raises(ModelContractError, match="outside current-turn scope"):
+        tool.execute(
+            arguments={
+                "scratchpad_id": "scratchpad:99",
+                "content": "revised fact",
+                "source_ids": ["attachment:1"],
+            },
+            context=SimpleNamespace(turn_id="turn-1"),
         )
 
 
