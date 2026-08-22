@@ -32,6 +32,7 @@ from .runtime_state import PersistentChatJobStore, PersistentSessionStore, Sessi
 from .terminal_tool import build_terminal_tools
 from .vision import OllamaVisionModel
 from .web_tools import build_web_market_tools
+from .working_context import WorkingRootToolAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,14 +216,25 @@ def build_lifecycle(
     reviser = ReviseMemoryTool(repository)
     memory_executor = FinalMemoryExecutor(writer=writer, reviser=reviser)
     web_tools = build_web_market_tools()
-    work_tools = web_tools if role == "trial" else [
-        *build_file_tools(owner_id=owner_id, default_root=default_root),
-        *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
-        *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
-        *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
-        *build_code_tools(owner_id=owner_id, default_root=default_root),
-        *web_tools,
-    ]
+    if role == "trial":
+        work_tools = web_tools
+    else:
+        file_tools = [
+            WorkingRootToolAdapter(tool, "root")
+            for tool in build_file_tools(owner_id=owner_id, default_root=default_root)
+        ]
+        code_tools = [
+            WorkingRootToolAdapter(tool, "indexed_root")
+            for tool in build_code_tools(owner_id=owner_id, default_root=default_root)
+        ]
+        work_tools = [
+            *file_tools,
+            *build_file_mutation_tools(owner_id=owner_id, grants=download_grants),
+            *build_document_image_tools(owner_id=owner_id, analyzer=image_analyzer),
+            *build_terminal_tools(owner_id=owner_id, encoding=terminal_encoding),
+            *code_tools,
+            *web_tools,
+        ]
     return AgentLifecycle(
         repository=repository,
         model=model,
@@ -236,21 +248,13 @@ def build_lifecycle(
 def _next_working_root(*, current_root: str, work_events: list[dict[str, Any]]) -> str:
     candidate = str(Path(current_root).expanduser().resolve())
     for event in work_events:
-        tool = event.get("tool")
-        result = event.get("result")
-        if not isinstance(result, dict):
-            continue
-        if tool in {"file_tree", "file_search", "file_text_search"}:
-            raw_root = result.get("root")
-        elif tool in {"code_index", "code_search"}:
-            raw_root = result.get("indexed_root")
-        else:
-            continue
+        raw_root = event.get("working_root")
         if not isinstance(raw_root, str) or not raw_root.strip():
             continue
         resolved = Path(raw_root).expanduser().resolve()
-        if resolved.exists() and resolved.is_dir():
-            candidate = str(resolved)
+        if not resolved.exists() or not resolved.is_dir():
+            raise NotADirectoryError(resolved)
+        candidate = str(resolved)
     return candidate
 
 
@@ -378,6 +382,7 @@ def create_app(
                 with use_model_context(
                     recent_messages=recent_messages,
                     recent_tool_operations=recent_tool_operations,
+                    working_root=current_session.working_root if current_session.role == "owner" else None,
                 ):
                     result = lifecycle_for(current_session).run(
                         user_id=current_session.user_id,
