@@ -4,13 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from mai.agent import AgentLifecycle, WorkContext
+from mai.agent import AgentLifecycle, PathProvenance, WorkContext
 from mai.code_search_tool import build_code_tools
 from mai.document_tools import build_document_image_tools
 from mai.file_mutation_tools import DownloadGrantStore, build_file_mutation_tools
 from mai.file_tools import build_file_tools
-from mai.scratchpad import ScratchpadPutTool, ScratchpadRegistry, ScratchpadUpdateTool, TurnEvidenceRegistry
 from mai.terminal_tool import build_terminal_tools
+from mai.tool_routes import ToolRouteRegistry
 from mai.web_tools import MarketProviderSettings, build_web_market_tools
 
 
@@ -51,20 +51,6 @@ class ScriptedModel:
         return self.actions.pop(0)
 
 
-class EmptyDiscovery:
-    def node_lookup(self, *, user_id: str, queries: list[str]) -> dict[str, Any]:
-        return {"matches": []}
-
-
-class EmptyRecall:
-    def recall_one_depth(self, *, user_id: str, focus_node_id: int) -> dict[str, Any]:
-        return {"nodes": [], "edges": [], "origin_path": {"nodes": [], "edges": []}}
-
-
-class NoScratchpadMemoryExecutor:
-    pass
-
-
 def _assert_common_work_tool_schema(*, tool_name: str, schema: dict[str, Any]) -> None:
     assert schema.get("type") == "object", f"{tool_name}: top-level schema must be an object"
     properties = schema.get("properties")
@@ -75,15 +61,11 @@ def _assert_common_work_tool_schema(*, tool_name: str, schema: dict[str, Any]) -
     assert isinstance(arguments, dict), f"{tool_name}: arguments schema must be an object"
     required = schema.get("required")
     assert isinstance(required, list), f"{tool_name}: top-level required list is required"
-    assert {"action", "tool", "arguments"}.issubset(required), (
-        f"{tool_name}: action/tool/arguments must all be required"
-    )
+    assert {"action", "tool", "arguments"}.issubset(required)
 
 
 def _all_registered_owner_work_tools(tmp_path: Path) -> list[Any]:
     owner_id = "owner"
-    evidence = TurnEvidenceRegistry()
-    scratchpads = ScratchpadRegistry(evidence=evidence)
     market_settings = MarketProviderSettings(
         kr_equity="fake",
         global_equity="fake",
@@ -109,12 +91,10 @@ def _all_registered_owner_work_tools(tmp_path: Path) -> list[Any]:
             market_providers={"fake": FakeMarketProvider()},
             market_settings=market_settings,
         ),
-        ScratchpadPutTool(scratchpads=scratchpads, evidence=evidence),
-        ScratchpadUpdateTool(scratchpads=scratchpads, evidence=evidence),
     ]
 
 
-def test_every_registered_owner_work_tool_uses_common_lazy_manual_envelope(tmp_path: Path) -> None:
+def test_every_registered_owner_work_tool_uses_common_envelope(tmp_path: Path) -> None:
     tools = _all_registered_owner_work_tools(tmp_path)
     expected_names = {
         "file_tree",
@@ -133,8 +113,6 @@ def test_every_registered_owner_work_tool_uses_common_lazy_manual_envelope(tmp_p
         "latest_search",
         "web_research",
         "market_snapshot",
-        "scratchpad_put",
-        "scratchpad_update",
     }
 
     assert {tool.name for tool in tools} == expected_names
@@ -172,33 +150,46 @@ def test_every_context_dependent_work_tool_schema_keeps_common_envelope(tmp_path
     }
 
 
-def test_every_registered_owner_work_tool_can_open_lazy_manual(tmp_path: Path) -> None:
+def test_every_registered_owner_work_tool_can_open_route_manual(tmp_path: Path) -> None:
+    established_paths = [
+        tmp_path / "note.txt",
+        tmp_path / "manual.pdf",
+        tmp_path / "image.png",
+    ]
+    for path in established_paths:
+        path.write_bytes(b"test")
+    provenance = PathProvenance()
+    provenance.add_many(established_paths)
+
     for tool in _all_registered_owner_work_tools(tmp_path):
+        registry = ToolRouteRegistry.for_tools([tool])
+        route = registry.route_for_tool(tool.name)
         model = ScriptedModel(
             actions=[
-                {"action": "tool", "tool": "tool_manual", "arguments": {"tool": tool.name}},
+                {"action": "tool", "tool": "tool_route", "arguments": {"path": f"{route.path}/manual"}},
                 {"action": "answer", "outcome": "completed", "content": "done"},
             ]
         )
-        lifecycle = AgentLifecycle(
-            repository=None,  # type: ignore[arg-type]
-            model=model,
-            discovery=EmptyDiscovery(),  # type: ignore[arg-type]
-            recall=EmptyRecall(),  # type: ignore[arg-type]
-            memory_executor=NoScratchpadMemoryExecutor(),  # type: ignore[arg-type]
-            work_tools=[tool],
-        )
+        lifecycle = AgentLifecycle(repository=None, model=model, work_tools=[tool])
 
         answer, events = lifecycle._run_agent_phase(
-            context=WorkContext(user_id="owner", turn_id=f"manual-{tool.name}", user_text="inspect tool manual"),
-            candidate_ids=set(),
-            recall_results=[],
+            context=WorkContext(
+                user_id="owner",
+                turn_id=f"manual-{tool.name}",
+                user_text="inspect tool manual",
+                path_provenance=provenance,
+            ),
+            extension_state=None,
         )
 
         assert answer == "done"
-        assert events[0]["tool"] == "tool_manual"
+        assert events[0]["tool"] == "tool_route"
         assert events[0]["result"]["tool"] == tool.name
-        assert events[0]["result"]["input_schema"] == tool.schema()["properties"]["arguments"]
+        assert events[0]["result"]["operation"] == "manual"
+        expected_schema = getattr(tool, "schema_for_paths", lambda _: tool.schema())(set(provenance.paths))
+        if expected_schema is None:
+            expected_schema = tool.schema()
+        assert events[0]["result"]["input_schema"] == expected_schema["properties"]["arguments"]
 
 
 def test_market_snapshot_keeps_operation_union_inside_arguments(tmp_path: Path) -> None:
@@ -208,8 +199,5 @@ def test_market_snapshot_keeps_operation_union_inside_arguments(tmp_path: Path) 
     variants = arguments.get("oneOf")
 
     assert isinstance(variants, list)
-    operations = {
-        variant["properties"]["operation"]["const"]
-        for variant in variants
-    }
+    operations = {variant["properties"]["operation"]["const"] for variant in variants}
     assert operations == {"lookup", "snapshot"}

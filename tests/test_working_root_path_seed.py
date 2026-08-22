@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from mai.file_tools import FileTreeTool, FileToolAccess
-from mai.scratchpad import EvidenceKindToolAdapter, EvidenceTrackingTool, TurnEvidenceRegistry
 from mai.working_context import WorkingRootToolAdapter
 
 
@@ -14,13 +13,7 @@ def test_working_root_adapter_seeds_only_existing_direct_child_files(tmp_path) -
     nested_file.write_text("nested", encoding="utf-8")
 
     tool = FileTreeTool(FileToolAccess(owner_id="owner", default_root=tmp_path))
-    wrapped = EvidenceTrackingTool(
-        EvidenceKindToolAdapter(
-            WorkingRootToolAdapter(tool, "root"),
-            "file_evidence",
-        ),
-        TurnEvidenceRegistry(),
-    )
+    wrapped = WorkingRootToolAdapter(tool, "root")
 
     assert wrapped.initial_discovered_paths() == {str(readme.resolve())}
     assert str(nested_file.resolve()) not in wrapped.initial_discovered_paths()

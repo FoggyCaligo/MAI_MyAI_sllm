@@ -9,33 +9,8 @@ from typing import Any, Iterable
 
 
 _ALLOWED_SOURCE_KINDS = frozenset(
-    {
-        "user_message",
-        "assistant_message",
-        "web_evidence",
-        "file_evidence",
-        "tool_operation",
-        "scratchpad",
-    }
+    {"user_message", "assistant_message", "web_evidence", "file_evidence", "tool_operation"}
 )
-
-_SOURCE_RELIABILITY = {
-    "user_message": 1.00,
-    "web_evidence": 0.82,
-    "file_evidence": 0.76,
-    "tool_operation": 0.66,
-    "scratchpad": 0.58,
-    "assistant_message": 0.46,
-}
-
-_SOURCE_STABILITY = {
-    "user_message": 0.82,
-    "web_evidence": 0.58,
-    "file_evidence": 0.68,
-    "tool_operation": 0.55,
-    "scratchpad": 0.52,
-    "assistant_message": 0.38,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +34,7 @@ class SourceRecord:
 
 
 class GraphSourceStore:
-    """Durable raw-source storage and structural confidence metadata for graph memory."""
+    """Durable evidence units linked to nodes or specific edge versions."""
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         path = Path(db_path)
@@ -97,36 +72,21 @@ class GraphSourceStore:
                 turn_id TEXT NOT NULL,
                 source_id INTEGER NOT NULL,
                 node_id INTEGER,
-                edge_id INTEGER,
+                edge_version_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CHECK ((node_id IS NOT NULL) != (edge_id IS NOT NULL)),
+                CHECK ((node_id IS NOT NULL) != (edge_version_id IS NOT NULL)),
                 FOREIGN KEY(source_id) REFERENCES graph_sources(source_id),
                 FOREIGN KEY(node_id) REFERENCES graph_nodes(node_id),
-                FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id)
+                FOREIGN KEY(edge_version_id) REFERENCES graph_edge_versions(version_id) ON DELETE CASCADE
             );
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_source_link_node_unique
             ON graph_source_links(user_id, source_id, node_id)
             WHERE node_id IS NOT NULL;
 
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_source_link_edge_unique
-            ON graph_source_links(user_id, source_id, edge_id)
-            WHERE edge_id IS NOT NULL;
-
-            CREATE INDEX IF NOT EXISTS idx_graph_source_links_node
-            ON graph_source_links(user_id, node_id);
-
-            CREATE INDEX IF NOT EXISTS idx_graph_source_links_edge
-            ON graph_source_links(user_id, edge_id);
-
-            CREATE TABLE IF NOT EXISTS graph_edge_signals (
-                user_id TEXT NOT NULL,
-                edge_id INTEGER NOT NULL,
-                conflict_count INTEGER NOT NULL DEFAULT 0 CHECK (conflict_count >= 0),
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY(user_id, edge_id),
-                FOREIGN KEY(edge_id) REFERENCES graph_edges(edge_id)
-            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_source_link_edge_version_unique
+            ON graph_source_links(user_id, source_id, edge_version_id)
+            WHERE edge_version_id IS NOT NULL;
             """
         )
         self._conn.commit()
@@ -137,6 +97,29 @@ class GraphSourceStore:
         if not clean:
             raise ValueError(f"{field} must be non-empty")
         return clean
+
+    def ensure_sources(
+        self,
+        *,
+        user_id: str,
+        turn_id: str,
+        records: Iterable[SourceRecord],
+    ) -> list[int]:
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                result = self.ensure_sources_in_connection(
+                    self._conn,
+                    user_id=user_id,
+                    turn_id=turn_id,
+                    records=records,
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
+        return result
 
     def ensure_sources_in_connection(
         self,
@@ -151,7 +134,7 @@ class GraphSourceStore:
         source_ids: list[int] = []
         for raw_record in records:
             record = raw_record.normalized()
-            encoded_metadata = json.dumps(record.metadata, ensure_ascii=False, sort_keys=True, default=str)
+            metadata_json = json.dumps(record.metadata, ensure_ascii=False, sort_keys=True, default=str)
             row = conn.execute(
                 """
                 SELECT source_id, content, metadata_json
@@ -173,18 +156,46 @@ class GraphSourceStore:
                         record.source_kind,
                         record.source_key,
                         record.content,
-                        encoded_metadata,
+                        metadata_json,
                     ),
                 )
                 source_ids.append(int(cursor.lastrowid))
                 continue
-            if str(row["content"]) != record.content or str(row["metadata_json"]) != encoded_metadata:
+            if str(row["content"]) != record.content or str(row["metadata_json"]) != metadata_json:
                 raise RuntimeError(
                     "stable graph source identity collision with different content: "
                     f"{record.source_kind}:{record.source_key}"
                 )
             source_ids.append(int(row["source_id"]))
         return source_ids
+
+    def link_sources(
+        self,
+        *,
+        user_id: str,
+        turn_id: str,
+        source_ids: Iterable[int],
+        node_id: int | None = None,
+        edge_version_id: int | None = None,
+        edge_id: int | None = None,
+    ) -> None:
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self.link_sources_in_connection(
+                    self._conn,
+                    user_id=user_id,
+                    turn_id=turn_id,
+                    source_ids=source_ids,
+                    node_id=node_id,
+                    edge_version_id=edge_version_id,
+                    edge_id=edge_id,
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
 
     def link_sources_in_connection(
         self,
@@ -194,219 +205,74 @@ class GraphSourceStore:
         turn_id: str,
         source_ids: Iterable[int],
         node_id: int | None = None,
+        edge_version_id: int | None = None,
         edge_id: int | None = None,
     ) -> None:
-        if (node_id is None) == (edge_id is None):
+        targets = sum(value is not None for value in (node_id, edge_version_id, edge_id))
+        if targets != 1:
             raise ValueError("exactly one graph source link target is required")
-        for source_id in dict.fromkeys(int(value) for value in source_ids):
+        resolved_version_id = edge_version_id
+        if edge_id is not None:
             row = conn.execute(
-                "SELECT user_id FROM graph_sources WHERE source_id=?",
-                (source_id,),
+                "SELECT current_version_id FROM graph_edges WHERE user_id=? AND edge_id=?",
+                (user_id, int(edge_id)),
             ).fetchone()
+            if row is None or row["current_version_id"] is None:
+                raise PermissionError(f"edge_id {edge_id} is outside user graph scope")
+            resolved_version_id = int(row["current_version_id"])
+        for source_id in dict.fromkeys(int(value) for value in source_ids):
+            row = conn.execute("SELECT user_id FROM graph_sources WHERE source_id=?", (source_id,)).fetchone()
             if row is None or str(row["user_id"]) != user_id:
                 raise PermissionError(f"source_id {source_id} is outside user source scope")
             conn.execute(
                 """
                 INSERT OR IGNORE INTO graph_source_links
-                    (user_id, turn_id, source_id, node_id, edge_id)
+                    (user_id, turn_id, source_id, node_id, edge_version_id)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (user_id, turn_id, source_id, node_id, edge_id),
+                (user_id, turn_id, source_id, node_id, resolved_version_id),
             )
 
-    def record_edge_conflict_in_connection(
-        self,
-        conn: sqlite3.Connection,
-        *,
-        user_id: str,
-        edge_id: int,
-    ) -> None:
-        conn.execute(
-            """
-            INSERT INTO graph_edge_signals (user_id, edge_id, conflict_count)
-            VALUES (?, ?, 1)
-            ON CONFLICT(user_id, edge_id)
-            DO UPDATE SET
-                conflict_count = graph_edge_signals.conflict_count + 1,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (user_id, int(edge_id)),
-        )
+    def source_ids_for_node(self, *, user_id: str, node_id: int) -> list[int]:
+        return self._source_ids(user_id=user_id, field="node_id", target_id=node_id)
 
-    def _linked_sources(
-        self,
-        *,
-        user_id: str,
-        node_id: int | None = None,
-        edge_id: int | None = None,
-    ) -> list[dict[str, Any]]:
-        if (node_id is None) == (edge_id is None):
-            raise ValueError("exactly one provenance target is required")
-        target_field = "node_id" if node_id is not None else "edge_id"
-        target_id = int(node_id if node_id is not None else edge_id)
+    def source_ids_for_edge_version(self, *, user_id: str, edge_version_id: int) -> list[int]:
+        return self._source_ids(user_id=user_id, field="edge_version_id", target_id=edge_version_id)
+
+    def source_ids_for_edge(self, *, user_id: str, edge_id: int) -> list[int]:
         with self._lock:
-            rows = self._conn.execute(
-                f"""
-                SELECT s.source_id, s.turn_id, s.source_kind, s.source_key,
-                       s.metadata_json, s.created_at
-                FROM graph_source_links l
-                JOIN graph_sources s ON s.source_id=l.source_id AND s.user_id=l.user_id
-                WHERE l.user_id=? AND l.{target_field}=?
-                ORDER BY l.link_id
-                """,
-                (user_id, target_id),
-            ).fetchall()
-        sources: list[dict[str, Any]] = []
-        for row in rows:
-            kind = str(row["source_kind"])
-            metadata = json.loads(str(row["metadata_json"]))
-            if not isinstance(metadata, dict):
-                raise ValueError("graph source metadata must decode to an object")
-            sources.append(
-                {
-                    "source_id": int(row["source_id"]),
-                    "turn_id": str(row["turn_id"]),
-                    "source_kind": kind,
-                    "source_key": str(row["source_key"]),
-                    "source_reliability": _SOURCE_RELIABILITY[kind],
-                    "stability": _SOURCE_STABILITY[kind],
-                    "metadata": metadata,
-                    "created_at": str(row["created_at"]),
-                }
-            )
-        return sources
-
-    def provenance_summary(
-        self,
-        *,
-        user_id: str,
-        node_id: int | None = None,
-        edge_id: int | None = None,
-    ) -> dict[str, Any]:
-        sources = self._linked_sources(user_id=user_id, node_id=node_id, edge_id=edge_id)
-        support_count = 1
-        conflict_count = 0
-        if edge_id is not None:
-            with self._lock:
-                edge = self._conn.execute(
-                    "SELECT support_count FROM graph_edges WHERE user_id=? AND edge_id=?",
-                    (user_id, int(edge_id)),
-                ).fetchone()
-                if edge is None:
-                    raise LookupError(f"edge_id {edge_id} is outside user graph scope")
-                signal = self._conn.execute(
-                    "SELECT conflict_count FROM graph_edge_signals WHERE user_id=? AND edge_id=?",
-                    (user_id, int(edge_id)),
-                ).fetchone()
-            support_count = int(edge["support_count"])
-            conflict_count = 0 if signal is None else int(signal["conflict_count"])
-
-        confidence, stability, dominant_kind = self._confidence(
-            sources=sources,
-            support_count=support_count,
-            conflict_count=conflict_count,
-        )
-        return {
-            "target": {"node_id": int(node_id)} if node_id is not None else {"edge_id": int(edge_id)},
-            "confidence": confidence,
-            "source_kind": dominant_kind,
-            "support_count": support_count,
-            "conflict_count": conflict_count,
-            "stability": stability,
-            "sources": sources,
-        }
-
-    def compact_edge_metadata(self, *, user_id: str, edge_id: int, support_count: int) -> dict[str, Any]:
-        sources = self._linked_sources(user_id=user_id, edge_id=edge_id)
-        with self._lock:
-            signal = self._conn.execute(
-                "SELECT conflict_count FROM graph_edge_signals WHERE user_id=? AND edge_id=?",
+            row = self._conn.execute(
+                "SELECT current_version_id FROM graph_edges WHERE user_id=? AND edge_id=?",
                 (user_id, int(edge_id)),
             ).fetchone()
-        conflict_count = 0 if signal is None else int(signal["conflict_count"])
-        confidence, _, dominant_kind = self._confidence(
-            sources=sources,
-            support_count=int(support_count),
-            conflict_count=conflict_count,
+        if row is None or row["current_version_id"] is None:
+            return []
+        return self.source_ids_for_edge_version(
+            user_id=user_id,
+            edge_version_id=int(row["current_version_id"]),
         )
-        return {
-            "confidence": confidence,
-            "source_kind": dominant_kind,
-        }
 
-    @staticmethod
-    def _confidence(
-        *,
-        sources: list[dict[str, Any]],
-        support_count: int,
-        conflict_count: int,
-    ) -> tuple[float, float, str]:
-        if sources:
-            dominant = max(
-                sources,
-                key=lambda source: (
-                    float(source["source_reliability"]),
-                    float(source["stability"]),
-                    -int(source["source_id"]),
-                ),
-            )
-            base_reliability = float(dominant["source_reliability"])
-            base_stability = float(dominant["stability"])
-            dominant_kind = str(dominant["source_kind"])
-        else:
-            base_reliability = 0.45
-            base_stability = 0.35
-            dominant_kind = "unlinked"
+    def _source_ids(self, *, user_id: str, field: str, target_id: int) -> list[int]:
+        if field not in {"node_id", "edge_version_id"}:
+            raise ValueError("unsupported graph source target field")
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT source_id FROM graph_source_links WHERE user_id=? AND {field}=? ORDER BY link_id",
+                (user_id, int(target_id)),
+            ).fetchall()
+        return [int(row["source_id"]) for row in rows]
 
-        support_boost = min(0.18, max(0, int(support_count) - 1) * 0.03)
-        conflict_penalty = min(0.30, max(0, int(conflict_count)) * 0.10)
-        stability_boost = min(0.15, max(0, int(support_count) - 1) * 0.025)
-        stability_penalty = min(0.25, max(0, int(conflict_count)) * 0.08)
-        confidence = max(0.0, min(1.0, base_reliability + support_boost - conflict_penalty))
-        stability = max(0.0, min(1.0, base_stability + stability_boost - stability_penalty))
-        return round(confidence, 3), round(stability, 3), dominant_kind
-
-    def read_source(
-        self,
-        *,
-        user_id: str,
-        source_id: int,
-        start: int = 1,
-        limit: int = 8000,
-    ) -> dict[str, Any]:
-        start = int(start)
-        limit = int(limit)
-        if start < 1:
-            raise ValueError("source read start must be >= 1")
-        if not 1 <= limit <= 12000:
-            raise ValueError("source read limit must be between 1 and 12000")
+    def read_source(self, *, user_id: str, source_id: int) -> dict[str, Any]:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM graph_sources WHERE user_id=? AND source_id=?",
                 (user_id, int(source_id)),
             ).fetchone()
         if row is None:
-            raise LookupError(f"source_id {source_id} is outside user source scope")
-        content = str(row["content"])
-        start_index = start - 1
-        end_index = min(len(content), start_index + limit)
-        excerpt = content[start_index:end_index]
-        metadata = json.loads(str(row["metadata_json"]))
-        if not isinstance(metadata, dict):
-            raise ValueError("graph source metadata must decode to an object")
-        return {
-            "source_id": int(row["source_id"]),
-            "turn_id": str(row["turn_id"]),
-            "source_kind": str(row["source_kind"]),
-            "source_key": str(row["source_key"]),
-            "metadata": metadata,
-            "start": start,
-            "content": excerpt,
-            "total_chars": len(content),
-            "has_more": end_index < len(content),
-            "next_start": end_index + 1 if end_index < len(content) else None,
-            "created_at": str(row["created_at"]),
-        }
+            raise PermissionError(f"source_id {source_id} is outside user source scope")
+        item = dict(row)
+        item["metadata"] = json.loads(str(item.pop("metadata_json")))
+        return item
 
     def close(self) -> None:
         with self._lock:

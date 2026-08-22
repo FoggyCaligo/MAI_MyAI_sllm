@@ -1,24 +1,118 @@
-# Mai MK4 Parity Roadmap
+# Mai Runtime Roadmap
 
-Mai가 MK4의 실사용 안정성과 문맥 유지 능력을 넘기 전까지, 새로운 문제를 해결할 때 먼저 MK4의 동종 구현을 확인한다. MK4 구현이 현재 Mai의 계약과 충돌하지 않으면 그 구조를 우선 참고한다.
+Mai는 작은 로컬 모델이 실제 사용 중에도 파일/웹/장기기억을 안정적으로 다룰 수 있는 단일 Agent runtime을 목표로 한다.
+
+핵심 원칙은 다음과 같다.
+
+> 모델이 의미를 결정하고, Framework는 구조를 강제한다.
+
+문자열 휴리스틱, hidden retry, fallback synthesis로 구조적 실패를 숨기지 않는다.
 
 ## Memory/source model
 
-세 종류의 memory를 분리한다.
+현재 target architecture는 세 저장소를 따로 두지 않는다.
 
 ```text
-raw conversation history = 최근 대화 continuity
-semantic graph           = 장기 의미 기억
-scratchpad               = 현재 작업 중 임시 working memory
+recent raw conversation = 짧은 대화 continuity
+persistent semantic graph = 장기기억 + Agent가 직접 수정하는 working-memory substrate
+turn ViewedGraph = 이번 turn에서 실제로 펼쳐 본 persistent graph의 누적 view
 ```
 
-Raw conversation을 자동으로 semantic graph로 복제하지 않는다.
+Request-scoped scratchpad는 사용하지 않는다.
 
-동일 사용자 graph에서 모델이 `new_node`를 제안하더라도 trim 이후 정확히 같은 node name이 이미 존재하면 새 node를 만들지 않고 기존 node를 재사용한다. 동일 `(subject, relation, object)` edge는 새 edge를 복제하지 않고 `support_count`를 강화한다. 비슷한 의미의 서로 다른 문자열을 Framework가 휴리스틱으로 합치지는 않는다.
+### Mandatory vector recall
 
-### Graph source provenance
+매 user turn의 첫 Agent reasoning은 최소 한 번의 `memory/recall(query=...)`를 거친다.
 
-Graph node/edge는 의미를 저장하고, 장기기억 mutation의 근거로 실제 채택된 source는 `graph.sqlite3`의 durable source store에 별도로 저장한다.
+- query는 Agent가 작성한다.
+- `.env`의 embedding model이 vector similarity candidate를 만든다.
+- candidate 검색만으로 one-hop 전체를 자동 주입하지 않는다.
+- 모델이 `memory/recall(node_id=...)`로 선택한 node만 active one-hop과 함께 ViewedGraph에 열린다.
+- 다른 node를 추가로 recall하면 기존 ViewedGraph에 누적된다.
+- embedding 실패를 lexical lookup으로 자동 fallback하지 않는다.
+
+Reference configuration:
+
+```env
+MAI_OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+```
+
+### Live graph mutation
+
+Graph mutation은 답변 뒤 별도 Memory loop에서 하지 않는다.
+같은 Agent loop가 필요할 때 직접 실행한다.
+
+```text
+memory/recall
+memory/generate/node
+memory/generate/edge
+memory/fix/node
+memory/fix/edge
+```
+
+Accepted mutation은 매 round 실제 `graph.sqlite3`에 즉시 commit한다.
+다음 Agent round와 이후 user turn에서 바로 recall할 수 있다.
+
+### Reuse/fix first
+
+- 새 node 생성 전에 vector query recall이 선행되어야 한다.
+- 새 node 하나를 생성한 뒤 다음 새 node를 생성하려면 fresh query recall을 다시 해야 한다.
+- semantic duplicate 여부는 모델이 판단한다.
+- 동일 의미 node라고 판단하면 기존 node를 재사용한다.
+- 나중에 duplicate가 발견되면 `memory/fix/node` merge로 정리한다.
+- Framework가 alias dictionary나 문자열 포함 규칙으로 의미 동일성을 판단하지 않는다.
+
+### Current edge model
+
+Edge는 과거 버전 stack이 아니라 현재 directed relationship state 하나를 나타낸다.
+
+```text
+(start_node_id, end_node_id)
+```
+
+ordered pair당 current edge는 최대 하나다.
+A→B와 B→A는 서로 다른 edge다.
+
+Edge는 다음 상태를 가진다.
+
+```text
+relation
+weight
+personal_relevance
+source_ids[]
+```
+
+`memory/fix/edge`는 기존 edge를 갱신한다.
+Weight는 기존 값에 `weight_delta`를 적용한다.
+Disconnect는 row 삭제가 아니라 weight를 0으로 만들어 normal active recall에서 제외한다.
+
+Node lifetime degree에는 제한을 두지 않는다.
+Turn execution budget만 둔다.
+
+- 신규 node 최대 10 / turn
+- node당 semantic edge mutation 최대 10 / turn
+
+### Composite concept
+
+여러 node가 함께 하나의 개념을 이룰 때 `kind=composite` node를 만들 수 있다.
+Composite membership은 일반 relation 문자열이 아니라 Framework-owned structural data다.
+Self-membership과 membership cycle은 실패한다.
+
+### Personal relevance
+
+`weight`와 `personal_relevance`는 별도 축이다.
+
+```text
+user_centered      -> 1.0
+general_knowledge  -> 0.5
+```
+
+분류는 Agent가 한다.
+Framework는 문장 키워드로 분류하지 않는다.
+
+### Source provenance
+
+Node와 edge는 각각 독립적으로 source ID를 가진다.
 
 Source kinds:
 
@@ -27,105 +121,125 @@ Source kinds:
 - `web_evidence`
 - `file_evidence`
 - `tool_operation`
-- `scratchpad`
 
-Graph target과 source는 stable source ID로 연결하며 동일 user ownership boundary를 따른다.
+Graph state 자체와 source 원문은 분리한다.
+Model-facing representation에서는 `source_ids: [...]`로 보이고, SQLite에서는 relational source/link table을 사용한다.
 
-### Graph confidence and lazy source disclosure
+## Phase 1 — Model context
 
-```text
-Level 1 — default recall
-semantic relation + confidence + source_kind
-
-Level 2 — memory_source_summary
-source reliability + support/conflict + stability + compact source metadata
-
-Level 3 — memory_source_read
-실제 raw evidence를 bounded excerpt로 조회
-```
-
-`confidence`는 모델이 임의로 만드는 의미 점수가 아니라 Framework가 구조적으로 알고 있는 source reliability, support count, revision/conflict count, stability를 압축한 값이다. Framework가 문장 의미를 문자열 heuristic으로 읽어 confidence를 결정하지 않는다.
-
-## Phase 1 — Model context parity
-
-구현됨:
+유지:
 
 - 최근 대화 context
 - tool result compaction
 - recent tool-operation context
 - current date system injection
 
-최근 대화는 raw text로 저장하고 최근 message만 model context에 주입한다. Graph는 final memory mutation에서 모델이 선택한 semantic relation만 저장한다. Tool result 원본은 runtime event에 보존하고 model-facing copy만 compact한다.
+최근 raw chat 전체를 graph로 자동 복제하지 않는다.
+장기 정보는 Agent가 memory tools를 통해 graph에 반영한다.
 
-## Phase 2 — Agent stability parity
+## Phase 2 — Agent loop
 
-구현됨:
+현재 방향:
 
-- 동일 successful action 반복 계약
-- Autonomy retry
-- web evidence grounding pass
+- explicit Agent round 1회 = structured LLM request 1회
+- hidden retry/review model call 없음
+- framework tool result는 native `role=tool` 대신 framework-authored user message로 반환
+- memory/file/web tool과 answer가 같은 Agent loop의 first-class action
+- answer 전 `graph_synced: true` 종료 gate
 
-동일 action guard는 structured tool name + canonical arguments identity를 사용한다. Autonomy retry는 구조적 `blocked` outcome에만 적용한다. Web grounding은 실제 evidence ID와 proposed final answer의 근거 연결을 검증하고 답변 문장 자체를 재작성하지 않는다.
+Final graph sync는 별도 reasoning model을 호출하지 않는다.
+같은 Agent가 answer action에서 현재 graph가 최신 durable understanding과 일치한다고 명시적으로 확인한다.
+일치하지 않으면 다음 normal Agent round에서 generate/fix를 수행한다.
 
-## Phase 3 — Session, authorization, and working context
+## Phase 3 — External tool hierarchy
 
-구현됨:
+처음부터 모든 tool schema를 노출하지 않는다.
+
+```text
+/file
+/web
+```
+
+File 예시:
+
+```text
+/file/tree
+/file/search
+/file/read
+/file/create
+/file/update
+/file/delete
+/file/document
+/file/image
+/file/code/index
+/file/code/search
+/file/terminal
+```
+
+Web:
+
+```text
+/web/search
+/web/market
+/web/current
+```
+
+Leaf는 `/manual`, `/use`를 제공한다.
+같은 Agent loop에서 사용법을 이미 아는 경우 정확한 `/.../use` route로 바로 활성화할 수 있다.
+틀린 route는 structured error로 반환하고 비슷한 이름을 추측하지 않는다.
+
+## Phase 4 — Session / authorization / working context
+
+유지:
 
 - owner/trial별 tool 제한
 - persistent authenticated session
 - request-detached chat execution
-- session별 file/code working context/root
+- session별 file/code working root
 - trial user ID당 active session 1개
-
-Trial은 host filesystem/terminal/code/document/image work tool을 catalog에서부터 받지 않는다. 다만 자기 account upload directory의 첨부파일은 upload하고 automatic attachment evidence로 읽거나 분석할 수 있다.
-
-Session token 원문은 DB에 저장하지 않고 hash만 저장한다. Queued job은 실행 직전 stable session ID를 다시 검증한다.
-
-## Phase 4 — Attachment and working memory
-
-구현됨:
-
 - attachment automatic read/analyze
-- attachment evidence의 model-only context 주입
-- normal work-tool result에 turn-local evidence ID 부여
-- model-managed `scratchpad_put` / `scratchpad_update`
-- attachment/tool evidence -> scratchpad carryover
-- final memory mutation의 optional `scratchpad_ids`
-- current-turn evidence/scratchpad scope validation
-- turn 종료 시 evidence/scratchpad registry 제거
 
-Scratchpad 전체를 durable graph에 자동 저장하지 않는다. Final graph mutation에서 모델이 명시적으로 선택한 scratchpad와 그 underlying evidence만 장기 source provenance 후보가 된다.
+Trial은 host filesystem/terminal/code tool을 받지 않는다.
+자기 account upload directory의 첨부만 사용할 수 있다.
 
-자세한 계약은 `docs/contracts/WORKING_MEMORY_CONTRACT.md`를 참조한다.
+## Phase 5 — Fresh graph database
 
-## Phase 5 — Graph provenance, confidence, and source inspection
+이번 memory redesign은 기존 graph DB migration을 목표로 하지 않는다.
+기존 `data/graph.sqlite3`은 삭제하고 새 schema로 재생성한다.
 
-구현됨:
+새 graph schema는 처음부터 다음을 구조적으로 강제한다.
 
-- `graph_sources` durable source store
-- `graph_source_links`를 통한 graph node/edge → stable raw source reference
-- source kinds: user / assistant / web / file / tool / scratchpad
-- 동일 source identity collision의 명시적 실패
-- default recall edge에 compact `confidence + source_kind`
-- `support_count` 기반 reinforcement
-- `revise_memory` 기반 conflict signal
-- source-kind reliability/stability 기반 구조적 confidence
-- `memory_source_summary` lazy provenance inspection
-- `memory_source_read` bounded raw-source inspection
-- scratchpad를 채택한 memory mutation에서 실제 underlying attachment/tool/web evidence까지 durable source로 연결
+- node `kind = concept | composite`
+- active/inactive node state
+- node embedding storage
+- directed edge `start_node_id / end_node_id`
+- `UNIQUE(user_id, start_node_id, end_node_id)`
+- edge weight 0.0~1.0
+- personal relevance 0.5 또는 1.0
+- composite membership table
+- source/link tables
 
-Graph recall은 원문 전체를 기본 payload에 포함하지 않는다. Summary에서 실제로 확인된 source ID만 raw read scope에 들어간다.
+`chat.sqlite3`은 graph redesign과 별개이며 초기화 대상이 아니다.
 
-자세한 계약은 `docs/contracts/GRAPH_SOURCE_CONTRACT.md`를 참조한다.
+## Phase 6 — Validation
 
-## Phase 6 — Remaining MK4 parity checks
+새 memory subsystem 완료 전 반드시 검증할 항목:
 
-다음 항목은 핵심 memory/runtime parity 이후 재평가한다.
-
-- model-friendly tool-name adapter
-- maximum active sessions / explicit session revocation controls
-- voice STT/TTS
-
-현재 trial account는 이미 user ID당 active session 1개를 강제하므로, Phase 6의 session 항목은 owner/admin용 명시적 session 관리 UI/API가 실제로 필요한지 재평가한다.
+- 첫 query recall 전 answer 불가
+- vector candidate retrieval
+- candidate 검색만으로 ViewedGraph 자동 확장 금지
+- node-id recall의 one-hop 누적
+- same-turn ViewedGraph 유지 / turn 종료 후 폐기
+- graph mutation 즉시 DB commit
+- fresh recall 없는 연속 new-node 생성 거절
+- directed pair duplicate edge 생성 거절
+- reverse edge 허용
+- weight delta / disconnect
+- personal relevance 승격
+- composite cycle/self-membership 거절
+- node merge edge collision 시 의미 선택 없이 실패
+- source ownership/scope
+- 정확한 external tool route와 invalid-path failure
+- answer의 same-Agent graph-sync gate
 
 MK4의 global round cap, hidden fallback synthesis, parse-success fallback처럼 현재 Mai의 fail-visible contract와 충돌하는 기능은 parity 대상으로 간주하지 않는다.
