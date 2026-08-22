@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .graph import GraphRepository, GraphScopeError
+from .graph import GraphRepository, GraphScopeError, GraphSourceStore
 from .memory_write import MemoryTurnScope
 from .model import ModelContractError
 
@@ -121,6 +121,7 @@ class ReviseMemoryScope:
 @dataclass(slots=True)
 class ReviseMemoryTool:
     repository: GraphRepository
+    source_store: GraphSourceStore | None = None
 
     @property
     def name(self) -> str:
@@ -187,10 +188,15 @@ class ReviseMemoryTool:
                 """,
                 (subject_id, relation, object_id, edge_id, scope.turn.user_id),
             )
+            if self.source_store is not None:
+                self.source_store.record_edge_conflict_in_connection(
+                    conn,
+                    user_id=scope.turn.user_id,
+                    edge_id=edge_id,
+                )
             self._insert_provenance(
                 conn,
-                user_id=scope.turn.user_id,
-                turn_id=scope.turn.turn_id,
+                scope=scope,
                 source_text=source_text,
                 edge_id=edge_id,
             )
@@ -245,6 +251,27 @@ class ReviseMemoryTool:
             name = str(new_node.get("name", "")).strip()
             if not name:
                 raise ModelContractError("new_node name must be non-empty")
+
+            existing = conn.execute(
+                """
+                SELECT node_id
+                FROM graph_nodes
+                WHERE user_id=? AND name=?
+                ORDER BY node_id
+                LIMIT 1
+                """,
+                (scope.turn.user_id, name),
+            ).fetchone()
+            if existing is not None:
+                node_id = int(existing["node_id"])
+                self._insert_provenance(
+                    conn,
+                    scope=scope.turn,
+                    source_text=source_text,
+                    node_id=node_id,
+                )
+                return node_id
+
             cursor = conn.execute(
                 "INSERT INTO graph_nodes (user_id, name) VALUES (?, ?)",
                 (scope.turn.user_id, name),
@@ -253,8 +280,7 @@ class ReviseMemoryTool:
             created_node_ids.append(node_id)
             self._insert_provenance(
                 conn,
-                user_id=scope.turn.user_id,
-                turn_id=scope.turn.turn_id,
+                scope=scope.turn,
                 source_text=source_text,
                 node_id=node_id,
             )
@@ -262,21 +288,38 @@ class ReviseMemoryTool:
 
         raise ModelContractError("memory endpoint violates revise_memory contract")
 
-    @staticmethod
     def _insert_provenance(
+        self,
         conn: Any,
         *,
-        user_id: str,
-        turn_id: str,
+        scope: MemoryTurnScope,
         source_text: str,
         node_id: int | None = None,
         edge_id: int | None = None,
     ) -> None:
+        if self.source_store is not None and scope.source_records:
+            source_ids = self.source_store.ensure_sources_in_connection(
+                conn,
+                user_id=scope.user_id,
+                turn_id=scope.turn_id,
+                records=scope.source_records,
+            )
+            self.source_store.link_sources_in_connection(
+                conn,
+                user_id=scope.user_id,
+                turn_id=scope.turn_id,
+                source_ids=source_ids,
+                node_id=node_id,
+                edge_id=edge_id,
+            )
+            marker = "source_refs:" + ",".join(str(source_id) for source_id in source_ids)
+        else:
+            marker = source_text
         conn.execute(
             """
             INSERT INTO graph_provenance
                 (user_id, turn_id, source_role, source_text, node_id, edge_id)
             VALUES (?, ?, 'turn', ?, ?, ?)
             """,
-            (user_id, turn_id, source_text, node_id, edge_id),
+            (scope.user_id, scope.turn_id, marker, node_id, edge_id),
         )
