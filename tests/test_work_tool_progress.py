@@ -22,20 +22,7 @@ def _tool_names(schema: dict[str, Any]) -> set[str]:
 
 
 def _answer(content: str = "done") -> dict[str, Any]:
-    return {
-        "action": "answer",
-        "content": content,
-        "memory_mutations": [
-            {
-                "kind": "write_memory",
-                "arguments": {
-                    "subject": {"kind": "user"},
-                    "relation": "turn_memory",
-                    "object": {"new_node": {"name": content}},
-                },
-            }
-        ],
-    }
+    return {"action": "answer", "outcome": "completed", "content": content}
 
 
 def _manual(tool: str) -> dict[str, Any]:
@@ -53,8 +40,7 @@ class ScriptedModel:
 
 
 class NoScratchpadMemoryExecutor:
-    def available_scratchpad_ids(self, *, turn_id: str) -> frozenset[str]:
-        return frozenset()
+    pass
 
 
 @dataclass
@@ -161,7 +147,7 @@ def test_progress_aware_tool_is_removed_after_no_new_keys() -> None:
     tool = ProgressTool(results=[{"keys": ["a"]}, {"keys": ["a"]}])
     lifecycle = _lifecycle(model, tool)
 
-    answer, _, _ = lifecycle._run_agent_phase(
+    answer, _ = lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="x"),
         candidate_ids=set(),
         recall_results=[],
