@@ -236,10 +236,16 @@ def build_lifecycle(
 def _next_working_root(*, current_root: str, work_events: list[dict[str, Any]]) -> str:
     candidate = str(Path(current_root).expanduser().resolve())
     for event in work_events:
+        tool = event.get("tool")
         result = event.get("result")
         if not isinstance(result, dict):
             continue
-        raw_root = result.get("root") or result.get("indexed_root")
+        if tool in {"file_tree", "file_search", "file_text_search"}:
+            raw_root = result.get("root")
+        elif tool in {"code_index", "code_search"}:
+            raw_root = result.get("indexed_root")
+        else:
+            continue
         if not isinstance(raw_root, str) or not raw_root.strip():
             continue
         resolved = Path(raw_root).expanduser().resolve()
@@ -298,18 +304,20 @@ def create_app(
     app.state.image_model_name = resolved_image_analyzer.model
     app.state.download_grants = grants
 
+    def valid_role(session: SessionRecord) -> bool:
+        expected_role = "owner" if session.user_id == resolved.owner_id else "trial"
+        return session.user_id in resolved.allowed_user_ids and session.role == expected_role
+
     def require_session(request: Request) -> SessionRecord:
         token = request.cookies.get(resolved.session_cookie)
         session = sessions.get(token)
         if session is None:
             raise HTTPException(status_code=401, detail="authentication required")
-        expected_role = "owner" if session.user_id == resolved.owner_id else "trial"
-        if session.user_id not in resolved.allowed_user_ids or session.role != expected_role:
+        if not valid_role(session):
             sessions.delete(token)
             raise HTTPException(status_code=401, detail="session account is no longer authorized")
         return session
 
-    @staticmethod
     def require_owner(session: SessionRecord) -> None:
         if session.role != "owner":
             raise HTTPException(status_code=403, detail="owner-only capability")
@@ -355,19 +363,24 @@ def create_app(
     def execute_chat_job(*, job_id: str, session: SessionRecord, message: str, attachment_paths: list[Path]) -> None:
         try:
             with lock_for(session.user_id):
+                current_session = sessions.get_by_session_id(session.session_id)
+                if current_session is None:
+                    raise PermissionError("chat job session expired or was revoked before execution")
+                if current_session.user_id != session.user_id or not valid_role(current_session):
+                    raise PermissionError("chat job session is no longer authorized")
+
                 jobs.mark_running(job_id)
                 agent_input = message
                 if attachment_paths:
                     agent_input += "\n\n[attached files]\n" + "\n".join(f"- {path}" for path in attachment_paths)
-                recent_messages = history.list_messages(user_id=session.user_id, limit=10)
-                recent_tool_operations = history.list_tool_operations(user_id=session.user_id, limit=5)
+                recent_messages = history.list_messages(user_id=current_session.user_id, limit=10)
+                recent_tool_operations = history.list_tool_operations(user_id=current_session.user_id, limit=5)
                 with use_model_context(
                     recent_messages=recent_messages,
                     recent_tool_operations=recent_tool_operations,
-                    working_root=session.working_root if session.role == "owner" else None,
                 ):
-                    result = lifecycle_for(session).run(
-                        user_id=session.user_id,
+                    result = lifecycle_for(current_session).run(
+                        user_id=current_session.user_id,
                         user_text=agent_input,
                         attachment_paths=attachment_paths,
                     )
@@ -376,23 +389,26 @@ def create_app(
                 turn_id = str(result["turn_id"])
                 work_events = list(result.get("work_events", []))
                 history.append_turn(
-                    user_id=session.user_id,
+                    user_id=current_session.user_id,
                     turn_id=turn_id,
                     user_text=message,
                     assistant_text=answer,
                 )
                 history.append_tool_operations(
-                    user_id=session.user_id,
+                    user_id=current_session.user_id,
                     turn_id=turn_id,
                     events=work_events,
                 )
-                if session.role == "owner":
+                if current_session.role == "owner":
                     next_root = _next_working_root(
-                        current_root=session.working_root,
+                        current_root=current_session.working_root,
                         work_events=work_events,
                     )
-                    if next_root != str(Path(session.working_root).expanduser().resolve()):
-                        sessions.update_working_root(session_id=session.session_id, working_root=next_root)
+                    if next_root != str(Path(current_session.working_root).expanduser().resolve()):
+                        sessions.update_working_root(
+                            session_id=current_session.session_id,
+                            working_root=next_root,
+                        )
                 jobs.complete(
                     job_id=job_id,
                     response={
