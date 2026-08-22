@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from typing import Any, Iterable
 
 from .memory_extension import AgentGraphMemoryExtension, MemoryTurnState
@@ -29,7 +31,18 @@ class MemoryAgentAdapter:
         )
 
     def answer_schema(self, state: MemoryTurnState) -> dict[str, Any] | None:
-        return self.memory.answer_schema(state)
+        if not state.query_recall_performed:
+            return None
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action", "outcome", "content"],
+            "properties": {
+                "action": {"const": "answer"},
+                "outcome": {"type": "string", "enum": ["completed", "blocked"]},
+                "content": {"type": "string", "minLength": 1},
+            },
+        }
 
     def schemas(self, state: MemoryTurnState) -> list[dict[str, Any]]:
         if not state.query_recall_performed:
@@ -44,11 +57,13 @@ class MemoryAgentAdapter:
     def validate_answer(*, state: MemoryTurnState, action: dict[str, Any]) -> None:
         if not state.query_recall_performed:
             raise ModelContractError("answer is unavailable before the mandatory vector recall")
-        if action.get("graph_synced") is not True:
-            raise ModelContractError("final answer requires graph_synced=true")
 
     def round_context(self, state: MemoryTurnState) -> str:
-        return self.memory.round_context(state)
+        payload = self._memory_context_payload(state)
+        protocol = payload.setdefault("memory_protocol", {})
+        protocol.pop("final_answer_requires_graph_synced", None)
+        protocol["final_graph_sync_required_before_return"] = True
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
     def execute(
         self,
@@ -58,6 +73,74 @@ class MemoryAgentAdapter:
         state: MemoryTurnState,
     ) -> dict[str, Any]:
         return self.memory.execute(tool=tool, arguments=arguments, state=state)
+
+    def graph_sync_schema(self, state: MemoryTurnState) -> dict[str, Any]:
+        variants: list[dict[str, Any]] = [self._sync_complete_schema()]
+        for schema in self.memory.schemas(state):
+            sync_tool = deepcopy(schema)
+            required = list(sync_tool.get("required") or [])
+            if "sync_complete" not in required:
+                required.append("sync_complete")
+            sync_tool["required"] = required
+            properties = sync_tool.setdefault("properties", {})
+            properties["sync_complete"] = {"type": "boolean"}
+            variants.append(sync_tool)
+        return {"oneOf": variants}
+
+    def execute_graph_sync(
+        self,
+        *,
+        state: MemoryTurnState,
+        action: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
+        if action.get("action") == "sync_complete":
+            if set(action) != {"action"}:
+                raise ModelContractError("sync_complete action may not contain extra fields")
+            return True, {"status": "complete", "changed": False}
+
+        if action.get("action") != "tool":
+            raise ModelContractError("final graph sync requires one memory tool action or sync_complete")
+        tool = action.get("tool")
+        arguments = action.get("arguments")
+        sync_complete = action.get("sync_complete")
+        if not isinstance(tool, str) or tool not in self.tool_names:
+            raise ModelContractError("final graph sync may use only registered memory tools")
+        if not isinstance(arguments, dict):
+            raise ModelContractError("final graph sync memory tool arguments must be an object")
+        if not isinstance(sync_complete, bool):
+            raise ModelContractError("final graph sync memory action requires sync_complete boolean")
+
+        result = self.memory.execute(tool=tool, arguments=arguments, state=state)
+        return sync_complete, {
+            "status": "complete" if sync_complete else "continue",
+            "changed": True,
+            "tool": tool,
+            "arguments": dict(arguments),
+            "result": result,
+        }
+
+    def graph_sync_context(self, state: MemoryTurnState) -> str:
+        payload = self._memory_context_payload(state)
+        protocol = payload.setdefault("memory_protocol", {})
+        protocol.pop("final_answer_requires_graph_synced", None)
+        protocol.update(
+            {
+                "final_graph_sync_only": True,
+                "working_graph_must_match_current_durable_understanding_before_sync_exit": True,
+                "working_state_is_not_past_memory_evidence": True,
+            }
+        )
+        return (
+            "This is the mandatory Final Graph Sync phase after the answer has been frozen. "
+            "Do not answer the user, revise the frozen answer, or use external work tools. Review the user message, "
+            "the complete current-turn Main Agent action/result transcript, the frozen answer, recall candidates, "
+            "available evidence/source IDs, and the current Working Graph. Use exactly one memory action when recall "
+            "or a graph change is needed. The actual result of that action will be applied before the next sync call. "
+            "Set sync_complete=false when another memory action is still needed after this action. Set "
+            "sync_complete=true only when applying this action completes graph synchronization. If no memory action "
+            "is needed, return the explicit sync_complete action.\n"
+            + json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        )
 
     def observe_work_tool_result(
         self,
@@ -86,6 +169,21 @@ class MemoryAgentAdapter:
         abort = getattr(self.memory, "abort_turn", None)
         if callable(abort):
             abort(turn_id=turn_id)
+
+    def _memory_context_payload(self, state: MemoryTurnState) -> dict[str, Any]:
+        payload = json.loads(self.memory.round_context(state))
+        if not isinstance(payload, dict):
+            raise RuntimeError("memory round context must decode to an object")
+        return payload
+
+    @staticmethod
+    def _sync_complete_schema() -> dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action"],
+            "properties": {"action": {"const": "sync_complete"}},
+        }
 
     @staticmethod
     def _initial_query_recall_schema() -> dict[str, Any]:
