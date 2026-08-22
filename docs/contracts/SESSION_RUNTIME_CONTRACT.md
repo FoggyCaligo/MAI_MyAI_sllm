@@ -12,6 +12,17 @@
 - logout은 DB session row를 제거하고 cookie를 삭제한다.
 - 요청마다 현재 allowed-user 설정과 owner/trial role을 다시 구조적으로 검증한다. 저장된 role이 현재 설정과 맞지 않으면 session을 계속 신뢰하지 않는다.
 
+### Trial single-session contract
+
+- `trial` user ID 하나에는 활성 persistent session을 하나만 허용한다.
+- 같은 trial user ID로 새 login session을 생성하면 기존 동일-user trial session row를 같은 session-store lock/transaction 안에서 먼저 제거한다.
+- 이전 browser/device의 bearer token은 다음 요청부터 더 이상 session으로 해석되지 않는다.
+- 이전 trial session에 귀속된 queued/running chat job은 실제 lifecycle 실행 직전에 stable `session_id`를 다시 조회하므로, session이 교체됐다면 명확한 authorization failure로 실패한다.
+- `owner`는 이 single-session 제한을 적용하지 않는다.
+- 다른 trial user ID의 session은 서로 폐기하지 않는다.
+
+이 규칙은 IP, User-Agent, user text 등의 heuristic으로 “같은 사람”을 추정하지 않는다. Authenticated `user_id + role`이라는 구조적 session identity만 사용한다.
+
 ## 2. Account roles and tool exposure
 
 역할은 Framework가 authenticated user identity에서 구조적으로 결정한다.
@@ -83,7 +94,8 @@ Working root는 기존 current-turn path provenance를 대체하지 않는다. E
 
 - expired/unknown session -> authentication failure
 - 현재 allowed-user/role 설정과 맞지 않는 persisted session -> authorization failure
-- queued job 실행 전에 session revoke/expire -> failed job
+- replaced trial session -> authentication/authorization failure on the old session
+- queued job 실행 전에 session revoke/expire/replace -> failed job
 - foreign job -> not found in caller scope
 - lifecycle exception -> failed job with concrete exception type/message
 - process restart during job -> interrupted
