@@ -86,7 +86,7 @@ Web grounding은 실제 web evidence ID/reference와 proposed final answer의 �
 - owner/trial별 tool 제한
 - persistent authenticated session
 - 다른 앱/탭을 보고 돌아와도 chat/job 상태가 끊기지 않는 request-detached execution
-- session별 file working context/root
+- session별 file/code working context/root
 
 권한은 Framework가 authenticated identity에서 구조적으로 강제한다. 모델이 user text를 보고 owner/trial을 추론하지 않는다.
 
@@ -96,7 +96,7 @@ Session token 원문은 DB에 저장하지 않고 hash만 저장한다. Session 
 
 Chat job은 persistent `pending/running/completed/failed/interrupted` 상태를 가지며 HTTP request와 독립적으로 실행된다. 프로세스 재시작 시 이전 active job을 성공으로 추측하거나 자동 재실행하지 않고 `interrupted`로 남긴다.
 
-Session별 working directory/root는 file tool discovery default root와 합친다. 실제 성공한 explicit-root file discovery result만 working root를 승격할 수 있다. Working root는 convenience base이지 owner filesystem sandbox가 아니다.
+Session별 working directory/root는 file/code discovery default root와 합친다. Working-root 승격 가능 여부는 tool 이름 문자열이 아니라 `WorkingRootToolAdapter`가 선언한 구조적 계약으로 결정한다. Agent가 성공 event에 붙인 `working_root` metadata만 session 계층이 반영한다. Working root는 convenience base이지 owner filesystem sandbox가 아니다.
 
 ## Phase 4 — Attachment and working memory
 
