@@ -20,7 +20,7 @@ class ImageAnalyzer(Protocol):
 
 _DOCUMENT_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 _DOCUMENT_PATH_PATTERN = (
-    r".*\.(?:[pP][dD][fF]|[dD][oO][cC][xX]|[tT][xX][tT]|[mM][dD]|[mM][aA][rR][kK][dD][oO][wW][nN])$"
+    r"^.*\.(?:[pP][dD][fF]|[dD][oO][cC][xX]|[tT][xX][tT]|[mM][dD]|[mM][aA][rR][kK][dD][oO][wW][nN])$"
 )
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 
