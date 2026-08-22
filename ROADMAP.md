@@ -105,7 +105,7 @@ Session별 working directory/root는 file/code discovery default root와 합친�
 - attachment automatic read/analyze
 - attachment evidence의 model-only context 주입
 - normal work-tool success result에 turn-local evidence ID 부여
-- model-managed `scratchpad_put`
+- model-managed `scratchpad_put` / `scratchpad_update`
 - attachment/tool evidence -> scratchpad working-memory carryover
 - final memory mutation의 optional `scratchpad_ids` reference
 - current-turn evidence/scratchpad scope validation
@@ -116,7 +116,7 @@ Session별 working directory/root는 file/code discovery default root와 합친�
 
 Attachment evidence는 raw user text에 합치지 않고 model context에만 주입한다. 따라서 첨부 원문 전체가 모든 graph mutation provenance에 자동 포함되지 않는다.
 
-Scratchpad item은 실제 current-turn `attachment:N` / `tool:N` evidence ID를 source로 가져야 한다. 존재하지 않는 source ID는 contract failure다.
+Scratchpad item은 실제 current-turn `attachment:N` / `tool:N` evidence ID를 source로 가져야 한다. 존재하지 않는 source ID는 contract failure다. `scratchpad_update`는 존재하는 current-turn scratchpad ID만 갱신하며 암묵적으로 새 항목을 만들지 않는다.
 
 Scratchpad 전체를 durable graph에 자동 저장하지 않는다. Final graph mutation에서 모델이 명시적으로 `scratchpad_ids`로 선택한 항목만 해당 mutation의 evidence context가 된다.
 
