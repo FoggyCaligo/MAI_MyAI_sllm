@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .agent import AgentLifecycle
 from .attachment_evidence import AttachmentEvidenceBuilder
+from .memory_completion import GraphCommitPhase, PostAnswerMemoryLifecycle
 from .model_context import use_attachment_evidence
 from .scratchpad import (
     EvidenceTrackingTool,
@@ -19,25 +20,40 @@ from .scratchpad import (
 
 @dataclass(slots=True)
 class WorkingMemoryLifecycle:
-    """Compose attachment evidence and turn-local scratchpad around the existing agent lifecycle."""
+    """Compose attachment evidence and turn-local scratchpad around the agent lifecycle."""
 
-    delegate: AgentLifecycle
+    delegate: AgentLifecycle | PostAnswerMemoryLifecycle
     attachments: AttachmentEvidenceBuilder
     evidence: TurnEvidenceRegistry
     scratchpads: ScratchpadRegistry
 
     def __post_init__(self) -> None:
-        if self.delegate.memory_executor.scratchpads not in {None, self.scratchpads}:
+        base = self.delegate
+        if isinstance(base, PostAnswerMemoryLifecycle):
+            base_agent = base.delegate
+        else:
+            base_agent = base
+
+        if base_agent.memory_executor.scratchpads not in {None, self.scratchpads}:
             raise ValueError("agent lifecycle already uses another scratchpad registry")
-        self.delegate.memory_executor.scratchpads = self.scratchpads
-        wrapped_tools = [EvidenceTrackingTool(tool, self.evidence) for tool in self.delegate.work_tools]
+        base_agent.memory_executor.scratchpads = self.scratchpads
+        wrapped_tools = [EvidenceTrackingTool(tool, self.evidence) for tool in base_agent.work_tools]
         wrapped_tools.extend(
             [
                 ScratchpadPutTool(scratchpads=self.scratchpads, evidence=self.evidence),
                 ScratchpadUpdateTool(scratchpads=self.scratchpads, evidence=self.evidence),
             ]
         )
-        self.delegate.work_tools = wrapped_tools
+        base_agent.work_tools = wrapped_tools
+
+        if not isinstance(base, PostAnswerMemoryLifecycle):
+            self.delegate = PostAnswerMemoryLifecycle(
+                delegate=base_agent,
+                memory_completion=GraphCommitPhase(
+                    model=base_agent.model,
+                    executor=base_agent.memory_executor,
+                ),
+            )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
