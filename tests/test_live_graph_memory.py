@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from mai.agent import AgentLifecycle
-from mai.graph import GraphConflictError, GraphRepository, GraphSourceStore
+from mai.graph import GraphRepository, GraphSourceStore
 from mai.memory_extension import AgentGraphMemoryExtension
 from mai.model import ModelContractError
 
@@ -197,20 +197,25 @@ def test_edge_fix_applies_delta_promotes_relevance_and_disconnects(tmp_path) -> 
             state=state,
         )
         edge_id = created["edge"]["edge_id"]
+        mutations_before_rejection = dict(state.edge_mutations_by_node)
 
-        with pytest.raises(GraphConflictError):
-            memory.execute(
-                tool="memory/generate/edge",
-                arguments={
-                    "start_node_id": a["node_id"],
-                    "end_node_id": b["node_id"],
-                    "relation": "another wording",
-                    "weight": 0.8,
-                    "personal_relevance": "user_centered",
-                    "source_ids": [source_id],
-                },
-                state=state,
-            )
+        rejected = memory.execute(
+            tool="memory/generate/edge",
+            arguments={
+                "start_node_id": a["node_id"],
+                "end_node_id": b["node_id"],
+                "relation": "another wording",
+                "weight": 0.8,
+                "personal_relevance": "user_centered",
+                "source_ids": [source_id],
+            },
+            state=state,
+        )
+        assert rejected["status"] == "rejected"
+        assert rejected["reason"] == "directed_edge_already_exists"
+        assert rejected["existing_edge_id"] == edge_id
+        assert state.edge_mutations_by_node == mutations_before_rejection
+        assert edge_id in state.viewed_edges
 
         updated = memory.execute(
             tool="memory/fix/edge",
