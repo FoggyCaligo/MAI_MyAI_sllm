@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .memory_extension import (
-    AgentGraphMemoryExtension,
-    MemoryTurnState,
-    PERSONAL_RELEVANCE,
-)
+from .memory_extension import AgentGraphMemoryExtension, MemoryTurnState, PERSONAL_RELEVANCE
 from .model import ModelContractError
 
 
@@ -21,6 +17,7 @@ class VersionedAgentGraphMemoryExtension(AgentGraphMemoryExtension):
                     "memory/recall edge_id requires an edge already opened in the current ViewedGraph"
                 )
             current = self._edge_payload(state.user_id, edge_id)
+            current_version_id = int(current["version_id"])
             historical = []
             for version in self.repository.edge_versions(
                 user_id=state.user_id,
@@ -28,6 +25,8 @@ class VersionedAgentGraphMemoryExtension(AgentGraphMemoryExtension):
                 exclude_turn_id=state.turn_id,
             ):
                 version_id = int(version["version_id"])
+                if version_id == current_version_id:
+                    continue
                 historical.append(
                     {
                         "version_id": version_id,
