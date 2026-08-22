@@ -74,6 +74,17 @@ class AgentCoreExtension(Protocol):
 
     def execute(self, *, tool: str, arguments: dict[str, Any], state: Any) -> dict[str, Any]: ...
 
+    def graph_sync_schema(self, state: Any) -> dict[str, Any]: ...
+
+    def graph_sync_context(self, state: Any) -> str: ...
+
+    def execute_graph_sync(
+        self,
+        *,
+        state: Any,
+        action: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]: ...
+
     def observe_work_tool_result(
         self,
         *,
@@ -212,7 +223,7 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
 
 @dataclass(slots=True)
 class AgentLifecycle:
-    """Generic external-tool Agent loop with an optional core extension."""
+    """Generic external-tool Agent loop with one mandatory Final Graph Sync."""
 
     repository: Any
     model: StructuredModel
@@ -307,8 +318,12 @@ class AgentLifecycle:
             {
                 "role": "system",
                 "content": (
-                    "Operate as one agent loop using exactly one structured action per round. "
+                    "Operate as one agent loop using exactly one structured action per main round. "
                     "User-facing conversational output must only be delivered through the answer action. "
+                    "Graph memory tools remain available during main work when their schemas are exposed. "
+                    "The current Working Graph is supplied in the dynamic memory context on every main round. "
+                    "When an answer candidate is produced, it is frozen and the framework enters a mandatory "
+                    "Final Graph Sync before the answer can be returned. "
                     "External tools are lazily discovered through exact registered tool_route paths. "
                     f"Initial external namespaces are {top_routes}. A leaf exposes /manual and /use. "
                     "If you already know a leaf route, request its exact /use path directly. "
@@ -349,15 +364,10 @@ class AgentLifecycle:
                     variants.append(schema)
                     exposed_tools.add(name)
 
-            request_messages = list(messages)
-            if self.core_extension is not None:
-                dynamic_context = self.core_extension.round_context(extension_state)
-                if dynamic_context:
-                    request_messages = [
-                        request_messages[0],
-                        {"role": "system", "content": dynamic_context},
-                        *request_messages[1:],
-                    ]
+            request_messages = self._with_extension_context(
+                messages=messages,
+                extension_state=extension_state,
+            )
             action = self.model.structured(messages=request_messages, schema=_combined_schema(variants))
 
             if action.get("action") == "answer":
@@ -366,6 +376,16 @@ class AgentLifecycle:
                     raise ModelContractError("answer content must be non-empty")
                 if self.core_extension is not None:
                     self.core_extension.validate_answer(state=extension_state, action=action)
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+                        }
+                    )
+                    self._run_final_graph_sync(
+                        messages=messages,
+                        extension_state=extension_state,
+                    )
                 return content, events
 
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
@@ -481,3 +501,61 @@ class AgentLifecycle:
                     + json.dumps(event, ensure_ascii=False, sort_keys=True, default=str),
                 }
             )
+
+    def _with_extension_context(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        extension_state: Any | None,
+    ) -> list[dict[str, str]]:
+        request_messages = list(messages)
+        if self.core_extension is None:
+            return request_messages
+        dynamic_context = self.core_extension.round_context(extension_state)
+        if not dynamic_context:
+            return request_messages
+        return [
+            request_messages[0],
+            {"role": "system", "content": dynamic_context},
+            *request_messages[1:],
+        ]
+
+    def _run_final_graph_sync(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        extension_state: Any,
+    ) -> None:
+        if self.core_extension is None:
+            raise RuntimeError("final graph sync requires a core extension")
+
+        while True:
+            sync_context = self.core_extension.graph_sync_context(extension_state)
+            request_messages = [
+                messages[0],
+                {"role": "system", "content": sync_context},
+                *messages[1:],
+            ]
+            action = self.model.structured(
+                messages=request_messages,
+                schema=self.core_extension.graph_sync_schema(extension_state),
+            )
+            complete, sync_result = self.core_extension.execute_graph_sync(
+                state=extension_state,
+                action=action,
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": json.dumps(action, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "Framework final graph sync result: "
+                    + json.dumps(sync_result, ensure_ascii=False, sort_keys=True, default=str),
+                }
+            )
+            if complete:
+                return
