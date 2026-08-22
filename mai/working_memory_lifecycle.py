@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -8,6 +7,7 @@ from uuid import uuid4
 
 from .agent import AgentLifecycle
 from .attachment_evidence import AttachmentEvidenceBuilder
+from .model_context import use_attachment_evidence
 from .scratchpad import (
     EvidenceTrackingTool,
     ScratchpadPutTool,
@@ -50,20 +50,14 @@ class WorkingMemoryLifecycle:
         for item in evidence_items:
             self.evidence.register_attachment(turn_id=resolved_turn_id, item=item)
 
-        agent_input = str(user_text)
-        if evidence_items:
-            agent_input += (
-                "\n\n[attachment_evidence]\n"
-                + json.dumps(evidence_items, ensure_ascii=False, sort_keys=True)
-            )
-
         try:
-            result = self.delegate.run(
-                user_id=user_id,
-                user_text=agent_input,
-                turn_id=resolved_turn_id,
-                attachment_paths=paths,
-            )
+            with use_attachment_evidence(evidence_items):
+                result = self.delegate.run(
+                    user_id=user_id,
+                    user_text=str(user_text),
+                    turn_id=resolved_turn_id,
+                    attachment_paths=paths,
+                )
             result["attachment_evidence"] = evidence_items
             result["scratchpad"] = self.scratchpads.snapshot(turn_id=resolved_turn_id)
             return result
