@@ -292,7 +292,8 @@ class EvidenceTrackingTool:
         result = self.delegate.execute(arguments=arguments, context=context)
         if not isinstance(result, dict):
             raise TypeError(f"evidence-tracked tool {self.name} must return an object result")
-        evidence_kind = str(getattr(self.delegate, "evidence_kind", "tool_operation"))
+        explicit_evidence_kind = getattr(self.delegate, "evidence_kind", None)
+        evidence_kind = str(explicit_evidence_kind or "tool_operation")
         evidence_item = self.evidence.register_tool_result(
             turn_id=context.turn_id,
             tool_name=self.name,
@@ -300,11 +301,10 @@ class EvidenceTrackingTool:
             result=result,
             source_kind=evidence_kind,
         )
-        return {
-            **result,
-            "evidence_id": evidence_item.evidence_id,
-            "evidence_kind": evidence_kind,
-        }
+        tracked = {**result, "evidence_id": evidence_item.evidence_id}
+        if explicit_evidence_kind is not None:
+            tracked["evidence_kind"] = evidence_kind
+        return tracked
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.delegate, name)
