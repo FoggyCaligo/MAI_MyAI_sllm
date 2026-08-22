@@ -8,22 +8,11 @@ from .repository import GraphRepository as BaseGraphRepository
 
 
 _GRAPH_SCHEMA_VERSION = "3"
+_DIRECT_TURN_ID = "__direct_repository_call__"
 
 
 class GraphRepository(BaseGraphRepository):
-    """Graph repository with one SQLite connection per calling thread.
-
-    FastAPI may execute synchronous endpoints in worker threads. Keeping a
-    thread-local SQLite connection avoids sharing query/transaction state
-    across worker threads. ``check_same_thread=False`` is used only so the
-    application shutdown thread can close connections created by workers.
-    WAL + busy_timeout remain the cross-thread/process coordination boundary.
-
-    The current graph schema is intentionally incompatible with retired graph
-    schemas. We do not migrate or reinterpret an old graph database. If an
-    existing graph database has no matching schema marker, the repository fails
-    visibly and requires that graph database to be deleted.
-    """
+    """Graph repository with one SQLite connection per calling thread."""
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         path = Path(db_path)
@@ -69,12 +58,8 @@ class GraphRepository(BaseGraphRepository):
 
         if existing_graph is not None:
             if meta_table is None:
-                raise RuntimeError(
-                    "graph database uses a retired schema; delete MAI_GRAPH_DB and restart"
-                )
-            row = conn.execute(
-                "SELECT value FROM graph_schema_meta WHERE key='schema_version'"
-            ).fetchone()
+                raise RuntimeError("graph database uses a retired schema; delete MAI_GRAPH_DB and restart")
+            row = conn.execute("SELECT value FROM graph_schema_meta WHERE key='schema_version'").fetchone()
             if row is None or str(row["value"]) != _GRAPH_SCHEMA_VERSION:
                 found = None if row is None else str(row["value"])
                 raise RuntimeError(
@@ -92,18 +77,53 @@ class GraphRepository(BaseGraphRepository):
 
         self._create_schema()
         conn.execute(
-            """
-            CREATE TABLE graph_schema_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
+            "CREATE TABLE graph_schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         )
         conn.execute(
             "INSERT INTO graph_schema_meta (key, value) VALUES ('schema_version', ?)",
             (_GRAPH_SCHEMA_VERSION,),
         )
         conn.commit()
+
+    def create_edge(
+        self,
+        *,
+        user_id: str,
+        start_node_id: int,
+        end_node_id: int,
+        relation: str,
+        weight: float,
+        personal_relevance: float,
+        turn_id: str = _DIRECT_TURN_ID,
+    ) -> dict:
+        return super().create_edge(
+            user_id=user_id,
+            start_node_id=start_node_id,
+            end_node_id=end_node_id,
+            relation=relation,
+            weight=weight,
+            personal_relevance=personal_relevance,
+            turn_id=turn_id,
+        )
+
+    def update_edge(
+        self,
+        *,
+        user_id: str,
+        edge_id: int,
+        relation: str,
+        weight: float,
+        personal_relevance: float,
+        turn_id: str = _DIRECT_TURN_ID,
+    ) -> dict:
+        return super().update_edge(
+            user_id=user_id,
+            edge_id=edge_id,
+            relation=relation,
+            weight=weight,
+            personal_relevance=personal_relevance,
+            turn_id=turn_id,
+        )
 
     def close(self) -> None:
         with self._connections_lock:
