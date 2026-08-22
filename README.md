@@ -10,7 +10,7 @@ The core design principle is:
 
 > **The model decides meaning; the framework enforces structure.**
 
-This branch first freezes the new memory architecture in documentation, then rebuilds the implementation by removing the existing memory subsystem and layering the new memory design onto the non-memory runtime.
+The current branch rebuilds memory around **Actual Graph + turn-local Working Graph + periodic graph checkpoints**.
 
 Canonical memory contract:
 
@@ -25,66 +25,82 @@ User
  ↓
 Recent conversation context
  ↓
-Mai single Agent loop
+Mai Agent lifecycle
  ├─ mandatory vector memory recall
- ├─ turn-scoped ViewedGraph
- ├─ persistent graph generate/fix
+ ├─ turn-local Working Graph
+ ├─ memory recall / generate / fix
  ├─ file / document / image / code / terminal
  ├─ web / market / current info
- └─ answer
+ ├─ periodic graph checkpoint
+ └─ final graph checkpoint → answer
 ```
 
-There is no separate post-answer Memory LLM in the target architecture.
-The request-scoped scratchpad is also removed.
+There is no separate post-answer Memory LLM and no scratchpad subsystem.
+The same configured main model is used for ordinary Agent rounds and graph-only checkpoints.
 
-The graph serves two roles:
+The graph is split structurally into:
 
-1. long-term memory across turns and restarts;
-2. the memory substrate the Agent directly inspects and updates while working.
+1. **Actual Graph**: durable long-term memory committed by completed prior turns;
+2. **Working Graph**: Actual Graph regions explicitly recalled during the current turn plus current-turn pending mutations.
+
+The Working Graph is the current turn's cognition/workspace and is not treated as past-memory evidence.
 
 ---
 
 # 2. Memory flow for one turn
 
-The Agent cannot answer immediately on its first round.
+The first Main round cannot answer immediately.
 It must perform at least one `memory/recall(query)` action first.
 
 ```text
 User message
  ↓
-Agent round 1
+Main round 1
  ↓
 memory/recall(query)
  ↓
 Embedding vector similarity search
  ↓
 Several related node candidates
- ↓
-Agent chooses useful node_id
- ↓
-memory/recall(node_id)
- ↓
-Selected node + active one-hop
- ↓
-Merged into ViewedGraph
 ```
 
-Further recalls do not replace previous results.
+Query recall returns candidates only. It does not automatically open them into the Working Graph.
+When the model chooses a candidate and calls `memory/recall(node_id)`, that Actual node and its active one-hop are accumulated into the Working Graph.
 
 ```text
-ViewedGraph(next)
-= ViewedGraph(current)
-+ newly opened nodes/edges
+recall A
+→ Working = A + A active one-hop
+
+recall B
+→ Working = previous Working + B + B active one-hop
 ```
 
-The ViewedGraph is discarded when the turn ends.
-Persistent graph mutations remain in SQLite and are recallable in future turns.
+`memory/generate/*` and `memory/fix/*` during Main work mutate only the Working Graph.
+New Working nodes use framework-issued negative temporary IDs and can be referenced by later rounds in the same turn.
+
+After a configured number of Main LLM requests, the framework forces a graph-only checkpoint.
+The current default interval is **3 Main LLM requests**.
+
+```text
+Main #1
+Main #2
+Main #3
+ ↓
+Graph Checkpoint
+ ↓
+Main #4 ...
+```
+
+Every answer candidate triggers a mandatory Final Graph Checkpoint regardless of the current count.
+If the periodic boundary and the final checkpoint coincide, only one checkpoint runs.
+
+After the Final Graph Checkpoint completes, the Working Graph mutation set is committed to the Actual Graph in **one atomic transaction with no LLM call**, and only then is the answer returned.
 
 ---
 
 # 3. Vector recall
 
-`memory/recall(query)` targets embedding-vector similarity rather than lexical substring matching.
+`memory/recall(query)` retrieves candidate nodes by embedding-vector similarity rather than lexical substring matching.
 
 The embedding model is configured separately in `.env`.
 
@@ -117,15 +133,14 @@ memory/
 
 ## `memory/recall`
 
-Two modes:
-
 - `query`: retrieve vector-similar node candidates;
-- `node_id`: open one selected node and its active one-hop neighborhood.
+- `node_id`: open one Actual node and its active one-hop into the Working Graph;
+- `edge_id`: inspect Actual/Working/history state for one edge.
 
 ## `memory/generate/node`
 
-Creates a semantic concept node or composite node.
-A relevant query recall must have occurred first.
+Creates a semantic concept node or composite node in the Working Graph.
+A fresh relevant query recall must occur before each new node generation.
 If the Agent judges an existing candidate semantically equivalent, it must reuse that node rather than create a duplicate.
 
 Maximum new nodes per turn: **10**.
@@ -140,14 +155,13 @@ A -> B
 B -> A
 ```
 
-are distinct edges.
-
-Only one current semantic edge exists for the same `(start_node_id, end_node_id)` ordered pair.
-A different relation wording does not justify another parallel edge.
+are distinct logical edges.
+Only one logical edge exists for the same `(start_node_id, end_node_id)` ordered pair.
+Different relation wording does not justify another parallel edge.
 
 ## `memory/fix/node`
 
-- update a node;
+- update node state;
 - update composite membership;
 - merge duplicate nodes.
 
@@ -160,7 +174,7 @@ A different relation wording does not justify another parallel edge.
 - disconnect.
 
 Disconnect sets weight to `0` rather than deleting the edge.
-Zero-weight edges remain available for provenance/debugging but are excluded from normal active recall.
+Zero-weight edges remain available for provenance/debug/history but are excluded from normal active recall.
 
 ---
 
@@ -173,11 +187,14 @@ node_id
 name
 kind: concept | composite
 source_ids[]
+member_node_ids[]
+pending
+graph_created_at
+graph_updated_at
 ```
 
-A composite node represents a new concept constituted by multiple existing nodes.
-Membership is framework-owned structural data rather than a normal model-authored relation string.
-Self-membership and composite cycles are invalid.
+Composite membership is framework-owned structural data rather than a normal model-authored relation string.
+Self-membership and membership cycles are invalid.
 
 ## Edge
 
@@ -188,11 +205,10 @@ end_node_id
 relation
 weight
 personal_relevance
-source_ids[]
+current_version_id
 ```
 
 There is no permanent degree cap on a node.
-
 Turn execution budgets are:
 
 - new nodes: at most 10 per turn;
@@ -230,55 +246,79 @@ Source reliability/confidence remains a separate axis.
 
 ---
 
-# 7. Sources and provenance
+# 7. Sources / provenance / history
 
-Nodes and edges may independently reference source sentence/tool evidence IDs.
+Nodes and edges link to source evidence relationally.
+Edge evidence links to a specific committed edge version.
 
-Model-facing form:
+Current-turn Working state is explicitly separated from prior Actual history.
 
 ```text
-source_ids: [12, 18, 44]
+actual_current
+working_current
+past_versions
+working_state_is_past_evidence: false
 ```
 
-The database stores these links relationally rather than as one opaque JSON list.
+Repeated fixes to the same edge in one turn produce one final committed state for that turn.
+Each logical edge retains the most recent **3 committed turn states**.
 
-The abandoned design of stacking up to three historical edge versions is not used.
-The current graph represents the current understanding; provenance preserves why that state exists.
+This prevents a Working state created moments ago from being reused as proof of what the system remembered before the current turn.
 
 ---
 
-# 8. Graph mutations commit immediately
+# 8. Working Graph mutation and final commit
 
-Memory is not deferred until after the final answer.
+Semantic memory mutations apply immediately to the **Working Graph** during Main/checkpoint execution, but they are not immediately committed to the Actual Graph.
 
 ```text
-Agent round N
+Main / Checkpoint
 → memory/generate or memory/fix
-→ immediate SQLite commit
-
-Agent round N+1
-→ updated graph can be recalled immediately
+→ Working Graph changes
+→ later rounds can use the changed Working Graph immediately
 ```
 
-The same graph remains recallable in future turns.
+The durability boundary is the atomic commit after the Final Graph Checkpoint.
 
-This means an incorrect intermediate judgment can be persisted.
-The target behavior is to repair the current graph through `memory/fix/*` as the Agent's understanding changes rather than hide intermediate state behind a deferred post-answer transaction.
+```text
+Final Graph Checkpoint complete
+ ↓
+Working Graph mutation set
+ ↓
+SQLite atomic transaction
+ ↓
+Actual Graph
+ ↓
+frozen answer returned
+```
+
+If the Agent/checkpoint fails, or if final commit fails, Working semantic changes are not promoted to the Actual Graph.
+Commit failure remains visible and the frozen answer is not returned.
 
 ---
 
-# 9. Final graph-sync gate
+# 9. Periodic / Final Graph Checkpoints
 
-Mai does not add another Memory reviewer model.
+A graph checkpoint is not a separate Memory reviewer model. It reuses the **same main model in a graph-only cognition state**.
 
-Before the same Agent loop terminates with an answer, it must explicitly confirm:
+During a checkpoint, answer and external work tools are unavailable.
+Only memory actions or explicit `sync_complete` are legal.
 
-> Does the persistent graph / ViewedGraph match the latest durable understanding gained in this turn?
+Each checkpoint LLM request still produces **exactly one action**.
 
-If not, it performs another memory generate/fix round.
-Only an answer that confirms graph alignment may terminate the loop.
+```text
+Checkpoint LLM
+→ one memory action
+→ apply the real result to Working Graph
+→ if sync_complete=false, run another checkpoint LLM request
+→ Main cannot resume until the checkpoint completes
+```
 
-The framework does not compare answer text and graph meaning with string heuristics.
+If no memory action is needed, the model returns `sync_complete`.
+If one final memory action is sufficient, that action can carry `sync_complete=true`, avoiding a separate done call.
+
+The framework does not decide what is worth remembering through text matching or topic heuristics.
+It only enforces checkpoint timing, legal actions, and the commit boundary.
 
 ---
 
@@ -334,21 +374,17 @@ Tool/OS/file failures remain visible.
 
 ---
 
-# 12. Old memory runtime to remove
-
-During implementation, the following old memory responsibilities are removed:
+# 12. Removed old memory runtime
 
 - dedicated `MAI_OLLAMA_MEMORY_MODEL`;
 - post-answer `GraphCommitPhase`;
 - `continue_memory`;
-- memory loop after the final answer;
+- separate post-answer Memory-model loop;
 - `ScratchpadRegistry`;
 - `scratchpad_put`;
 - `scratchpad_update`;
 - scratchpad → durable-memory promotion;
-- the old split `node_lookup` + `recall_memory` API.
-
-The non-memory runtime is preserved first, then the new memory subsystem is layered back onto it.
+- old `node_lookup` + `recall_memory` split API.
 
 ---
 
@@ -374,7 +410,7 @@ Pull the actual reference Ollama models listed in `.env.example`.
 data/graph.sqlite3
 ```
 
-Contains persistent semantic graph memory and provenance/source links.
+Contains semantic nodes/edges, edge versions, provenance/source links, and the long-term Actual Graph.
 
 ```text
 data/chat.sqlite3
@@ -395,6 +431,7 @@ Mai does not hide failures through fallback behavior.
 - no guessed tool path;
 - no hidden model retry;
 - no silent generate→fix conversion;
-- no silent duplicate graph creation.
+- no silent duplicate graph creation;
+- no silent Working→Actual commit failure.
 
 Structural contract violations fail visibly.
