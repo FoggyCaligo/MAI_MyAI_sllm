@@ -2,6 +2,12 @@
 
 Mai work tools are structurally divided by execution behavior rather than by natural-language or tool-name heuristics.
 
+## User-facing answer channel
+
+User-facing conversational output is delivered only through the structured `answer` action.
+
+A file payload, terminal stdout, search result, document extraction, or any other tool result is evidence/work state returned to the agent loop. It is never implicitly promoted into the final chat response. The model must terminate the turn with an `answer` action, whose `content` is fixed by the Framework before memory mutation and then released unchanged after memory mutation succeeds.
+
 ## Inspection tools
 
 Inspection tools obtain information without intentionally changing external state.
@@ -37,21 +43,53 @@ This means repeated searches are still allowed while they produce new structural
 
 Action tools intentionally create or change state, or perform an external action whose legitimate repetition cannot be inferred from inspection-result identity.
 
-They declare `work_kind = "action"` and are not removed by inspection progress gating.
+They declare both:
 
-Current action tools include:
+```text
+work_kind = "action"
+action_scope = "..."
+```
 
-- `file_create`
-- `file_update`
-- `file_delete`
-- `file_download_link`
-- `terminal_command`
-- generic `FunctionWorkTool` by default
+An action tool without a non-empty `action_scope` is a registration/contract error. The Framework does not infer an action scope from a tool name or user text.
 
-Action failures remain visible. The framework does not silently retry, redirect, or rewrite an action into another tool.
+Current action scopes are declared by the tools themselves:
+
+- file actions: `action_scope = "file"`
+  - `file_create`
+  - `file_update`
+  - `file_delete`
+  - `file_download_link`
+- terminal actions: `action_scope = "terminal"`
+  - `terminal_command`
+- generic `FunctionWorkTool`: `action_scope = "generic"` by default
+
+### Side-effect activation gate
+
+At the beginning of an agent turn, action tools are not included in the model schema. The Framework exposes only a structural control action for the scopes actually declared by registered action tools:
+
+```json
+{
+  "action": "request_action_scope",
+  "scope": "file"
+}
+```
+
+The model decides whether a side effect is actually part of the task. The Framework does not inspect the user's text to make that semantic decision.
+
+After a valid scope request:
+
+- that scope becomes active for the current turn only;
+- action tools declaring that scope may appear in later model schemas;
+- existing path-provenance restrictions still apply independently;
+- the same already-open scope is no longer requestable;
+- unrelated action scopes remain closed.
+
+For example, a normal conversational turn can terminate directly through `answer` without ever exposing `file_create` or `terminal_command`. A file-creation task must first request the `file` action scope, then execute the file action, and finally return the user-facing result through `answer`.
+
+Action failures remain visible. The Framework does not silently retry, redirect, rewrite an action into another tool, or treat a tool result as the final conversational response.
 
 ## File path provenance
 
-The existing current-turn path provenance contract remains independent from progress gating.
+The existing current-turn path provenance contract remains independent from progress gating and action-scope activation.
 
-Discovery and creation may establish concrete paths. Existing-file actions are only exposed for established paths, and execution re-checks the same scope. Progress gating answers a different question: whether an inspection tool is still obtaining new structural information.
+Discovery and creation may establish concrete paths. Existing-file actions are only exposed for established paths after their action scope is active, and execution re-checks the same path scope. Progress gating answers whether an inspection tool is still obtaining new structural information; action-scope activation answers whether state-changing tools are eligible to be shown at all.
