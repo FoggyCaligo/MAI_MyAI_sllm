@@ -23,7 +23,7 @@ from .scratchpad import (
 
 @dataclass(slots=True)
 class WorkingMemoryLifecycle:
-    """Compose work-agent execution and a separate post-answer memory-model call."""
+    """Run the work agent first, then commit durable memory with a dedicated model call."""
 
     delegate: AgentLifecycle
     attachments: AttachmentEvidenceBuilder
@@ -47,7 +47,7 @@ class WorkingMemoryLifecycle:
         if self.memory_model is None:
             if isinstance(self.delegate.model, OllamaModel):
                 self.memory_model = OllamaModel(
-                    model=os.getenv("MAI_OLLAMA_MEMORY_MODEL", self.delegate.model.model),
+                    model=os.getenv("MAI_OLLAMA_MEMORY_MODEL", "qwen3.5:9b"),
                     base_url=self.delegate.model.base_url,
                     timeout_seconds=self.delegate.model.timeout_seconds,
                 )
@@ -119,7 +119,7 @@ class WorkingMemoryLifecycle:
             aggregate_recall = self.delegate._aggregate_recall(recall_results)
             memory_model = self.memory_model
             if memory_model is None:
-                raise RuntimeError("external memory model is not configured")
+                raise RuntimeError("dedicated memory model is not configured")
             with phase(resolved_turn_id, "memory_mutation"):
                 memory_result = GraphCommitPhase(
                     model=memory_model,
@@ -132,7 +132,7 @@ class WorkingMemoryLifecycle:
                     recall_result=aggregate_recall,
                 )
             if memory_result.get("status") != "done":
-                raise RuntimeError("external graph commit did not complete")
+                raise RuntimeError("dedicated graph commit did not complete")
 
             result = {
                 "status": "completed",
