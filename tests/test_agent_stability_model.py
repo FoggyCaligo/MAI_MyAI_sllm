@@ -18,7 +18,6 @@ class FakeResponse:
         return self.payload
 
 
-
 def _answer_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -32,10 +31,8 @@ def _answer_schema() -> dict[str, Any]:
     }
 
 
-
 def _response(value: dict[str, Any]) -> FakeResponse:
     return FakeResponse({"message": {"content": json.dumps(value, ensure_ascii=False)}})
-
 
 
 def test_structured_round_performs_exactly_one_ollama_request(monkeypatch) -> None:
@@ -60,7 +57,6 @@ def test_structured_round_performs_exactly_one_ollama_request(monkeypatch) -> No
     assert len(requests) == 1
 
 
-
 def test_blocked_answer_is_returned_without_hidden_reconsideration(monkeypatch) -> None:
     requests: list[dict[str, Any]] = []
 
@@ -83,7 +79,6 @@ def test_blocked_answer_is_returned_without_hidden_reconsideration(monkeypatch) 
     assert len(requests) == 1
 
 
-
 def test_web_evidence_history_does_not_trigger_hidden_grounding_call(monkeypatch) -> None:
     requests: list[dict[str, Any]] = []
 
@@ -104,11 +99,17 @@ def test_web_evidence_history_does_not_trigger_hidden_grounding_call(monkeypatch
         messages=[
             {"role": "system", "content": "system"},
             {"role": "user", "content": "latest"},
-            {"role": "assistant", "content": str(action)},
-            {"role": "tool", "content": str(event)},
+            {"role": "assistant", "content": json.dumps(action, ensure_ascii=False, sort_keys=True)},
+            {
+                "role": "user",
+                "content": "Framework tool result: "
+                + json.dumps(event, ensure_ascii=False, sort_keys=True),
+            },
         ],
         schema=_answer_schema(),
     )
 
     assert result["content"] == "fact"
     assert len(requests) == 1
+    sent_messages = requests[0]["messages"]
+    assert all(message["role"] != "tool" for message in sent_messages)
