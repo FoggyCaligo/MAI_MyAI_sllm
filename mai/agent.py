@@ -140,7 +140,10 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
                 "additionalProperties": False,
                 "required": ["focus_node_id"],
                 "properties": {
-                    "focus_node_id": {"type": "integer", "enum": sorted(candidate_ids)}
+                    "focus_node_id": {
+                        "type": "integer",
+                        "enum": sorted(candidate_ids),
+                    }
                 },
             },
         },
@@ -150,23 +153,33 @@ def _recall_schema(candidate_ids: set[int]) -> dict[str, Any]:
 def _memory_source_summary_schema(*, node_ids: set[int], edge_ids: set[int]) -> dict[str, Any]:
     targets: list[dict[str, Any]] = []
     if node_ids:
-        targets.append({
-            "type": "object", "additionalProperties": False, "required": ["node_id"],
-            "properties": {"node_id": {"type": "integer", "enum": sorted(node_ids)}},
-        })
+        targets.append(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["node_id"],
+                "properties": {"node_id": {"type": "integer", "enum": sorted(node_ids)}},
+            }
+        )
     if edge_ids:
-        targets.append({
-            "type": "object", "additionalProperties": False, "required": ["edge_id"],
-            "properties": {"edge_id": {"type": "integer", "enum": sorted(edge_ids)}},
-        })
+        targets.append(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["edge_id"],
+                "properties": {"edge_id": {"type": "integer", "enum": sorted(edge_ids)}},
+            }
+        )
     if not targets:
         raise ValueError("memory source summary requires recalled graph targets")
     target_schema = targets[0] if len(targets) == 1 else {"oneOf": targets}
     return {
-        "type": "object", "additionalProperties": False,
+        "type": "object",
+        "additionalProperties": False,
         "required": ["action", "tool", "arguments"],
         "properties": {
-            "action": {"const": "tool"}, "tool": {"const": "memory_source_summary"},
+            "action": {"const": "tool"},
+            "tool": {"const": "memory_source_summary"},
             "arguments": target_schema,
         },
     }
@@ -174,12 +187,16 @@ def _memory_source_summary_schema(*, node_ids: set[int], edge_ids: set[int]) -> 
 
 def _memory_source_read_schema(source_ids: set[int]) -> dict[str, Any]:
     return {
-        "type": "object", "additionalProperties": False,
+        "type": "object",
+        "additionalProperties": False,
         "required": ["action", "tool", "arguments"],
         "properties": {
-            "action": {"const": "tool"}, "tool": {"const": "memory_source_read"},
+            "action": {"const": "tool"},
+            "tool": {"const": "memory_source_read"},
             "arguments": {
-                "type": "object", "additionalProperties": False, "required": ["source_id"],
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source_id"],
                 "properties": {
                     "source_id": {"type": "integer", "enum": sorted(source_ids)},
                     "start": {"type": "integer", "minimum": 1},
@@ -192,13 +209,22 @@ def _memory_source_read_schema(source_ids: set[int]) -> dict[str, Any]:
 
 def _tool_manual_schema(tool_names: set[str]) -> dict[str, Any]:
     return {
-        "type": "object", "additionalProperties": False,
+        "type": "object",
+        "additionalProperties": False,
         "required": ["action", "tool", "arguments"],
         "properties": {
-            "action": {"const": "tool"}, "tool": {"const": "tool_manual"},
+            "action": {"const": "tool"},
+            "tool": {"const": "tool_manual"},
             "arguments": {
-                "type": "object", "additionalProperties": False, "required": ["tool"],
-                "properties": {"tool": {"type": "string", "enum": sorted(tool_names)}},
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["tool"],
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "enum": sorted(tool_names),
+                    }
+                },
             },
         },
     }
@@ -441,7 +467,12 @@ class AgentLifecycle:
             if candidate_ids:
                 variants.append(_recall_schema(candidate_ids))
             if self.source_store is not None and (recalled_node_ids or recalled_edge_ids):
-                variants.append(_memory_source_summary_schema(node_ids=recalled_node_ids, edge_ids=recalled_edge_ids))
+                variants.append(
+                    _memory_source_summary_schema(
+                        node_ids=recalled_node_ids,
+                        edge_ids=recalled_edge_ids,
+                    )
+                )
             if self.source_store is not None and available_source_ids:
                 variants.append(_memory_source_read_schema(available_source_ids))
             manual_targets = available_tools - activated_tools
