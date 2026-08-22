@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from mai.agent import AgentLifecycle, WorkContext
-from mai.memory_discovery import MandatoryMemoryDiscovery
 
 
 @dataclass
@@ -29,26 +28,42 @@ class FakeRecall:
         return {"nodes": [], "edges": [], "origin_path": {"nodes": [], "edges": []}}
 
 
+def _answer() -> dict[str, Any]:
+    return {
+        "action": "answer",
+        "content": "done",
+        "memory_mutations": [
+            {
+                "kind": "write_memory",
+                "arguments": {
+                    "subject": {"kind": "user"},
+                    "relation": "turn_memory",
+                    "object": {"new_node": {"name": "done"}},
+                },
+            }
+        ],
+    }
+
+
 def _has_node_lookup(schema: dict[str, Any]) -> bool:
     return '"node_lookup"' in __import__("json").dumps(schema)
 
 
-def test_work_disables_lookup_after_no_candidate_progress() -> None:
+def test_agent_disables_lookup_after_no_candidate_progress() -> None:
     model = ScriptedModel([
         {"action": "tool", "tool": "node_lookup", "arguments": {"queries": ["x"]}},
-        {"action": "answer", "content": "done"},
+        _answer(),
     ])
     lifecycle = AgentLifecycle(
         repository=None,
         model=model,
-        discovery_phase=None,
         discovery=ScriptedDiscovery([{"matches": [{"node_id": 1}]}]),
         recall=FakeRecall(),
-        memory_completion=None,
+        memory_executor=None,
         work_tools=[],
     )
 
-    answer, events = lifecycle._run_work_phase(
+    answer, _, events = lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="hello"),
         candidate_ids={1},
         recall_results=[],
@@ -60,22 +75,21 @@ def test_work_disables_lookup_after_no_candidate_progress() -> None:
     assert not _has_node_lookup(model.schemas[1])
 
 
-def test_work_keeps_lookup_when_candidate_set_expands() -> None:
+def test_agent_keeps_lookup_when_candidate_set_expands() -> None:
     model = ScriptedModel([
         {"action": "tool", "tool": "node_lookup", "arguments": {"queries": ["x"]}},
-        {"action": "answer", "content": "done"},
+        _answer(),
     ])
     lifecycle = AgentLifecycle(
         repository=None,
         model=model,
-        discovery_phase=None,
         discovery=ScriptedDiscovery([{"matches": [{"node_id": 1}, {"node_id": 2}]}]),
         recall=FakeRecall(),
-        memory_completion=None,
+        memory_executor=None,
         work_tools=[],
     )
 
-    lifecycle._run_work_phase(
+    lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="hello"),
         candidate_ids={1},
         recall_results=[],
@@ -83,26 +97,3 @@ def test_work_keeps_lookup_when_candidate_set_expands() -> None:
 
     assert _has_node_lookup(model.schemas[0])
     assert _has_node_lookup(model.schemas[1])
-
-
-def test_discovery_disables_additional_lookup_after_no_progress() -> None:
-    model = ScriptedModel([
-        {"action": "tool", "tool": "node_lookup", "arguments": {"queries": ["first"]}},
-        {"action": "tool", "tool": "node_lookup", "arguments": {"queries": ["again"]}},
-        {"action": "tool", "tool": "recall_memory", "arguments": {"focus_node_id": 1}},
-    ])
-    discovery = MandatoryMemoryDiscovery(
-        model=model,
-        discovery=ScriptedDiscovery([
-            {"matches": [{"node_id": 1}]},
-            {"matches": [{"node_id": 1}]},
-        ]),
-        recall=FakeRecall(),
-    )
-
-    result = discovery.run(user_id="u", user_text="hello")
-
-    assert result["status"] == "recalled"
-    assert _has_node_lookup(model.schemas[0])
-    assert _has_node_lookup(model.schemas[1])
-    assert not _has_node_lookup(model.schemas[2])

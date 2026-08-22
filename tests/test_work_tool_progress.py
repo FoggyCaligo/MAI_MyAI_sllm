@@ -21,6 +21,23 @@ def _tool_names(schema: dict[str, Any]) -> set[str]:
     return names
 
 
+def _answer(content: str = "done") -> dict[str, Any]:
+    return {
+        "action": "answer",
+        "content": content,
+        "memory_mutations": [
+            {
+                "kind": "write_memory",
+                "arguments": {
+                    "subject": {"kind": "user"},
+                    "relation": "turn_memory",
+                    "object": {"new_node": {"name": content}},
+                },
+            }
+        ],
+    }
+
+
 @dataclass
 class ScriptedModel:
     actions: list[dict[str, Any]]
@@ -115,10 +132,9 @@ def _lifecycle(model: ScriptedModel, tool: Any) -> AgentLifecycle:
     return AgentLifecycle(
         repository=None,  # type: ignore[arg-type]
         model=model,
-        discovery_phase=None,  # type: ignore[arg-type]
         discovery=EmptyDiscovery(),  # type: ignore[arg-type]
         recall=EmptyRecall(),  # type: ignore[arg-type]
-        memory_completion=None,  # type: ignore[arg-type]
+        memory_executor=None,  # type: ignore[arg-type]
         work_tools=[tool],
     )
 
@@ -128,14 +144,14 @@ def test_progress_aware_tool_is_removed_after_no_new_keys() -> None:
         actions=[
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
-            {"action": "answer", "content": "done"},
+            _answer(),
         ],
         schemas=[],
     )
     tool = ProgressTool(results=[{"keys": ["a"]}, {"keys": ["a"]}])
     lifecycle = _lifecycle(model, tool)
 
-    answer, _ = lifecycle._run_work_phase(
+    answer, _, _ = lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="x"),
         candidate_ids=set(),
         recall_results=[],
@@ -152,14 +168,14 @@ def test_progress_aware_tool_stays_available_when_new_keys_arrive() -> None:
         actions=[
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
             {"action": "tool", "tool": "progress_tool", "arguments": {}},
-            {"action": "answer", "content": "done"},
+            _answer(),
         ],
         schemas=[],
     )
     tool = ProgressTool(results=[{"keys": ["a"]}, {"keys": ["a", "b"]}])
     lifecycle = _lifecycle(model, tool)
 
-    lifecycle._run_work_phase(
+    lifecycle._run_agent_phase(
         context=WorkContext(user_id="u", turn_id="t", user_text="x"),
         candidate_ids=set(),
         recall_results=[],
@@ -171,7 +187,7 @@ def test_progress_aware_tool_stays_available_when_new_keys_arrive() -> None:
 def test_inspection_tool_without_progress_keys_is_rejected_before_model_round() -> None:
     model = ScriptedModel(actions=[], schemas=[])
     with pytest.raises(ValueError, match="must implement progress_keys"):
-        _lifecycle(model, BrokenInspectionTool())._run_work_phase(
+        _lifecycle(model, BrokenInspectionTool())._run_agent_phase(
             context=WorkContext(user_id="u", turn_id="t", user_text="x"),
             candidate_ids=set(),
             recall_results=[],
@@ -182,7 +198,7 @@ def test_inspection_tool_without_progress_keys_is_rejected_before_model_round() 
 def test_unclassified_tool_without_progress_contract_is_rejected() -> None:
     model = ScriptedModel(actions=[], schemas=[])
     with pytest.raises(ValueError, match="must declare work_kind"):
-        _lifecycle(model, UnclassifiedTool())._run_work_phase(
+        _lifecycle(model, UnclassifiedTool())._run_agent_phase(
             context=WorkContext(user_id="u", turn_id="t", user_text="x"),
             candidate_ids=set(),
             recall_results=[],

@@ -5,10 +5,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 from uuid import uuid4
 
+from .final_memory import FinalMemoryExecutor, answer_with_memory_schema
 from .graph import GraphDiscoveryService, GraphRecallService, GraphRepository
-from .memory_completion import MandatoryMemoryCompletion
-from .memory_discovery import MandatoryMemoryDiscovery
-from .memory_write import MemoryTurnScope
 from .model import ModelContractError, StructuredModel
 from .progress import phase, tool_completed, tool_started, turn_completed, turn_failed, turn_started
 
@@ -82,18 +80,6 @@ class FunctionWorkTool:
 
     def execute(self, *, arguments: dict[str, Any], context: WorkContext) -> Any:
         return self.handler(arguments, context)
-
-
-def _answer_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["action", "content"],
-        "properties": {
-            "action": {"const": "answer"},
-            "content": {"type": "string", "minLength": 1},
-        },
-    }
 
 
 def _lookup_schema() -> dict[str, Any]:
@@ -213,10 +199,9 @@ def _schema_for_context(tool: WorkTool, context: WorkContext) -> dict[str, Any] 
 class AgentLifecycle:
     repository: GraphRepository
     model: StructuredModel
-    discovery_phase: MandatoryMemoryDiscovery
     discovery: GraphDiscoveryService
     recall: GraphRecallService
-    memory_completion: MandatoryMemoryCompletion
+    memory_executor: FinalMemoryExecutor
     work_tools: list[WorkTool] = field(default_factory=list)
 
     def run(
@@ -243,21 +228,10 @@ class AgentLifecycle:
                     source_text="turn initialization",
                 )
 
-            with phase(resolved_turn_id, "memory_discovery"):
-                discovery_result = self.discovery_phase.run(user_id=user_id, user_text=clean_user)
-
             recall_results: list[dict[str, Any]] = []
-            initial_recall = discovery_result.get("recall")
-            if initial_recall:
-                recall_results.append(initial_recall)
-
-            candidate_ids = {
-                int(node["node_id"])
-                for node in (discovery_result.get("lookup") or {}).get("matches", [])
-            }
-
-            with phase(resolved_turn_id, "work"):
-                fixed_answer, work_events = self._run_work_phase(
+            candidate_ids: set[int] = set()
+            with phase(resolved_turn_id, "agent"):
+                fixed_answer, memory_plan, work_events = self._run_agent_phase(
                     context=WorkContext(
                         user_id=user_id,
                         turn_id=resolved_turn_id,
@@ -269,23 +243,23 @@ class AgentLifecycle:
                 )
 
             aggregate_recall = self._aggregate_recall(recall_results)
-            turn = MemoryTurnScope.from_recall(
-                user_id=user_id,
-                turn_id=resolved_turn_id,
-                user_text=clean_user,
-                assistant_text=fixed_answer,
-                recall_result=aggregate_recall,
-            )
             with phase(resolved_turn_id, "memory_mutation"):
-                memory_result = self.memory_completion.run(turn=turn, recall_result=aggregate_recall)
+                memory_result = self.memory_executor.execute(
+                    user_id=user_id,
+                    turn_id=resolved_turn_id,
+                    user_text=clean_user,
+                    fixed_answer=fixed_answer,
+                    recall_result=aggregate_recall,
+                    mutations=memory_plan,
+                )
             if memory_result.get("status") != "done":
-                raise RuntimeError("memory completion did not reach done")
+                raise RuntimeError("memory mutation did not complete")
 
             result = {
                 "status": "completed",
                 "turn_id": resolved_turn_id,
                 "answer": fixed_answer,
-                "discovery": discovery_result,
+                "discovery": {"status": "agent_driven"},
                 "work_events": work_events,
                 "memory": memory_result,
             }
@@ -296,13 +270,13 @@ class AgentLifecycle:
         turn_completed(resolved_turn_id)
         return result
 
-    def _run_work_phase(
+    def _run_agent_phase(
         self,
         *,
         context: WorkContext,
         candidate_ids: set[int],
         recall_results: list[dict[str, Any]],
-    ) -> tuple[str, list[dict[str, Any]]]:
+    ) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]]]:
         tools = {tool.name: tool for tool in self.work_tools}
         if len(tools) != len(self.work_tools):
             raise ValueError("work tool names must be unique")
@@ -314,10 +288,12 @@ class AgentLifecycle:
             {
                 "role": "system",
                 "content": (
-                    "Memory discovery is complete. Perform normal work using exactly one structured "
-                    "action per round. You may use available tools, inspect more memory with node_lookup "
-                    "and recall_memory, or produce one final answer. Existing-file actions may only use paths "
-                    "established by current-turn attachments, file_create, or file/code discovery tool results."
+                    "Operate as one agent loop using exactly one structured action per round. Use node_lookup and "
+                    "recall_memory only when conversation memory is useful, use available work tools when needed, "
+                    "or produce the final answer directly. A final answer must include at least one semantic memory "
+                    "mutation plan. The framework fixes the answer text before executing that plan, and releases the "
+                    "answer only after memory mutation succeeds. Existing-file actions may only use paths established "
+                    "by current-turn attachments, file_create, or file/code discovery tool results."
                 ),
             },
             {"role": "user", "content": context.user_text},
@@ -328,7 +304,8 @@ class AgentLifecycle:
         seen_progress: dict[str, set[str]] = {}
 
         while True:
-            variants = [_answer_schema()]
+            aggregate_recall = self._aggregate_recall(recall_results)
+            variants = [answer_with_memory_schema(aggregate_recall)]
             if allow_lookup:
                 variants.append(_lookup_schema())
             if candidate_ids:
@@ -346,12 +323,15 @@ class AgentLifecycle:
 
             if action.get("action") == "answer":
                 content = str(action.get("content", "")).strip()
+                mutations = action.get("memory_mutations")
                 if not content:
                     raise ModelContractError("answer content must be non-empty")
-                return content, events
+                if not isinstance(mutations, list) or not mutations:
+                    raise ModelContractError("answer requires at least one memory mutation")
+                return content, mutations, events
 
             if action.get("action") != "tool" or not isinstance(action.get("arguments"), dict):
-                raise ModelContractError("work phase requires one tool action or one answer")
+                raise ModelContractError("agent phase requires one tool action or one answer")
 
             tool_name = action.get("tool")
             arguments = action["arguments"]
@@ -390,7 +370,7 @@ class AgentLifecycle:
                     if not new_keys:
                         available_tools.discard(tool_name)
             else:
-                raise ModelContractError("unexpected tool in work phase")
+                raise ModelContractError("unexpected tool in agent phase")
             tool_completed(tool_name)
 
             event = {"tool": tool_name, "arguments": arguments, "result": result}

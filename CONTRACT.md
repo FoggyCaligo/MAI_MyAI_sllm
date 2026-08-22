@@ -10,7 +10,7 @@
    - Tailscale 설정 실패는 숨기지 않는다.
 
 2. **UI**
-   - 사용자에게 보이는 UI는 기존 MACHI/MK4 형식을 그대로 따른다.
+   - 사용자에게 보이는 UI는 기존 MACHI/MK4 형식을 따른다.
    - 백엔드 구조는 새로 설계하되 시각 형식과 주요 UI 동작은 유지한다.
 
 3. **파일 입력 / 문서 / 이미지**
@@ -54,11 +54,12 @@
 ## 2. 모델과 Framework 책임 분리
 
 ### 모델이 결정한다
+- memory를 조회할 필요가 있는지
 - 어떤 개념을 memory에서 찾을지
 - `node_lookup`에 사용할 lexical query들
 - lookup 후보 중 어떤 node를 focus로 recall할지
 - 추가로 어떤 node를 recall할지
-- 어떤 tool을 사용할지
+- 어떤 일반 tool을 사용할지
 - tool 결과를 어떻게 해석할지
 - 최종 답변 내용
 - graph node의 의미와 이름
@@ -67,9 +68,8 @@
 - 현재 턴 표현을 어떤 개념으로 정규화/일반화할지
 
 ### Framework가 강제한다
-- 현재 phase
-- phase별 허용 action/tool
-- JSON schema
+- single-agent loop의 action schema
+- action/tool별 구조 계약
 - authentication/account role
 - graph ownership
 - recall scope
@@ -78,8 +78,11 @@
 - tool 실제 실행
 - lexical lookup의 실제 DB 조회
 - focus node에서 사용자 anchor까지의 구조적 경로 계산
+- current-turn file path provenance
+- inspection tool structural progress contract
 - 성공/실패 상태
 - fixed answer 불변성
+- memory mutation 성공 전 answer 비공개
 
 > 의미 판단은 모델, 실행 계약은 Framework.
 
@@ -110,69 +113,96 @@ sLLM이 직접 semantic node 이름과 relation을 만든다.
 
 ## 5. Turn Lifecycle
 
+Runtime lifecycle은 별도 memory-agent phase를 두지 않는 **single agent loop**다.
+
 ```text
 User Input
   ↓
-Mandatory Memory Discovery
+Framework Turn Initialization
+  └─ canonical user anchor 보장
+  ↓
+Single Agent Loop
+  ├─ answer directly
   ├─ node_lookup
-  └─ recall_memory(focus node)
+  ├─ recall_memory
+  └─ normal work tool
+       ↓
+       tool result → same agent loop
   ↓
-Work / Tool Loop
+Final Answer Action
+  ├─ fixed answer text
+  └─ memory_mutations[]
   ↓
-Fixed Answer Draft
+Framework fixes answer text
   ↓
-Mandatory Memory Mutation
+Framework executes memory mutation plan
   ↓
-Memory Done
+Mutation success
   ↓
-Release Fixed Answer
+Release exact fixed answer
 ```
 
-Fixed answer는 memory commit 성공 전에는 사용자에게 release하지 않는다.
+`Mandatory Memory Discovery`와 별도의 model-driven `Memory Completion`은 runtime turn lifecycle에 존재하지 않는다.
+
+툴이 필요 없는 일반 대화는 모델이 첫 round에 final answer action을 반환할 수 있으므로 **모델 호출 1회**로 완료할 수 있어야 한다.
+
+Fixed answer는 memory mutation 성공 전에는 사용자에게 release하지 않는다.
 
 ## 6. One Model Round = One Action
 
-각 model response는 정확히 하나의 action만 표현한다.
+각 model response는 정확히 하나의 top-level action만 표현한다.
+
+Tool action 예:
 
 ```json
 {"action":"tool","tool":"node_lookup","arguments":{"queries":["MAI","MAI 프로젝트"]}}
 ```
 
-또는
-
 ```json
 {"action":"tool","tool":"recall_memory","arguments":{"focus_node_id":17}}
 ```
 
-또는
+일반 work tool도 동일하게 한 round에 하나만 호출한다.
+
+Final answer action은 한 개의 answer action이며, answer와 함께 실행할 memory mutation plan을 구조적으로 포함한다.
 
 ```json
-{"action":"answer","content":"..."}
+{
+  "action":"answer",
+  "content":"...",
+  "memory_mutations":[
+    {
+      "kind":"write_memory",
+      "arguments":{
+        "subject":{"kind":"user"},
+        "relation":"...",
+        "object":{"new_node":{"name":"..."}}
+      }
+    }
+  ]
+}
 ```
 
-또는 해당 phase에서 허용된 경우
+`memory_mutations`는 answer action의 commit plan이지 같은 model round의 별도 tool call이 아니다. Framework는 answer text를 먼저 고정한 뒤 이 plan을 실행한다.
 
-```json
-{"action":"done"}
-```
-
-한 응답에 여러 tool call, tool+answer를 함께 넣지 않는다.
-
-Agent loop에는 임의의 global round cap을 두지 않는다. 모델이 terminal action을 내거나 실제 오류/취소/server shutdown이 발생할 때까지 필요한 만큼 반복할 수 있다.
+Agent loop에는 임의의 global round cap을 두지 않는다. 실제 오류/취소/server shutdown이 발생하거나 모델이 final answer action을 낼 때까지 필요한 만큼 반복할 수 있다.
 
 ## 7. Memory Discovery / Recall Contract
 
-### 7.1 Mandatory memory discovery
+### 7.1 Agent-driven memory discovery
 
-일반 작업 전에 memory discovery를 반드시 수행한다.
+Memory discovery는 별도 mandatory model phase가 아니다. `node_lookup`과 `recall_memory`는 single agent loop 안의 구조화된 memory inspection tool이다.
 
-최초 discovery는 다음 구조를 따른다.
+모델이 현재 질문에 memory가 필요하지 않다고 판단하면 첫 round에 바로 answer할 수 있다.
+
+모델이 memory가 필요하다고 판단하면 예를 들어 다음 흐름을 사용할 수 있다.
 
 ```text
 model -> node_lookup(queries <= 3)
 framework -> actual node candidates
 model -> recall_memory(focus_node_id)
 framework -> one-hop neighborhood + origin path
+model -> answer or another tool
 ```
 
 그래프가 비어 있거나 lookup 결과가 없으면 그 사실을 실제 결과로 반환한다. 성공처럼 보이는 guessed node나 fallback focus를 만들지 않는다.
@@ -189,13 +219,13 @@ Framework는:
 - embedding/semantic similarity를 자동 적용하지 않는다.
 - 없는 node를 추측해서 만들지 않는다.
 
-후보가 많을 수 있으므로 결과는 pagination/cursor 계약을 사용한다. 모델은 필요하면 추가 `node_lookup` 호출로 다음 page를 볼 수 있다.
+Lookup 결과가 현재 agent turn의 candidate set을 전혀 확장하지 못하면 이후 해당 turn에서 `node_lookup`을 schema에서 제거한다. 이는 의미 판단이나 round cap이 아니라 structural no-progress gate다.
 
 ### 7.3 Focus selection
 
 lookup 결과의 실제 `node_id` 중 무엇을 focus로 선택할지는 모델이 결정한다.
 
-`recall_memory`는 실제 user-owned stable `focus_node_id`를 요구한다. 임의 ID나 foreign-user ID는 scope failure다.
+`recall_memory`는 현재 turn의 실제 lookup candidate에 포함된 user-owned stable `focus_node_id`를 요구한다. 임의 ID나 foreign-user ID는 scope failure다.
 
 ### 7.4 One-hop neighborhood
 
@@ -212,7 +242,7 @@ recursive multi-depth neighborhood 확장은 하지 않는다. 더 먼 관계는
 
 각 user graph에는 framework가 보장하는 canonical **user anchor node**가 정확히 하나 존재한다.
 
-이 anchor는 mandatory first recall의 focus를 강제로 정하기 위한 root가 아니다. 오직:
+이 anchor는 recall focus를 강제로 정하기 위한 root가 아니다. 오직:
 - user identity endpoint
 - origin/path anchor
 
@@ -224,49 +254,42 @@ recursive multi-depth neighborhood 확장은 하지 않는다. 더 먼 관계는
 
 `recall_memory(focus_node_id)` 결과에는 1-hop neighborhood와 별도로 **focus node에서 canonical user anchor까지 연결되는 하나의 origin path**를 함께 반환한다.
 
-목적은 모델이 선택한 기억의 기원/상위 문맥을 확인할 수 있게 하는 것이다.
-
-예:
-
-```text
-사용자 -> 프로젝트 -> sLLM -> MAI
-```
-
-MAI를 focus로 recall하면:
-
-```text
-one_hop:
-  MAI와 직접 연결된 node/edge만
-
-origin_path:
-  MAI -> sLLM -> 프로젝트 -> 사용자
-```
-
-을 함께 반환한다.
-
 Origin path 계산 규칙:
 - 같은 user graph 안에서만 탐색한다.
 - edge 방향은 path 탐색 가능 여부를 제한하지 않는다. 즉 구조적 연결성 기준으로 탐색한다.
-- 여러 경로가 존재하면 **edge 수가 가장 적은 shortest path 하나**만 반환한다.
+- 여러 경로가 존재하면 edge 수가 가장 적은 shortest path 하나만 반환한다.
 - 반환할 때는 각 edge의 실제 `subject_node_id`, `relation`, `object_node_id` 방향을 그대로 보존한다.
-- shortest path가 여러 개로 동률이면 stable ID 기반 deterministic ordering으로 하나를 선택한다. 의미 점수나 문자열 휴리스틱으로 고르지 않는다.
-- user anchor까지 연결된 경로가 없으면 `origin_path`는 명시적으로 unavailable/empty 상태를 반환하며, 임의 연결을 만들지 않는다.
+- shortest path가 여러 개로 동률이면 stable ID 기반 deterministic ordering으로 하나를 선택한다.
+- 의미 점수나 문자열 휴리스틱으로 경로를 고르지 않는다.
+- user anchor까지 연결된 경로가 없으면 `origin_path`는 명시적으로 unavailable/empty 상태를 반환하며 임의 연결을 만들지 않는다.
 
-Origin path는 1-hop 제한의 예외가 아니라 **별도 provenance/navigation view**다. 따라서 모델이 일반 주변 관계를 재귀적으로 보는 수단으로 사용하지 않는다.
+Origin path는 recursive recall이 아니라 별도 provenance/navigation view다.
 
 ### 7.7 Recall scope
 
 recall 결과에는 실제 stable `node_id`, `edge_id`를 포함한다.
 
-현재 턴에서 lookup으로 후보만 본 node는 mutation scope에 자동 포함하지 않는다. 기존 memory 수정 가능 scope는:
-- 실제 `recall_memory` 결과에 포함된 node/edge
-- 현재 턴에서 새로 생성된 node/edge
+현재 턴에서 lookup 후보로만 본 node는 mutation scope에 자동 포함하지 않는다. 기존 memory 수정 가능 scope는 실제 `recall_memory` 결과에 포함된 node/edge로 제한한다.
 
-로 제한한다.
+현재 final memory plan에서 새로 생성된 node는 이후 같은 plan의 Framework 실행 scope에 포함할 수 있다. 모델이 final plan 작성 시 알 수 없는 새 stable ID를 추측해서 참조할 수는 없다.
 
 ## 8. Answer Contract
 
-모델이 `answer` action을 반환한 순간 텍스트가 fixed answer draft가 된다. 이후 memory phase에서 답변 수정, 재생성, helper 교체, 성공 fallback 생성을 금지한다. Memory phase 성공 시 fixed answer를 그대로 release하고, 실패하면 실패를 드러낸다.
+모델이 유효한 final `answer` action을 반환한 순간 `content`가 fixed answer가 된다.
+
+Final answer action은 반드시 최소 1개의 `memory_mutations`를 포함한다.
+
+Framework 실행 순서:
+
+```text
+1. structured final action validation
+2. answer content 고정
+3. memory mutation plan 실행
+4. 모든 필수 mutation 성공 확인
+5. 고정된 answer content 그대로 release
+```
+
+Mutation 단계에서 답변 수정, 재생성, helper 교체, 성공 fallback 생성을 금지한다. Mutation이 실패하면 fixed answer를 성공 응답으로 release하지 않고 실제 실패를 드러낸다.
 
 ## 9. Semantic Graph Contract
 
@@ -275,12 +298,11 @@ recall 결과에는 실제 stable `node_id`, `edge_id`를 포함한다.
 node_id       Framework-generated stable ID
 user_id       Framework-enforced owner
 name          model-authored semantic name
-is_user_anchor Framework-managed structural flag/identity
 created_at
 updated_at
 ```
 
-일반 node의 `name`은 모델이 정한다. Canonical user anchor의 구조적 identity는 Framework가 관리하며 이름 문자열 비교로 판별하지 않는다.
+일반 node의 `name`은 모델이 정한다. Canonical user anchor의 구조적 identity는 Framework가 별도 mapping으로 관리하며 이름 문자열 비교로 판별하지 않는다.
 
 ### Edge
 ```text
@@ -301,31 +323,25 @@ updated_at
 
 모든 정상 턴에서 최소 1회의 memory mutation이 성공해야 한다.
 
-첫 memory round에는 `done`을 schema에 노출하지 않는다.
+이 요구는 별도 memory model loop로 구현하지 않는다. Final answer action의 `memory_mutations` 배열이 최소 1개를 구조적으로 요구한다.
 
 허용 mutation:
 - `write_memory`
-- `revise_memory` (수정 가능한 recalled/created 대상이 있을 때만)
+- `revise_memory` (실제 recalled edge가 현재 final schema에 존재할 때만)
 
-최소 1회의 mutation 성공 이후에만 `done`을 노출한다.
+Framework는 final answer가 고정된 이후 mutation plan을 순서대로 실행한다. 모든 mutation은 기존 write/revise scope, ownership, transaction 계약을 그대로 사용한다.
 
-```text
-memory start
-→ write/revise required
-→ mutation success
-→ write/revise/done
-→ done
-```
+별도의 `done` model round는 없다. 계획된 mutation 실행이 성공적으로 끝나면 Framework가 memory status를 `done`으로 확정한다.
 
 ## 11. write_memory Contract
 
 모델은 기존 recalled node를 endpoint로 사용하거나 현재 턴 문맥에서 새 node를 만들 수 있으며 relation을 직접 정의한다.
 
-예:
+Final plan 예:
+
 ```json
 {
-  "action":"tool",
-  "tool":"write_memory",
+  "kind":"write_memory",
   "arguments":{
     "subject":{"kind":"user"},
     "relation":"좋아한다",
@@ -338,20 +354,33 @@ memory start
 
 ## 12. revise_memory Contract
 
-`revise_memory`는 현재 턴에서 recall되었거나 생성된 graph scope만 수정한다. 현재 scope의 실제 ID만 schema에 노출한다. 임의 ID, ownership violation, DB collision은 그대로 실패한다. 자동 병합이나 문자열 기반 보정을 하지 않는다.
+`revise_memory`는 현재 턴에서 실제 recall된 graph edge만 final answer schema에 노출한다. 실행 시 기존 `ReviseMemoryScope`의 ownership/scope 검증을 그대로 적용한다.
+
+현재 final plan 실행 중 새로 만들어진 node/edge는 Framework 내부 실행 scope에 포함될 수 있지만, 모델은 final action 작성 시 아직 존재하지 않는 stable ID를 추측해서 참조할 수 없다.
+
+임의 ID, ownership violation, DB collision은 그대로 실패한다. 자동 병합이나 문자열 기반 보정을 하지 않는다.
 
 ## 13. Tool Contract
 
-모든 모델용 tool은 최소 다음을 가진다.
+모든 모델용 work tool은 최소 다음을 가진다.
 
 ```text
 name
 description
+work_kind
 JSON input schema
 execution handler
 ```
 
-모델은 structured action으로 tool을 선택하며 Framework가 사용자 문장을 보고 의미적으로 route하지 않는다.
+`work_kind`는 구조적으로 다음 중 하나다.
+- `inspection`
+- `action`
+
+Inspection tool은 `progress_keys(result)`를 반드시 제공한다. 새 structural progress key를 하나도 추가하지 못한 성공 실행 이후에는 현재 turn의 다음 model schema에서 해당 inspection tool을 제거한다.
+
+Action tool은 동일 result identity로 반복 가능 여부를 판단하지 않는다. 정상적인 반복 write/command가 의미 있을 수 있기 때문이다.
+
+Framework는 사용자 문장을 보고 tool route를 의미적으로 결정하지 않는다.
 
 ## 14. File Tool Contract
 
@@ -368,6 +397,19 @@ file_download_link
 ```
 
 Owner 계정에서는 application-level workspace confinement를 두지 않는다.
+
+기존 파일을 읽거나 수정/삭제/다운로드하는 action은 current-turn path provenance에 포함된 실제 path만 사용할 수 있다.
+
+Path provenance source:
+- 인증된 upload attachment
+- `file_tree`
+- `file_search`
+- `file_text_search`
+- `code_index`
+- `code_search`
+- 성공한 `file_create`
+
+발견된 path만 다음 round의 path enum에 노출한다. `file_create`는 새 path를 만드는 도구이므로 provenance 없이 새 path를 지정할 수 있으며 성공 후 그 path를 provenance에 추가한다. `file_delete` 성공 후에는 해당 path를 provenance에서 제거한다.
 
 ## 15. Code Tool Contract
 
@@ -386,18 +428,20 @@ Owner 계정에서는 application-level workspace confinement를 두지 않는�
 - 현재 in-memory code index의 구조 정보를 검색한다.
 - index가 없거나 요청 root가 기존 indexed root와 다르면 현재 source에서 `code_index`를 자동 실행할 수 있다.
 - 같은 root의 source 변경은 자동 감지/자동 rebuild하지 않는다. 모델이 최신 구조가 필요하면 `code_index`를 다시 호출한다.
-- 검색 결과는 실제 indexed file/symbol 구조를 반환하고, 모델은 필요하면 `file_read`로 선택한 source를 상세 조회한다.
+- 검색 결과는 실제 indexed file/symbol 구조를 반환하고 모델은 필요하면 `file_read`로 선택한 source를 상세 조회한다.
+- result file path를 inspection progress key로 사용한다.
 
-이 구조는 옛 MK4의 compact repository map 방식을 계승하되, index 파일을 디스크에 저장하거나 실패를 fallback으로 숨기지 않는다.
+이 구조는 옛 MK4의 compact repository map 방식을 계승하되 index 파일을 디스크에 저장하거나 실패를 fallback으로 숨기지 않는다.
 
 ## 16. Document / Image Contract
 
-- `document_read`: 최소 PDF/DOCX text extraction.
-- `image_analyze`: 이미지 metadata와 별도 configured Ollama vision model 분석.
+- `document_read`: PDF/DOCX만 명시적으로 지원한다.
+- `image_analyze`: 별도 configured Ollama vision model로 이미지 분석한다.
 - vision model은 일반 chat model과 분리한다.
+- 기존 파일 path provenance를 만족해야 한다.
 
 ```env
-MAI_OLLAMA_MODEL=qwen...
+MAI_OLLAMA_MODEL=...
 MAI_OLLAMA_IMAGE_MODEL=...
 ```
 
@@ -408,8 +452,8 @@ MAI_OLLAMA_IMAGE_MODEL=...
 ## 18. Authentication / Owner Contract
 
 Owner는 최소 다음 권한을 가진다.
-- unrestricted file path access at application level
-- unrestricted file CRUD at application level
+- unrestricted file path discovery at application level
+- discovered/current-turn file CRUD at application level
 - unrestricted terminal invocation at application level
 
 실제 OS 권한은 우회하지 않는다.
@@ -453,34 +497,45 @@ Tailscale 실패    -> hosting failure
 
 ## 21. Logging Contract
 
-로그는 사람이 읽기 쉽게 최소화한다. 정상 chat은 가능한 한 한 줄 summary를 사용한다.
+Lifecycle progress log는 최소 다음을 구분할 수 있어야 한다.
 
 ```text
-[MAI] chat | recall=1.2s | answer=2.3s | memory=0.8s | tools=3
+turn_initialization
+agent round N
+selected action/tool
+tool started/completed
+memory_mutation
+turn completed/failed
 ```
 
-세부 diagnostics는 API/debug data로 유지할 수 있다. 오류는 숨기지 않는다.
+사용자 message 본문, tool argument 전체, tool result 전체를 lifecycle progress log에 강제로 노출하지 않는다. 오류는 숨기지 않는다.
 
-## 22. Implementation Order
+## 22. Architecture History / Current Direction
 
-계약 merge 이후 각 단계는 `main`에서 새 branch를 만들고 독립 PR로 구현한다.
+초기 구현 순서는 다음 계층을 독립 PR로 만들었다.
 
 ```text
-1. semantic graph storage
-2. exact one-depth neighborhood recall primitive
-3. canonical user anchor + node_lookup + origin path
-4. mandatory memory discovery orchestration
-5. write_memory
-6. revise_memory
-7. memory completion contract
-8. work/tool agent loop
-9. MK4 UI + upload + Tailscale hosting
-10. file discovery/read
-11. file CRUD/download
-12. document/image
-13. terminal
-14. code_index + code_search
-15. web/current-information tools
+semantic graph
+one-depth recall
+user anchor + lookup + origin path
+mandatory memory discovery
+write/revise memory
+mandatory memory completion
+work/tool loop
+runtime/UI/file/document/terminal/code/web tools
 ```
 
-각 단계는 로컬 테스트와 실제 실행 검증 후 사용자가 수동으로 main에 merge한다.
+이후 로컬 small-model latency와 tool-loop 종료 문제를 실제 실행으로 확인한 결과, runtime lifecycle은 다음 방향으로 정리한다.
+
+```text
+single agent loop
++ agent-driven memory lookup/recall
++ final answer embedded memory plan
++ framework-only post-answer mutation execution
++ inspection structural progress gating
++ current-turn file path provenance
+```
+
+과거 mandatory discovery/completion 모듈의 존재 여부가 현재 runtime contract를 바꾸지 않는다. Runtime wiring과 `AgentLifecycle`은 본 문서의 single-agent lifecycle을 따라야 한다.
+
+각 코드 변경은 `main`에서 새 branch를 만들고 독립 PR로 구현하며, 로컬 테스트와 실제 실행 검증 후 사용자가 수동으로 main에 merge한다.
