@@ -12,11 +12,10 @@ from .model_context import use_attachment_evidence
 
 @dataclass(slots=True)
 class WorkingMemoryLifecycle:
-    """Attachment-aware wrapper around the memory-free Agent baseline.
+    """Attachment-aware wrapper around the Agent loop.
 
-    Despite the historical class name, this wrapper currently owns no graph
-    memory, scratchpad, or second model phase. It only prepares attachment
-    evidence/context and seeds paths before delegating to the Agent loop.
+    The class name is retained for compatibility, but working memory itself is
+    supplied by the Agent core extension rather than by this wrapper.
     """
 
     delegate: AgentLifecycle
@@ -61,6 +60,7 @@ class WorkingMemoryLifecycle:
                 turn_id=resolved_turn_id,
                 attachment_paths=paths,
                 discovered_paths=self._initial_discovered_paths(),
+                attachment_evidence=evidence_items,
             )
 
         return {**result, "attachment_evidence": evidence_items}
