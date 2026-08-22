@@ -2,24 +2,22 @@
 
 ## Status
 
-This document records the agreed target architecture for the next MAI runtime revision.
-It replaces the dedicated post-answer memory-model design as the intended runtime direction.
-
-The design principle is:
+This is the runtime memory contract for the current MAI redesign.
 
 > The model decides meaning; the framework enforces structure.
 
-The persistent semantic graph is both long-term memory and the agent's working memory during a turn.
-The agent may recall, create, and fix graph state between normal tool rounds, and each accepted graph mutation is committed to SQLite immediately so later rounds can observe it.
+There is one top-level Agent loop. There is no separate post-answer Memory-model loop and no scratchpad subsystem.
+
+The memory system is divided structurally into:
+
+- **Actual Graph**: durable graph state committed by completed prior turns;
+- **Working Graph**: the turn-local graph region the current Agent has explicitly recalled, plus its pending generate/fix changes.
+
+The Working Graph is discarded when the turn ends. Only its final mutation set is committed to the Actual Graph, and only after the final answer has been generated and frozen.
 
 ---
 
-## 1. Runtime shape
-
-There is one top-level Agent loop.
-There is no independent post-answer Memory loop.
-There is no dedicated memory model requirement.
-There is no request-scoped scratchpad layer.
+## 1. Turn lifecycle
 
 ```text
 User request
@@ -30,240 +28,308 @@ Agent round 1
        vector-similar node candidates
        ↓
 Agent round 2+
-  ├─ memory/recall(node_id) → add node + one-hop to ViewedGraph
-  ├─ memory generate/fix → immediate SQLite commit
-  ├─ file/web/other work tool
-  └─ answer only after graph-sync confirmation
+  ├─ memory/recall(node_id)
+  │    → selected Actual node + active one-hop
+  │    → merge into Working Graph
+  ├─ memory/generate/*
+  │    → Working Graph only
+  ├─ memory/fix/*
+  │    → Working Graph only
+  ├─ file/web/other work tools
+  └─ more recall as needed
+       ↓
+Agent produces final answer with graph_synced=true
+       ↓
+answer text is frozen inside the lifecycle
+       ↓
+Working Graph mutation set
+  → one atomic Actual Graph transaction
+       ↓
+commit succeeds
+       ↓
+frozen answer is returned to the UI
+       ↓
+Working Graph discarded
 ```
 
-Each explicit Agent round maps to exactly one structured model request.
-No hidden model retry/review/fallback request may be inserted by the model adapter.
+If the Agent fails, the Working Graph is discarded and the Actual Graph is not semantically mutated.
+If final graph commit fails, the failure remains visible and the frozen answer is not returned to the UI.
 
-Graph mutations are not deferred until after the user-facing answer.
-An accepted mutation is committed immediately and becomes available to later rounds in the same turn and to future turns.
-
-Consequently, an incorrect intermediate model judgment may remain durable if the turn later fails before the model corrects it. This is an intentional consequence of using the persistent graph as live working memory rather than a transactional post-answer store.
+Each explicit Agent round maps to exactly one structured model request. No hidden review/retry/fallback model request is inserted by the adapter.
 
 ---
 
-## 2. Mandatory vector recall and the recent-dialogue boundary
+## 2. Mandatory vector recall
 
-Recent raw conversation remains a small context window. Long-term memory is not automatically dumped into every model request.
+The first Agent action of every turn is `memory/recall(query)`.
+Before that succeeds, external tool routes and `answer` are not exposed.
 
-The first Agent round of every turn must perform `memory/recall` with a semantic query before `answer` becomes an available action. This is a framework-enforced protocol state, not a prompt-only suggestion.
-
-The query recall uses an embedding model configured through `.env` and returns several vector-similar node candidates. Candidate retrieval does not automatically inject every candidate neighborhood into model context.
-The model chooses which candidate to open.
-
-`memory/recall` therefore has two modes:
-
-1. `query`: embedding/vector-similarity candidate search;
-2. `node_id`: open one selected/known node and exactly one hop of active relationships.
-
-When information may exist outside the recent dialogue, the model must continue using memory recall before concluding that it does not remember or does not know the relevant past user context.
-The framework does not infer memory intent from string heuristics.
-
-The embedding model is runtime configuration, not a semantic hard-coded rule. The reference configuration uses:
+The query is embedded using the `.env` configured model. Reference configuration:
 
 ```text
 MAI_OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 ```
 
-Embedding failure is surfaced as a real failure. Lexical search is not used as a silent fallback for vector recall.
+Vector recall returns several similar node candidates. Candidate retrieval alone does **not** open those nodes into the Working Graph.
+
+The model chooses a candidate and calls `memory/recall(node_id)` to open it.
+Embedding failure is a real failure. There is no lexical fallback.
 
 ---
 
-## 3. Turn-scoped ViewedGraph
+## 3. Gradually expanding Working Graph
 
-Every turn owns an in-memory `ViewedGraph` representing the portion of the persistent graph the Agent has explicitly opened during that turn.
+The Working Graph starts empty.
 
-Initially the ViewedGraph is empty. Vector candidate search does not itself add neighborhoods to it.
-When the model opens a node through `memory/recall(node_id)`, that node and its active one-hop neighborhood are merged into the ViewedGraph.
+A node-id recall opens exactly:
 
-Subsequent recalls accumulate rather than replace prior results:
+- that Actual node;
+- its currently active one-hop edges;
+- the one-hop endpoint nodes.
+
+Those objects are merged into the current Working Graph rather than replacing it.
 
 ```text
-recall node A
-→ ViewedGraph = A + A one-hop
+recall A
+→ Working = A + A one-hop
 
-recall node B
-→ ViewedGraph = previous ViewedGraph ∪ B + B one-hop
+recall B
+→ Working = previous Working ∪ B + B one-hop
 ```
 
-The current ViewedGraph is returned with memory operations so later Agent rounds continue to see the graph accumulated so far.
-Memory generate/fix operations refresh affected portions so the ViewedGraph follows the graph's newly committed state rather than retaining stale copies.
+Therefore the world graph is never copied wholesale into the turn.
+The Agent progressively brings only needed regions from the Actual Graph into its current workspace.
 
-The ViewedGraph is only a turn-scoped view/index over the real persistent graph. It is not a second memory database and it is never promoted after the answer.
-At turn completion or failure, the ViewedGraph is discarded. Persistent graph mutations remain committed.
+Working generate/fix changes overlay recalled Actual objects. A later recall never silently overwrites a pending Working change with the older Actual value.
 
----
-
-## 4. Final graph-sync gate
-
-The design expects the Agent to keep the persistent graph synchronized while its understanding develops, rather than running a second post-answer memory phase.
-
-Before returning the final `answer`, the same Agent must explicitly assert that the graph state it has worked with is aligned with its latest understanding of durable information from the turn.
-If it is not aligned, the Agent must use `memory/generate/*` or `memory/fix/*` in another normal Agent round before answering.
-
-This is a thin termination gate inside the Agent loop. It does not create a second model role or a hidden review call.
-The framework does not itself semantically compare the answer text with graph contents.
+New Working objects receive framework-owned negative temporary IDs. They may be referenced by later Agent rounds in the same turn. At final commit they are replaced by real SQLite IDs.
 
 ---
 
-## 5. Graph model
+## 4. Actual Graph versus Working evidence
 
-### 5.1 Node
+The Actual Graph is historical evidence from completed turns.
+The Working Graph is the current Agent's pending interpretation and must never be represented as historical evidence.
 
-A node represents one semantic entity or concept.
-
-Model-facing shape should expose at least:
+For an opened edge, history inspection distinguishes explicitly between:
 
 ```text
-Node
-- node_id
-- name / semantic label
-- kind
-- source_ids[]
+actual_current
+working_current
+past_versions
 ```
 
-Supported node kinds include ordinary semantic concepts and composite concepts.
+This prevents a model from changing an edge in the current turn and then treating that change as proof of what it remembered before the turn.
 
-A composite node represents a model-declared concept whose meaning is constituted by multiple existing nodes.
-Composite membership is framework-owned structural data, not an ordinary model-authored relation string.
-Composite nodes may participate in normal semantic edges like any other node.
-Structural self-membership and composite membership cycles are invalid.
-
-### 5.2 Edge
-
-An edge is a directed current relationship state between exactly two nodes.
-Direction is represented by the endpoints themselves; a separate direction flag is unnecessary.
+A pending Working object is exposed with:
 
 ```text
-Edge
+pending: true
+committed_at: null
+```
+
+Committed Actual objects are exposed with graph-record timestamps.
+
+---
+
+## 5. Graph timestamps
+
+Nodes expose graph record timestamps such as:
+
+```text
+graph_created_at
+graph_updated_at
+```
+
+Committed edge versions expose:
+
+```text
+committed_turn_id
+committed_at
+```
+
+These timestamps mean **when MAI's graph record was created or changed**.
+They do not mean the real-world time that the remembered fact was true.
+
+For example, learning today that something happened in 2023 produces a graph update today. The framework must not infer the fact's real-world time from the graph update timestamp.
+Any semantic temporal meaning such as "in 2023", "previously", or "currently" remains model-authored semantic content rather than a framework string heuristic.
+
+Graph timestamps nevertheless give the model structural evidence that a state was only recently recorded and therefore should not automatically be treated as an old remembered state.
+
+---
+
+## 6. Node model
+
+A node represents a semantic entity or concept.
+
+Model-facing node data includes at least:
+
+```text
+node_id
+name
+kind
+source_ids[]
+member_node_ids[]
+pending
+graph_created_at
+graph_updated_at
+```
+
+Kinds:
+
+- `concept`
+- `composite`
+
+Composite membership is structural graph data, not a special relation string. Self-membership and membership cycles are invalid.
+
+### Reuse first
+
+Before each new node generation, the Agent must perform a fresh relevant vector query recall.
+The framework enforces the lookup step but does not decide semantic equivalence with string matching, aliases, or hard-coded dictionaries.
+
+The model decides whether an existing candidate represents the intended concept.
+Existing nodes are reused/fixed before new ones are generated.
+
+Maximum new nodes per turn: **10**.
+There is no permanent node-degree cap.
+
+### Pending node IDs
+
+New nodes exist only in the Working Graph until final commit and use negative temporary IDs.
+They may participate in Working edges/composites during the same turn.
+
+---
+
+## 7. Directed edge model
+
+A logical edge is identified by its ordered endpoints:
+
+```text
+(user_id, start_node_id, end_node_id)
+```
+
+A → B and B → A are separate logical edges.
+Parallel A → B logical edges are not allowed merely because relation wording differs.
+
+The logical edge stores stable endpoints. Its semantic state is stored in committed versions.
+
+```text
+Logical Edge
 - edge_id
 - start_node_id
 - end_node_id
+
+Committed Edge Version
+- version_id
 - relation
 - weight
 - personal_relevance
+- committed_turn_id
+- committed_at
 - source_ids[]
 ```
 
-For one user graph, only one active/current edge may exist for a given ordered endpoint pair:
+---
+
+## 8. Edge versions
+
+The Actual Graph retains at most the **three most recent committed turn states** for one logical edge.
+
+The history is turn-based, not round-based.
+Repeated fixes to the same Working edge within one Agent turn do not create multiple committed versions.
+Only the final Working state becomes one new version when the turn commits.
+
+Example:
 
 ```text
-(start_node_id, end_node_id)
+turn 10 → developer
+turn 25 → web developer
+turn 48 → backend developer  (current)
 ```
 
-Therefore A -> B and B -> A are distinct and may both exist, but multiple parallel A -> B semantic edges are not created merely because relation wording differs.
+During turn 49 the model may change the Working relation many times, but none of those intermediate states are Actual history.
+At successful final commit only the final turn-49 state is appended.
+After pruning, only the newest three committed turn states remain model-facing history.
 
-The relation field is the current integrated description of the relationship between the two nodes. New information about the same directed pair should normally fix the existing edge rather than create another edge.
-
----
-
-## 6. Reuse-first memory policy
-
-Node and edge reuse/fix are preferred over generation.
-
-### 6.1 Node generation
-
-Before a new semantic node may be generated, the agent must perform a relevant `memory/recall(query)` during the current turn so existing vector-similar candidates can be considered.
-
-The framework enforces the prior-recall requirement.
-The framework does not decide semantic equivalence using string containment, aliases, hard-coded dictionaries, or other text heuristics.
-
-The model decides whether a recalled candidate is semantically the same concept.
-If it is the same concept, the existing `node_id` must be reused.
-If no candidate represents the intended meaning, a new node may be generated.
-
-New-node budget:
-
-- at most 10 newly created nodes per turn;
-- composite nodes consume the same new-node budget;
-- recalled/existing nodes do not consume the budget;
-- exceeding the budget is a visible contract error, not a silent success or fallback.
-
-### 6.2 Duplicate repair
-
-Because semantic duplicate prevention cannot be perfect, `memory/fix/node` supports merging a duplicate node into a selected canonical node.
-
-A merge moves or reconciles structural references, source links, semantic edges, and composite membership onto the canonical node while preserving graph ownership constraints.
-If a merge would require a semantic choice between conflicting active edges, the framework fails visibly instead of silently choosing one; the Agent must fix/disconnect the conflict first.
+Version-specific source links are preserved so evidence for one state is not silently reassigned to another state.
 
 ---
 
-## 7. Edge generation and fixing
+## 9. Edge generation and fixing
 
-### 7.1 Generate edge
+### Generate
 
-`memory/generate/edge` creates a directed edge only when the ordered pair does not already have the current edge.
+`memory/generate/edge` creates a pending directed edge only when the ordered pair has no logical edge.
 
-If the pair already exists, generation is rejected visibly and the existing edge identifier is returned so the model can use `memory/fix/edge`.
-There is no fallback that silently converts generate into fix.
+If an Actual or Working logical edge already exists for the pair, generation is rejected visibly and its edge ID is returned so the model can use `memory/fix/edge`.
+There is no silent generate-to-fix fallback.
 
-### 7.2 Fix edge
+### Fix
 
-`memory/fix/edge` is the normal path for changing an existing relationship.
-It can update the relation state, source associations, personal relevance, and weight.
+`memory/fix/edge` changes the Working state only.
+It may:
 
-Weight changes are expressed as a delta against the existing value rather than requiring the model to replace an unknown current value blindly.
-The framework applies the delta and clamps the resulting weight to the structural range 0.0 through 1.0.
+- change relation;
+- apply `weight_delta`;
+- promote personal relevance;
+- attach current evidence;
+- disconnect the relationship.
 
-Disconnecting a relationship is performed through `memory/fix/edge` by making its weight `0`.
-A zero-weight edge is retained for provenance/debugging but is not treated as an active semantic connection by ordinary one-hop recall.
+`weight_delta` is applied to the Working edge's current value and structurally clamped to 0.0–1.0.
 
-The abandoned design of stacking up to three historical edge versions is not used.
+### Disconnect
 
-### 7.3 Edge mutation budget
-
-There is no permanent degree limit on a node.
-A node may accumulate arbitrarily many relationships over its lifetime.
-
-For one turn, each node may participate in at most 10 semantic edge mutations.
-An edge mutation counts against both participating nodes.
-This is a per-turn execution budget, not a permanent graph-capacity limit.
-
----
-
-## 8. Weight and personal relevance
-
-`weight` and `personal_relevance` are distinct concepts.
-
-`weight` represents the current strength of the directed relationship itself.
-It may be strengthened or weakened through `memory/fix/edge` using a delta.
-A weight of zero represents a disconnected/inactive semantic relationship.
-
-`personal_relevance` represents how directly the memory concerns the user, independently of source reliability and independently of edge strength.
-
-The Agent chooses one structural classification and the framework maps it to:
+There is no semantic hard delete operation.
+Disconnect is represented by the final committed edge version having:
 
 ```text
-user_centered      -> 1.0
-general_knowledge  -> 0.5
+weight = 0
 ```
 
-The framework must not determine this classification from keywords or other semantic string rules.
-Repeated evidence may promote relevance from 0.5 to 1.0; a lower-relevance observation does not automatically downgrade an already user-centered relationship.
+A zero-weight logical edge remains available for provenance/history and future repair, but ordinary active one-hop recall excludes it.
+
+### Mutation budget
+
+Each node may participate in at most 10 edge mutations during one turn.
+The budget is per turn, not a permanent degree limit.
 
 ---
 
-## 9. Sources and provenance
+## 10. Personal relevance
 
-The graph keeps current semantic state, while provenance keeps supporting evidence.
+`weight` and `personal_relevance` are separate.
 
-Model-facing nodes and edges expose source references as arrays:
+Framework mapping:
 
 ```text
-source_ids: [12, 18, 44]
+user_centered      → 1.0
+general_knowledge  → 0.5
 ```
 
-SQLite uses relational source/link tables rather than opaque JSON arrays. Both nodes and edges have independent provenance because node existence and a relationship claim are different assertions.
-
-Historical semantic edge versions are not required for normal operation. Source/provenance history remains available for later inspection and repair.
+The model chooses the classification. The framework does not infer it from text patterns.
+A lower-relevance observation does not automatically demote an already user-centered edge.
 
 ---
 
-## 10. Memory tool namespace
+## 11. Sources and provenance
+
+Evidence units are stored durably and referenced by numeric `source_id`.
+
+Nodes link to sources.
+Edge evidence links to a **specific committed edge version**, not merely to the logical edge.
+
+This allows MAI to distinguish:
+
+```text
+version A was supported by source 12
+version B was supported by source 81
+```
+
+Source records may be created while the turn is running, but pending semantic graph state is not committed until final graph commit. An aborted turn may leave unlinked evidence records; it does not leave durable semantic graph mutations.
+
+---
+
+## 12. Memory tools
 
 ```text
 memory/
@@ -276,133 +342,105 @@ memory/
    └─ edge
 ```
 
-`memory/generate` and `memory/fix` are namespace/menu nodes rather than executable mutations.
+### `memory/recall`
 
-### memory/recall
+Modes:
 
-- `query`: vector-similar candidate nodes;
-- `node_id`: selected node + exactly one active hop;
-- node-id recall merges its neighborhood into the current ViewedGraph;
-- may be reused at any Agent round;
-- excludes zero-weight semantic edges from ordinary active recall.
+- `query`: vector-similar Actual node candidates;
+- `node_id`: open Actual node + active one-hop into Working Graph;
+- `edge_id`: inspect Working state separately from committed Actual current/history.
 
-### memory/generate/node
+Repeated node recalls expand the same Working Graph.
 
-- generate a new semantic or composite node;
-- requires a query recall first;
-- new-node budget applies;
-- semantic duplicate candidates must be reused when the model judges them equivalent.
+### `memory/generate/node`
 
-### memory/generate/edge
+Creates a pending semantic/composite node after a fresh query recall.
 
-- create one directed relationship state for an ordered node pair;
-- refuses an already-existing ordered pair and points the model to the existing edge.
+### `memory/generate/edge`
 
-### memory/fix/node
+Creates a pending directed edge for a previously unused ordered pair.
 
-- update an existing node;
-- merge a duplicate node into a canonical node;
-- update composite membership where structurally valid.
+### `memory/fix/node`
 
-### memory/fix/edge
+Stages node rename, composite-member repair, or duplicate merge inside the Working Graph.
 
-- update current relation state;
-- apply `weight_delta`;
-- update/promote personal relevance;
-- add source support;
-- disconnect by setting resulting weight to zero.
+### `memory/fix/edge`
+
+Stages relation/weight/relevance/source changes or disconnect.
 
 ---
 
-## 11. Tool discovery hierarchy
+## 13. Final graph-sync gate and answer freeze
 
-Large external work-tool schemas are not all exposed at the beginning of every Agent round.
-The initial external catalog is a small namespace-level view.
-
-Conceptually:
+The same Agent loop decides when its Working Graph matches its latest understanding.
+The final action must contain:
 
 ```text
-memory
-file
-web
-answer (after mandatory query recall)
+graph_synced = true
 ```
 
-Memory remains a core Agent capability. External work tools use lazy hierarchical discovery.
+There is no additional model review call.
 
-### File namespace
+`graph_synced=true` means:
 
-Representative protocol:
+> The current Working Graph is the Agent's intended final durable memory state for this turn.
+
+The resulting answer text is frozen before graph persistence begins.
+The framework then commits the Working Graph mutation set in one transaction.
+Only after that succeeds is the frozen answer returned to the UI.
+
+The framework does not semantically compare answer text against graph contents.
+
+---
+
+## 14. External tool discovery
+
+Memory is a core Agent capability.
+Large external tool schemas are exposed lazily through exact structural routes.
+
+Examples:
 
 ```text
-/file
-/file/tree
 /file/tree/manual
 /file/tree/use
+/file/read/use
+/web/search/use
+/web/market/use
+/web/current/use
 ```
 
-A model that already understands a tool during the current Agent loop may address the exact `/.../use` route directly without reopening the manual.
-Paths are parsed as registered structural route segments. Unknown paths return a visible structured error and valid child choices; the framework does not guess or autocorrect them.
-
-### Web namespace
-
-```text
-/web/search   - ordinary web search
-/web/market   - market/equity/index/FX data
-/web/current  - current/latest information
-```
-
-Human-facing descriptions may be localized, but routing identifiers are stable structural identifiers.
+Invalid paths fail visibly. No fuzzy route correction or substring routing is used.
+External namespaces become available after the mandatory first vector recall.
 
 ---
 
-## 12. Immediate persistence
-
-Every accepted graph mutation commits to the real database immediately.
-
-```text
-Agent round N
-  -> memory/generate or memory/fix
-  -> SQLite commit
-
-Agent round N+1
-  -> memory/recall or current ViewedGraph
-  -> observes that mutation
-```
-
-The same mutation is recallable in future turns.
-There is no temporary scratchpad graph and no post-answer promotion step.
-
----
-
-## 13. Failure rules
+## 15. Failure rules
 
 Failures remain visible.
 
-- no lexical fallback when embedding recall fails;
-- no string-based semantic fallbacks;
-- no guessed tool route on an invalid path;
+- no lexical fallback for failed embedding recall;
+- no text heuristics for semantic identity/routing;
+- no guessed tool route;
 - no silent generate-to-fix conversion;
-- no silent duplicate-node creation after missing the required recall;
-- no hidden model re-request in the adapter;
-- structural scope/ownership/self-reference/cycle/budget violations raise explicit contract errors;
-- tool and OS failures are surfaced as actual failures.
+- no hidden model re-request;
+- no permanent semantic DB write during Agent graph work;
+- commit conflicts roll back the final graph transaction;
+- a failed final commit prevents the frozen answer from reaching the UI;
+- self-reference, ownership, cycle, duplicate-pair, and budget violations remain explicit errors.
 
-The framework owns structural validity. The model owns semantic decisions.
+The model owns meaning. The framework owns structural validity and transaction boundaries.
 
 ---
 
-## 14. Simplifications from the previous runtime
+## 16. Retired architecture
 
-The runtime removes or retires responsibilities that existed only for the dedicated post-answer memory phase:
+The following are retired:
 
-- dedicated Qwen memory model orchestration;
-- `GraphCommitPhase` as a second top-level model loop;
+- dedicated Qwen memory-model orchestration;
+- post-answer `GraphCommitPhase` model loop;
 - `continue_memory` protocol;
-- post-answer memory mutation phase;
-- request-scoped scratchpad tools and scratchpad registry plumbing;
-- scratchpad-to-memory selection as an independent mechanism.
+- scratchpad memory tools/registry;
+- direct semantic mutation of the Actual Graph on every Agent round;
+- using current-turn edits as historical memory evidence.
 
-Useful source/provenance infrastructure remains but attaches directly to Agent-observed evidence and graph mutations.
-
-The final runtime objective is one explicit Agent loop in which vector recall, turn-scoped ViewedGraph, persistent graph mutation, external tools, and final answering are all first-class actions.
+The current design is one Agent loop operating on a gradually expanded Working Graph, followed by an answer freeze and one atomic promotion of final graph changes into the Actual Graph.
