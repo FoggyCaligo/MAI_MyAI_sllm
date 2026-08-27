@@ -1,1 +1,1 @@
-"""MAI sLLM runtime package."""
+"""MAI MyAI sLLM runtime package."""
