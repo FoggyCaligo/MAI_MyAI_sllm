@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from pydantic import BaseModel, ConfigDict
+
+from mai.llm.models import NativeToolCall
+from mai.tools.registry import (
+    DuplicateToolError,
+    ToolArgumentsError,
+    ToolRegistry,
+    UnknownToolError,
+)
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+class AddInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    left: int
+    right: int
+
+
+def test_registry_exports_ollama_native_function_schema() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        name="add_numbers",
+        description="Add two integers.",
+        input_model=AddInput,
+        handler=lambda left, right: left + right,
+        category="test",
+    )
+
+    schemas = registry.native_schemas()
+
+    assert len(schemas) == 1
+    function = schemas[0]["function"]
+    assert schemas[0]["type"] == "function"
+    assert function["name"] == "add_numbers"
+    assert function["description"] == "Add two integers."
+    assert function["parameters"]["type"] == "object"
+    assert set(function["parameters"]["required"]) == {"left", "right"}
+
+
+def test_registry_invokes_exact_native_tool_call() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        name="add_numbers",
+        description="Add two integers.",
+        input_model=AddInput,
+        handler=lambda left, right: {"sum": left + right},
+    )
+
+    result = run(registry.invoke(NativeToolCall(
+        name="add_numbers",
+        arguments={"left": 2, "right": 5},
+    )))
+
+    assert result == {"sum": 7}
+
+
+def test_registry_supports_async_handlers() -> None:
+    registry = ToolRegistry()
+
+    async def add(left: int, right: int):
+        await asyncio.sleep(0)
+        return left + right
+
+    registry.add(
+        name="add_numbers",
+        description="Add two integers.",
+        input_model=AddInput,
+        handler=add,
+    )
+
+    assert run(registry.invoke(NativeToolCall(
+        name="add_numbers",
+        arguments={"left": 4, "right": 6},
+    ))) == 10
+
+
+def test_unknown_tool_fails_visibly() -> None:
+    registry = ToolRegistry()
+
+    with pytest.raises(UnknownToolError):
+        run(registry.invoke(NativeToolCall(name="missing", arguments={})))
+
+
+def test_invalid_arguments_fail_instead_of_being_repaired() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        name="add_numbers",
+        description="Add two integers.",
+        input_model=AddInput,
+        handler=lambda left, right: left + right,
+    )
+
+    with pytest.raises(ToolArgumentsError):
+        run(registry.invoke(NativeToolCall(
+            name="add_numbers",
+            arguments={"left": 2},
+        )))
+
+    with pytest.raises(ToolArgumentsError):
+        run(registry.invoke(NativeToolCall(
+            name="add_numbers",
+            arguments={"left": 2, "right": 3, "unexpected": True},
+        )))
+
+
+def test_duplicate_registration_is_rejected() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        name="add_numbers",
+        description="Add two integers.",
+        input_model=AddInput,
+        handler=lambda left, right: left + right,
+    )
+
+    with pytest.raises(DuplicateToolError):
+        registry.add(
+            name="add_numbers",
+            description="Another implementation.",
+            input_model=AddInput,
+            handler=lambda left, right: left - right,
+        )
+
+
+def test_timeout_is_a_real_timeout_failure() -> None:
+    registry = ToolRegistry()
+
+    async def slow(left: int, right: int):
+        await asyncio.sleep(0.05)
+        return left + right
+
+    registry.add(
+        name="slow_add",
+        description="Slowly add two integers.",
+        input_model=AddInput,
+        handler=slow,
+        timeout_seconds=0.001,
+    )
+
+    with pytest.raises(TimeoutError):
+        run(registry.invoke(NativeToolCall(
+            name="slow_add",
+            arguments={"left": 1, "right": 2},
+        )))
+
+
+def test_handler_exception_is_not_hidden() -> None:
+    registry = ToolRegistry()
+
+    def broken(left: int, right: int):
+        raise PermissionError("denied")
+
+    registry.add(
+        name="broken",
+        description="Always fails.",
+        input_model=AddInput,
+        handler=broken,
+    )
+
+    with pytest.raises(PermissionError, match="denied"):
+        run(registry.invoke(NativeToolCall(
+            name="broken",
+            arguments={"left": 1, "right": 2},
+        )))
