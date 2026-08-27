@@ -1,9 +1,8 @@
 """High-level AgentRuntime lifecycle orchestration.
 
-The current runtime is intentionally small: it accepts an already-built message
-context and delegates the native multi-round protocol to AgentLoop. Memory turn
-initialization/finalization will be connected later without changing this model ↔
-tool execution contract.
+The current runtime accepts an already-built message context and delegates the
+native multi-round protocol to AgentLoop. Memory lifecycle integration comes
+later without changing this model ↔ tool execution contract.
 """
 from __future__ import annotations
 
@@ -12,6 +11,7 @@ from typing import Any, Mapping, Sequence
 from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
+from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult
 
 
@@ -23,9 +23,14 @@ class AgentRuntime:
         adapter: OllamaAdapter,
         registry: ToolRegistry,
         *,
-        max_rounds: int = 30,
+        guard_config: GuardConfig | None = None,
+        max_rounds: int | None = None,
     ) -> None:
-        self.loop = AgentLoop(adapter, registry, max_rounds=max_rounds)
+        if guard_config is not None and max_rounds is not None:
+            raise ValueError("pass guard_config or max_rounds, not both")
+        if max_rounds is not None:
+            guard_config = GuardConfig(max_rounds=max_rounds)
+        self.loop = AgentLoop(adapter, registry, guard_config=guard_config)
 
     async def run(
         self,
