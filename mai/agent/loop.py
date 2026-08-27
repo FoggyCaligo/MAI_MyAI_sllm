@@ -8,14 +8,11 @@ from typing import Any, Mapping, Sequence
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
+from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
 
 
 class AgentRuntimeError(RuntimeError):
     """Base class for Agent Runtime failures."""
-
-
-class AgentLoopExhausted(AgentRuntimeError):
-    """The model kept requesting work beyond the configured structural limit."""
 
 
 class ToolResultSerializationError(AgentRuntimeError):
@@ -46,25 +43,18 @@ class AgentRunResult:
 
 
 class AgentLoop:
-    """Run Ollama native tool calls until the model returns a final answer.
-
-    This class owns only the basic multi-round protocol. More advanced progress
-    guards (identical-call detection, no-progress detection, cancellation policy)
-    belong to the dedicated guard layer implemented after this minimal loop.
-    """
+    """Run Ollama native tool calls until the model returns a final answer."""
 
     def __init__(
         self,
         adapter: OllamaAdapter,
         registry: ToolRegistry,
         *,
-        max_rounds: int = 30,
+        guard_config: GuardConfig | None = None,
     ) -> None:
-        if max_rounds <= 0:
-            raise ValueError("max_rounds must be positive")
         self.adapter = adapter
         self.registry = registry
-        self.max_rounds = max_rounds
+        self.guard_config = guard_config or GuardConfig()
 
     async def run(
         self,
@@ -76,8 +66,11 @@ class AgentLoop:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
         tools = self.registry.native_schemas()
+        guard = AgentGuard(self.guard_config)
+        round_number = 1
 
-        for round_number in range(1, self.max_rounds + 1):
+        while True:
+            guard.before_model_round(round_number)
             turn = await self.adapter.chat(ChatRequest(
                 messages=history,
                 tools=tools,
@@ -96,12 +89,9 @@ class AgentLoop:
                     final_turn=turn,
                 )
 
-            if round_number == self.max_rounds:
-                raise AgentLoopExhausted(
-                    f"agent reached max_rounds={self.max_rounds} while the model still requested tools"
-                )
-
+            round_observations: list[ExecutionObservation] = []
             for call in turn.tool_calls:
+                call_fp = guard.before_tool_call(call.name, call.arguments)
                 execution = await self._execute_tool(call)
                 executions.append(execution)
                 history.append({
@@ -109,8 +99,17 @@ class AgentLoop:
                     "tool_name": call.name,
                     "content": execution.content,
                 })
+                observation = ExecutionObservation(
+                    call_fingerprint=call_fp,
+                    ok=execution.ok,
+                    content_fingerprint=content_fingerprint(execution.content),
+                    error_type=execution.error_type,
+                )
+                guard.after_tool_execution(observation)
+                round_observations.append(observation)
 
-        raise AssertionError("unreachable agent loop state")
+            guard.after_tool_round(round_observations)
+            round_number += 1
 
     async def _execute_tool(self, call: NativeToolCall) -> ToolExecution:
         try:
@@ -140,12 +139,7 @@ class AgentLoop:
 
 
 def _serialize_tool_content(value: Any) -> str:
-    """Serialize a tool result to Ollama's string `role=tool` content field.
-
-    Strings are passed through unchanged. JSON-compatible structured values are
-    encoded as JSON. Unsupported values fail explicitly rather than falling back
-    to repr/string heuristics.
-    """
+    """Serialize a tool result to Ollama's string `role=tool` content field."""
 
     if isinstance(value, str):
         return value
