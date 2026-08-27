@@ -1,5 +1,16 @@
 """Native tool implementations and registry."""
 
+from .filesystem import (
+    register_filesystem_tools,
+    file_list,
+    file_search,
+    file_read,
+    file_write,
+    file_create,
+    file_delete,
+    file_move,
+    file_copy,
+)
 from .registry import (
     DuplicateToolError,
     EmptyToolInput,
@@ -9,6 +20,7 @@ from .registry import (
     ToolRegistryError,
     UnknownToolError,
 )
+from .terminal import register_terminal_tools, terminal_run
 
 __all__ = [
     "DuplicateToolError",
@@ -18,4 +30,15 @@ __all__ = [
     "ToolRegistry",
     "ToolRegistryError",
     "UnknownToolError",
+    "file_list",
+    "file_search",
+    "file_read",
+    "file_write",
+    "file_create",
+    "file_delete",
+    "file_move",
+    "file_copy",
+    "register_filesystem_tools",
+    "terminal_run",
+    "register_terminal_tools",
 ]
