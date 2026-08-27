@@ -1,11 +1,10 @@
-.env
 __pycache__/
-.pytest_cache/
-*.pyc
-
-# Runtime state must stay local.
+*.py[cod]
+.venv/
+.env
 data/
-.mai_uploads/
+*.sqlite3
 *.db
-*.db-shm
-*.db-wal
+.pytest_cache/
+.coverage
+htmlcov/
