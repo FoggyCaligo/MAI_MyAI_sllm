@@ -1,4 +1,4 @@
-"""Native memory tools bound to one turn's Working Graph."""
+"""Native memory tools bound to one user's current Working Graph."""
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,18 +17,21 @@ def register_memory_tools(
     registry: ToolRegistry,
     memory: MemoryRuntime,
     working: WorkingGraph,
+    *,
+    user_id: str,
 ) -> None:
-    """Register deliberate one-hop recall for the current agent turn."""
+    """Register deliberate one-hop recall for the current account/agent turn."""
 
     def memory_search(node_id: int) -> dict[str, object]:
-        return memory.memory_search(working, node_id)
+        return memory.memory_search(working, user_id=user_id, node_id=node_id)
 
     registry.add(
         name="memory_search",
         description=(
-            "Expand one memory node by exactly one hop in the permanent graph and merge "
-            "the returned nodes, directed edges, relation history, and evidence references "
-            "into the current Working Graph. Call again on another node to recall farther."
+            "Expand one memory node by exactly one hop in permanent memory, merge the "
+            "typed edges and directly addressable fact/utterance evidence into the current "
+            "Working Graph, and preserve the shortest available path back to this user's anchor. "
+            "Call again on another node to recall farther."
         ),
         input_model=MemorySearchInput,
         handler=memory_search,

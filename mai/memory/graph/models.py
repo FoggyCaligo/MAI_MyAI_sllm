@@ -3,12 +3,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
 class MemoryNode:
     id: int
+    identity_key: str
+    node_type: str
     canonical_text: str
+    payload: dict[str, Any]
     occurrence_count: int
     created_at: str
     last_seen_at: str
@@ -23,20 +27,13 @@ class Evidence:
 
 
 @dataclass(frozen=True, slots=True)
-class RelationObservation:
-    id: int
-    edge_id: int
-    detail: str
-    evidence_id: int
-    observed_at: str
-
-
-@dataclass(frozen=True, slots=True)
 class MemoryEdge:
     id: int
     from_node_id: int
     to_node_id: int
-    observations: tuple[RelationObservation, ...] = ()
+    relation: str
+    provenance: str
+    created_at: str
 
 
 @dataclass(frozen=True, slots=True)
