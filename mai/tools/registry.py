@@ -83,10 +83,10 @@ class ToolDefinition:
         }
 
     def validate_arguments(self, arguments: Mapping[str, Any]) -> BaseModel:
-        """Validate one model-produced argument object without repairing it."""
+        """Validate one model-produced argument object without coercive repair."""
 
         try:
-            return self.input_model.model_validate(dict(arguments))
+            return self.input_model.model_validate(dict(arguments), strict=True)
         except ValidationError as exc:
             raise ToolArgumentsError(
                 f"invalid arguments for native tool '{self.name}'"
@@ -96,18 +96,18 @@ class ToolDefinition:
         """Validate and execute this definition's handler.
 
         Handler exceptions are intentionally not converted into success-shaped
-        fallback values. Async and sync handlers are both supported. A timeout,
-        when configured, is enforced structurally by the registry.
+        fallback values. Async and sync handlers are both supported. Sync
+        handlers run in a worker thread so a configured timeout can actually
+        interrupt the await path instead of blocking the event loop.
         """
 
         validated = self.validate_arguments(arguments)
         kwargs = validated.model_dump()
 
         async def execute() -> Any:
-            result = self.handler(**kwargs)
-            if inspect.isawaitable(result):
-                return await result
-            return result
+            if inspect.iscoroutinefunction(self.handler):
+                return await self.handler(**kwargs)
+            return await asyncio.to_thread(self.handler, **kwargs)
 
         if self.timeout_seconds is None:
             return await execute()
