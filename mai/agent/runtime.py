@@ -1,9 +1,4 @@
-"""High-level AgentRuntime lifecycle orchestration.
-
-The current runtime accepts an already-built message context and delegates the
-native multi-round protocol to AgentLoop. Memory lifecycle integration comes
-later without changing this model ↔ tool execution contract.
-"""
+"""High-level AgentRuntime lifecycle orchestration."""
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
@@ -13,11 +8,10 @@ from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult
+from .requirements import FrozenToolRequirements
 
 
 class AgentRuntime:
-    """Public entry point for one MAI Agent run."""
-
     def __init__(
         self,
         adapter: OllamaAdapter,
@@ -38,8 +32,9 @@ class AgentRuntime:
         *,
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
+        requirements: FrozenToolRequirements | None = None,
     ) -> AgentRunResult:
-        return await self.loop.run(messages, think=think, options=options)
+        return await self.loop.run(messages, think=think, options=options, requirements=requirements)
 
     async def run_user_message(
         self,
@@ -48,9 +43,10 @@ class AgentRuntime:
         prior_messages: Sequence[Mapping[str, Any]] = (),
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
+        requirements: FrozenToolRequirements | None = None,
     ) -> AgentRunResult:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
         messages: list[Message] = [dict(message) for message in prior_messages]
         messages.append({"role": "user", "content": content})
-        return await self.run(messages, think=think, options=options)
+        return await self.run(messages, think=think, options=options, requirements=requirements)

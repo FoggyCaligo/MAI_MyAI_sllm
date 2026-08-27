@@ -9,6 +9,7 @@ from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkS
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
+from .requirements import FrozenToolRequirements, UnsatisfiedToolRequirements
 
 
 class AgentRuntimeError(RuntimeError):
@@ -21,8 +22,6 @@ class ToolResultSerializationError(AgentRuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ToolExecution:
-    """One native tool-call execution observed during an Agent run."""
-
     name: str
     arguments: dict[str, Any]
     ok: bool
@@ -32,8 +31,6 @@ class ToolExecution:
 
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
-    """Completed Agent run with the final model turn and accumulated history."""
-
     content: str
     thinking: str
     messages: tuple[Message, ...]
@@ -43,15 +40,7 @@ class AgentRunResult:
 
 
 class AgentLoop:
-    """Run Ollama native tool calls until the model returns a final answer."""
-
-    def __init__(
-        self,
-        adapter: OllamaAdapter,
-        registry: ToolRegistry,
-        *,
-        guard_config: GuardConfig | None = None,
-    ) -> None:
+    def __init__(self, adapter: OllamaAdapter, registry: ToolRegistry, *, guard_config: GuardConfig | None = None) -> None:
         self.adapter = adapter
         self.registry = registry
         self.guard_config = guard_config or GuardConfig()
@@ -62,24 +51,26 @@ class AgentLoop:
         *,
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
+        requirements: FrozenToolRequirements | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
+        successful_tools: set[str] = set()
         tools = self.registry.native_schemas()
         guard = AgentGuard(self.guard_config)
         round_number = 1
 
         while True:
             guard.before_model_round(round_number)
-            turn = await self.adapter.chat(ChatRequest(
-                messages=history,
-                tools=tools,
-                think=think,
-                options=options,
-            ))
+            turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
             history.append(dict(turn.assistant_message))
 
             if not turn.tool_calls:
+                missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(successful_tools)
+                if missing:
+                    raise UnsatisfiedToolRequirements(
+                        "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
+                    )
                 return AgentRunResult(
                     content=turn.content,
                     thinking=turn.thinking,
@@ -95,11 +86,9 @@ class AgentLoop:
                 call_fp = guard.before_tool_call(call.name, call.arguments)
                 execution = await self._execute_tool(call)
                 executions.append(execution)
-                history.append({
-                    "role": "tool",
-                    "tool_name": call.name,
-                    "content": execution.content,
-                })
+                if execution.ok:
+                    successful_tools.add(execution.name)
+                history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
                 observation = ExecutionObservation(
                     call_fingerprint=call_fp,
                     ok=execution.ok,
@@ -116,32 +105,12 @@ class AgentLoop:
         try:
             value = await self.registry.invoke(call)
         except Exception as exc:
-            payload = {
-                "ok": False,
-                "error_type": type(exc).__name__,
-                "message": str(exc),
-            }
-            content = _serialize_tool_content(payload)
-            return ToolExecution(
-                name=call.name,
-                arguments=dict(call.arguments),
-                ok=False,
-                content=content,
-                error_type=type(exc).__name__,
-            )
-
-        content = _serialize_tool_content(value)
-        return ToolExecution(
-            name=call.name,
-            arguments=dict(call.arguments),
-            ok=True,
-            content=content,
-        )
+            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+            return ToolExecution(call.name, dict(call.arguments), False, _serialize_tool_content(payload), type(exc).__name__)
+        return ToolExecution(call.name, dict(call.arguments), True, _serialize_tool_content(value))
 
 
 def _serialize_tool_content(value: Any) -> str:
-    """Serialize a tool result to Ollama's string `role=tool` content field."""
-
     if isinstance(value, str):
         return value
     try:

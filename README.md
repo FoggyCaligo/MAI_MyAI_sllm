@@ -1,101 +1,103 @@
 # MAI MyAI sLLM
 
-MAI MyAI sLLM은 **그래프 기반 장기기억을 소형 로컬 언어모델(sLLM)에 부여하고, 그 기억을 로컬 PC 도구 사용과 연결하는 개인 에이전트 런타임**이다. 과거 대화를 통째로 쌓는 대신 사용자·프로젝트·사실·선호·정정·출처를 노드와 관계로 축적하고, 현재 대화에서 활성화된 개념 주변의 작은 서브그래프만 모델에 다시 보여주는 것을 핵심 아이디어로 삼는다. 반복 개념을 하나의 노드로 공유해 장기적인 중복을 줄일 가능성이 있고, 특정 개념이 어떤 발화·사실·출처·정정 관계를 통해 형성됐는지를 사람이 읽을 수 있는 구조로 남길 수 있다는 장점이 있다. 반면 그래프 자체가 사고까지 맡으면 응답 파이프라인과 유지보수 비용이 커질 수 있으므로, MACHI MK4에서 정리한 방향처럼 **그래프는 장기기억과 회수에 집중하고 실제 계획·도구 선택·응답 생성은 LLM이 담당**한다. 한 턴이 시작되면 사용자 발화를 저장하고 현재 입력과 이전 활성 영역으로 관련 기억을 자동 recall하여 첫 모델 context에 포함하고, 부족할 때만 모델이 memory tool로 더 탐색하며, 최종 응답 뒤에는 필요한 장기 정보만 그래프에 반영하는 구조를 목표로 한다. 모델과 도구 사이의 통신은 자체 JSON 규약 대신 Ollama native `tools` / `tool_calls`를 사용한다. 세부 개발 계약은 [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md)에 있다.
+MAI MyAI sLLM은 **그래프 기반 장기기억을 소형 로컬 언어모델(sLLM)에 부여하고, 그 기억을 Ollama native tool과 로컬 PC 작업에 연결하는 개인 에이전트 런타임**이다. 장기기억의 기본 단위는 문장 전체가 아니라 [`Sentence_Breaker`](https://github.com/FoggyCaligo/Sentence_Breaker)가 나눈 재사용 가능한 segment다. 동일 canonical segment는 하나의 Node와 하나의 vector만 가지므로 반복되는 문장 전체를 계속 vector화해 저장하는 방식의 중복을 줄이는 것을 목표로 한다. VectorDB는 관련 기억의 진입 Node를 빠르게 찾고, 방향성 Graph는 그 Node 주변의 관계와 근거를 탐색한다. `A -> B`와 `B -> A`는 각각 하나의 edge만 존재할 수 있고, 각 edge에는 모델이 작성한 관계 설명을 최신순 최대 3개까지 timestamp/evidence와 함께 보존한다. 원본 evidence는 이 큐와 별도로 불변 저장한다. 자동 recall은 vector hit의 1-hop으로 Working Graph를 만들며, 더 깊은 기억은 모델이 `memory_search`를 반복 호출해 한 hop씩 Working Graph를 확장한다. 의미 관계의 영구 Graph 반영은 tool-use와 같은 턴 중간에 수행하지 않고 **최종 응답이 확정된 뒤 별도 post-response 단계에서 한 번만 수행**한다. 상세한 Memory v1 계약은 [`MEMORY_V1.md`](MEMORY_V1.md), 전체 개발 계약은 [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md)에 있다.
 
 ## 도구
 
-모든 도구는 `ToolRegistry`에 등록되어 Ollama native function schema로 모델에 노출된다. Registry는 이름·설명·Pydantic 입력 모델·실행 함수·timeout이라는 구조적 계약만 관리하며 사용자 문장을 문자열 규칙으로 해석해 tool route를 고르지 않는다. 현재 **Ollama adapter, native Tool Registry, Agent Runtime, structural Agent Guard, PC-wide Filesystem/Terminal tools까지 구현**되어 있다. 파일 계층에는 `file_list`, `file_search`, `file_read`, `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy`가 있으며 Python filesystem API를 사용한다. 절대경로를 정식 입력으로 허용하고 상대경로는 등록 시점의 `cwd` 기준으로 해석하며, repository/workspace confinement를 두지 않아 MAI 프로세스를 실행한 OS 사용자 계정이 접근 가능한 로컬 PC 전체를 대상으로 한다. `file_create`는 기존 파일을 덮어쓰지 않고 실패하며, `file_write`는 기존 파일만 수정한다. `terminal_run`은 로컬 shell에서 command·cwd·timeout을 받아 실행하고 `stdout`, `stderr`, `returncode`, `timed_out`, 실제 `cwd`를 그대로 반환한다. timeout 시에는 Windows에서는 `taskkill /T /F`, POSIX에서는 process group kill을 사용해 자식 프로세스까지 종료한다. non-zero exit code는 성공으로 바꾸지 않고 원래 return code를 보존한다. 이후 `code`, `document_read`, `image_read`, `web`, memory tools를 같은 registry 위에 추가한다.
+모든 실행 도구는 `ToolRegistry`에 등록되어 Ollama native function schema로 모델에 노출된다. Registry는 이름·설명·Pydantic 입력 계약·handler·timeout만 관리하며 문자열 휴리스틱으로 route를 정하지 않는다. 현재 Ollama adapter, native Tool Registry, Agent Runtime, structural Agent Guard, PC-wide Filesystem/Terminal tools가 구현되어 있다. 파일 도구는 repository 밖 절대경로를 허용하며 MAI 프로세스를 실행한 OS 사용자 계정의 실제 권한을 따른다. `terminal_run`도 동일한 사용자 권한으로 로컬 shell을 실행하고 stdout/stderr/returncode/timeout을 숨기지 않는다. Memory v1에는 `memory_search(node_id)`가 추가되며, 이 도구는 선택한 permanent Node의 정확히 1-hop을 반환해 현재 Working Graph에 merge한다. 향후 code/document/image/web 도구도 같은 native registry 위에 구현한다.
 
 ## 파일 구조와 전체 작동 구조
 
 ```text
 mai/
 ├─ llm/
-│  ├─ models.py            # provider-neutral request/response types
-│  └─ ollama.py            # Ollama native adapter
+│  ├─ models.py             # provider-neutral model contracts
+│  └─ ollama.py             # Ollama native adapter
 ├─ tools/
-│  ├─ registry.py          # native schema + strict validation + execution
-│  ├─ local.py             # implemented local-PC tool bundle
-│  ├─ filesystem.py        # implemented PC-wide file operations
-│  ├─ terminal.py          # implemented local shell execution
-│  ├─ code.py              # planned
-│  ├─ documents.py         # planned
-│  ├─ images.py            # planned
-│  └─ web.py               # planned
+│  ├─ registry.py           # native schema + validation + invocation
+│  ├─ filesystem.py         # PC-wide filesystem
+│  ├─ terminal.py           # local shell
+│  └─ ...                   # code/document/image/web
 ├─ agent/
-│  ├─ runtime.py           # public AgentRuntime entry point
-│  ├─ loop.py              # native multi-round tool loop
-│  ├─ guards.py            # structural repetition/failure/no-progress guards
-│  └─ context.py           # planned short-term context management
-├─ memory/
 │  ├─ runtime.py
-│  ├─ graph/
-│  ├─ activation/
-│  ├─ recall/
-│  ├─ extraction/
-│  └─ tools.py
+│  ├─ loop.py               # native multi-round tool loop
+│  ├─ guards.py             # repetition/failure/no-progress guards
+│  └─ requirements.py       # frozen pre-recall tool obligations
+├─ memory/
+│  ├─ runtime.py            # memory lifecycle
+│  ├─ segmenter.py          # Sentence_Breaker adapter
+│  ├─ working.py            # per-turn Working Graph
+│  ├─ graph/                # permanent SQLite graph + evidence
+│  ├─ vector/               # replaceable vector DB boundary
+│  ├─ recall/               # vector entry + 1-hop expansion
+│  ├─ extraction/           # post-response relation proposals
+│  └─ tools.py              # native memory_search
 └─ app/
    └─ runtime.py
 ```
 
-현재 구현 흐름은 다음과 같다.
-
-```text
-User message / existing history
-        ↓
-AgentRuntime
-        ↓
-AgentLoop + AgentGuard
-        ↓
-OllamaAdapter.chat(messages, registry.native_schemas())
-        ↓
-Ollama / sLLM
-        ├─ tool_calls 없음 → final content → 종료
-        │
-        └─ native tool_calls[]
-                 ↓
-          ToolRegistry.invoke(call)
-                 ↓
-          filesystem / terminal handler
-                 ↓
-          OS filesystem / shell
-                 ↓
-          role="tool" result
-                 ↓
-          guard structural progress check
-                 ↓
-          다시 Ollama
-```
-
-전체 목표에서는 이 native agent loop 앞뒤에 Memory Runtime이 결합된다.
+한 사용자 턴의 목표 순서는 다음과 같다. **Tool Requirement Preflight가 auto-recall보다 먼저**라는 점이 중요한 계약이다. Recall이나 검색 결과를 먼저 보여주면 이미 정보가 충족된 것처럼 보여 `memory_search`/`web_search` 필요 판정이 false로 편향될 수 있기 때문이다.
 
 ```text
 User input
    ↓
-Memory Runtime
-   ├─ raw utterance 저장
-   ├─ 이전 activation 로드
-   ├─ 현재 입력 activation 갱신
-   └─ local subgraph automatic recall
+Tool Requirement Preflight
+   │  user request + minimum recent dialogue + capability list만 사용
+   │  auto-recall / Working Graph / search result / tool result 없음
    ↓
-MemoryContext + recent dialogue
+required tools true/false 판정 → FREEZE
    ↓
-Agent Runtime / native tool loop / guards
+raw user evidence 저장
    ↓
-Final answer
+Sentence_Breaker → segment[]
    ↓
-Memory extraction
+VectorDB search over unique Nodes
    ↓
-장기적으로 남길 정보만 graph mutation
+vector hit + permanent graph 1-hop
+   ↓
+Initial Working Graph
+   ↓
+AgentLoop + AgentGuard
+   ↓
+Ollama native tool_calls
+   ├─ filesystem / terminal / web / ...
+   └─ memory_search(node)
+          ↓
+       Permanent Graph 1-hop
+          ↓
+       Working Graph merge
+          ↓
+       다음 model round에서 확장된 graph 확인
+   ↓
+Frozen required tools가 모두 성공했는지 확인
+   ↓
+Final response
+   ↓
+Agent/tool loop 종료
+   ↓
+Post-response Memory Writer 1회
+   ↓
+relation proposal → runtime timestamp/evidence 부착
+   ↓
+Permanent Graph commit
+```
+
+`required=true`는 final 전에 해당 capability가 최소 한 번 성공해야 한다는 뜻이고, `required=false`는 사용 금지가 아니다. Agent는 실행 중 새 정보에 따라 다른 도구를 자유롭게 추가 호출할 수 있다.
+
+Memory의 저장/탐색 역할은 다음처럼 분리한다.
+
+```text
+Vector index   = 관련 기억 위치로 빠르게 점프
+Permanent Graph = 장기 관계와 evidence
+Working Graph   = 현재 턴에 펼쳐 놓은 기억
+memory_search   = 선택한 Node에서 한 hop 더 의도적으로 탐색
 ```
 
 ## 실행 방법
 
-Python 3.11 이상과 Ollama를 준비하고 초기 모델로 Ornith를 사용할 경우 다음처럼 설치한다.
+Python 3.11 이상과 로컬 Ollama가 필요하다. 프로젝트를 clone한 뒤 가상환경을 만들고 설치한다. `Sentence_Breaker`는 `pyproject.toml`의 Git dependency로 함께 설치된다.
 
 ```bash
-ollama pull ornith-1.5:9b
-
 git clone https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
 cd MAI_MyAI_sllm
 python -m venv .venv
@@ -108,67 +110,24 @@ Windows PowerShell:
 pip install -e ".[dev]"
 ```
 
-Git Bash / Linux / macOS:
+Linux/macOS:
 
 ```bash
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-주요 예정 환경값은 `.env.example`에 있다.
-
-```env
-OLLAMA_HOST=http://127.0.0.1:11434
-MAIN_MODEL=ornith-1.5:9b
-OLLAMA_THINK=true
-AGENT_MAX_ROUNDS=30
-AGENT_MAX_IDENTICAL_CALLS=3
-AGENT_MAX_IDENTICAL_FAILURES=2
-AGENT_MAX_NO_PROGRESS_ROUNDS=2
-TOOL_TIMEOUT_SECONDS=60
-TERMINAL_TIMEOUT_SECONDS=120
-MEMORY_DB_PATH=./data/memory.sqlite3
-```
-
-계약 테스트:
+Ollama를 실행하고 사용할 native-tool 지원 모델을 준비한다.
 
 ```bash
-python -m pytest -q
+ollama serve
+ollama pull ornith-1.5:9b
 ```
 
-현재 local PC tools까지 포함한 Agent Runtime은 Python에서 다음처럼 구성할 수 있다.
+환경 설정은 `.env.example`을 기준으로 한다. 현재 repository는 runtime core를 단계적으로 구현 중이므로 완성된 end-user CLI/UI는 아직 없다. 개발 검증은 다음으로 수행한다.
 
-```python
-import asyncio
-
-from mai.agent import AgentRuntime
-from mai.llm import ModelConfig, OllamaAdapter
-from mai.tools import ToolRegistry, register_local_pc_tools
-
-
-async def main():
-    registry = ToolRegistry()
-    register_local_pc_tools(
-        registry,
-        cwd=None,                       # None이면 현재 프로세스 cwd
-        filesystem_timeout_seconds=60,
-        terminal_timeout_seconds=120,
-    )
-
-    adapter = OllamaAdapter(ModelConfig(
-        model="ornith-1.5:9b",
-        host="http://127.0.0.1:11434",
-        think=True,
-    ))
-    agent = AgentRuntime(adapter, registry)
-
-    result = await agent.run_user_message(
-        "내 Documents 폴더에서 README.md를 찾아 내용 일부를 확인해줘"
-    )
-    print(result.content)
-
-
-asyncio.run(main())
+```bash
+pytest
 ```
 
-`register_local_pc_tools()`는 현재 구현된 8개 filesystem tool과 `terminal_run`을 한 번에 등록한다. 이 도구들은 repository 밖 절대경로 접근을 막지 않으며, 실제 OS 계정의 filesystem/process 권한이 최종 경계다. 관리자 권한이 필요한 작업을 일반 권한으로 실행하면 실제 권한 오류가 발생한다. 현재 완성된 App/UI 진입점은 아직 없으므로 Python에서 runtime을 구성해 사용한다. 다음 도구 계층은 code/document/image/web이며, 메모리 계층은 별도 설계 논의 후 이어서 구현한다.
+현재 Memory v1에서 SQLite permanent graph, unique Node/edge 계약, 최신 3개 relation observation queue, immutable evidence, Working Graph, Sentence_Breaker adapter, replaceable vector-index boundary, one-hop recall, native `memory_search`, post-response relation proposal 경계와 frozen required-tool enforcement가 구현되고 있다. **구체적인 production VectorDB/embedding backend와 모델 기반 preflight planner/relation extractor 연결은 다음 구현 단계**이며, 이 경계는 `MEMORY_V1.md`의 계약을 바꾸지 않고 교체 가능하도록 둔다.
