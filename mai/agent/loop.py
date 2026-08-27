@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from ..llm.models import ChatRequest, Message, ModelTurn, ThinkSetting
+from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 
@@ -96,8 +96,13 @@ class AgentLoop:
                     final_turn=turn,
                 )
 
+            if round_number == self.max_rounds:
+                raise AgentLoopExhausted(
+                    f"agent reached max_rounds={self.max_rounds} while the model still requested tools"
+                )
+
             for call in turn.tool_calls:
-                execution = await self._execute_tool(call.name, call.arguments)
+                execution = await self._execute_tool(call)
                 executions.append(execution)
                 history.append({
                     "role": "tool",
@@ -105,14 +110,9 @@ class AgentLoop:
                     "content": execution.content,
                 })
 
-        raise AgentLoopExhausted(
-            f"agent exceeded max_rounds={self.max_rounds} without a final model turn"
-        )
+        raise AssertionError("unreachable agent loop state")
 
-    async def _execute_tool(self, name: str, arguments: Mapping[str, Any]) -> ToolExecution:
-        from ..llm.models import NativeToolCall
-
-        call = NativeToolCall(name=name, arguments=dict(arguments))
+    async def _execute_tool(self, call: NativeToolCall) -> ToolExecution:
         try:
             value = await self.registry.invoke(call)
         except Exception as exc:
@@ -123,8 +123,8 @@ class AgentLoop:
             }
             content = _serialize_tool_content(payload)
             return ToolExecution(
-                name=name,
-                arguments=dict(arguments),
+                name=call.name,
+                arguments=dict(call.arguments),
                 ok=False,
                 content=content,
                 error_type=type(exc).__name__,
@@ -132,8 +132,8 @@ class AgentLoop:
 
         content = _serialize_tool_content(value)
         return ToolExecution(
-            name=name,
-            arguments=dict(arguments),
+            name=call.name,
+            arguments=dict(call.arguments),
             ok=True,
             content=content,
         )
