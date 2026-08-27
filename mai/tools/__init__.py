@@ -11,6 +11,7 @@ from .filesystem import (
     file_move,
     file_copy,
 )
+from .local import register_local_pc_tools
 from .registry import (
     DuplicateToolError,
     EmptyToolInput,
@@ -39,6 +40,7 @@ __all__ = [
     "file_move",
     "file_copy",
     "register_filesystem_tools",
+    "register_local_pc_tools",
     "terminal_run",
     "register_terminal_tools",
 ]
