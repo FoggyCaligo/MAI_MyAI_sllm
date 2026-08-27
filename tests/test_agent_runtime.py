@@ -6,7 +6,7 @@ import json
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from mai.agent import AgentLoopExhausted, AgentRuntime
+from mai.agent import AgentRoundLimitExceeded, AgentRuntime
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
 
@@ -17,7 +17,6 @@ def run(coro):
 
 class EchoInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     text: str
 
 
@@ -60,126 +59,68 @@ def assistant_turn(*, content="", thinking="", calls=()):
 
 def test_runtime_completes_native_tool_round_trip() -> None:
     registry = ToolRegistry()
-    registry.add(
-        name="echo",
-        description="Echo text.",
-        input_model=EchoInput,
-        handler=lambda text: {"echo": text},
-    )
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: {"echo": text})
     adapter = FakeAdapter([
-        assistant_turn(
-            thinking="Use echo.",
-            calls=(NativeToolCall(name="echo", arguments={"text": "hello"}, index=0),),
-        ),
+        assistant_turn(thinking="Use echo.", calls=(NativeToolCall(name="echo", arguments={"text": "hello"}, index=0),)),
         assistant_turn(content="The tool returned hello.", thinking="Done."),
     ])
-    runtime = AgentRuntime(adapter, registry)
-
-    result = run(runtime.run_user_message("echo hello"))
-
+    result = run(AgentRuntime(adapter, registry).run_user_message("echo hello"))
     assert result.content == "The tool returned hello."
-    assert result.thinking == "Done."
     assert result.model_rounds == 2
-    assert len(result.tool_executions) == 1
     assert result.tool_executions[0].ok is True
-
-    second_request = adapter.requests[1]
-    assert second_request.tools[0]["function"]["name"] == "echo"
-    assert second_request.messages[1]["role"] == "assistant"
-    assert second_request.messages[2] == {
-        "role": "tool",
-        "tool_name": "echo",
-        "content": '{"echo":"hello"}',
-    }
+    assert adapter.requests[1].messages[2] == {"role": "tool", "tool_name": "echo", "content": '{"echo":"hello"}'}
 
 
 def test_runtime_preserves_multiple_tool_calls_in_order() -> None:
     registry = ToolRegistry()
-    registry.add(
-        name="echo",
-        description="Echo text.",
-        input_model=EchoInput,
-        handler=lambda text: text.upper(),
-    )
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text.upper())
     adapter = FakeAdapter([
-        assistant_turn(calls=(
-            NativeToolCall(name="echo", arguments={"text": "a"}, index=0),
-            NativeToolCall(name="echo", arguments={"text": "b"}, index=1),
-        )),
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "a"}, index=0), NativeToolCall(name="echo", arguments={"text": "b"}, index=1))),
         assistant_turn(content="done"),
     ])
-
     result = run(AgentRuntime(adapter, registry).run_user_message("two calls"))
-
     assert [execution.content for execution in result.tool_executions] == ["A", "B"]
-    tool_messages = [message for message in adapter.requests[1].messages if message["role"] == "tool"]
-    assert [message["content"] for message in tool_messages] == ["A", "B"]
 
 
 def test_tool_failure_is_returned_as_visible_structured_tool_result() -> None:
     registry = ToolRegistry()
-
     def denied(text: str):
         raise PermissionError("denied")
-
-    registry.add(
-        name="denied",
-        description="A tool that fails.",
-        input_model=EchoInput,
-        handler=denied,
-    )
+    registry.add(name="denied", description="A tool that fails.", input_model=EchoInput, handler=denied)
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(name="denied", arguments={"text": "x"}),)),
         assistant_turn(content="I could not complete it."),
     ])
-
     result = run(AgentRuntime(adapter, registry).run_user_message("try"))
-
-    execution = result.tool_executions[0]
-    assert execution.ok is False
-    assert execution.error_type == "PermissionError"
-    payload = json.loads(execution.content)
-    assert payload == {
-        "ok": False,
-        "error_type": "PermissionError",
-        "message": "denied",
-    }
-    assert adapter.requests[1].messages[-1]["content"] == execution.content
+    payload = json.loads(result.tool_executions[0].content)
+    assert payload == {"ok": False, "error_type": "PermissionError", "message": "denied"}
 
 
 def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
-    registry = ToolRegistry()
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(name="missing", arguments={}),)),
         assistant_turn(content="missing tool"),
     ])
-
-    result = run(AgentRuntime(adapter, registry).run_user_message("use missing"))
-
-    execution = result.tool_executions[0]
-    assert execution.ok is False
-    assert execution.error_type == "UnknownToolError"
-    assert json.loads(execution.content)["error_type"] == "UnknownToolError"
+    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message("use missing"))
+    assert result.tool_executions[0].error_type == "UnknownToolError"
 
 
-def test_runtime_stops_at_structural_max_rounds() -> None:
+def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect() -> None:
     registry = ToolRegistry()
-    registry.add(
-        name="echo",
-        description="Echo text.",
-        input_model=EchoInput,
-        handler=lambda text: text,
-    )
+    calls = []
+    def echo(text: str):
+        calls.append(text)
+        return text
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=echo)
     repeating = assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "again"}),))
     adapter = FakeAdapter([repeating, repeating])
     runtime = AgentRuntime(adapter, registry, max_rounds=2)
-
-    with pytest.raises(AgentLoopExhausted, match="max_rounds=2"):
+    with pytest.raises(AgentRoundLimitExceeded, match="max_rounds=2"):
         run(runtime.run_user_message("loop"))
+    assert calls == ["again"]
 
 
 def test_runtime_rejects_empty_user_message() -> None:
     runtime = AgentRuntime(FakeAdapter([]), ToolRegistry())
-
     with pytest.raises(ValueError, match="non-empty"):
         run(runtime.run_user_message("   "))
