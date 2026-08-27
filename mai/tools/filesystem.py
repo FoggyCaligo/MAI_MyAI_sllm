@@ -43,7 +43,6 @@ class FileWriteInput(_StrictModel):
     path: str
     content: str
     encoding: str = "utf-8"
-    create_parents: bool = False
 
 
 class FileCreateInput(_StrictModel):
@@ -131,14 +130,12 @@ def file_read(*, path: str, encoding: str = "utf-8", max_chars: int | None = Non
     return {"path": str(target), "content": text, "truncated": truncated, "encoding": encoding}
 
 
-def file_write(*, path: str, content: str, encoding: str = "utf-8", create_parents: bool = False, cwd: str | Path | None = None) -> dict[str, Any]:
+def file_write(*, path: str, content: str, encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))
     if not target.is_file():
         raise IsADirectoryError(str(target))
-    if create_parents:
-        target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding=encoding)
     return {"path": str(target), "bytes": target.stat().st_size}
 
