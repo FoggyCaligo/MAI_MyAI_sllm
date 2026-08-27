@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,55 @@ class TerminalRunInput(BaseModel):
     command: str = Field(min_length=1)
     cwd: str | None = None
     timeout_seconds: float | None = Field(default=None, gt=0)
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        os.killpg(process.pid, signal.SIGKILL)
+
+
+def _run_command(command: str, cwd: Path, timeout_seconds: float | None) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(
+        command,
+        cwd=str(cwd),
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        errors="replace",
+        **kwargs,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(process)
+        stdout, stderr = process.communicate()
+        timed_out = True
+
+    return {
+        "command": command,
+        "cwd": str(cwd),
+        "stdout": stdout,
+        "stderr": stderr,
+        "returncode": process.returncode,
+        "timed_out": timed_out,
+    }
 
 
 async def terminal_run(
@@ -35,32 +86,7 @@ async def terminal_run(
         raise NotADirectoryError(str(resolved_cwd))
 
     effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
-    process = await asyncio.create_subprocess_shell(
-        command,
-        cwd=str(resolved_cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    try:
-        if effective_timeout is None:
-            stdout, stderr = await process.communicate()
-        else:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=effective_timeout)
-        timed_out = False
-    except TimeoutError:
-        process.kill()
-        stdout, stderr = await process.communicate()
-        timed_out = True
-
-    return {
-        "command": command,
-        "cwd": str(resolved_cwd),
-        "stdout": stdout.decode(errors="replace"),
-        "stderr": stderr.decode(errors="replace"),
-        "returncode": process.returncode,
-        "timed_out": timed_out,
-    }
+    return await asyncio.to_thread(_run_command, command, resolved_cwd, effective_timeout)
 
 
 def register_terminal_tools(
