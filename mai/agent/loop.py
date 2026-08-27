@@ -89,6 +89,7 @@ class AgentLoop:
                     final_turn=turn,
                 )
 
+            guard.before_tool_round(round_number)
             round_observations: list[ExecutionObservation] = []
             for call in turn.tool_calls:
                 call_fp = guard.before_tool_call(call.name, call.arguments)
