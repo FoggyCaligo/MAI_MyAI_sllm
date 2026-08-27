@@ -17,7 +17,6 @@ class TerminalRunInput(BaseModel):
     command: str = Field(min_length=1)
     cwd: str | None = None
     timeout_seconds: float | None = Field(default=None, gt=0)
-    shell: bool = True
 
 
 async def terminal_run(
@@ -25,27 +24,23 @@ async def terminal_run(
     command: str,
     cwd: str | None = None,
     timeout_seconds: float | None = None,
-    shell: bool = True,
     default_cwd: str | Path | None = None,
     default_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
-    resolved_cwd = Path(cwd).expanduser().resolve(strict=False) if cwd else Path(default_cwd or os.getcwd()).resolve(strict=False)
+    base = cwd if cwd is not None else default_cwd
+    resolved_cwd = Path(base or os.getcwd()).expanduser().resolve(strict=False)
     if not resolved_cwd.exists():
         raise FileNotFoundError(str(resolved_cwd))
     if not resolved_cwd.is_dir():
         raise NotADirectoryError(str(resolved_cwd))
 
     effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
-
-    if shell:
-        process = await asyncio.create_subprocess_shell(
-            command,
-            cwd=str(resolved_cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    else:
-        raise ValueError("shell=false is not supported by terminal_run; use a shell command string")
+    process = await asyncio.create_subprocess_shell(
+        command,
+        cwd=str(resolved_cwd),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
 
     try:
         if effective_timeout is None:
@@ -74,43 +69,26 @@ def register_terminal_tools(
     cwd: str | Path | None = None,
     timeout_seconds: float | None = 120,
 ) -> None:
-    async def handler(command: str, cwd: str | None = None, timeout_seconds: float | None = None, shell: bool = True) -> dict[str, Any]:
+    async def handler(
+        command: str,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         return await terminal_run(
             command=command,
             cwd=cwd,
             timeout_seconds=timeout_seconds,
-            shell=shell,
-            default_cwd=cwd if cwd is not None else None,
-            default_timeout_seconds=timeout_seconds if timeout_seconds is not None else 120,
+            default_cwd=register_default_cwd,
+            default_timeout_seconds=register_default_timeout,
         )
 
-    async def bound_handler(command: str, cwd: str | None = None, timeout_seconds: float | None = None, shell: bool = True) -> dict[str, Any]:
-        return await terminal_run(
-            command=command,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            shell=shell,
-            default_cwd=cwd if cwd is not None else (str(cwd) if cwd else None),
-            default_timeout_seconds=timeout_seconds,
-        )
-
-    async def final_handler(command: str, cwd: str | None = None, timeout_seconds: float | None = None, shell: bool = True) -> dict[str, Any]:
-        return await terminal_run(
-            command=command,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            shell=shell,
-            default_cwd=register_terminal_tools_default_cwd,
-            default_timeout_seconds=register_terminal_tools_default_timeout,
-        )
-
-    register_terminal_tools_default_cwd = cwd
-    register_terminal_tools_default_timeout = timeout_seconds
+    register_default_cwd = cwd
+    register_default_timeout = timeout_seconds
     registry.add(
         name="terminal_run",
         description="Run a shell command on the local PC with the same OS permissions as the MAI process. Paths outside the repository are allowed.",
         input_model=TerminalRunInput,
-        handler=final_handler,
+        handler=handler,
         timeout_seconds=None,
         category="terminal",
     )
