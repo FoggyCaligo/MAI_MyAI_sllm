@@ -73,6 +73,14 @@ class AgentGuard:
                 f"agent exceeded max_rounds={self.config.max_rounds}"
             )
 
+    def before_tool_round(self, round_number: int) -> None:
+        """Reject new side effects when no later model round can consume them."""
+
+        if round_number >= self.config.max_rounds:
+            raise AgentRoundLimitExceeded(
+                f"agent reached max_rounds={self.config.max_rounds} while the model still requested tools"
+            )
+
     def before_tool_call(self, name: str, arguments: Mapping[str, Any]) -> str:
         fingerprint = call_fingerprint(name, arguments)
         count = self._call_counts.get(fingerprint, 0) + 1
