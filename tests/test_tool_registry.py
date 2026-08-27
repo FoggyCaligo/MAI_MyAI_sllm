@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -99,17 +100,16 @@ def test_invalid_arguments_fail_instead_of_being_repaired() -> None:
         handler=lambda left, right: left + right,
     )
 
-    with pytest.raises(ToolArgumentsError):
-        run(registry.invoke(NativeToolCall(
-            name="add_numbers",
-            arguments={"left": 2},
-        )))
-
-    with pytest.raises(ToolArgumentsError):
-        run(registry.invoke(NativeToolCall(
-            name="add_numbers",
-            arguments={"left": 2, "right": 3, "unexpected": True},
-        )))
+    for arguments in (
+        {"left": 2},
+        {"left": 2, "right": 3, "unexpected": True},
+        {"left": "2", "right": 3},
+    ):
+        with pytest.raises(ToolArgumentsError):
+            run(registry.invoke(NativeToolCall(
+                name="add_numbers",
+                arguments=arguments,
+            )))
 
 
 def test_duplicate_registration_is_rejected() -> None:
@@ -130,7 +130,7 @@ def test_duplicate_registration_is_rejected() -> None:
         )
 
 
-def test_timeout_is_a_real_timeout_failure() -> None:
+def test_async_timeout_is_a_real_failure() -> None:
     registry = ToolRegistry()
 
     async def slow(left: int, right: int):
@@ -148,6 +148,28 @@ def test_timeout_is_a_real_timeout_failure() -> None:
     with pytest.raises(TimeoutError):
         run(registry.invoke(NativeToolCall(
             name="slow_add",
+            arguments={"left": 1, "right": 2},
+        )))
+
+
+def test_sync_timeout_is_enforced_without_blocking_agent_await_path() -> None:
+    registry = ToolRegistry()
+
+    def slow(left: int, right: int):
+        time.sleep(0.05)
+        return left + right
+
+    registry.add(
+        name="slow_sync_add",
+        description="Slowly add two integers synchronously.",
+        input_model=AddInput,
+        handler=slow,
+        timeout_seconds=0.001,
+    )
+
+    with pytest.raises(TimeoutError):
+        run(registry.invoke(NativeToolCall(
+            name="slow_sync_add",
             arguments={"left": 1, "right": 2},
         )))
 
