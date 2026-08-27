@@ -1,4 +1,4 @@
-"""Vector entry + one-hop graph recall for Memory v1."""
+"""Vector concept entry + MK4-style evidence graph recall."""
 from __future__ import annotations
 
 from ..graph.repository import MemoryGraphRepository
@@ -23,15 +23,35 @@ class RecallService:
         self.segmenter = segmenter
         self.vector_limit = vector_limit
 
-    def auto_recall(self, user_text: str) -> WorkingGraph:
+    def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
+        """Build initial Working Graph from concept hits, one-hop evidence, and anchor paths."""
+        anchor = self.graph.get_user_anchor(user_id)
+        if anchor is None:
+            raise KeyError(f"user anchor for '{user_id}' does not exist")
         segments = tuple(self.segmenter.segment(user_text))
         hits = self.vector_index.search(segments, limit=self.vector_limit)
         working = WorkingGraph()
+        working.nodes[anchor.id] = anchor
         for hit in hits:
-            working.merge(self.graph.one_hop(hit.node_id))
+            neighborhood = self.graph.one_hop(hit.node_id)
+            working.merge(neighborhood)
+            path = self.graph.shortest_path_to_user_anchor(hit.node_id, user_id)
+            if path is not None:
+                working.merge(path, mark_expanded=False)
         return working
 
-    def expand_one_hop(self, working: WorkingGraph, node_id: int) -> dict[str, object]:
+    def expand_one_hop(
+        self,
+        working: WorkingGraph,
+        *,
+        user_id: str,
+        node_id: int,
+    ) -> dict[str, object]:
+        """Expand exactly one hop and keep newly visible context rooted to the user anchor."""
         neighborhood = self.graph.one_hop(node_id)
         working.merge(neighborhood)
+        for node in neighborhood.nodes:
+            path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
+            if path is not None:
+                working.merge(path, mark_expanded=False)
         return working.snapshot()
