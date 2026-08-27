@@ -1,19 +1,39 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 from mai.llm.models import NativeToolCall
-from mai.tools import ToolRegistry, register_filesystem_tools, register_terminal_tools
+from mai.tools import (
+    ToolRegistry,
+    register_filesystem_tools,
+    register_local_pc_tools,
+    register_terminal_tools,
+)
 
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_local_pc_tools(registry, cwd=tmp_path)
+
+    assert registry.names() == (
+        "file_list",
+        "file_search",
+        "file_read",
+        "file_write",
+        "file_create",
+        "file_delete",
+        "file_move",
+        "file_copy",
+        "terminal_run",
+    )
 
 
 def test_filesystem_tools_support_create_read_write_copy_move_delete(tmp_path: Path) -> None:
