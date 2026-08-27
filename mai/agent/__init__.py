@@ -1,8 +1,16 @@
-"""Agent runtime and execution-loop boundaries."""
+"""Agent runtime, execution-loop, and guard boundaries."""
 
+from .guards import (
+    AgentGuard,
+    AgentGuardError,
+    AgentRoundLimitExceeded,
+    GuardConfig,
+    NoProgressError,
+    RepeatedToolCallError,
+    RepeatedToolFailureError,
+)
 from .loop import (
     AgentLoop,
-    AgentLoopExhausted,
     AgentRunResult,
     AgentRuntimeError,
     ToolExecution,
@@ -11,11 +19,17 @@ from .loop import (
 from .runtime import AgentRuntime
 
 __all__ = [
+    "AgentGuard",
+    "AgentGuardError",
     "AgentLoop",
-    "AgentLoopExhausted",
+    "AgentRoundLimitExceeded",
     "AgentRunResult",
     "AgentRuntime",
     "AgentRuntimeError",
+    "GuardConfig",
+    "NoProgressError",
+    "RepeatedToolCallError",
+    "RepeatedToolFailureError",
     "ToolExecution",
     "ToolResultSerializationError",
 ]
