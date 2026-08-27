@@ -4,11 +4,11 @@ MAI MyAI sLLM은 **그래프 기반 장기기억을 소형 로컬 언어모델(s
 
 ## 도구
 
-모든 도구는 `ToolRegistry`에 등록되어 Ollama native function schema로 모델에 노출된다. Registry는 등록된 이름·설명·Pydantic 입력 모델·실행 함수·timeout 같은 구조적 계약만 관리하며 사용자 문장을 문자열 규칙으로 해석해 도구를 선택하지 않는다. 현재 **Ollama adapter, native Tool Registry, 최소 Agent Runtime까지 구현**되어 실제 native tool-call 왕복을 수행할 수 있다. 이후 연결할 파일 도구는 `file_list`, `file_search`, `file_read`, `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy`이며 Python filesystem API를 사용해 MAI를 실행한 OS 사용자 계정이 접근 가능한 로컬 PC 전체를 대상으로 한다. `terminal_run`은 subprocess 기반으로 command·cwd·timeout을 받아 stdout/stderr/returncode를 보존하고, `code` 도구는 소스 구조 탐색과 검색, `document_read`는 PDF/DOCX/XLSX 파싱, `image_read`는 별도 vision-capable Ollama 모델을 통한 이미지 해석, `web` 도구는 외부 최신 정보 조회를 담당한다. Memory 도구는 automatic recall과 별개로 `memory_search`, `memory_get_node`, `memory_get_relations`, `memory_expand`, `memory_get_source` 형태로 제공할 예정이다. Tool handler가 실패하면 실패를 성공으로 바꾸지 않고 오류 종류와 메시지를 `role=tool` 결과로 모델에 되돌려 다음 라운드에서 복구할 기회를 주며, runtime 기록에도 실패 상태가 남는다.
+모든 도구는 `ToolRegistry`에 등록되어 Ollama native function schema로 모델에 노출된다. Registry는 등록된 이름·설명·Pydantic 입력 모델·실행 함수·timeout 같은 구조적 계약만 관리하며 사용자 문장을 문자열 규칙으로 해석해 도구를 선택하지 않는다. 현재 **Ollama adapter, native Tool Registry, Agent Runtime, structural Agent Guard까지 구현**되어 native tool-call 왕복과 반복 방지를 수행할 수 있다. 이후 연결할 파일 도구는 `file_list`, `file_search`, `file_read`, `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy`이며 Python filesystem API를 사용해 MAI를 실행한 OS 사용자 계정이 접근 가능한 로컬 PC 전체를 대상으로 한다. `terminal_run`은 subprocess 기반으로 command·cwd·timeout을 받아 stdout/stderr/returncode를 보존하고, `code` 도구는 소스 구조 탐색과 검색, `document_read`는 PDF/DOCX/XLSX 파싱, `image_read`는 별도 vision-capable Ollama 모델을 통한 이미지 해석, `web` 도구는 외부 최신 정보 조회를 담당한다. Memory 도구는 automatic recall과 별개로 `memory_search`, `memory_get_node`, `memory_get_relations`, `memory_expand`, `memory_get_source` 형태로 제공할 예정이다. Tool handler가 실패하면 실패를 성공으로 바꾸지 않고 오류 종류와 메시지를 `role=tool` 결과로 모델에 되돌려 다음 라운드에서 복구할 기회를 주며, runtime 기록에도 실패 상태가 남는다.
 
 ## 파일 구조와 전체 작동 구조
 
-`mai/llm`은 Ollama native message/thinking/tool call을 MAI 내부 타입으로 옮기는 얇은 adapter, `mai/tools`는 native schema와 실제 실행 함수를 연결하는 registry 및 도구 구현, `mai/agent`는 multi-round tool loop와 이후 guard/context 관리를 담당한다. `mai/memory`는 장기 그래프 저장소, activation, automatic recall, extraction, explicit memory tools를 담당하고, `mai/app`은 최종적으로 대화 session과 UI/server 진입점을 묶는다.
+`mai/llm`은 Ollama native message/thinking/tool call을 MAI 내부 타입으로 옮기는 얇은 adapter, `mai/tools`는 native schema와 실제 실행 함수를 연결하는 registry 및 도구 구현, `mai/agent`는 multi-round tool loop와 구조적 guard를 담당한다. `mai/memory`는 장기 그래프 저장소, activation, automatic recall, extraction, explicit memory tools를 담당하고, `mai/app`은 최종적으로 대화 session과 UI/server 진입점을 묶는다.
 
 ```text
 mai/
@@ -25,9 +25,9 @@ mai/
 │  └─ web.py               # planned: external information retrieval
 ├─ agent/
 │  ├─ runtime.py           # public AgentRuntime entry point
-│  ├─ loop.py              # implemented native multi-round tool loop
-│  ├─ guards.py            # next: repetition/no-progress guards
-│  └─ context.py           # next: short-term context management
+│  ├─ loop.py              # native multi-round tool loop
+│  ├─ guards.py            # round/repetition/failure/no-progress guards
+│  └─ context.py           # planned: short-term context management
 ├─ memory/
 │  ├─ runtime.py
 │  ├─ graph/
@@ -39,7 +39,7 @@ mai/
    └─ runtime.py
 ```
 
-현재 구현된 Agent loop는 다음처럼 동작한다.
+현재 Agent Runtime은 다음처럼 동작한다.
 
 ```text
 User message / existing history
@@ -48,6 +48,8 @@ AgentRuntime
         ↓
 AgentLoop
         ↓
+AgentGuard.before_model_round
+        ↓
 OllamaAdapter.chat(messages, registry.native_schemas())
         ↓
 Ollama / sLLM
@@ -55,20 +57,23 @@ Ollama / sLLM
         │
         └─ native tool_calls[]
                  ↓
+          AgentGuard.before_tool_round
+                 ↓
           assistant_message를 history에 보존
                  ↓
-          ToolRegistry.invoke(call)
+          각 call마다
+          ├─ identical-call fingerprint 검사
+          ├─ ToolRegistry.invoke(call)
+          ├─ role="tool" 결과 추가
+          └─ repeated-failure 검사
                  ↓
-          실제 handler 실행
-                 ↓
-          role="tool", tool_name=..., content=...
-          를 history에 추가
+          round 전체 call/result fingerprint 검사
+          └─ 동일 round 결과 반복 시 no-progress 중단
                  ↓
           다시 OllamaAdapter.chat(...)
-                 └────────────── 반복
 ```
 
-Ollama가 한 응답에서 여러 tool call을 반환하면 모두 원래 순서대로 실행하고 각각의 `role=tool` 메시지를 추가한다. 현재 최소 runtime에는 전체 작업이 끝없이 지속되는 것을 막기 위한 구조적 `max_rounds` 상한만 들어가 있고, 동일 tool+arguments 반복 감지와 no-progress 판단 같은 세밀한 guard는 다음 단계에서 `mai/agent/guards.py`에 추가한다.
+Guard는 결과의 의미를 판단하지 않는다. 동일 호출 여부는 `(tool name + canonical arguments)` 구조로, 반복 실패는 `(same call + same exception type)`으로, no-progress는 연속 tool round의 `(call fingerprint + 성공/실패 + exact result fingerprint)`가 완전히 같은지로 판단한다. 즉 "이 결과가 쓸모없어 보인다"거나 "사용자가 원한 작업과 관련 없어 보인다" 같은 의미 판단을 framework가 문자열 규칙으로 대신하지 않는다. 기본값은 최대 model round 30회, 동일 call 3회, 동일 실패 2회, 완전히 동일한 no-progress round 2회다. 마지막 허용 model round에서 또 tool call이 나오면 그 tool을 실행하지 않고 중단해, 결과를 소비할 다음 model round 없이 side effect만 발생하는 상황도 막는다.
 
 전체 목표 구조에서는 이 Agent loop 앞뒤로 Memory Runtime이 결합된다.
 
@@ -83,7 +88,7 @@ Memory Runtime
    ↓
 MemoryContext + recent dialogue
    ↓
-Agent Runtime / native tool loop
+Agent Runtime / native tool loop / structural guards
    ↓
 Final answer
    ↓
@@ -134,6 +139,8 @@ VISION_MODEL=
 OLLAMA_THINK=true
 AGENT_MAX_ROUNDS=30
 AGENT_MAX_IDENTICAL_CALLS=3
+AGENT_MAX_IDENTICAL_FAILURES=2
+AGENT_MAX_NO_PROGRESS_ROUNDS=2
 TOOL_TIMEOUT_SECONDS=60
 TERMINAL_TIMEOUT_SECONDS=120
 MEMORY_DB_PATH=./data/memory.sqlite3
@@ -145,13 +152,13 @@ MEMORY_DB_PATH=./data/memory.sqlite3
 python -m pytest -q
 ```
 
-최소 Agent Runtime은 Python에서 직접 실행할 수 있다. 아래 예제는 실제로 모델이 `echo` native tool을 선택하면 MAI가 실행 결과를 `role=tool`로 돌려주고, 모델이 최종 답변을 만들 때까지 반복한다.
+Agent Runtime은 Python에서 직접 실행할 수 있다. 아래 예제는 실제로 모델이 `echo` native tool을 선택하면 MAI가 실행 결과를 `role=tool`로 돌려주고, 모델이 최종 답변을 만들 때까지 반복한다. Guard 설정을 직접 조정하려면 `GuardConfig`를 전달한다.
 
 ```python
 import asyncio
 from pydantic import BaseModel, ConfigDict
 
-from mai.agent import AgentRuntime
+from mai.agent import AgentRuntime, GuardConfig
 from mai.llm import ModelConfig, OllamaAdapter
 from mai.tools import ToolRegistry
 
@@ -179,7 +186,16 @@ async def main():
         host="http://127.0.0.1:11434",
         think=True,
     ))
-    agent = AgentRuntime(adapter, registry, max_rounds=30)
+    agent = AgentRuntime(
+        adapter,
+        registry,
+        guard_config=GuardConfig(
+            max_rounds=30,
+            max_identical_calls=3,
+            max_identical_failures=2,
+            max_no_progress_rounds=2,
+        ),
+    )
 
     result = await agent.run_user_message("echo 도구로 hello를 확인한 뒤 결과를 알려줘")
     print(result.content)
@@ -189,4 +205,4 @@ async def main():
 asyncio.run(main())
 ```
 
-현재는 실제 filesystem/terminal/document/image/web/memory handler와 완성된 App/UI Runtime이 아직 없으므로 위처럼 Python에서 registry를 구성해 실행한다. 다음 구현 단계는 **Agent Guards / Error semantics 강화**이며, 이후 filesystem + terminal 도구를 연결하면 로컬 PC에서 실제 작업을 수행하는 에이전트 형태가 된다. 더 세밀한 설계 계약과 구현 순서는 [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md)를 참고한다.
+현재는 실제 filesystem/terminal/document/image/web/memory handler와 완성된 App/UI Runtime이 아직 없으므로 위처럼 Python에서 registry를 구성해 실행한다. 다음 구현 단계는 **Filesystem + Terminal 도구**이며, 이를 연결하면 로컬 PC에서 실제 작업을 수행하는 에이전트 형태가 된다. 더 세밀한 설계 계약과 구현 순서는 [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md)를 참고한다.
