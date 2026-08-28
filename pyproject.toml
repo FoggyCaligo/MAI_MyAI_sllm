@@ -6,7 +6,6 @@ requires-python = ">=3.11"
 dependencies = [
   "ollama>=0.6.0",
   "pydantic>=2.0",
-  "sqlite-vec>=0.1.6",
   "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
 ]
 

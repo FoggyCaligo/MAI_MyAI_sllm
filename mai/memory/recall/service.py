@@ -1,9 +1,9 @@
-"""Vector concept entry + MK4-style evidence graph recall."""
+"""Concept-index entry + MK4-style evidence graph recall."""
 from __future__ import annotations
 
 from ..graph.repository import MemoryGraphRepository
+from ..index import ConceptIndex
 from ..segmenter import Segmenter
-from ..vector import VectorIndex
 from ..working import WorkingGraph
 
 
@@ -11,17 +11,17 @@ class RecallService:
     def __init__(
         self,
         graph: MemoryGraphRepository,
-        vector_index: VectorIndex,
+        concept_index: ConceptIndex,
         segmenter: Segmenter,
         *,
-        vector_limit: int = 5,
+        concept_limit: int = 5,
     ) -> None:
-        if vector_limit < 1:
-            raise ValueError("vector_limit must be >= 1")
+        if concept_limit < 1:
+            raise ValueError("concept_limit must be >= 1")
         self.graph = graph
-        self.vector_index = vector_index
+        self.concept_index = concept_index
         self.segmenter = segmenter
-        self.vector_limit = vector_limit
+        self.concept_limit = concept_limit
 
     def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
         """Build initial Working Graph from concept hits, one-hop evidence, and anchor paths."""
@@ -29,7 +29,7 @@ class RecallService:
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
         segments = tuple(self.segmenter.segment(user_text))
-        hits = self.vector_index.search(segments, limit=self.vector_limit)
+        hits = self.concept_index.search(segments, limit=self.concept_limit)
         working = WorkingGraph()
         working.nodes[anchor.id] = anchor
         for hit in hits:
