@@ -32,6 +32,9 @@ def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> N
         "file_delete",
         "file_move",
         "file_copy",
+        "code_search",
+        "code_read",
+        "code_symbols",
         "terminal_run",
     )
 
