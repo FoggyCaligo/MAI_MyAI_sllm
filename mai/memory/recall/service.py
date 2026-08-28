@@ -1,4 +1,4 @@
-"""Concept-index entry + MK4-style evidence graph recall."""
+"""Concept-index entry + evidence graph recall."""
 from __future__ import annotations
 
 from ..graph.repository import MemoryGraphRepository
@@ -8,14 +8,7 @@ from ..working import WorkingGraph
 
 
 class RecallService:
-    def __init__(
-        self,
-        graph: MemoryGraphRepository,
-        concept_index: ConceptIndex,
-        segmenter: Segmenter,
-        *,
-        concept_limit: int = 5,
-    ) -> None:
+    def __init__(self, graph: MemoryGraphRepository, concept_index: ConceptIndex, segmenter: Segmenter, *, concept_limit: int = 5) -> None:
         if concept_limit < 1:
             raise ValueError("concept_limit must be >= 1")
         self.graph = graph
@@ -23,12 +16,13 @@ class RecallService:
         self.segmenter = segmenter
         self.concept_limit = concept_limit
 
-    def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
-        """Build initial Working Graph from concept hits, one-hop evidence, and anchor paths."""
+    def recall_query(self, *, user_id: str, query: str) -> WorkingGraph:
+        if not query.strip():
+            raise ValueError("memory recall query must be non-empty")
         anchor = self.graph.get_user_anchor(user_id)
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
-        segments = tuple(self.segmenter.segment(user_text))
+        segments = tuple(self.segmenter.segment(query))
         hits = self.concept_index.search(segments, limit=self.concept_limit)
         working = WorkingGraph()
         working.nodes[anchor.id] = anchor
@@ -40,14 +34,10 @@ class RecallService:
                 working.merge(path, mark_expanded=False)
         return working
 
-    def expand_one_hop(
-        self,
-        working: WorkingGraph,
-        *,
-        user_id: str,
-        node_id: int,
-    ) -> dict[str, object]:
-        """Expand exactly one hop and keep newly visible context rooted to the user anchor."""
+    def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
+        return self.recall_query(user_id=user_id, query=user_text)
+
+    def expand_one_hop(self, working: WorkingGraph, *, user_id: str, node_id: int) -> dict[str, object]:
         neighborhood = self.graph.one_hop(node_id)
         working.merge(neighborhood)
         for node in neighborhood.nodes:
