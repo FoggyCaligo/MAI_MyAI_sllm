@@ -78,16 +78,55 @@ class MemoryRuntime:
     def memory_search(self, working: WorkingGraph, *, user_id: str, node_id: int) -> dict[str, object]:
         return self.recall.expand_one_hop(working, user_id=user_id, node_id=node_id)
 
-    async def finish_turn(self, *, user_id: str, user_text: str, final_answer: str, user_evidence: Evidence, successful_tool_results: Sequence[str] = ()) -> None:
+    async def extract_facts(
+        self,
+        *,
+        user_text: str,
+        final_answer: str,
+        successful_tool_results: Sequence[str] = (),
+    ) -> tuple[str, ...]:
+        """Extract facts before graph admission so recall-only turns can be filtered safely."""
+        if self.fact_extractor is None:
+            return ()
+        raw_facts = await self.fact_extractor.extract(
+            user_text=user_text,
+            final_answer=final_answer,
+            successful_tool_results=successful_tool_results,
+        )
+        facts: list[str] = []
+        for fact_text in raw_facts:
+            clean_fact = str(fact_text).strip()
+            if not clean_fact:
+                raise ValueError("fact extractor returned an empty fact")
+            facts.append(clean_fact)
+        return tuple(dict.fromkeys(facts))
+
+    async def finish_turn(
+        self,
+        *,
+        user_id: str,
+        user_text: str,
+        final_answer: str,
+        user_evidence: Evidence,
+        successful_tool_results: Sequence[str] = (),
+        fact_texts: Sequence[str] | None = None,
+    ) -> None:
         now = self.now()
         anchor = self.graph.ensure_user_anchor(user_id, now=now)
         utterance = self.graph.create_utterance_node(user_id=user_id, evidence=user_evidence, now=now)
         self.graph.add_typed_edge(anchor.id, utterance.id, "spoke", provenance="user_utterance", now=now)
         self._link_concepts(carrier=utterance, text=user_text, relation="mentions", provenance="user_utterance")
-        if self.fact_extractor is None:
-            return
-        fact_texts = await self.fact_extractor.extract(user_text=user_text, final_answer=final_answer, successful_tool_results=successful_tool_results)
-        for fact_text in fact_texts:
+
+        facts = (
+            await self.extract_facts(
+                user_text=user_text,
+                final_answer=final_answer,
+                successful_tool_results=successful_tool_results,
+            )
+            if fact_texts is None
+            else tuple(fact_texts)
+        )
+        for fact_text in facts:
             clean_fact = str(fact_text).strip()
             if not clean_fact:
                 raise ValueError("fact extractor returned an empty fact")
