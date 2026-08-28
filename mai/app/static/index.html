@@ -1,119 +1,338 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MAI</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, Pretendard, system-ui, sans-serif; background:#111318; color:#edf0f7; }
-    * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; display:flex; flex-direction:column; }
-    header { padding:14px 18px; border-bottom:1px solid #2a2f3a; display:flex; align-items:center; gap:12px; }
-    .badge { width:36px; height:36px; border-radius:50%; display:grid; place-items:center; background:#2867ff; font-weight:700; }
-    h1 { font-size:16px; margin:0; }
-    .meta { margin-left:auto; font-size:12px; color:#9ca6b8; }
-    main { width:min(900px, 100%); margin:0 auto; flex:1; padding:22px 16px 120px; }
-    #messages { display:flex; flex-direction:column; gap:16px; }
-    .message { border:1px solid #2a2f3a; border-radius:16px; padding:14px 16px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .user { align-self:flex-end; max-width:82%; background:#1a2232; }
-    .assistant { align-self:stretch; background:#151820; }
-    .diagnostics { margin-top:10px; font-size:12px; color:#8e99ab; white-space:normal; }
-    form { position:fixed; bottom:0; left:0; right:0; padding:14px; background:linear-gradient(transparent, #111318 28%); }
-    .composer { width:min(900px, 100%); margin:0 auto; display:flex; gap:10px; align-items:flex-end; }
-    textarea { flex:1; resize:none; min-height:54px; max-height:180px; border:1px solid #343b48; border-radius:16px; background:#181c24; color:inherit; padding:15px; font:inherit; outline:none; }
-    textarea:focus { border-color:#5f88ff; }
-    button { border:0; border-radius:14px; padding:15px 18px; background:#2867ff; color:white; font-weight:700; cursor:pointer; }
-    button:disabled { opacity:.5; cursor:wait; }
-    .error { border-color:#8b3b48; background:#27171c; }
-    @media (max-width:600px) { main { padding-inline:10px; } .user { max-width:92%; } header { padding-inline:12px; } }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#0f0f12;
+      --surface:#18181f;
+      --border:#2a2a35;
+      --accent:#7c6af7;
+      --accent-dim:#4a4280;
+      --text:#e4e4ef;
+      --text-dim:#6b6b80;
+      --user-bg:#252538;
+      --mai-bg:#1c1c28;
+      --danger:#e05260;
+      --meta:#77778d;
+      --radius:12px;
+      --font:'Segoe UI','Apple SD Gothic Neo',sans-serif;
+    }
+    html, body { height:100%; background:var(--bg); color:var(--text); font-family:var(--font); }
+    #app { display:flex; flex-direction:column; height:100dvh; max-width:860px; margin:0 auto; }
+    header {
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding:14px 18px; border-bottom:1px solid var(--border); background:var(--bg); flex-shrink:0;
+    }
+    .brand { min-width:0; }
+    .logo { color:var(--accent); font-size:18px; font-weight:700; letter-spacing:.5px; }
+    .subtitle { color:var(--text-dim); font-size:11px; margin-top:2px; }
+    .header-right { display:flex; align-items:center; gap:10px; min-width:0; }
+    #model-select {
+      max-width:220px; min-width:150px; background:var(--surface); border:1px solid var(--border);
+      color:var(--text); padding:7px 11px; border-radius:20px; font-size:12px; outline:none;
+    }
+    #model-select:focus { border-color:var(--accent); }
+    #connection { color:var(--text-dim); font-size:11px; white-space:nowrap; }
+
+    #messages {
+      flex:1; min-height:0; overflow-y:auto; padding:22px 18px;
+      display:flex; flex-direction:column; gap:16px; scroll-behavior:smooth;
+    }
+    #messages::-webkit-scrollbar { width:5px; }
+    #messages::-webkit-scrollbar-thumb { background:var(--border); border-radius:6px; }
+    #empty-state { margin:auto; color:var(--text-dim); text-align:center; user-select:none; }
+    #empty-state .big { color:var(--accent); font-size:34px; font-weight:700; margin-bottom:8px; }
+
+    .msg-row { display:flex; gap:10px; align-items:flex-start; width:100%; }
+    .msg-row.user { flex-direction:row-reverse; }
+    .avatar {
+      width:32px; height:32px; border-radius:50%; display:grid; place-items:center;
+      flex-shrink:0; font-size:12px; font-weight:700;
+    }
+    .avatar.mai { background:var(--accent-dim); color:#c9c1ff; }
+    .avatar.user { background:var(--user-bg); color:var(--text-dim); }
+    .content-wrap { max-width:78%; min-width:0; }
+    .msg-row.mai .content-wrap { max-width:calc(100% - 42px); flex:1; }
+    .bubble {
+      padding:12px 16px; border-radius:var(--radius); font-size:14px; line-height:1.65;
+      overflow-wrap:anywhere;
+    }
+    .msg-row.user .bubble { background:var(--user-bg); border-top-right-radius:4px; white-space:pre-wrap; }
+    .msg-row.mai .bubble { background:var(--mai-bg); border-top-left-radius:4px; }
+    .bubble p + p { margin-top:.8em; }
+    .bubble h1,.bubble h2,.bubble h3,.bubble h4 { margin:.8em 0 .4em; line-height:1.3; }
+    .bubble h1 { font-size:1.35em; } .bubble h2 { font-size:1.22em; } .bubble h3 { font-size:1.1em; }
+    .bubble ul,.bubble ol { padding-left:1.45em; margin:.55em 0; }
+    .bubble li + li { margin-top:.22em; }
+    .bubble blockquote { border-left:3px solid var(--accent-dim); padding-left:10px; color:#b8b8c8; margin:.6em 0; }
+    .bubble code { background:#121218; padding:2px 5px; border-radius:5px; font-family:Consolas,monospace; font-size:.92em; }
+    .bubble pre { background:#121218; border:1px solid var(--border); border-radius:8px; padding:11px; overflow:auto; margin:.7em 0; }
+    .bubble pre code { background:none; padding:0; }
+    .bubble a { color:#a99cff; }
+    .bubble table { border-collapse:collapse; width:100%; margin:.7em 0; font-size:13px; }
+    .bubble th,.bubble td { border:1px solid var(--border); padding:6px 8px; text-align:left; }
+    .bubble th { background:var(--surface); }
+
+    .diagnostics { margin-top:7px; font-size:11px; color:var(--meta); }
+    details.tool-log { margin-top:8px; border-top:1px solid var(--border); padding-top:7px; }
+    details.tool-log summary { color:var(--meta); font-size:11px; cursor:pointer; user-select:none; }
+    .tool-entry { margin-top:7px; padding:8px 10px; background:#15151c; border-radius:8px; font-size:11px; }
+    .tool-head { display:flex; justify-content:space-between; gap:10px; color:#aaaabd; }
+    .tool-failed { color:var(--danger); }
+    .tool-args { margin-top:5px; color:#85859b; white-space:pre-wrap; font-family:Consolas,monospace; overflow-wrap:anywhere; }
+    .error { border:1px solid #7c3642; background:#26171c !important; }
+
+    #input-area { flex-shrink:0; border-top:1px solid var(--border); padding:14px 18px; background:var(--bg); }
+    #input-row {
+      display:flex; align-items:flex-end; gap:10px; background:var(--surface); border:1px solid var(--border);
+      border-radius:var(--radius); padding:9px 11px;
+    }
+    #input-row:focus-within { border-color:var(--accent-dim); }
+    #msg-input {
+      flex:1; min-height:24px; max-height:150px; resize:none; border:none; outline:none;
+      background:transparent; color:var(--text); font:14px/1.5 var(--font);
+    }
+    #msg-input::placeholder { color:var(--text-dim); }
+    #send-btn {
+      border:none; border-radius:8px; padding:7px 16px; background:var(--accent); color:#fff;
+      font-size:13px; font-weight:600; cursor:pointer; flex-shrink:0;
+    }
+    #send-btn:hover { background:#9585ff; }
+    #send-btn:disabled { opacity:.4; cursor:wait; }
+
+    @media (max-width:620px) {
+      header { align-items:flex-start; flex-direction:column; padding:12px; }
+      .header-right { width:100%; justify-content:space-between; }
+      #model-select { flex:1; min-width:0; max-width:none; }
+      #messages { padding:16px 10px; }
+      #input-area { padding:10px; }
+      .content-wrap, .msg-row.mai .content-wrap { max-width:88%; }
+    }
   </style>
 </head>
 <body>
+<div id="app">
   <header>
-    <div class="badge">MAI</div>
-    <div><h1>MyAI sLLM</h1><div class="meta" id="status">연결 확인 중…</div></div>
-  </header>
-  <main><div id="messages"></div></main>
-  <form id="chat-form">
-    <div class="composer">
-      <textarea id="input" placeholder="MAI에게 메시지 보내기" rows="1" required></textarea>
-      <button id="send" type="submit">전송</button>
+    <div class="brand">
+      <div class="logo">MAI</div>
+      <div class="subtitle">local personal agent</div>
     </div>
-  </form>
-  <script>
-    const messages = document.querySelector('#messages');
-    const form = document.querySelector('#chat-form');
-    const input = document.querySelector('#input');
-    const send = document.querySelector('#send');
-    const status = document.querySelector('#status');
-    const sessionId = crypto.randomUUID();
+    <div class="header-right">
+      <select id="model-select" title="생성 모델 선택"><option value="">모델 로딩 중…</option></select>
+      <div id="connection">연결 확인 중…</div>
+    </div>
+  </header>
 
-    function addMessage(role, text, diagnostics='') {
-      const box = document.createElement('div');
-      box.className = `message ${role}`;
-      box.textContent = text;
-      if (diagnostics) {
-        const meta = document.createElement('div');
-        meta.className = 'diagnostics';
-        meta.textContent = diagnostics;
-        box.appendChild(meta);
-      }
-      messages.appendChild(box);
-      box.scrollIntoView({behavior:'smooth', block:'end'});
-      return box;
-    }
+  <div id="messages">
+    <div id="empty-state"><div class="big">MAI</div><div>메시지를 입력하세요.</div></div>
+  </div>
 
-    async function loadHealth() {
-      try {
-        const res = await fetch('/health');
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        status.textContent = `${data.model} · ${data.tailscale_serve ? 'Tailscale' : 'Local'}`;
-      } catch (err) {
-        status.textContent = '서버 연결 실패';
-      }
-    }
+  <div id="input-area">
+    <form id="chat-form">
+      <div id="input-row">
+        <textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea>
+        <button id="send-btn" type="submit">전송</button>
+      </div>
+    </form>
+  </div>
+</div>
 
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const message = input.value.trim();
-      if (!message) return;
-      addMessage('user', message);
-      input.value = '';
-      send.disabled = true;
-      const pending = addMessage('assistant', '생각 중…');
-      try {
-        const res = await fetch('/chat', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({message, session_id:sessionId})
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        pending.textContent = data.answer;
-        const used = data.tools.map(t => `${t.name}${t.ok ? '' : ' (failed)'}`).join(', ');
-        if (used) {
-          const meta = document.createElement('div');
-          meta.className = 'diagnostics';
-          meta.textContent = `tools: ${used} · rounds: ${data.model_rounds}`;
-          pending.appendChild(meta);
-        }
-      } catch (err) {
-        pending.classList.add('error');
-        pending.textContent = `오류: ${err.message}`;
-      } finally {
-        send.disabled = false;
-        input.focus();
-      }
+<script>
+  const $messages = document.getElementById('messages');
+  const $empty = document.getElementById('empty-state');
+  const $form = document.getElementById('chat-form');
+  const $input = document.getElementById('msg-input');
+  const $send = document.getElementById('send-btn');
+  const $model = document.getElementById('model-select');
+  const $connection = document.getElementById('connection');
+  const sessionId = crypto.randomUUID();
+
+  function scrollToBottom(behavior='smooth') {
+    requestAnimationFrame(() => {
+      $messages.scrollTo({top:$messages.scrollHeight, behavior});
     });
+  }
 
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        form.requestSubmit();
+  function escapeHtml(value) {
+    return value.replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  }
+
+  function renderInline(value) {
+    let text = escapeHtml(value);
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return text;
+  }
+
+  function renderMarkdown(source) {
+    const lines = String(source ?? '').replace(/\r\n/g, '\n').split('\n');
+    const out = [];
+    let inCode = false;
+    let codeLines = [];
+    let listType = null;
+    let paragraph = [];
+
+    const flushParagraph = () => {
+      if (paragraph.length) {
+        out.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`);
+        paragraph = [];
       }
+    };
+    const closeList = () => {
+      if (listType) { out.push(`</${listType}>`); listType = null; }
+    };
+
+    for (const line of lines) {
+      if (line.startsWith('```')) {
+        flushParagraph(); closeList();
+        if (!inCode) { inCode = true; codeLines = []; }
+        else { out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`); inCode = false; codeLines = []; }
+        continue;
+      }
+      if (inCode) { codeLines.push(line); continue; }
+      const heading = line.match(/^(#{1,4})\s+(.+)$/);
+      if (heading) { flushParagraph(); closeList(); const level = heading[1].length; out.push(`<h${level}>${renderInline(heading[2])}</h${level}>`); continue; }
+      const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+      const ordered = line.match(/^\s*\d+\.\s+(.+)$/);
+      if (bullet || ordered) {
+        flushParagraph();
+        const wanted = bullet ? 'ul' : 'ol';
+        if (listType !== wanted) { closeList(); listType = wanted; out.push(`<${wanted}>`); }
+        out.push(`<li>${renderInline((bullet || ordered)[1])}</li>`); continue;
+      }
+      if (line.startsWith('> ')) { flushParagraph(); closeList(); out.push(`<blockquote>${renderInline(line.slice(2))}</blockquote>`); continue; }
+      if (!line.trim()) { flushParagraph(); closeList(); continue; }
+      paragraph.push(line);
+    }
+    if (inCode) out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+    flushParagraph(); closeList();
+    return out.join('');
+  }
+
+  function addMessage(role, text) {
+    if ($empty && $empty.isConnected) $empty.remove();
+    const row = document.createElement('div');
+    row.className = `msg-row ${role}`;
+    const avatar = document.createElement('div');
+    avatar.className = `avatar ${role}`;
+    avatar.textContent = role === 'user' ? 'U' : 'MAI';
+    const wrap = document.createElement('div');
+    wrap.className = 'content-wrap';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    if (role === 'user') bubble.textContent = text;
+    else bubble.innerHTML = renderMarkdown(text);
+    wrap.appendChild(bubble);
+    row.append(avatar, wrap);
+    $messages.appendChild(row);
+    scrollToBottom();
+    return {row, wrap, bubble};
+  }
+
+  function renderToolLog(wrap, tools, rounds, model) {
+    const diag = document.createElement('div');
+    diag.className = 'diagnostics';
+    diag.textContent = `${model} · rounds: ${rounds}`;
+    wrap.appendChild(diag);
+    if (!tools.length) return;
+
+    const details = document.createElement('details');
+    details.className = 'tool-log';
+    const summary = document.createElement('summary');
+    summary.textContent = `tool log · ${tools.length} call${tools.length === 1 ? '' : 's'}`;
+    details.appendChild(summary);
+    tools.forEach(tool => {
+      const entry = document.createElement('div');
+      entry.className = 'tool-entry';
+      const head = document.createElement('div');
+      head.className = 'tool-head';
+      const name = document.createElement('span');
+      name.textContent = tool.name;
+      const state = document.createElement('span');
+      state.textContent = tool.ok ? 'ok' : (tool.error_type || 'failed');
+      if (!tool.ok) state.className = 'tool-failed';
+      head.append(name, state);
+      const args = document.createElement('div');
+      args.className = 'tool-args';
+      args.textContent = JSON.stringify(tool.arguments, null, 2);
+      entry.append(head, args);
+      details.appendChild(entry);
     });
-    loadHealth();
-    input.focus();
-  </script>
+    wrap.appendChild(details);
+  }
+
+  async function loadModels() {
+    const res = await fetch('/models');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || '모델 목록 조회 실패');
+    $model.innerHTML = '';
+    data.models.forEach(name => {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      option.selected = name === data.current;
+      $model.appendChild(option);
+    });
+    if (!data.models.length) $model.innerHTML = '<option value="">설치된 모델 없음</option>';
+  }
+
+  async function loadHealth() {
+    const res = await fetch('/health');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'health 실패');
+    $connection.textContent = data.tailscale_serve ? 'Tailscale' : 'Local';
+    $connection.title = `memory: ${data.memory_db}`;
+  }
+
+  $form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const message = $input.value.trim();
+    if (!message) return;
+    addMessage('user', message);
+    $input.value = '';
+    $input.style.height = 'auto';
+    $send.disabled = true;
+    const pending = addMessage('mai', '생각 중…');
+    try {
+      const res = await fetch('/chat', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message, session_id:sessionId, model:$model.value || null})
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+      pending.bubble.innerHTML = renderMarkdown(data.answer);
+      renderToolLog(pending.wrap, data.tools, data.model_rounds, data.model);
+      scrollToBottom();
+    } catch (err) {
+      pending.bubble.classList.add('error');
+      pending.bubble.textContent = `오류: ${err.message}`;
+      scrollToBottom();
+    } finally {
+      $send.disabled = false;
+      $input.focus();
+    }
+  });
+
+  $input.addEventListener('input', () => {
+    $input.style.height = 'auto';
+    $input.style.height = `${Math.min($input.scrollHeight, 150)}px`;
+  });
+  $input.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); $form.requestSubmit(); }
+  });
+
+  Promise.all([loadHealth(), loadModels()]).catch(err => {
+    $connection.textContent = '연결 실패';
+    $connection.title = err.message;
+  });
+  $input.focus();
+</script>
 </body>
 </html>
