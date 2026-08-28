@@ -14,11 +14,12 @@ from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.admission import (
+    should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import FactExtractionError, OllamaFactExtractor
+from ..memory.extraction.service import OllamaFactExtractor
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -196,15 +197,18 @@ class MAIRuntime:
                 len(fact_texts),
                 len(extraction_tool_results),
             )
-        except (FactExtractionError, ValueError) as exc:
+        except Exception as exc:
             _LOG.warning(
                 "MAI memory extraction failed error_type=%s message=%s; preserving raw turn",
                 type(exc).__name__,
                 str(exc),
             )
 
-        skip_recall_without_new_facts = bool(recall_tools) and extraction_succeeded and not fact_texts
-        if skip_recall_without_new_facts:
+        if should_skip_recall_without_new_facts(
+            result.tool_executions,
+            extracted_facts=fact_texts,
+            extraction_succeeded=extraction_succeeded,
+        ):
             _LOG.info(
                 "MAI memory admission skipped reason=recall_without_new_facts tools=%s",
                 ",".join(recall_tools),
