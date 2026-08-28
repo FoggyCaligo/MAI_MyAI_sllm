@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal
 from .runtime import MAIRuntime
-from .tailscale import TailscaleServe
+from .tailscale import TailscaleFunnel
 
 
 load_dotenv()
@@ -25,7 +25,7 @@ _STATIC_DIR = Path(__file__).with_name("static")
 _UPLOAD_DIR = Path("mai_uploads").resolve()
 _runtime: MAIRuntime | None = None
 _access_policy: AccessPolicy | None = None
-_tailscale: TailscaleServe | None = None
+_tailscale: TailscaleFunnel | None = None
 _auth_sessions: dict[str, AccessPrincipal] = {}
 _chat_sessions: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
 
@@ -54,6 +54,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _runtime, _access_policy, _tailscale
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
+    if _env_bool("TAILSCALE_SERVE", False):
+        raise ValueError(
+            "TAILSCALE_SERVE is retired because MAI requires public Funnel access; "
+            "remove it or set it to false and set TAILSCALE_FUNNEL=true"
+        )
     _access_policy = AccessPolicy.from_env_values(
         owner_id=os.environ.get("OWNER_ID"),
         owner_memory_id=os.environ.get("OWNER_MEMORY_ID"),
@@ -69,13 +74,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         cwd=os.environ.get("MAI_CWD") or None,
     )
     print(f"MAI local: http://{host}:{port}", flush=True)
-    if _env_bool("TAILSCALE_SERVE", False):
-        _tailscale = TailscaleServe(port=port)
+    if _env_bool("TAILSCALE_FUNNEL", False):
+        _tailscale = TailscaleFunnel(port=port)
         status_text = _tailscale.start()
-        print("MAI Tailscale Serve:", flush=True)
+        print("MAI Tailscale Funnel (public internet):", flush=True)
         print(status_text, flush=True)
     else:
-        print("MAI Tailscale Serve: disabled (set TAILSCALE_SERVE=true to enable)", flush=True)
+        print("MAI Tailscale Funnel: disabled (set TAILSCALE_FUNNEL=true to enable)", flush=True)
     try:
         yield
     finally:
@@ -173,7 +178,7 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "model": runtime.model,
         "vision_model": runtime.vision_model,
-        "tailscale_serve": _tailscale is not None,
+        "tailscale_funnel": _tailscale is not None,
     }
 
 
