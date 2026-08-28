@@ -48,6 +48,11 @@ class MemoryRuntime:
         self.ensure_user(user_id)
         return self.recall.auto_recall(user_id=user_id, user_text=user_text)
 
+    def explicit_recall(self, *, user_id: str, query: str) -> WorkingGraph:
+        """Recall memory only when the agent explicitly asks for it."""
+        self.ensure_user(user_id)
+        return self.recall.recall_query(user_id=user_id, query=query)
+
     def memory_search(
         self,
         working: WorkingGraph,
