@@ -22,6 +22,7 @@ from .tailscale import TailscaleServe
 load_dotenv()
 
 _STATIC_DIR = Path(__file__).with_name("static")
+_UPLOAD_DIR = Path("mai_uploads").resolve()
 _runtime: MAIRuntime | None = None
 _access_policy: AccessPolicy | None = None
 _tailscale: TailscaleServe | None = None
@@ -51,6 +52,7 @@ def _history_limit() -> int:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _runtime, _access_policy, _tailscale
+    host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
     _access_policy = AccessPolicy.from_env_values(
         owner_id=os.environ.get("OWNER_ID"),
@@ -66,9 +68,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         upload_root="./mai_uploads",
         cwd=os.environ.get("MAI_CWD") or None,
     )
+    print(f"MAI local: http://{host}:{port}", flush=True)
     if _env_bool("TAILSCALE_SERVE", False):
         _tailscale = TailscaleServe(port=port)
-        _tailscale.start()
+        status_text = _tailscale.start()
+        print("MAI Tailscale Serve:", flush=True)
+        print(status_text, flush=True)
+    else:
+        print("MAI Tailscale Serve: disabled (set TAILSCALE_SERVE=true to enable)", flush=True)
     try:
         yield
     finally:
@@ -145,12 +152,13 @@ def _principal_from_authorization(authorization: str | None) -> tuple[str, Acces
     return token, principal
 
 
-def _validated_upload_filename(filename: str | None) -> str:
-    if not filename:
-        raise HTTPException(status_code=400, detail="upload filename is required")
-    if filename in {".", ".."} or "/" in filename or "\\" in filename:
-        raise HTTPException(status_code=400, detail="upload filename must be a plain file name")
-    return filename
+def _safe_upload_name(filename: str | None) -> str:
+    if filename is None or not filename.strip():
+        raise HTTPException(status_code=400, detail="uploaded file must have a filename")
+    clean = filename.strip()
+    if clean in {".", ".."} or Path(clean).name != clean or "/" in clean or "\\" in clean:
+        raise HTTPException(status_code=400, detail="uploaded filename must not contain a path")
+    return clean
 
 
 @app.get("/", include_in_schema=False)
@@ -218,22 +226,19 @@ async def upload_file(
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
-    _, principal = _principal_from_authorization(authorization)
-    runtime = _get_runtime()
-    filename = _validated_upload_filename(file.filename)
-    target = runtime.upload_root / filename
+    _principal_from_authorization(authorization)
+    filename = _safe_upload_name(file.filename)
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    target = (_UPLOAD_DIR / filename).resolve()
+    if target.parent != _UPLOAD_DIR:
+        raise HTTPException(status_code=400, detail="uploaded filename resolved outside mai_uploads")
     if target.exists():
-        raise HTTPException(status_code=409, detail=f"upload already exists: {filename}")
+        raise HTTPException(status_code=409, detail="a file with that name already exists in mai_uploads")
 
-    written = 0
     try:
         with target.open("xb") as handle:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
+            while chunk := await file.read(1024 * 1024):
                 handle.write(chunk)
-                written += len(chunk)
     except Exception:
         if target.exists():
             target.unlink()
@@ -241,12 +246,7 @@ async def upload_file(
     finally:
         await file.close()
 
-    return {
-        "filename": filename,
-        "path": str(target.resolve()),
-        "bytes": written,
-        "uploaded_by": principal.auth_user_id,
-    }
+    return {"filename": filename, "path": str(target), "bytes": target.stat().st_size}
 
 
 @app.post("/chat", response_model=ChatResponse)
