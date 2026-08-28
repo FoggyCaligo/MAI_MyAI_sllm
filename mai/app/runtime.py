@@ -14,11 +14,11 @@ from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.admission import (
-    is_recall_only_turn,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
+from ..memory.extraction.service import FactExtractionError, OllamaFactExtractor
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -95,12 +95,14 @@ class MAIRuntime:
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
         self.concept_index = SqliteFtsConceptIndex(self.memory_db_path)
         self.recall = RecallService(self.graph, self.concept_index, self.segmenter)
+        fact_adapter = OllamaAdapter(ModelConfig(model=model, host=ollama_host, think=False))
         self.memory = MemoryRuntime(
             self.graph,
             self.concept_index,
             self.segmenter,
             self.recall,
             now=lambda: datetime.now(timezone.utc),
+            fact_extractor=OllamaFactExtractor(fact_adapter),
         )
         self._adapters: dict[str, OllamaAdapter] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
@@ -179,25 +181,49 @@ class MAIRuntime:
 
         recall_tools = successful_memory_recall_tools(result.tool_executions)
         all_successful_tools = successful_tool_names(result.tool_executions)
-        if is_recall_only_turn(result.tool_executions):
+        extraction_tool_results = successful_non_recall_tool_results(result.tool_executions)
+        fact_texts: tuple[str, ...] = ()
+        extraction_succeeded = False
+        try:
+            fact_texts = await self.memory.extract_facts(
+                user_text=prompt,
+                final_answer=result.content,
+                successful_tool_results=extraction_tool_results,
+            )
+            extraction_succeeded = self.memory.fact_extractor is not None
             _LOG.info(
-                "MAI memory admission skipped reason=recall_only_turn tools=%s",
+                "MAI memory extraction ok facts=%d tool_results=%d",
+                len(fact_texts),
+                len(extraction_tool_results),
+            )
+        except (FactExtractionError, ValueError) as exc:
+            _LOG.warning(
+                "MAI memory extraction failed error_type=%s message=%s; preserving raw turn",
+                type(exc).__name__,
+                str(exc),
+            )
+
+        skip_recall_without_new_facts = bool(recall_tools) and extraction_succeeded and not fact_texts
+        if skip_recall_without_new_facts:
+            _LOG.info(
+                "MAI memory admission skipped reason=recall_without_new_facts tools=%s",
                 ",".join(recall_tools),
             )
         else:
             evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
-            extraction_tool_results = successful_non_recall_tool_results(result.tool_executions)
             await self.memory.finish_turn(
                 user_id=principal.memory_user_id,
                 user_text=prompt,
                 final_answer=result.content,
                 user_evidence=evidence,
                 successful_tool_results=extraction_tool_results,
+                fact_texts=fact_texts,
             )
             _LOG.info(
-                "MAI memory admission stored source=user_utterance chars=%d tools=%s extraction_tool_results=%d",
+                "MAI memory admission stored source=user_utterance chars=%d tools=%s facts=%d extraction_tool_results=%d",
                 len(prompt),
                 ",".join(all_successful_tools) if all_successful_tools else "-",
+                len(fact_texts),
                 len(extraction_tool_results),
             )
 
