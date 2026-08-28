@@ -86,6 +86,7 @@ class ToolExecutionResponse(BaseModel):
     arguments: dict[str, object]
     ok: bool
     error_type: str | None
+    result: str
 
 
 class ChatResponse(BaseModel):
