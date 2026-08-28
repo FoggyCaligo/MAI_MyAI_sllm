@@ -1,6 +1,7 @@
 """Image-reading tools backed by a separately configurable Ollama vision model."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -19,19 +20,34 @@ class ImageAnalyzeInput(BaseModel):
     )
 
 
+def _resolve(path: str, cwd: str | Path | None) -> Path:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(cwd or os.getcwd()) / candidate
+    return candidate.resolve(strict=False)
+
+
 class ImageAnalyzer:
-    def __init__(self, *, model: str, host: str, max_bytes: int = 20 * 1024 * 1024) -> None:
+    def __init__(
+        self,
+        *,
+        model: str,
+        host: str,
+        cwd: str | Path | None = None,
+        max_bytes: int = 20 * 1024 * 1024,
+    ) -> None:
         clean_model = model.strip()
         if not clean_model:
             raise ValueError("vision model must be non-empty")
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
         self.model = clean_model
+        self.cwd = cwd
         self.max_bytes = max_bytes
         self.client = AsyncClient(host=host)
 
     async def analyze(self, *, path: str, question: str) -> dict[str, Any]:
-        target = Path(path).expanduser().resolve()
+        target = _resolve(path, self.cwd)
         if not target.exists():
             raise FileNotFoundError(str(target))
         if not target.is_file():
@@ -68,9 +84,10 @@ def register_image_tools(
     *,
     model: str,
     host: str,
+    cwd: str | Path | None = None,
     timeout_seconds: float | None = 120,
 ) -> None:
-    analyzer = ImageAnalyzer(model=model, host=host)
+    analyzer = ImageAnalyzer(model=model, host=host, cwd=cwd)
     registry.add(
         name="image_analyze",
         description=(
