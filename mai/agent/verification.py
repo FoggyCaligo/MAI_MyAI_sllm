@@ -172,15 +172,18 @@ class FinalGroundingVerifier:
                 continue
             content = message.get("content")
             if isinstance(content, str):
-                evidence.update(_extract_material_numeric_facts(content))
+                evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
         for _, content in successful_tool_results:
-            evidence.update(_extract_material_numeric_facts(content))
+            evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
         if not evidence:
             return None
 
         candidate_facts = _extract_material_numeric_facts(candidate)
-        unsupported = sorted(candidate_facts - evidence)
+        unsupported = sorted(
+            fact for fact in candidate_facts
+            if fact not in evidence and not _supported_as_month_day_alias(fact, evidence)
+        )
         if not unsupported:
             return None
         return VerificationIssue(
@@ -307,14 +310,18 @@ def _clip_text(text: str, limit: int) -> str:
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
-def _extract_material_numeric_facts(text: str) -> set[str]:
+def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = False) -> set[str]:
     cleaned = _LIST_ORDINAL_RE.sub("", text)
     facts: set[str] = set()
     occupied: list[tuple[int, int]] = []
 
     for match in _DATE_RE.finditer(cleaned):
         year, month, day = match.groups()
-        facts.add(f"date:{int(year):04d}-{int(month):02d}-{int(day):02d}")
+        month_i = int(month)
+        day_i = int(day)
+        facts.add(f"date:{int(year):04d}-{month_i:02d}-{day_i:02d}")
+        if include_date_aliases:
+            facts.add(f"monthday:{month_i:02d}-{day_i:02d}")
         occupied.append(match.span())
 
     for match in _KOREAN_UNIT_RE.finditer(cleaned):
@@ -346,6 +353,27 @@ def _extract_material_numeric_facts(text: str) -> set[str]:
         key = _decimal_key(value)
         facts.add(f"percent:{key}" if is_percent else key)
     return facts
+
+
+def _supported_as_month_day_alias(fact: str, evidence: set[str]) -> bool:
+    """Allow a bare M.D candidate only when evidence contains that exact calendar month/day.
+
+    Vision/OCR output often preserves a full date such as 2026.08.27 while the
+    answering model shortens it to 8.27. Treat that as the same grounded date,
+    but only when a matching full date was actually present in evidence.
+    """
+    if fact.startswith(("date:", "monthday:", "percent:")):
+        return False
+    if "." not in fact:
+        return False
+    whole, fractional = fact.split(".", 1)
+    if not whole.isdigit() or not fractional.isdigit():
+        return False
+    month = int(whole)
+    day = int(fractional)
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return False
+    return f"monthday:{month:02d}-{day:02d}" in evidence
 
 
 def _decimal_key(value: Decimal) -> str:
