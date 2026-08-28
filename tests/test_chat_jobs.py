@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 
 from mai.app.chat_jobs import ChatJobStore
 
@@ -68,3 +70,19 @@ def test_shutdown_cancels_running_tasks() -> None:
         assert task.cancelled()
 
     run(scenario())
+
+
+def test_resumable_chat_routes_install_without_fastapi_model_error() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from mai.app.resumable_chat import install; install(); print('installed')",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "installed" in result.stdout
