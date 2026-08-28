@@ -71,8 +71,14 @@
     .tool-result { color:#a2a2b5; max-height:220px; overflow:auto; } .error { border:1px solid #7c3642; background:#26171c !important; }
 
     #input-area { flex-shrink:0; border-top:1px solid var(--border); padding:14px 18px; background:var(--bg); }
+    #upload-status { min-height:16px; margin:0 3px 6px; color:var(--text-dim); font-size:11px; overflow-wrap:anywhere; }
+    #upload-status.failed { color:var(--danger); }
     #input-row { display:flex; align-items:flex-end; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:9px 11px; }
     #input-row:focus-within { border-color:var(--accent-dim); }
+    #upload-btn { width:31px; height:31px; display:grid; place-items:center; flex-shrink:0; border:1px solid var(--border); border-radius:8px; color:var(--text-dim); cursor:pointer; user-select:none; }
+    #upload-btn:hover { color:var(--text); border-color:var(--accent-dim); }
+    #upload-btn.busy { opacity:.45; pointer-events:none; }
+    #file-input { display:none; }
     #msg-input { flex:1; min-height:24px; max-height:150px; resize:none; border:none; outline:none; background:transparent; color:var(--text); font:14px/1.5 var(--font); }
     #msg-input::placeholder { color:var(--text-dim); }
     #send-btn { border:none; border-radius:8px; padding:7px 16px; background:var(--accent); color:#fff; font-size:13px; font-weight:600; cursor:pointer; flex-shrink:0; }
@@ -105,13 +111,22 @@
     </div>
   </header>
   <div id="messages"><div id="empty-state"><div class="big">MAI</div><div>메시지를 입력하세요.</div></div></div>
-  <div id="input-area"><form id="chat-form"><div id="input-row"><textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea><button id="send-btn" type="submit">전송</button></div></form></div>
+  <div id="input-area">
+    <form id="chat-form">
+      <div id="upload-status"></div>
+      <div id="input-row">
+        <label id="upload-btn" title="파일 업로드">＋<input id="file-input" type="file" /></label>
+        <textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea>
+        <button id="send-btn" type="submit">전송</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script>
   const state = { token: sessionStorage.getItem('MAI:auth-token'), userId:null, role:null, sessionId:crypto.randomUUID() };
   const $loginScreen=document.getElementById('login-screen'), $loginForm=document.getElementById('login-form'), $loginId=document.getElementById('login-id'), $loginBtn=document.getElementById('login-btn'), $loginError=document.getElementById('login-error');
-  const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn');
+  const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
 
   function authHeaders(extra={}) { return state.token ? {...extra, Authorization:`Bearer ${state.token}`} : extra; }
   function scrollToBottom(behavior='smooth') { requestAnimationFrame(()=>{$messages.scrollTo({top:$messages.scrollHeight,behavior});}); }
@@ -143,7 +158,8 @@
 
   $loginForm.addEventListener('submit',async event=>{event.preventDefault();$loginBtn.disabled=true;$loginError.textContent='';try{const res=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:$loginId.value})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'접속 거부');state.token=data.token;state.userId=data.user_id;state.role=data.role;sessionStorage.setItem('MAI:auth-token',state.token);showApp();}catch(err){$loginError.textContent=err.message;}finally{$loginBtn.disabled=false;}});
   $logout.addEventListener('click',async()=>{try{await fetch('/logout',{method:'POST',headers:authHeaders()});}finally{showLogin();}});
-  $form.addEventListener('submit',async event=>{event.preventDefault();const message=$input.value.trim();if(!message)return;addMessage('user',message);$input.value='';$input.style.height='auto';$send.disabled=true;const pending=addThinking();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null})});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||JSON.stringify(data));pending.bubble.innerHTML=renderMarkdown(data.answer);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{$send.disabled=false;$input.focus();}});
+  $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`업로드 중: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||'업로드 실패');const reference=`업로드된 파일: ${data.path}`;$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`업로드 완료: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`업로드 오류: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
+  $form.addEventListener('submit',async event=>{event.preventDefault();const message=$input.value.trim();if(!message)return;addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');$send.disabled=true;const pending=addThinking();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null})});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||JSON.stringify(data));pending.bubble.innerHTML=renderMarkdown(data.answer);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{$send.disabled=false;$input.focus();}});
   $input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=`${Math.min($input.scrollHeight,150)}px`;});
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   restoreSession();

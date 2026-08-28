@@ -32,7 +32,9 @@ You are running inside the MAI local personal-agent runtime.
 
 Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, or the terminal.
 
-Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use document_read for PDF, DOCX, XLSX, or PPTX files. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
+Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use document_read for PDF, DOCX, XLSX, CSV, or PPTX files. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
+
+Trial accounts may receive file_write and file_create, but those handlers are structurally restricted to the MAI upload directory. Do not claim that such tools can modify arbitrary local paths.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 
@@ -59,6 +61,7 @@ class MAIRuntime:
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
         vision_model: str | None = None,
+        upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
     ) -> None:
         if not model.strip():
@@ -67,6 +70,8 @@ class MAIRuntime:
         self.ollama_host = ollama_host
         self.model = model
         self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
+        self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
+        self.upload_root.mkdir(parents=True, exist_ok=True)
         self.memory_db_path = Path(memory_db_path).expanduser().resolve()
         self.graph = MemoryGraphRepository(self.memory_db_path)
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
@@ -120,7 +125,11 @@ class MAIRuntime:
         if principal.role is AccessRole.OWNER:
             register_local_pc_tools(registry, cwd=self.cwd)
         elif principal.role is AccessRole.TRIAL:
-            register_readonly_local_tools(registry, cwd=self.cwd)
+            register_readonly_local_tools(
+                registry,
+                cwd=self.cwd,
+                upload_root=self.upload_root,
+            )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
         return registry

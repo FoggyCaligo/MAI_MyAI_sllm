@@ -13,6 +13,7 @@ from mai.tools import (
     register_local_pc_tools,
     register_terminal_tools,
 )
+from mai.tools.local import register_readonly_local_tools
 
 
 def run(coro):
@@ -37,6 +38,42 @@ def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> N
         "code_symbols",
         "terminal_run",
     )
+
+
+def test_trial_bundle_can_write_only_inside_upload_root(tmp_path: Path) -> None:
+    upload_root = tmp_path / "mai_uploads"
+    upload_root.mkdir()
+    inside = upload_root / "inside.txt"
+    inside.write_text("before")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside")
+
+    registry = ToolRegistry()
+    register_readonly_local_tools(registry, cwd=tmp_path, upload_root=upload_root)
+    assert "file_write" in registry.names()
+    assert "file_create" in registry.names()
+    assert "file_delete" not in registry.names()
+    assert "terminal_run" not in registry.names()
+
+    run(registry.invoke(NativeToolCall(
+        name="file_write",
+        arguments={"path": str(inside), "content": "after"},
+    )))
+    assert inside.read_text() == "after"
+
+    created = upload_root / "created.txt"
+    run(registry.invoke(NativeToolCall(
+        name="file_create",
+        arguments={"path": str(created), "content": "new"},
+    )))
+    assert created.read_text() == "new"
+
+    with pytest.raises(PermissionError):
+        run(registry.invoke(NativeToolCall(
+            name="file_write",
+            arguments={"path": str(outside), "content": "blocked"},
+        )))
+    assert outside.read_text() == "outside"
 
 
 def test_filesystem_tools_support_create_read_write_copy_move_delete(tmp_path: Path) -> None:

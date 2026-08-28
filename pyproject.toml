@@ -14,6 +14,7 @@ dependencies = [
   "pypdf>=5.0",
   "python-docx>=1.1",
   "python-dotenv>=1.0.0",
+  "python-multipart>=0.0.20",
   "python-pptx>=1.0",
   "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
   "uvicorn>=0.35.0",
