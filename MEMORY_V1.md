@@ -1,6 +1,6 @@
 # MAI Memory v1
 
-This document defines MAI's long-term memory contract without relying on any earlier MACHI/MK repository. The memory system is an evidence-preserving graph built from user anchors, original utterances, user-grounded facts, reusable concepts, typed edges, and provenance. Recall enters that graph through a model-independent ConceptIndex.
+This document defines MAI's long-term memory schema and runtime contract without relying on any earlier MACHI/MK repository. The memory system is an evidence-preserving graph built from user anchors, original utterances, optional user-grounded facts, reusable concepts, typed edges, and provenance. Model-visible recall enters that graph through explicit native memory tools backed by a model-independent ConceptIndex.
 
 ## 1. Core idea
 
@@ -9,10 +9,10 @@ Sentence_Breaker defines reusable **Concept Node boundaries**, not the entire me
 ```text
 User utterance
   -> immutable raw Evidence
-  -> after final response only:
+  -> after final response:
        Utterance Node (original sentence)
-       Fact Nodes (model-extracted user facts)
        Concept Nodes (Sentence_Breaker segments)
+       optional Fact Nodes (when a FactExtractor is configured)
 ```
 
 Concept identity is exact segment identity:
@@ -25,14 +25,16 @@ Repeated appearances of the same segment reuse the same Concept Node. Recall ind
 
 The full original sentence remains a first-class Utterance Node so recall can show the model what the user actually said instead of forcing it to trust a rewritten relation description.
 
+The current production runtime does **not** configure a model-backed `FactExtractor`. Therefore raw Utterance and Concept memory are active today, while Fact nodes remain part of the schema/extension contract rather than something every production turn currently creates.
+
 ## 2. Permanent graph node types
 
 ### User Anchor
 
-Every user account owns one persistent anchor:
+Every memory identity owns one persistent anchor:
 
 ```text
-user_anchor::<user_id>
+user_anchor::<memory_user_id>
 ```
 
 The anchor is a permanent graph node but is never inserted into the ConceptIndex. It establishes whose memory a recalled subgraph belongs to.
@@ -48,12 +50,14 @@ User Anchor
 
 ### Fact Node
 
-A Fact Node is a concise long-term fact extracted from the user's utterance after the final response has been accepted. It never replaces its source utterance.
+A Fact Node is a concise long-term fact derived from a user's utterance. It never replaces its source utterance.
 
 ```text
 User Anchor ─asserted_fact→ Fact
 Utterance   ─derived_fact─→ Fact
 ```
+
+Fact is a supported permanent node type, but current production runs with `fact_extractor=None`, so Fact creation is not part of the active default write path.
 
 ### Concept Node
 
@@ -80,34 +84,33 @@ Each edge stores provenance such as `user_utterance`, `user_assertion`, `derived
 
 The database enforces one edge per `(from_node_id, to_node_id, relation)`.
 
+Relations involving Fact nodes are used only when Fact extraction is actually enabled.
+
 ## 4. Evidence
 
-Raw user input is stored in the immutable `evidence` table before the agent run. Recording raw evidence is not semantic graph mutation. After the final answer, an Utterance Node is created for that evidence and connected to the user anchor and derived memory nodes.
+Raw user input is stored in the immutable `evidence` table before the agent run. Recording raw evidence is not semantic graph mutation. After the final answer, an Utterance Node is created for that evidence and connected to the user's memory anchor and its Concept nodes.
 
 This lets the system answer not only "what is remembered?" but also "what did the user actually say that produced this memory?"
 
-## 5. A-path ordering contract
+## 5. Production runtime ordering
 
-The default A-path places Tool Requirement Preflight before automatic recall.
+The current production request path is **pure-agent C**. It has no Tool Requirement Preflight and no automatic recall stage.
 
 ```text
 User input
-  -> Tool Requirement Preflight
-       current request
-       minimum recent dialogue
-       available capabilities
-       NO auto-recall / Working Graph / search results
-  -> freeze required tool obligations
-  -> automatic memory recall
+  -> record immutable raw evidence
+  -> create per-turn Working Graph
+  -> expose role-appropriate native tools
   -> main Ollama-native agent loop
-  -> verify frozen obligations
+       memory tools are available like other native capabilities
+       the model chooses whether and when to call them
   -> final response accepted
   -> post-response memory update
 ```
 
-`required=true` means a successful call is mandatory before final-answer acceptance. `required=false` does not prohibit later tool use.
+Memory is therefore not injected into every turn automatically. If user history is needed, the model explicitly calls a model-visible memory tool.
 
-This is an execution-order contract for the A runtime path, not the definition of the project itself.
+Preflight/required-tool classes may still exist elsewhere in the source tree for older experiments or lower-level compatibility, but they are not part of the production MAI request lifecycle.
 
 ## 6. Model-independent ConceptIndex: Exact + SQLite FTS5
 
@@ -145,56 +148,62 @@ Memory Runtime
          -> SqliteFtsConceptIndex
 ```
 
-There is no embedding model configuration and no model-specific vector space. Changing the main LLM or memory-writing LLM therefore does not require rebuilding long-term memory or recall coordinates.
+There is no embedding model configuration and no model-specific vector space. Changing the main LLM or a future memory-writing LLM therefore does not require rebuilding long-term memory or recall coordinates.
 
 When `SqliteFtsConceptIndex` opens an existing Memory v1 database, it non-destructively synchronizes permanent Concept Nodes that are not yet present in the exact/FTS tables. Legacy sqlite-vec tables, if present from an older development database, are ignored rather than silently deleted.
 
-## 7. Automatic recall and the Working Graph
+## 7. Model-visible memory recall
 
-The ConceptIndex is only the recall entry point. A Concept hit is not a final memory answer.
+The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer.
 
-For each hit, automatic recall adds:
+Current model-visible memory entry points are:
 
-1. the Concept's one-hop neighborhood, exposing related Fact and Utterance Nodes;
-2. the shortest available graph path from the hit back to the current user's account anchor.
+```text
+memory_overview(limit)
+  -> broad memory view without a lexical query
+
+memory_recall(query)
+  -> Sentence_Breaker query segments
+  -> Exact + FTS5 ConceptIndex
+  -> Concept seeds
+  -> graph neighborhoods / available user-anchor paths
+  -> merge into the per-turn Working Graph
+
+memory_search(node_id)
+  -> exact one-hop expansion from a selected permanent node
+  -> merge into the per-turn Working Graph
+```
 
 Shortest-path discovery treats topology as undirected, while returned edges preserve stored direction, relation, and provenance.
 
-```text
-Current user input
-  -> Sentence_Breaker query segments
-  -> Exact + FTS5 ConceptIndex
-  -> Concept seed
-  -> seed one-hop
-  -> seed -> current user anchor shortest path
-  -> merge union into Working Graph
-```
-
-The Working Graph is temporary per-turn state and is not persisted as another graph.
+The Working Graph is temporary per-turn state and is not persisted as another graph. It is populated only by explicit memory-tool execution in the production C runtime; there is no automatic recall pass before the main agent loop.
 
 ## 8. Deliberate memory expansion
 
-`memory_search(node_id)` expands exactly one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes also receive available shortest paths back to the current user's anchor.
+`memory_search(node_id)` expands exactly one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes may also receive available shortest paths back to the current user's memory anchor.
 
 There is no arbitrary-depth hidden traversal; farther recall requires another explicit memory call.
 
-## 9. Post-response semantic update
+## 9. Post-response memory update
 
 No interpreted graph memory is written during the native tool-use loop.
 
 ```text
 raw user evidence saved
-  -> preflight / recall / agent-tool loop
+  -> agent/tool loop
   -> final answer accepted
   -> MemoryRuntime.finish_turn()
        create Utterance Node
        connect user_anchor -> utterance (spoke)
        create/reuse Sentence_Breaker Concepts
        connect utterance -> concept (mentions)
-       extract user-grounded Facts
-       connect anchor/utterance/fact provenance
+       if FactExtractor is configured:
+         create user-grounded Facts
+         connect anchor/utterance/fact provenance
        index only newly-created Concept Nodes
 ```
+
+Current production uses `fact_extractor=None`; therefore the active default write path preserves raw Utterance evidence and Concept links without silently pretending semantic Fact extraction succeeded.
 
 Tool/search-derived world facts have a different source from user assertions and must not be silently stored as if the user had said them.
 
@@ -202,7 +211,11 @@ Tool/search-derived world facts have a different source from user assertions and
 
 Long-term memory is revisable. A later correction does not justify deleting the original evidence and pretending it never existed.
 
-Correction handling preserves source evidence and represents the newer interpretation through explicit provenance/version relations. User-model correction, factual/content correction, and response-style correction remain distinct meanings and must not all be collapsed into profile mutation.
+The design principle is to preserve source evidence and represent newer interpretations through explicit provenance/version or conflict relations rather than destructive rewriting.
+
+User-model correction, factual/content correction, and response-style correction remain distinct meanings and must not all be collapsed into profile mutation.
+
+This is a memory-design contract. A complete production correction-application pipeline is not assumed to be implemented merely because the graph schema can represent it.
 
 ## 11. Failure semantics
 
@@ -210,12 +223,13 @@ Memory follows the same MAI rules as the agent runtime:
 
 - no string-contains routing;
 - no similarity-based identity merging;
-- no silent replacement of failed required tools;
+- no silent replacement of failed memory calls;
 - no rewriting source utterances;
 - no free-form model edge meaning used as evidence;
+- no claiming Fact extraction occurred when `FactExtractor` is absent;
 - SQLite/FTS5/index contract failures remain explicit;
 - conflicting Concept index identity fails visibly;
-- a required memory capability that did not successfully run cannot be considered satisfied.
+- a failed memory tool result must not be treated as successful recall.
 
 ## 12. Implementation boundaries
 
@@ -231,11 +245,11 @@ mai/memory/
   working.py        per-turn Working Graph
   segmenter.py      Sentence_Breaker adapter
   recall/           concept entry + one-hop + user-anchor path assembly
-  extraction/       post-response user FactExtractor contract
+  extraction/       optional post-response user FactExtractor contract
   runtime.py        memory lifecycle coordinator
   tools.py          user-bound native memory tools
 ```
 
 The design goal is:
 
-> **Evidence-preserving graph memory with a model-independent exact + lexical ConceptIndex.**
+> **Evidence-preserving graph memory with explicit model-driven recall and a model-independent exact + lexical ConceptIndex.**
