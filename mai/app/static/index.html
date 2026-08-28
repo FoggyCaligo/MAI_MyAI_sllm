@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAI</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, Pretendard, system-ui, sans-serif; background:#111318; color:#edf0f7; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:flex; flex-direction:column; }
+    header { padding:14px 18px; border-bottom:1px solid #2a2f3a; display:flex; align-items:center; gap:12px; }
+    .badge { width:36px; height:36px; border-radius:50%; display:grid; place-items:center; background:#2867ff; font-weight:700; }
+    h1 { font-size:16px; margin:0; }
+    .meta { margin-left:auto; font-size:12px; color:#9ca6b8; }
+    main { width:min(900px, 100%); margin:0 auto; flex:1; padding:22px 16px 120px; }
+    #messages { display:flex; flex-direction:column; gap:16px; }
+    .message { border:1px solid #2a2f3a; border-radius:16px; padding:14px 16px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .user { align-self:flex-end; max-width:82%; background:#1a2232; }
+    .assistant { align-self:stretch; background:#151820; }
+    .diagnostics { margin-top:10px; font-size:12px; color:#8e99ab; white-space:normal; }
+    form { position:fixed; bottom:0; left:0; right:0; padding:14px; background:linear-gradient(transparent, #111318 28%); }
+    .composer { width:min(900px, 100%); margin:0 auto; display:flex; gap:10px; align-items:flex-end; }
+    textarea { flex:1; resize:none; min-height:54px; max-height:180px; border:1px solid #343b48; border-radius:16px; background:#181c24; color:inherit; padding:15px; font:inherit; outline:none; }
+    textarea:focus { border-color:#5f88ff; }
+    button { border:0; border-radius:14px; padding:15px 18px; background:#2867ff; color:white; font-weight:700; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:wait; }
+    .error { border-color:#8b3b48; background:#27171c; }
+    @media (max-width:600px) { main { padding-inline:10px; } .user { max-width:92%; } header { padding-inline:12px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="badge">MAI</div>
+    <div><h1>MyAI sLLM</h1><div class="meta" id="status">연결 확인 중…</div></div>
+  </header>
+  <main><div id="messages"></div></main>
+  <form id="chat-form">
+    <div class="composer">
+      <textarea id="input" placeholder="MAI에게 메시지 보내기" rows="1" required></textarea>
+      <button id="send" type="submit">전송</button>
+    </div>
+  </form>
+  <script>
+    const messages = document.querySelector('#messages');
+    const form = document.querySelector('#chat-form');
+    const input = document.querySelector('#input');
+    const send = document.querySelector('#send');
+    const status = document.querySelector('#status');
+    const sessionId = crypto.randomUUID();
+
+    function addMessage(role, text, diagnostics='') {
+      const box = document.createElement('div');
+      box.className = `message ${role}`;
+      box.textContent = text;
+      if (diagnostics) {
+        const meta = document.createElement('div');
+        meta.className = 'diagnostics';
+        meta.textContent = diagnostics;
+        box.appendChild(meta);
+      }
+      messages.appendChild(box);
+      box.scrollIntoView({behavior:'smooth', block:'end'});
+      return box;
+    }
+
+    async function loadHealth() {
+      try {
+        const res = await fetch('/health');
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        status.textContent = `${data.model} · ${data.tailscale_serve ? 'Tailscale' : 'Local'}`;
+      } catch (err) {
+        status.textContent = '서버 연결 실패';
+      }
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      addMessage('user', message);
+      input.value = '';
+      send.disabled = true;
+      const pending = addMessage('assistant', '생각 중…');
+      try {
+        const res = await fetch('/chat', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({message, session_id:sessionId})
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        pending.textContent = data.answer;
+        const used = data.tools.map(t => `${t.name}${t.ok ? '' : ' (failed)'}`).join(', ');
+        if (used) {
+          const meta = document.createElement('div');
+          meta.className = 'diagnostics';
+          meta.textContent = `tools: ${used} · rounds: ${data.model_rounds}`;
+          pending.appendChild(meta);
+        }
+      } catch (err) {
+        pending.classList.add('error');
+        pending.textContent = `오류: ${err.message}`;
+      } finally {
+        send.disabled = false;
+        input.focus();
+      }
+    });
+
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    loadHealth();
+    input.focus();
+  </script>
+</body>
+</html>
