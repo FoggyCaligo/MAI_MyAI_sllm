@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -12,6 +13,7 @@ from ..agent.runtime import AgentRuntime
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
+from ..memory.admission import successful_memory_recall_tools
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -27,6 +29,9 @@ from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
+
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 AGENT_SYSTEM_PROMPT = """
@@ -155,7 +160,6 @@ class MAIRuntime:
             raise ValueError("prompt must be non-empty")
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
-        evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
         working = WorkingGraph()
         registry = self._registry_for(principal, working)
         agent = AgentRuntime(
@@ -168,14 +172,22 @@ class MAIRuntime:
         messages.extend(prior_messages)
         result = await agent.run_user_message(prompt, prior_messages=messages)
 
-        successful_tool_results = tuple(execution.content for execution in result.tool_executions if execution.ok)
-        await self.memory.finish_turn(
-            user_id=principal.memory_user_id,
-            user_text=prompt,
-            final_answer=result.content,
-            user_evidence=evidence,
-            successful_tool_results=successful_tool_results,
-        )
+        recall_tools = successful_memory_recall_tools(result.tool_executions)
+        if recall_tools:
+            _LOG.info(
+                "MAI memory admission skipped reason=recall_turn tools=%s",
+                ",".join(recall_tools),
+            )
+        else:
+            evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
+            await self.memory.finish_turn(
+                user_id=principal.memory_user_id,
+                user_text=prompt,
+                final_answer=result.content,
+                user_evidence=evidence,
+            )
+            _LOG.info("MAI memory admission stored source=user_utterance chars=%d", len(prompt))
+
         tools = tuple({
             "name": execution.name,
             "arguments": execution.arguments,
