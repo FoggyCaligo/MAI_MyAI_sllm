@@ -4,12 +4,17 @@ version = "0.1.0"
 description = "Ollama-native personal agent runtime with graph memory"
 requires-python = ">=3.11"
 dependencies = [
+  "beautifulsoup4>=4.13",
   "ddgs>=9.0",
   "fastapi>=0.116.0",
   "httpx>=0.27",
   "ollama>=0.6.0",
+  "openpyxl>=3.1",
   "pydantic>=2.0",
+  "pypdf>=5.0",
+  "python-docx>=1.1",
   "python-dotenv>=1.0.0",
+  "python-pptx>=1.0",
   "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
   "uvicorn>=0.35.0",
 ]
