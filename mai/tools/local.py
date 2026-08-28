@@ -4,7 +4,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from .code import register_code_tools
-from .filesystem import register_filesystem_read_tools, register_filesystem_tools
+from .filesystem import (
+    register_filesystem_read_tools,
+    register_filesystem_tools,
+    register_upload_scoped_write_tools,
+)
 from .registry import ToolRegistry
 from .terminal import register_terminal_tools
 
@@ -13,11 +17,18 @@ def register_readonly_local_tools(
     registry: ToolRegistry,
     *,
     cwd: str | Path | None = None,
+    upload_root: str | Path | None = None,
     filesystem_timeout_seconds: float | None = 60,
     code_timeout_seconds: float | None = 60,
 ) -> None:
-    """Register the non-mutating local capabilities allowed to trial users."""
+    """Register trial-safe local capabilities, optionally including upload-scoped writes."""
     register_filesystem_read_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
+    if upload_root is not None:
+        register_upload_scoped_write_tools(
+            registry,
+            upload_root=upload_root,
+            timeout_seconds=filesystem_timeout_seconds,
+        )
     register_code_tools(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
 
 

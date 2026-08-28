@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         memory_db_path=os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3"),
         sentence_breaker_db_path=os.environ.get("SENTENCE_BREAKER_DB_PATH", "./data/sentence_breaker.sqlite3"),
         vision_model=os.environ.get("VISION_MODEL") or None,
+        upload_root="./mai_uploads",
         cwd=os.environ.get("MAI_CWD") or None,
     )
     if _env_bool("TAILSCALE_SERVE", False):
@@ -144,6 +145,14 @@ def _principal_from_authorization(authorization: str | None) -> tuple[str, Acces
     return token, principal
 
 
+def _validated_upload_filename(filename: str | None) -> str:
+    if not filename:
+        raise HTTPException(status_code=400, detail="upload filename is required")
+    if filename in {".", ".."} or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="upload filename must be a plain file name")
+    return filename
+
+
 @app.get("/", include_in_schema=False)
 async def root() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
@@ -202,6 +211,42 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
     return {"models": installed, "current": runtime.model}
+
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, object]:
+    _, principal = _principal_from_authorization(authorization)
+    runtime = _get_runtime()
+    filename = _validated_upload_filename(file.filename)
+    target = runtime.upload_root / filename
+    if target.exists():
+        raise HTTPException(status_code=409, detail=f"upload already exists: {filename}")
+
+    written = 0
+    try:
+        with target.open("xb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                written += len(chunk)
+    except Exception:
+        if target.exists():
+            target.unlink()
+        raise
+    finally:
+        await file.close()
+
+    return {
+        "filename": filename,
+        "path": str(target.resolve()),
+        "bytes": written,
+        "uploaded_by": principal.auth_user_id,
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
