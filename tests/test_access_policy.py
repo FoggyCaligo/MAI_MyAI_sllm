@@ -76,4 +76,4 @@ def test_trial_local_bundle_has_no_mutating_or_terminal_tools(tmp_path):
 def test_external_bundle_exposes_web_and_market_tools():
     registry = ToolRegistry()
     register_external_information_tools(registry)
-    assert set(registry.names()) == {"web_search", "market_data"}
+    assert set(registry.names()) == {"web_search", "web_fetch", "market_data"}
