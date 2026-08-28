@@ -99,15 +99,25 @@ def document_read(*, path: str, max_chars: int = 50000, cwd: str | Path | None =
 
     structured = reader(target)
     text_parts: list[str] = []
+    details: dict[str, Any]
     kind = structured["kind"]
     if kind == "pdf":
         text_parts = [item["text"] for item in structured["pages"]]
+        details = {"page_count": len(structured["pages"])}
     elif kind == "docx":
         text_parts = [*structured["paragraphs"], *["\t".join(row) for table in structured["tables"] for row in table]]
+        details = {"paragraph_count": len(structured["paragraphs"]), "table_count": len(structured["tables"])}
     elif kind == "xlsx":
         text_parts = ["\t".join("" if value is None else str(value) for value in row) for sheet in structured["sheets"] for row in sheet["rows"]]
+        details = {
+            "sheets": [
+                {"title": sheet["title"], "row_count": len(sheet["rows"])}
+                for sheet in structured["sheets"]
+            ]
+        }
     elif kind == "pptx":
         text_parts = [item["text"] for item in structured["slides"]]
+        details = {"slide_count": len(structured["slides"])}
     else:
         raise RuntimeError(f"unsupported structured document kind: {kind}")
 
@@ -117,7 +127,7 @@ def document_read(*, path: str, max_chars: int = 50000, cwd: str | Path | None =
         "extension": suffix,
         "text": text,
         "truncated": truncated,
-        "structured": structured,
+        "details": details,
     }
 
 
