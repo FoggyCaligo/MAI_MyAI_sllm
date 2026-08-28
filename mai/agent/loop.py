@@ -10,6 +10,7 @@ from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
 from .requirements import FrozenToolRequirements, UnsatisfiedToolRequirements
+from .verification import FinalGroundingVerifier
 
 
 class AgentRuntimeError(RuntimeError):
@@ -59,10 +60,18 @@ class AgentRunResult:
 
 
 class AgentLoop:
-    def __init__(self, adapter: OllamaAdapter, registry: ToolRegistry, *, guard_config: GuardConfig | None = None) -> None:
+    def __init__(
+        self,
+        adapter: OllamaAdapter,
+        registry: ToolRegistry,
+        *,
+        guard_config: GuardConfig | None = None,
+        final_verifier: FinalGroundingVerifier | None = None,
+    ) -> None:
         self.adapter = adapter
         self.registry = registry
         self.guard_config = guard_config or GuardConfig()
+        self.final_verifier = final_verifier
 
     async def run(
         self,
@@ -91,6 +100,20 @@ class AgentLoop:
                         raise UnsatisfiedToolRequirements(
                             "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
                         )
+                    if self.final_verifier is not None:
+                        verification = await self.final_verifier.verify(
+                            candidate=turn.content,
+                            messages=history,
+                            successful_tool_results=tuple(
+                                (execution.name, execution.content)
+                                for execution in executions
+                                if execution.ok
+                            ),
+                        )
+                        if not verification.ok:
+                            history.append({"role": "system", "content": verification.feedback_message()})
+                            round_number += 1
+                            continue
                     return AgentRunResult(
                         content=turn.content,
                         thinking=turn.thinking,

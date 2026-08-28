@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 from ollama import AsyncClient
 
 from ..agent.runtime import AgentRuntime
+from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.graph.repository import MemoryGraphRepository
@@ -36,6 +37,8 @@ Your capabilities are defined by the native tools supplied with this request. Do
 Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use document_read for PDF, DOCX, XLSX, CSV, or PPTX files. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
 Preserve factual values exactly as they appear in user messages and tool results unless the user explicitly asks to transform them. Do not silently replace, round, reinterpret, or normalize a supplied number into a different value. Distinguish source facts from derived calculations: for example, a profitable sale does not imply that a separately stated target price was reached.
+
+Keep the meaning and scope of each source field, metric, screen, and time range separate unless the available evidence establishes that they use the same definition. Similar labels or related values do not make two metrics interchangeable. When comparing values from different sources or screens, do not attribute their difference to a specific cause unless that cause is supported by the source definitions, a verified calculation rule, or other evidence. If the relationship is uncertain, say what is known and leave the cause unresolved rather than inventing a reconciliation.
 
 For arithmetic that materially affects the answer, use the calculator tool instead of mental arithmetic. This includes sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step numeric comparisons.
 
@@ -155,7 +158,11 @@ class MAIRuntime:
         evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
         working = WorkingGraph()
         registry = self._registry_for(principal, working)
-        agent = AgentRuntime(adapter, registry)
+        agent = AgentRuntime(
+            adapter,
+            registry,
+            final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
+        )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)

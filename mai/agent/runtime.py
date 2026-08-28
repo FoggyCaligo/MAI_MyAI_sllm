@@ -9,6 +9,7 @@ from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult
 from .requirements import FrozenToolRequirements
+from .verification import FinalGroundingVerifier
 
 
 class AgentRuntime:
@@ -19,12 +20,18 @@ class AgentRuntime:
         *,
         guard_config: GuardConfig | None = None,
         max_rounds: int | None = None,
+        final_verifier: FinalGroundingVerifier | None = None,
     ) -> None:
         if guard_config is not None and max_rounds is not None:
             raise ValueError("pass guard_config or max_rounds, not both")
         if max_rounds is not None:
             guard_config = GuardConfig(max_rounds=max_rounds)
-        self.loop = AgentLoop(adapter, registry, guard_config=guard_config)
+        self.loop = AgentLoop(
+            adapter,
+            registry,
+            guard_config=guard_config,
+            final_verifier=final_verifier,
+        )
 
     async def run(
         self,
