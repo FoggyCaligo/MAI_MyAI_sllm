@@ -13,6 +13,7 @@ python -m pip install -e ".[dev]"
 
 ```env
 MAIN_MODEL=gemma4:e4b
+VISION_MODEL=
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
 OWNER_ID=my-owner-login
@@ -32,39 +33,35 @@ OWNER_ID=원하는-로그인-ID
 OWNER_MEMORY_ID=local-user
 ```
 
-이렇게 하면 로그인 ID를 새로 정해도 기존 `local-user` User Anchor의 기억을 그대로 읽고 계속 기록한다. 기존 C 실험이 `c-test` identity를 사용했다면 `OWNER_MEMORY_ID=c-test`로 지정한다.
+`VISION_MODEL`은 선택 사항이다. 비워두면 `image_analyze` 자체가 ToolRegistry에 노출되지 않는다. 이미지 분석을 사용하려면 Ollama에 설치되어 있고 이미지 입력을 지원하는 모델 이름을 지정한다.
 
-`TRIAL_IDS`는 쉼표로 구분하며 비워둘 수 있다. Trial은 별도의 memory mapping 설정 없이 각 로그인 ID 자체를 자신의 memory identity로 사용한다. `OWNER_MEMORY_ID`가 trial ID와 충돌하면 startup이 실패하여 서로 다른 계정이 같은 User Anchor를 공유하지 못하게 한다.
+`TRIAL_IDS`는 쉼표로 구분하며 비워둘 수 있다. Trial은 별도의 memory mapping 설정 없이 각 로그인 ID 자체를 자신의 memory identity로 사용한다. `OWNER_MEMORY_ID`가 trial ID와 충돌하면 startup이 실패한다.
 
-등록되지 않은 ID는 `/login` 단계에서 거부된다. 인증은 ID-only이며 로그인 성공 시 서버가 임시 Bearer session token을 발급한다. 브라우저를 닫거나 서버를 재시작한 뒤에는 다시 로그인한다.
+등록되지 않은 ID는 `/login` 단계에서 거부된다. 인증은 ID-only이며 로그인 성공 시 서버가 임시 Bearer session token을 발급한다.
 
-## 2. 권한
+## 2. 권한과 읽기 도구
 
-Owner는 현재 등록된 모든 native tool을 사용할 수 있다.
-
-```text
-owner
-  memory
-  current_time
-  filesystem read/write/create/delete/move/copy
-  code read/search/symbols
-  terminal
-  web_search
-  market_data
-```
-
-Trial은 runtime이 처음부터 제한된 ToolRegistry를 구성한다. 프롬프트로 사용을 자제시키는 방식이 아니다.
+Owner는 현재 등록된 모든 native tool을 사용할 수 있다. Trial은 파일 변경/삭제와 terminal을 받지 않지만 읽기 계열과 외부 정보 계열은 사용할 수 있다.
 
 ```text
-trial
+공통 read/info capability
   memory_recall / memory_overview / memory_search
   current_time
   file_list / file_search / file_read
   code_search / code_read / code_symbols
-  web_search / market_data
+  document_read
+  image_analyze          # VISION_MODEL이 설정된 경우
+  web_search / web_fetch
+  market_data
+
+owner 추가 capability
+  file_write / file_create / file_delete / file_move / file_copy
+  terminal_run
 ```
 
-Trial에는 `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy`, `terminal_run`이 노출되지 않는다.
+`document_read`는 PDF, DOCX, XLSX, PPTX를 지원한다. 큰 결과는 `max_chars`로 제한할 수 있다.
+
+`web_search`는 검색 결과를 찾는 도구이고 `web_fetch`는 이미 알고 있는 특정 public HTTP(S) URL의 본문을 읽는 도구다. `web_fetch`는 loopback/private-network 주소를 거부하고 redirect 대상도 다시 검사한다.
 
 ## 3. 로컬 UI
 
@@ -80,9 +77,9 @@ http://127.0.0.1:8000
 
 처음에는 ID login 화면만 보인다. 허용 ID로 로그인한 뒤 Ollama 설치 모델을 상단 selector에서 선택할 수 있다. 선택한 모델은 해당 요청에 직접 사용되며 `MAIN_MODEL`은 기본 선택값이다.
 
-한 브라우저 session에서는 짧은 대화 history를 유지한다. Chat history는 인증 ID별로 분리되고, 장기기억은 persistent SQLite graph에서 `memory_user_id`별 User Anchor로 저장된다. 따라서 owner의 로그인 이름을 바꾸더라도 `OWNER_MEMORY_ID`를 유지하면 같은 장기기억을 계속 사용할 수 있다.
+한 브라우저 session에서는 짧은 대화 history를 유지한다. Chat history는 인증 ID별로 분리되고, 장기기억은 persistent SQLite graph에서 `memory_user_id`별 User Anchor로 저장된다.
 
-응답은 기본 Markdown 요소를 렌더링하며, 각 응답 아래의 `tool log`에서 tool name, 성공/실패 상태, arguments, result를 확인할 수 있다. 새 메시지와 응답이 추가되면 message pane은 자동으로 최하단으로 스크롤된다. 응답 대기 중에는 이전 MK5와 같은 세 점 bounce loader를 표시한다.
+응답은 기본 Markdown 요소를 렌더링하며, 각 응답 아래의 `tool log`에서 tool name, 성공/실패 상태, arguments, result를 확인할 수 있다. 새 메시지와 응답이 추가되면 message pane은 자동으로 최하단으로 스크롤된다.
 
 ## 4. Tailscale Serve
 
@@ -115,7 +112,7 @@ Access role → ToolRegistry composition
    ↓
 Main LLM
    ↓ native tool selection
-memory / time / file / code / web / market / terminal (role에 따라 노출)
+memory / time / file / code / document / image / web / market / terminal
    ↓
 Final Response
    ↓

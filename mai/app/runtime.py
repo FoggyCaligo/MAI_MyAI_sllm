@@ -18,7 +18,9 @@ from ..memory.runtime import MemoryRuntime
 from ..memory.segmenter import SentenceBreakerSegmenter
 from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
+from ..tools.documents import register_document_tools
 from ..tools.external import register_external_information_tools
+from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..tools.time import register_time_tools
@@ -28,9 +30,9 @@ from .access import AccessPrincipal, AccessRole
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
 
-Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, the web, market data, the current local time, or the terminal.
+Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, or the terminal.
 
-Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use web or market tools for current external information when those tools are available. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
+Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use document_read for PDF, DOCX, XLSX, or PPTX files. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 
@@ -56,6 +58,7 @@ class MAIRuntime:
         ollama_host: str,
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
+        vision_model: str | None = None,
         cwd: str | Path | None = None,
     ) -> None:
         if not model.strip():
@@ -63,6 +66,7 @@ class MAIRuntime:
         self.cwd = cwd
         self.ollama_host = ollama_host
         self.model = model
+        self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
         self.memory_db_path = Path(memory_db_path).expanduser().resolve()
         self.graph = MemoryGraphRepository(self.memory_db_path)
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
@@ -107,14 +111,12 @@ class MAIRuntime:
 
     def _registry_for(self, principal: AccessPrincipal, working: WorkingGraph) -> ToolRegistry:
         registry = ToolRegistry()
-        register_memory_tools(
-            registry,
-            self.memory,
-            working,
-            user_id=principal.memory_user_id,
-        )
+        register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         register_time_tools(registry)
         register_external_information_tools(registry)
+        register_document_tools(registry, cwd=self.cwd)
+        if self.vision_model is not None:
+            register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:
             register_local_pc_tools(registry, cwd=self.cwd)
         elif principal.role is AccessRole.TRIAL:
