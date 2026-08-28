@@ -46,6 +46,7 @@ Evidence grounding:
 - Use "supported" when no material unsupported claim is present.
 - Stable general knowledge does not require current-turn evidence merely because it is factual.
 - Prior assistant text may clarify conversational context but is not factual evidence. User messages and successful tool results are evidence.
+- Preserve the scope of observed evidence. When a screenshot, table, list, search result, page, or tool result visibly contains only part of a larger collection, claims about the entire collection require evidence that the full collection was actually observed. Do not infer "only", "the highest", "the lowest", "all", "none", "every", "the rest", or equivalent exhaustive/superlative conclusions merely because they are true among the currently visible rows. If the candidate presents such a broader-scope conclusion as fact without evidence that the relevant set is complete, treat that concrete claim as unsupported. A scoped statement such as "among the visible rows" is acceptable when supported.
 
 Task alignment:
 - Identify the user's current request from the latest user message, resolving references from the supplied conversational context when needed.
