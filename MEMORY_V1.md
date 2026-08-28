@@ -1,10 +1,10 @@
 # MAI Memory v1
 
-This document is the implementation contract for MAI's long-term memory. Memory v1 keeps the parts of MACHI MK4 that produced the most interpretable answers — user anchors, directly addressable utterance evidence, fact nodes, reusable concept nodes, typed edges, and provenance — while replacing MK4's custom relevance/activation entry path with a replaceable vector index.
+This document is the implementation contract for MAI's long-term memory. Memory v1 keeps the MACHI MK4 properties that produced interpretable answers — user anchors, directly addressable utterance evidence, fact nodes, reusable concept nodes, typed edges, and provenance — while using a model-independent ConceptIndex for recall entry.
 
 ## 1. Core idea
 
-Sentence_Breaker defines reusable **concept-node boundaries**, not the entire memory graph.
+Sentence_Breaker defines reusable **Concept Node boundaries**, not the entire memory graph.
 
 ```text
 User utterance
@@ -18,12 +18,12 @@ User utterance
 Concept identity is exact segment identity:
 
 ```text
-one canonical Sentence_Breaker segment = one Concept Node = one vector
+one canonical Sentence_Breaker segment = one Concept Node
 ```
 
-Repeated appearances of the same segment reuse the same concept and vector. Semantic similarity is used only to retrieve an existing concept; it never merges two concept identities.
+Repeated appearances of the same segment reuse the same Concept Node. Recall indexing never merges graph identity.
 
-The full original sentence remains a first-class Utterance Node. This is deliberate: recall must be able to show the model what the user actually said instead of forcing it to trust a free-form rewritten relation description.
+The full original sentence remains a first-class Utterance Node so recall can show the model what the user actually said instead of forcing it to trust a rewritten relation description.
 
 ## 2. Permanent graph node types
 
@@ -35,33 +35,29 @@ Every user account owns one persistent anchor:
 user_anchor::<user_id>
 ```
 
-The anchor is a real permanent graph node but is never vector-indexed. It establishes whose memory a recalled subgraph belongs to.
+The anchor is a permanent graph node but is never inserted into the ConceptIndex.
 
 ### Utterance Node
 
-An Utterance Node contains the original user sentence and an immutable `evidence_id` in its payload.
+An Utterance Node contains the original user sentence and an immutable `evidence_id`.
 
 ```text
 User Anchor
     └─spoke→ Utterance
 ```
 
-Utterances are evidence-bearing graph nodes and may be returned directly during recall.
-
 ### Fact Node
 
-A Fact Node is a concise long-term fact extracted by a model **after the final response has been accepted**. It does not replace its source utterance.
+A Fact Node is a concise long-term fact extracted after the final response has been accepted. It never replaces its source utterance.
 
 ```text
 User Anchor ─asserted_fact→ Fact
 Utterance   ─derived_fact─→ Fact
 ```
 
-Fact extraction is the model-written semantic layer. Edge meanings are not freely rewritten by the model.
-
 ### Concept Node
 
-A Concept Node is an exact Sentence_Breaker segment. Concept Nodes are globally reusable and are the only graph nodes stored in the vector index.
+A Concept Node is an exact Sentence_Breaker segment. Concept Nodes are globally reusable and are the only graph nodes placed in the ConceptIndex.
 
 ```text
 Utterance ─mentions→ Concept
@@ -70,7 +66,7 @@ Fact      ─mentions→ Concept
 
 ## 3. Typed edges and provenance
 
-Edges use runtime-defined relation types rather than model-written relation prose. The initial Memory v1 vocabulary is intentionally small:
+Runtime-defined relation types are used instead of model-written relation prose:
 
 ```text
 user_anchor -> utterance : spoke
@@ -80,47 +76,27 @@ utterance   -> concept   : mentions
 fact        -> concept   : mentions
 ```
 
-Each edge also stores provenance such as `user_utterance`, `user_assertion`, `derived_from_utterance`, or `fact_index`.
+Each edge stores provenance such as `user_utterance`, `user_assertion`, `derived_from_utterance`, or `fact_index`.
 
-The database enforces one edge per `(from_node_id, to_node_id, relation)`. The same pair may have different typed relations, but an identical typed relation is not duplicated.
-
-This replaces the earlier proposed `A -> B + latest three model-written relation descriptions` design. That representation was compact but placed model interpretation ahead of the original sentence, which can make remembered answers less stable. Memory v1 instead preserves the source sentence as a node and uses facts as a derived, traceable layer.
+The database enforces one edge per `(from_node_id, to_node_id, relation)`.
 
 ## 4. Evidence
 
-Raw user input is stored in the immutable `evidence` table before the agent run so the original source cannot be lost. Recording raw evidence is not semantic graph mutation.
+Raw user input is stored in the immutable `evidence` table before the agent run. Recording raw evidence is not semantic graph mutation. After the final answer, an Utterance Node is created for that evidence and connected to the user anchor and derived memory nodes.
 
-After the final answer, an Utterance Node is created for that evidence and connected to the user anchor and derived memory nodes.
-
-Therefore the system can answer both:
-
-```text
-What do I currently remember?
-```
-
-and:
-
-```text
-Why do I remember that? What did the user actually say?
-```
-
-without treating a rewritten graph relation as the original source.
+This allows both semantic recall and direct inspection of the original source sentence.
 
 ## 5. Tool requirement preflight comes before recall
 
 Tool requirement planning happens **before automatic recall**.
 
-This ordering is mandatory. If automatic memory, web results, or file results are visible first, a small model can conclude that the request is already sufficiently answered and incorrectly mark `memory_search` or `web_search` as unnecessary.
-
 ```text
 User input
   -> Tool Requirement Preflight
        current request
-       minimum recent dialogue needed to resolve the request
+       minimum recent dialogue
        available capabilities
-       NO auto-recall
-       NO Working Graph
-       NO search/tool results
+       NO auto-recall / Working Graph / search results
   -> freeze required tool obligations
   -> automatic memory recall
   -> main Ollama-native agent loop
@@ -129,11 +105,11 @@ User input
   -> post-response memory update
 ```
 
-`required=true` means a successful call is mandatory before final-answer acceptance. `required=false` means only that there is no preflight obligation; the agent remains free to use that tool later.
+`required=true` means a successful call is mandatory before final-answer acceptance. `required=false` does not prohibit later tool use.
 
-## 6. sqlite-vec and the VectorIndex boundary
+## 6. Model-independent ConceptIndex: Exact + SQLite FTS5
 
-Memory v1 uses `sqlite-vec` as the first concrete vector backend. Graph tables and vector tables can live in the same `memory.db` file.
+Memory v1 does not require embeddings or a vector database. Persistent recall entry is handled by a `ConceptIndex` boundary whose first concrete implementation is `SqliteFtsConceptIndex`.
 
 ```text
 memory.db
@@ -141,71 +117,66 @@ memory.db
   user_anchors
   evidence
   edges
-  memory_node_vectors   <- sqlite-vec vec0 virtual table
+  memory_concept_exact
+  memory_concept_fts
 ```
 
-Only Concept Nodes are inserted into `memory_node_vectors`, and `rowid` is the permanent graph node ID.
+`memory_concept_exact` persists the exact mapping from canonical Concept text to permanent Concept Node ID. At runtime this mapping is loaded into an in-memory Python dictionary, providing exact hash lookup.
+
+`memory_concept_fts` is an SQLite FTS5 virtual table used only as a lexical fallback when exact lookup does not find a Concept. It does not perform embedding similarity and does not define graph identity.
 
 ```text
-Concept Node id 3817
-      ↕
-memory_node_vectors.rowid 3817
+Sentence_Breaker query segments
+        ↓
+Exact hash lookup
+        ↓ miss
+SQLite FTS5 lexical search
+        ↓
+Concept Node IDs
 ```
 
-The memory core does **not** depend directly on sqlite-vec. It depends on the `VectorIndex` protocol:
+The graph owns identity. The index only locates existing Concept Node IDs.
+
+The memory core depends on the `ConceptIndex` protocol:
 
 ```text
 Memory Runtime
-    -> VectorIndex
-         -> SqliteVecIndex today
-         -> another backend later if needed
+    -> ConceptIndex
+         -> SqliteFtsConceptIndex
 ```
 
-This boundary is permanent. sqlite-vec may be replaced without changing graph identity or recall semantics.
+There is no embedding model configuration and no model-specific vector space. Changing the main LLM or memory-writing LLM therefore does not require rebuilding long-term memory or recall coordinates.
 
-Embeddings are generated through an independent `EmbeddingProvider` boundary. The initial local implementation uses Ollama `/api/embed`.
+When `SqliteFtsConceptIndex` opens an existing Memory v1 database, it non-destructively synchronizes any existing permanent Concept Nodes that are not yet present in the exact/FTS tables. Legacy sqlite-vec tables, if present from an older development database, are ignored rather than silently deleted.
 
 ## 7. Automatic recall and the Working Graph
 
-The vector index is only the semantic entry point. A vector hit is a Concept Node, not a final memory answer.
+The ConceptIndex is only the recall entry point. A Concept hit is not a final memory answer.
 
-For each concept hit, automatic recall adds:
+For each hit, automatic recall adds:
 
-1. the concept's one-hop neighborhood, which can expose related Fact and Utterance Nodes;
+1. the Concept's one-hop neighborhood, exposing related Fact and Utterance Nodes;
 2. the shortest available graph path from the hit back to the current user's account anchor.
 
-The shortest-path search ignores edge direction only while discovering topology. Returned edges preserve their real stored direction, relation type, and provenance.
+Shortest-path discovery treats topology as undirected, while returned edges preserve stored direction, relation, and provenance.
 
 ```text
 Current user input
   -> Sentence_Breaker query segments
-  -> sqlite-vec searches Concept Nodes
-  -> concept seed
+  -> Exact + FTS5 ConceptIndex
+  -> Concept seed
   -> seed one-hop
   -> seed -> current user anchor shortest path
   -> merge union into Working Graph
 ```
 
-This prevents isolated fragments such as `MAI -> project` from being shown without enough structure to establish whose project or memory it is.
-
-The Working Graph is temporary per-turn state. It is not persisted as another graph.
+The Working Graph is temporary per-turn state and is not persisted as another graph.
 
 ## 8. Deliberate memory expansion
 
-`memory_search(node_id)` expands exactly one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes also receive their available shortest paths back to the current user's anchor.
+`memory_search(node_id)` expands exactly one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes also receive available shortest paths back to the current user's anchor.
 
-```text
-Working Graph
-  concept -> utterance -> user anchor
-
-model calls memory_search(concept)
-    -> one-hop permanent neighborhood
-    -> merge facts/utterances/concepts/typed edges
-    -> preserve user-root paths
-    -> next model round sees expanded Working Graph
-```
-
-There is no arbitrary-depth hidden traversal. The model recalls farther by calling `memory_search` again. Agent guards therefore also bound deliberate memory traversal.
+There is no arbitrary-depth hidden traversal; farther recall requires another explicit `memory_search` call.
 
 ## 9. Post-response semantic update
 
@@ -217,32 +188,29 @@ raw user evidence saved
   -> auto-recall
   -> agent/tool loop
   -> final answer accepted
-  -> agent loop ends
   -> MemoryRuntime.finish_turn()
        create Utterance Node
        connect user_anchor -> utterance (spoke)
-       Sentence_Breaker concepts from utterance
+       create/reuse Sentence_Breaker Concepts
        connect utterance -> concept (mentions)
-       model extracts user facts
-       create/reuse Fact Nodes
-       user_anchor -> fact (asserted_fact)
-       utterance -> fact (derived_fact)
-       fact -> concepts (mentions)
-       add vectors only for newly-created Concept Nodes
+       extract user-grounded Facts
+       connect anchor/utterance/fact provenance
+       index only newly-created Concept Nodes
 ```
 
-The future fact-extraction model must extract only facts actually grounded in the user's utterance when those facts are stored as user assertions. Tool/search-derived world facts require their own evidence-bearing node/source policy rather than being silently attributed to the user.
+Tool/search-derived world facts require their own evidence-bearing source policy and must not be silently attributed to the user.
 
 ## 10. Failure semantics
 
 Memory follows the same MAI rules as the agent runtime:
 
 - no string-contains routing;
-- no semantic vector similarity for identity merging;
+- no similarity-based identity merging;
 - no silent replacement of failed required tools;
 - no rewriting source utterances;
 - no free-form model edge meaning used as evidence;
-- schema, SQLite, embedding, and sqlite-vec failures remain explicit;
+- SQLite/FTS5/index contract failures remain explicit;
+- conflicting Concept index identity fails visibly;
 - a required `memory_search` that did not successfully run cannot be considered satisfied.
 
 ## 11. Implementation boundaries
@@ -253,18 +221,17 @@ mai/memory/
     schema.py       typed permanent graph schema
     models.py       anchor/utterance/fact/concept/edge values
     repository.py   graph identity, typed edges, one-hop and anchor paths
-  vector/
-    index.py        replaceable VectorIndex protocol
-    embedding.py    replaceable EmbeddingProvider + Ollama implementation
-    sqlite_vec.py   sqlite-vec backend
+  index/
+    base.py         ConceptIndex / ConceptHit protocol values
+    sqlite_fts.py   exact hash + SQLite FTS5 backend
   working.py        per-turn Working Graph
   segmenter.py      Sentence_Breaker adapter
-  recall/           vector entry + one-hop + user-anchor path assembly
+  recall/           concept entry + one-hop + user-anchor path assembly
   extraction/       post-response user FactExtractor contract
   runtime.py        memory lifecycle coordinator
   tools.py          user-bound native memory_search
 ```
 
-The design goal is therefore not "vector memory instead of graph memory". It is:
+The design goal is:
 
-> **MK4-style evidence/provenance graph memory, with sqlite-vec used only to find the right reusable concept nodes quickly.**
+> **MK4-style evidence/provenance graph memory with a model-independent exact + lexical ConceptIndex.**

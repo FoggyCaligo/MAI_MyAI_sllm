@@ -7,9 +7,9 @@ from typing import Callable, Sequence
 from .extraction.service import FactExtractor
 from .graph.models import Evidence, MemoryNode
 from .graph.repository import MemoryGraphRepository
+from .index import ConceptIndex
 from .recall.service import RecallService
 from .segmenter import Segmenter
-from .vector import VectorIndex
 from .working import WorkingGraph
 
 
@@ -17,7 +17,7 @@ class MemoryRuntime:
     def __init__(
         self,
         graph: MemoryGraphRepository,
-        vector_index: VectorIndex,
+        concept_index: ConceptIndex,
         segmenter: Segmenter,
         recall: RecallService,
         *,
@@ -25,14 +25,14 @@ class MemoryRuntime:
         fact_extractor: FactExtractor | None = None,
     ) -> None:
         self.graph = graph
-        self.vector_index = vector_index
+        self.concept_index = concept_index
         self.segmenter = segmenter
         self.recall = recall
         self.now = now
         self.fact_extractor = fact_extractor
 
     def ensure_user(self, user_id: str) -> MemoryNode:
-        """Create/reuse the persistent account anchor without vector indexing it."""
+        """Create/reuse the persistent account anchor without indexing it."""
         return self.graph.ensure_user_anchor(user_id, now=self.now())
 
     def record_raw_user_evidence(self, user_id: str, user_text: str) -> Evidence:
@@ -136,7 +136,7 @@ class MemoryRuntime:
         for segment in self.segmenter.segment(text):
             concept, created = self.graph.get_or_create_concept(segment, now=self.now())
             if created:
-                self.vector_index.add_node(concept.id, concept.canonical_text)
+                self.concept_index.add_node(concept.id, concept.canonical_text)
             self.graph.add_typed_edge(
                 carrier.id,
                 concept.id,

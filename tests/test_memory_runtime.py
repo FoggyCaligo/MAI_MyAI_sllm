@@ -2,9 +2,9 @@ import asyncio
 from datetime import datetime, timezone
 
 from mai.memory.graph.repository import MemoryGraphRepository
+from mai.memory.index import ConceptHit
 from mai.memory.recall.service import RecallService
 from mai.memory.runtime import MemoryRuntime
-from mai.memory.vector.index import VectorHit
 
 NOW = datetime(2026, 8, 27, 15, 24, tzinfo=timezone.utc)
 
@@ -14,19 +14,19 @@ class FixedSegmenter:
         return tuple(part for part in text.replace(".", "").split() if part)
 
 
-class FakeVectorIndex:
+class FakeConceptIndex:
     def __init__(self):
         self.text_by_id = {}
 
     def add_node(self, node_id: int, text: str) -> None:
         if node_id in self.text_by_id:
-            raise ValueError("duplicate vector")
+            raise ValueError("duplicate concept index entry")
         self.text_by_id[node_id] = text
 
     def search(self, queries, *, limit: int):
         query_set = set(queries)
         hits = [
-            VectorHit(node_id=node_id, score=1.0)
+            ConceptHit(node_id=node_id, score=1.0, match_kind="exact")
             for node_id, text in self.text_by_id.items()
             if text in query_set
         ]
@@ -40,12 +40,12 @@ class OneFactExtractor:
 
 def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
-    vector = FakeVectorIndex()
+    index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, vector, segmenter)
+    recall = RecallService(graph, index, segmenter)
     memory = MemoryRuntime(
         graph,
-        vector,
+        index,
         segmenter,
         recall,
         now=lambda: NOW,
@@ -71,7 +71,7 @@ def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
         assert utterance.canonical_text == "나는 MAI를 만들고 있어"
         assert fact is not None
         assert concept is not None
-        assert concept.id in vector.text_by_id
+        assert concept.id in index.text_by_id
         relations = {
             row[0]
             for row in graph.connection.execute("SELECT relation FROM edges").fetchall()
@@ -83,12 +83,12 @@ def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
 
 def test_auto_recall_keeps_concept_connected_to_current_user_anchor(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
-    vector = FakeVectorIndex()
+    index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, vector, segmenter)
+    recall = RecallService(graph, index, segmenter)
     memory = MemoryRuntime(
         graph,
-        vector,
+        index,
         segmenter,
         recall,
         now=lambda: NOW,
