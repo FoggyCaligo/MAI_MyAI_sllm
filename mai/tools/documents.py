@@ -1,6 +1,7 @@
 """Structured document-reading tools for PDF, DOCX, XLSX, and PPTX files."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,13 @@ class DocumentReadInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1)
     max_chars: int = Field(default=50000, ge=1, le=500000)
+
+
+def _resolve(path: str, cwd: str | Path | None) -> Path:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(cwd or os.getcwd()) / candidate
+    return candidate.resolve(strict=False)
 
 
 def _trim(text: str, max_chars: int) -> tuple[str, bool]:
@@ -71,8 +79,8 @@ def _read_pptx(path: Path) -> dict[str, Any]:
     return {"kind": "pptx", "slides": slides}
 
 
-def document_read(*, path: str, max_chars: int = 50000) -> dict[str, Any]:
-    target = Path(path).expanduser().resolve()
+def document_read(*, path: str, max_chars: int = 50000, cwd: str | Path | None = None) -> dict[str, Any]:
+    target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))
     if not target.is_file():
@@ -113,7 +121,15 @@ def document_read(*, path: str, max_chars: int = 50000) -> dict[str, Any]:
     }
 
 
-def register_document_tools(registry: ToolRegistry, *, timeout_seconds: float | None = 60) -> None:
+def register_document_tools(
+    registry: ToolRegistry,
+    *,
+    cwd: str | Path | None = None,
+    timeout_seconds: float | None = 60,
+) -> None:
+    def handler(**kwargs: Any) -> Any:
+        return document_read(cwd=cwd, **kwargs)
+
     registry.add(
         name="document_read",
         description=(
@@ -121,7 +137,7 @@ def register_document_tools(registry: ToolRegistry, *, timeout_seconds: float | 
             "Use this instead of file_read when the target is one of those binary document formats."
         ),
         input_model=DocumentReadInput,
-        handler=document_read,
+        handler=handler,
         timeout_seconds=timeout_seconds,
         category="document",
     )
