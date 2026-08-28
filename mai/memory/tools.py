@@ -13,6 +13,11 @@ class MemoryRecallInput(BaseModel):
     query: str = Field(min_length=1, description="Lexical query for recalling this user's persistent memory")
 
 
+class MemoryOverviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    limit: int = Field(default=12, ge=1, le=50, description="Maximum number of recent user-grounded memories to return")
+
+
 class MemorySearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     node_id: int = Field(gt=0, description="Working/permanent memory node to expand by exactly one graph hop")
@@ -33,12 +38,26 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         registry.add(
             name="memory_recall",
             description=(
-                "Search this user's persistent memory from a free-text query. Use it when the answer requires "
-                "stored user history, preferences, decisions, projects, or other personal context. The result "
-                "contains typed graph nodes, source utterances, and user-anchor paths."
+                "Search this user's persistent memory from a specific free-text query. Use it when the answer "
+                "depends on a particular remembered topic, preference, decision, person, project, or past event."
             ),
             input_model=MemoryRecallInput,
             handler=memory_recall,
+            category="memory",
+        )
+
+        async def memory_overview(limit: int = 12) -> dict[str, object]:
+            return memory.memory_overview(user_id=user_id, limit=limit)
+
+        registry.add(
+            name="memory_overview",
+            description=(
+                "Return a recent overview of memories grounded in this user's own prior utterances and facts. "
+                "Use it for broad requests about what you remember about the user when there is no specific "
+                "lexical topic to search for."
+            ),
+            input_model=MemoryOverviewInput,
+            handler=memory_overview,
             category="memory",
         )
 
