@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     port = int(os.environ.get("MAI_PORT", "8000"))
     _access_policy = AccessPolicy.from_env_values(
         owner_id=os.environ.get("OWNER_ID"),
+        owner_memory_id=os.environ.get("OWNER_MEMORY_ID"),
         trial_ids=os.environ.get("TRIAL_IDS"),
     )
     _runtime = MAIRuntime(
@@ -92,6 +93,7 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     token: str
     user_id: str
+    memory_user_id: str
     role: str
 
 
@@ -160,13 +162,22 @@ async def login(request: LoginRequest) -> LoginResponse:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     token = secrets.token_urlsafe(32)
     _auth_sessions[token] = principal
-    return LoginResponse(token=token, user_id=principal.user_id, role=principal.role.value)
+    return LoginResponse(
+        token=token,
+        user_id=principal.auth_user_id,
+        memory_user_id=principal.memory_user_id,
+        role=principal.role.value,
+    )
 
 
 @app.get("/me")
 async def me(authorization: str | None = Header(default=None)) -> dict[str, str]:
     _, principal = _principal_from_authorization(authorization)
-    return {"user_id": principal.user_id, "role": principal.role.value}
+    return {
+        "user_id": principal.auth_user_id,
+        "memory_user_id": principal.memory_user_id,
+        "role": principal.role.value,
+    }
 
 
 @app.post("/logout")
@@ -191,7 +202,7 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
 async def chat(request: ChatRequest, authorization: str | None = Header(default=None)) -> ChatResponse:
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
-    session_key = (principal.user_id, request.session_id)
+    session_key = (principal.auth_user_id, request.session_id)
     history = _chat_sessions[session_key]
     limit = _history_limit()
     prior = history[-limit:] if limit else []
@@ -221,5 +232,5 @@ async def chat(request: ChatRequest, authorization: str | None = Header(default=
 @app.delete("/session/{session_id}")
 async def clear_session(session_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
     _, principal = _principal_from_authorization(authorization)
-    removed = _chat_sessions.pop((principal.user_id, session_id), None)
+    removed = _chat_sessions.pop((principal.auth_user_id, session_id), None)
     return {"cleared": removed is not None}
