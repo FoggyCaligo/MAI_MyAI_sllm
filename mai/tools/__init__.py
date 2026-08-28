@@ -1,6 +1,7 @@
 """Native tool implementations and registry."""
 
 from .code import code_read, code_search, code_symbols, register_code_tools
+from .documents import document_read, register_document_tools
 from .external import register_external_information_tools
 from .filesystem import (
     register_filesystem_read_tools,
@@ -14,6 +15,7 @@ from .filesystem import (
     file_move,
     file_copy,
 )
+from .images import ImageAnalyzer, register_image_tools
 from .local import register_local_pc_tools, register_readonly_local_tools
 from .market import MarketDataError, MarketDataNotFoundError, MarketDataProtocolError, market_data, register_market_tools
 from .registry import (
@@ -27,11 +29,12 @@ from .registry import (
 )
 from .terminal import register_terminal_tools, terminal_run
 from .time import current_time, register_time_tools
-from .web import WebSearchError, register_web_tools, web_search
+from .web import WebFetchError, WebSearchError, register_web_tools, web_fetch, web_search
 
 __all__ = [
     "DuplicateToolError",
     "EmptyToolInput",
+    "ImageAnalyzer",
     "MarketDataError",
     "MarketDataNotFoundError",
     "MarketDataProtocolError",
@@ -40,11 +43,13 @@ __all__ = [
     "ToolRegistry",
     "ToolRegistryError",
     "UnknownToolError",
+    "WebFetchError",
     "WebSearchError",
     "code_read",
     "code_search",
     "code_symbols",
     "current_time",
+    "document_read",
     "file_list",
     "file_search",
     "file_read",
@@ -55,9 +60,11 @@ __all__ = [
     "file_copy",
     "market_data",
     "register_code_tools",
+    "register_document_tools",
     "register_external_information_tools",
     "register_filesystem_read_tools",
     "register_filesystem_tools",
+    "register_image_tools",
     "register_local_pc_tools",
     "register_market_tools",
     "register_readonly_local_tools",
@@ -65,5 +72,6 @@ __all__ = [
     "register_time_tools",
     "register_web_tools",
     "terminal_run",
+    "web_fetch",
     "web_search",
 ]
