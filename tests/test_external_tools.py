@@ -5,6 +5,7 @@ import pytest
 import mai.tools.market as market_module
 import mai.tools.web as web_module
 from mai.tools.market import MarketDataNotFoundError, MarketDataProtocolError
+from mai.tools.web import WebFetchError
 
 
 class FakeDDGS:
@@ -64,6 +65,11 @@ def test_web_search_returns_ranked_structured_results(monkeypatch):
     assert result["provider"] == "ddgs"
     assert [item["rank"] for item in result["results"]] == [1, 2]
     assert result["results"][0]["url"] == "https://example.test/1"
+
+
+def test_web_fetch_refuses_loopback_destination():
+    with pytest.raises(WebFetchError):
+        web_module.web_fetch("http://127.0.0.1/")
 
 
 def test_market_data_resolves_stock_and_extracts_per(monkeypatch):
