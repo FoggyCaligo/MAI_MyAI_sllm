@@ -1,755 +1,442 @@
-# MAI MyAI sLLM
+# MAI MyAI sLLM — Working Contract
 
-MAI MyAI sLLM은 Ollama에서 실행되는 소형/중형 로컬 언어모델을 **개인 PC 전체를 다룰 수 있는 지속형 개인 에이전트**로 사용하기 위한 런타임 프로젝트다.
+이 문서는 README의 소개를 반복하는 문서가 아니라, MAI runtime을 구현할 때 지켜야 하는 **구조적 계약**을 기록한다.
 
-이 저장소는 기존 구현을 이어붙이는 방식이 아니라, 실패했던 이전 Agent/Memory 결합 구조를 폐기하고 **Ollama native tool calling을 중심으로 다시 시작하는 새 기반**이다. 목표는 Ornith-1.5 계열과 앞으로 등장할 Ollama tool-capable sLLM을 모델 교체만으로 사용할 수 있게 하고, MAI/MACHI MK4에서 발전시킨 그래프 기억 원리는 독립적인 memory subsystem으로 재구성하는 것이다.
-
-현재 단계에서는 새 아키텍처 골격 위에 **Ollama native adapter가 첫 실제 구현으로 추가된 상태**다. Agent loop, tool registry, filesystem/terminal, memory runtime은 이후 단계에서 이 adapter 위에 구현한다.
+프로젝트의 목적과 차별점은 [`README.md`](README.md), 장기기억의 세부 schema와 recall 계약은 [`MEMORY_V1.md`](MEMORY_V1.md)를 기준으로 한다.
 
 ---
 
-## 핵심 목표
-
-1. Ollama의 native `tools` / `tool_calls` 프로토콜을 그대로 사용한다.
-2. 특정 모델 전용 JSON 응답 규약이나 문자열 기반 tool-call 파서를 만들지 않는다.
-3. Agent loop, tool 실행, 오류 처리, 반복 방지는 MAI runtime이 담당한다.
-4. 기억은 단순한 tool 하나가 아니라 Agent와 병렬로 존재하는 독립 cognitive subsystem으로 둔다.
-5. 자동 recall과 명시적 memory tool을 함께 제공한다.
-6. 로컬 파일, 문서, 이미지, 코드, 터미널, 웹 등의 도구를 하나의 registry에서 native tool로 노출한다.
-7. 파일/터미널 도구는 workspace에 제한하지 않고, MAI 프로세스를 실행한 Windows 사용자 계정이 접근 가능한 로컬 PC 전체를 다룰 수 있게 한다.
-8. 실패를 숨기지 않는다. 필수 계약 위반, 파일 부재, 명령 실패, timeout, 권한 오류는 구조적으로 드러나야 한다.
-9. 의미 판단을 문자열 휴리스틱으로 우회하지 않는다. 모델이 의미를 판단하고 framework는 구조와 실행 계약을 강제한다.
-10. 모델 교체가 Agent/Memory 구조 변경으로 이어지지 않게 한다.
-
----
-
-# 전체 구조 한눈에 보기
+# 1. Runtime 역할 분리
 
 ```text
-                                   ┌───────────────────────┐
-                                   │      Local User       │
-                                   └───────────┬───────────┘
-                                               │
-                                               ▼
-                                   ┌───────────────────────┐
-                                   │ Conversation Runtime  │
-                                   └───────────┬───────────┘
-                                               │
-                            ┌──────────────────┴──────────────────┐
-                            ▼                                     ▼
-                 ┌─────────────────────┐               ┌─────────────────────┐
-                 │   Memory Runtime    │               │    Agent Runtime    │
-                 │                     │               │                     │
-                 │ store               │               │ loop                │
-                 │ activation          │──────────────▶│ guards              │
-                 │ recall              │ MemoryContext │ context             │
-                 │ extraction          │               │ tool execution      │
-                 │ graph               │               └─────────┬───────────┘
-                 └─────────┬───────────┘                         │
-                           │                                     ▼
-                           │                          ┌─────────────────────┐
-                           │                          │   Ollama Adapter    │
-                           │                          │ messages/tools      │
-                           │                          │ thinking/tool_calls │
-                           │                          └─────────┬───────────┘
-                           │                                    │
-                           │                                    ▼
-                           │                          ┌─────────────────────┐
-                           │                          │   Ollama / Model    │
-                           │                          │ Ornith / future LLM │
-                           │                          └─────────┬───────────┘
-                           │                                    │
-                           │                                    ▼
-                           │                          ┌─────────────────────┐
-                           │                          │    Tool Registry    │
-                           │                          └─────────┬───────────┘
-                           │                                    │
-                           │          ┌──────────────┬──────────┼──────────┬─────────┐
-                           │          ▼              ▼          ▼          ▼         ▼
-                           │       memory        filesystem  terminal    web    document/
-                           │        tools            tools      tools     tools    image/code
-                           │
-                           └───────────────────────────────────────────────────────────────
+Ollama / Model
+  = inference, reasoning, native tool_calls
+
+OllamaAdapter
+  = Ollama protocol translation
+
+AgentRuntime
+  = model/tool multi-round loop, validation, guards
+
+MemoryRuntime
+  = evidence, recall, graph write lifecycle
+
+ToolRegistry
+  = native schema + executable binding + timeout
+
+Tool implementations
+  = memory / filesystem / code / document / image / web / terminal
 ```
 
-역할은 다음처럼 고정한다.
-
-```text
-Ollama                 : inference / thinking / native tool_calls
-MAI Ollama Adapter     : provider protocol translation only
-MAI Agent Runtime      : loop / execution / validation / guards / recovery
-MAI Memory Runtime     : store / activation / recall / extraction / graph
-Tool Registry          : native tool schema + executable binding
-Tool Implementations   : filesystem / terminal / web / document / image / code / memory
-```
+LLM이 의미 판단을 담당하고 framework는 실행 계약과 데이터 구조를 강제한다. Framework가 `if text contains ...` 형태의 문자열 heuristic으로 사람, 주제, 관계, tool 필요 여부를 판정하지 않는다.
 
 ---
 
-# 한 user turn의 전체 실행 순서
+# 2. Ollama native tool contract
+
+MAI는 Ollama의 `tools` / `tool_calls` 구조를 그대로 사용한다.
 
 ```text
-User input
-   │
-   ▼
-1. raw utterance 저장
-   │
-   ▼
-2. 이전 activation 상태 로드
-   │
-   ▼
-3. 현재 발화에서 graph activation
-   │
-   ▼
-4. automatic recall
-   │
-   ▼
-5. MemoryContext 생성
-   │
-   ▼
-6. AgentContext에
-   ├─ user message
-   ├─ recent dialogue
-   ├─ working context
-   └─ recalled memory
-   를 함께 구성
-   │
-   ▼
-7. Ollama native chat
-   │
+AgentRuntime
+   ↓
+OllamaAdapter.chat(messages, tools)
+   ↓
+Ollama
    ├─ content
    ├─ thinking
    └─ tool_calls
-   │
-   ▼
-8. tool_calls가 있으면
-   ├─ schema/registry 검증
-   ├─ guard 검사
-   ├─ 실제 tool 실행
-   ├─ role=tool 결과 추가
-   └─ 다시 Ollama 호출
-   │
-   ▼
-9. tool_calls 없이 최종 content가 오면 final answer 확정
-   │
-   ▼
-10. memory extraction
-   │
-   ▼
-11. 장기적으로 남길 내용을 graph mutation
-   │
-   ▼
-12. turn 종료
 ```
 
-기억 자동 recall은 첫 Ollama 호출보다 앞에 있다.
+`OllamaAdapter`는 tool을 실행하지 않는다. `tool_calls`를 자체 문자열 JSON으로 다시 만들거나 `<think>` 문자열을 파싱해 의미를 복원하지 않는다.
+
+Native response가 contract를 위반하면 임의 보정하지 않고 protocol error로 실패시킨다.
 
 ---
 
-# Native tool agent loop
+# 3. Tool Registry
 
-Ollama가 tool을 직접 실행하는 것은 아니다. Ollama는 모델에게 tool schema를 보여주고 모델이 구조화된 `tool_calls`를 생성하도록 한다. 실제 함수 실행과 반복은 MAI Agent Runtime의 책임이다.
-
-```text
-Agent Runtime
-    │
-    ▼
-OllamaAdapter.chat(messages, tools)
-    │
-    ▼
-Ollama / Model
-    │
-    ├────────────── no tool_calls ───────────────┐
-    │                                             │
-    ▼                                             ▼
-message.tool_calls                          message.content
-    │                                             │
-    ▼                                             ▼
-Tool Registry                                Final answer
-    │
-    ▼
-실제 함수 실행
-    │
-    ▼
-role="tool" result를 messages에 추가
-    │
-    └───────────────────▶ 다시 Ollama 호출
-```
-
-여러 native tool call이 한 turn에서 병렬로 반환될 수 있으므로 adapter는 tool call을 하나로 축소하지 않는다.
-
----
-
-# Ollama Adapter
-
-현재 실제 구현이 들어간 첫 계층이다.
-
-```text
-mai/llm/models.py
-mai/llm/ollama.py
-```
-
-## Adapter의 책임
-
-```text
-입력
- ├─ messages
- ├─ native tools
- ├─ model name
- ├─ think
- └─ Ollama options
-
-출력
- ├─ content
- ├─ thinking
- ├─ native tool_calls
- └─ normalized assistant_message
-```
-
-```text
-MAI ChatRequest
-      │
-      ▼
-OllamaAdapter
-      │
-      ├─ model
-      ├─ messages
-      ├─ tools
-      ├─ think
-      ├─ options
-      └─ stream=False
-      │
-      ▼
-Ollama native chat
-      │
-      ▼
-message
- ├─ content
- ├─ thinking
- └─ tool_calls
-      │
-      ▼
-MAI ModelTurn
-```
-
-Adapter는 tool을 실행하지 않고 Agent loop도 돌리지 않는다. Tool 이름의 의미도 해석하지 않는다. Ollama native response를 MAI 내부의 provider-neutral 구조로 정규화하는 역할만 가진다.
-
-## Thinking
-
-```text
-message.thinking  → reasoning trace
-message.content   → final answer content
-```
-
-MAI는 `<think>...</think>` 문자열을 직접 잘라내는 parser를 만들지 않는다.
-
-Think 설정은 boolean과 모델별 level 값을 모두 전달할 수 있게 한다.
-
-```text
-true / false / "low" / "medium" / "high" / "max"
-```
-
-## Native tool calls
-
-```text
-message.tool_calls[]
- └─ function
-     ├─ index
-     ├─ name
-     └─ arguments
-```
-
-MAI 내부:
-
-```text
-NativeToolCall
- ├─ name
- ├─ arguments
- └─ index
-```
-
-`arguments`가 object가 아니거나 function name이 비어 있는 등 native contract가 깨진 경우 임의 보정하지 않고 `OllamaProtocolError`로 실패시킨다.
-
-## Assistant message 보존
-
-```text
-ModelTurn
- ├─ content
- ├─ thinking
- ├─ tool_calls
- └─ assistant_message
-```
-
-Agent Runtime은 향후 `assistant_message`를 그대로 history에 추가한 뒤 `role=tool` 결과를 이어 붙인다. 자체 tool-call JSON을 다시 만들 필요가 없다.
-
----
-
-# Memory와 Agent의 결합 위치
-
-Memory는 Agent의 tool 하나로만 존재하지 않는다.
-
-```text
-User
- ↓
-MemoryRuntime.begin_turn()
- ↓
-automatic activation / recall
- ↓
-MemoryContext
- ↓
-AgentRuntime.run()
- ↓
-final answer
- ↓
-MemoryRuntime.finish_turn()
- ↓
-extraction / graph mutation
-```
-
-```text
-automatic recall = 자연스럽게 떠오르는 기억
-memory tools      = 의도적으로 기억을 더 뒤지는 행동
-```
-
----
-
-# Memory Runtime
-
-```text
-memory/
- ├─ runtime.py
- ├─ graph/
- │   ├─ repository.py
- │   ├─ models.py
- │   └─ schema.py
- ├─ activation/
- │   └─ service.py
- ├─ recall/
- │   └─ service.py
- ├─ extraction/
- │   └─ service.py
- └─ tools.py
-```
-
-## Graph / Activation / Recall
-
-```text
-현재 턴 직접 활성
-        +
-직전 턴 잔존 activation
-        +
-관계로 이어지는 주변 영역
-        ↓
-working-memory 후보
-        ↓
-current query와 연결된 local subgraph
-        ↓
-MemoryContext
-        ↓
-Agent first model call
-```
-
-전체 DB를 매 턴 전역 재해석하지 않고 현재 활성 영역 주변을 중심으로 움직이는 MK4의 원리를 유지한다.
-
-## Extraction
-
-```text
-User utterance
-      +
-Final answer
-      +
-relevant turn evidence
-      ↓
-Memory extraction model
-      ↓
-structured graph mutations
-      ↓
-Graph repository
-```
-
-Agent의 답변/tool loop와 memory graph mutation을 분리한다.
-
----
-
-# Memory Tools
-
-```text
-memory_search
-memory_get_node
-memory_get_relations
-memory_expand
-memory_get_source
-```
-
-```text
-Model
- ↓ native tool_call
-Memory Tool
- ↓
-Tool Registry
- ↓
-Memory Runtime public API
- ↓
-Graph / Recall service
- ↓
-structured result
- ↓
-role=tool
- ↓
-Model
-```
-
----
-
-# Short-term / Long-term 분리
-
-```text
-Short-term
- ├─ recent messages
- ├─ current activation
- ├─ tool history
- └─ working memory
-
-Long-term
- └─ graph memory
-```
-
-```text
-file_read / terminal / web result
-              ↓
-        working context
-              ↓
-      turn 종료 시 extraction
-              ↓
-필요한 것만 long-term graph로 승격
-```
-
----
-
-# Tool Registry
+모든 실행 capability는 `ToolRegistry`에 등록한다.
 
 ```text
 ToolDefinition
- ├─ native JSON schema
- ├─ executable binding
- ├─ timeout metadata
- └─ structural metadata
+  name
+  description
+  Pydantic input schema
+  handler
+  timeout
+  category
 ```
 
-예정 범주:
+Registry는 tool 이름의 의미를 해석하지 않는다. Schema validation 실패, handler exception, timeout은 구조화된 실패로 반환한다.
+
+도구 범주는 다음과 같이 유지한다.
 
 ```text
 memory
 filesystem
-terminal
 code
-web
 document
 image
+web
+terminal
+tool manual
 ```
 
-runtime은 tool 이름 문자열의 의미를 휴리스틱으로 해석해 route를 결정하지 않는다.
+Filesystem / code / terminal은 현재 repository에 구현되어 있다. Document / image / web / tool manual은 기존 runtime에서 사용한 계약을 동일한 native Tool Registry 구조에 맞춰 유지한다.
 
 ---
 
-# PC 전체 접근 모델
+# 4. PC 접근 계약
+
+Filesystem, document, image, code, terminal 도구는 repository confinement를 기본 전제로 하지 않는다.
 
 ```text
 MAI Process
-   │
-   ├─ C:\Users\...
-   ├─ D:\...
-   ├─ 다른 Git repository
-   ├─ Desktop / Documents / Downloads
-   ├─ 설치된 프로그램
-   └─ PATH에서 실행 가능한 CLI
+  ├─ C:\Users\...
+  ├─ 다른 drive
+  ├─ 다른 Git repository
+  ├─ Desktop / Documents / Downloads
+  └─ PATH에서 실행 가능한 command
 ```
 
-MAI 프로세스를 실행한 OS 사용자 계정이 접근 가능한 범위라면 repo 밖도 읽기/쓰기/실행할 수 있게 한다. 관리자 권한이 필요한 작업은 실제 권한 오류로 실패한다.
+절대경로는 정식 입력이다. 상대경로는 runtime `cwd` 기준으로 해석한다.
+
+OS 사용자가 접근할 수 없는 경로는 권한 오류로 실패해야 한다. 관리자 권한이 필요한 작업을 우회하거나 성공 문자열로 위장하지 않는다.
+
+Terminal은 최소한 다음 실행 결과를 보존한다.
+
+```text
+stdout
+stderr
+returncode
+timed_out
+```
+
+Timeout 시 child process가 남지 않도록 Windows에서는 process tree, POSIX에서는 process group 종료를 사용한다.
 
 ---
 
-# Filesystem 흐름
+# 5. Code / file discovery 계약
 
 ```text
-Model
- ↓
-file_read({"path": "C:\\Users\\...\\file.txt"})
- ↓
-Ollama native tool_call
- ↓
+file_list / file_search
+  = path와 file name 탐색
+
+code_search
+  = file content 검색
+
+code_read
+  = line range 보존 read
+
+code_symbols
+  = parser가 지원하는 구조적 symbol 탐색
+```
+
+`code_search`의 literal/regex mode, case sensitivity, include/exclude glob, encoding, file size limit은 명시적 입력이다. Runtime이 문자열 모양을 보고 regex인지 자동 추측하지 않는다.
+
+`code_symbols`는 지원 parser가 없는 언어를 regex로 class/function처럼 꾸며 반환하지 않는다. 현재 구현은 Python AST를 사용한다.
+
+---
+
+# 6. Memory의 역할
+
+Memory는 단순 chat history나 vector store가 아니다.
+
+```text
+Permanent Graph
+  = long-term memory body
+
+ConceptIndex
+  = permanent graph entry point
+
+Working Graph
+  = current turn-local recalled subgraph
+```
+
+Permanent Graph는 다음 핵심 node를 사용한다.
+
+```text
+User Anchor
+Utterance
+Fact
+Concept
+```
+
+핵심 relation은 다음과 같다.
+
+```text
+user_anchor -> utterance : spoke
+user_anchor -> fact      : asserted_fact
+utterance   -> fact      : derived_fact
+utterance   -> concept   : mentions
+fact        -> concept   : mentions
+```
+
+원문 Utterance는 Fact와 분리해 보존한다. Fact는 원문을 대체하지 않는다.
+
+---
+
+# 7. Concept identity와 Sentence_Breaker
+
+Sentence_Breaker가 만든 canonical segment가 Concept identity를 결정한다.
+
+```text
+one canonical segment = one Concept Node
+```
+
+Semantic similarity나 lexical search 결과가 Concept identity를 합치지 않는다.
+
+동일 Concept이 여러 발화와 Fact에서 반복되면 하나의 Concept Node를 공유한다.
+
+---
+
+# 8. ConceptIndex: Exact + SQLite FTS5
+
+Persistent memory recall은 embedding model이나 vector space에 의존하지 않는다.
+
+```text
+query
+  ↓ Sentence_Breaker
+segments
+  ↓
+exact hash lookup
+  ↓ miss
+SQLite FTS5 lexical search
+  ↓
+Concept Node IDs
+```
+
+Exact mapping은 SQLite에 저장되고 runtime에서 dictionary로 읽어 hash lookup을 수행한다. FTS5는 lexical candidate retrieval만 담당한다.
+
+Index는 graph identity를 소유하지 않는다. Graph가 Concept Node identity를 소유한다.
+
+기존 graph DB를 열 때 ConceptIndex에 없는 Concept Node는 non-destructive하게 동기화한다. 이전 개발 DB에 sqlite-vec table이 남아 있어도 자동 삭제하지 않는다.
+
+---
+
+# 9. User Anchor와 provenance
+
+모든 사용자 memory recall은 현재 `user_id`의 User Anchor로 다시 연결될 수 있어야 한다.
+
+이 계약은 `나`, `내`, 사용자 프로젝트·선호 같은 1인칭 기억이 agent 자신의 속성으로 뒤집히는 문제를 막기 위한 구조적 기준이다.
+
+Graph path 탐색은 topology를 찾을 때 edge direction을 무시할 수 있지만, Working Graph에 반환되는 edge는 실제 저장 방향, relation, provenance를 그대로 유지한다.
+
+---
+
+# 10. Automatic recall
+
+A 경로의 기본 recall은 다음 구조를 사용한다.
+
+```text
+User Input
+  ↓ Sentence_Breaker
+ConceptIndex
+  ↓
+Concept seed
+  ├─ one-hop neighborhood
+  └─ shortest path to current User Anchor
+  ↓
+Initial Working Graph
+```
+
+전체 graph를 매 턴 모델에게 주입하지 않는다. 현재 query와 연결된 작은 subgraph만 Working Graph에 올린다.
+
+---
+
+# 11. Deliberate memory traversal
+
+`memory_search(node_id)`는 선택한 permanent node의 **정확히 one-hop**을 Working Graph에 merge한다.
+
+새로 보이는 node에도 가능한 User Anchor path를 붙인다.
+
+임의 깊이 traversal을 helper 내부에서 숨기지 않는다. 더 깊이 탐색하려면 model이 추가 memory call을 해야 한다.
+
+C pure-agent 실험에서는 `memory_recall(query)`를 최초 memory entry tool로 추가 노출한다. A 경로의 기본 memory tool registration에는 자동으로 추가하지 않는다.
+
+---
+
+# 12. Tool Requirement Preflight
+
+A 경로에서는 main agent의 첫 model call 전에 Tool Requirement Preflight가 현재 요청의 필수 capability를 판정한다.
+
+입력 범위는 다음으로 제한한다.
+
+```text
+current user request
+minimum recent dialogue
+available capability catalog
+minimum runtime facts
+```
+
+Preflight에는 automatic recall result, Working Graph, search result, tool result를 넣지 않는다.
+
+출력은 tool별 boolean requirement이고 frozen obligation set으로 바꾼다.
+
+```text
+required=true
+  = final answer 전에 해당 exact tool capability가 성공해야 함
+
+required=false
+  = mandatory obligation이 아님
+  = tool 사용 금지가 아님
+```
+
+Tool requirement 의미 판단을 문자열 패턴으로 구현하지 않는다. Model-backed planner가 capability contract를 보고 판정한다.
+
+---
+
+# 13. 한 turn의 A 경로
+
+```text
+User Input
+   ↓
+Tool Requirement Preflight
+   ↓ freeze
+Raw User Evidence + User Anchor
+   ↓
+Automatic Recall
+   ↓
+Working Graph
+   ↓
 Agent Runtime
- ↓
+   ↓
+Native Tool Calls
+   ↓
+Required Tool Success Check
+   ↓
+Final Response
+   ↓
+Post-response Memory Update
+```
+
+이 순서는 전체 프로젝트의 핵심 아이디어가 아니라 **A 실행 경로의 일관성을 위한 runtime contract**다.
+
+---
+
+# 14. Agent guards
+
+Agent loop는 최소한 다음 반복 실패를 막는다.
+
+```text
+maximum model rounds
+identical call repetition
+identical failure repetition
+structural no-progress repetition
+```
+
+Guard는 tool 호출 의미를 문자열로 추측해서 route를 바꾸는 장치가 아니다. 반복된 구조적 상태를 감시한다.
+
+---
+
+# 15. Failure semantics
+
+실패를 성공처럼 보이게 만들지 않는다.
+
+다음 상황은 명시적 실패다.
+
+```text
+invalid native tool schema
+unknown tool
+Pydantic validation failure
+file not found
+permission denied
+invalid regex in explicit regex mode
+unsupported structured parser
+terminal non-zero return code
+terminal timeout
+SQLite / FTS5 failure
+Concept index identity conflict
+unsatisfied required tool obligation
+```
+
+문자열 비교나 fallback으로 contract 위반을 숨기지 않는다.
+
+---
+
+# 16. Post-response memory write
+
+해석된 long-term graph mutation은 agent/tool loop와 분리한다.
+
+```text
+raw evidence
+  ↓
+agent/tool loop
+  ↓
+final response accepted
+  ↓
+MemoryRuntime.finish_turn()
+```
+
+`finish_turn()`은 다음을 담당한다.
+
+```text
+Utterance Node 생성
+User Anchor -> Utterance
+Utterance -> Concepts
+user-grounded Fact extraction
+User Anchor -> Fact
+Utterance -> Fact provenance
+Fact -> Concepts
+new Concept -> ConceptIndex
+```
+
+사용자 Fact로 저장되는 내용은 사용자 발화에 직접 근거해야 한다. Tool/search 결과의 world fact를 사용자 assertion으로 조용히 바꾸지 않는다.
+
+---
+
+# 17. Correction / conflict 원칙
+
+기억은 한 번 저장됐다는 이유만으로 절대 진실이 되지 않는다. 사용자 정정과 충돌은 기존 source를 삭제해 덮어쓰는 방식보다 원래 evidence를 보존하면서 새 provenance와 version relation으로 표현하는 것을 원칙으로 한다.
+
+정정 대상은 최소한 다음 의미를 구분한다.
+
+```text
+user model correction
+content / factual correction
+response style correction
+```
+
+서로 다른 종류의 correction을 모두 사용자 profile mutation으로 처리하지 않는다.
+
+---
+
+# 18. 구현 상태를 읽는 방법
+
+이 프로젝트 문서에는 두 종류의 계약이 함께 들어 있다.
+
+1. **현재 repository에 코드가 존재하는 계약**
+2. **기존 MAI runtime에서 이미 동작 방식이 정해졌고 이 repository 구조로 그대로 이식하는 계약**
+
+현재 repository에 직접 들어와 있는 주요 구현은 다음과 같다.
+
+```text
+Ollama native adapter
 Tool Registry
- ↓
-filesystem implementation
- ↓
-OS filesystem
- ↓
-structured result
- ↓
-role=tool
- ↓
-Model
+multi-round Agent Runtime
+Agent guards
+FrozenToolRequirements enforcement
+PC-wide Filesystem
+Code discovery
+Terminal
+Graph memory repository
+Sentence_Breaker Concept identity
+Exact + SQLite FTS5 ConceptIndex
+Working Graph recall
+memory_search one-hop expansion
+post-response memory lifecycle boundary
 ```
 
-절대경로를 정식 입력으로 허용하고 상대경로는 runtime의 `cwd` 기준으로 해석한다.
-
----
-
-# Terminal 흐름
-
-예정 계약:
+다음 항목은 동작 방식과 계약이 정해진 구성요소로 같은 runtime 구조에서 관리한다.
 
 ```text
-terminal_run(command, cwd=None, timeout=None)
+model-backed Tool Requirement Planner
+document_read
+image_analyze
+web search / research
+tool_manual
+model-backed FactExtractor
+correction / conflict application
 ```
 
-```text
-Model
- ↓
-terminal_run(...)
- ↓
-Agent Runtime
- ↓
-subprocess
- ↓
-Windows user account 권한
- ↓
-stdout / stderr / returncode
- ↓
-role=tool result
- ↓
-Model
-```
-
-명령 실패를 성공 문자열로 바꾸지 않는다.
-
----
-
-# Document / Image 흐름
-
-```text
-Model
- ↓
-document_read(path)
- ↓
-Tool Registry
- ↓
-PDF / DOCX / XLSX parser
- ↓
-text / tables / structure
- ↓
-role=tool
- ↓
-Model
-```
-
-```text
-Model
- ↓
-image_read(path)
- ↓
-Tool Registry
- ↓
-Image loader
- ↓
-Configured Vision Model
- ↓
-structured visual result
- ↓
-role=tool
- ↓
-Main Agent Model
-```
-
-Main model과 vision model은 독립 설정을 유지한다.
-
----
-
-# 모델 교체 구조
-
-```text
-                 ┌─ ornith-1.5:9b
-.env model name ─┼─ future qwen
-                 ├─ future gemma
-                 └─ other Ollama tool-capable model
-                        │
-                        ▼
-                  Ollama Adapter
-                        │
-                        ▼
-                  동일 Agent Runtime
-                        │
-                        ▼
-                  동일 Tool Registry
-                        │
-                        ▼
-                  동일 Memory Runtime
-```
-
-Ornith는 초기 기본 후보일 뿐, Ornith 전용 Agent를 만들지 않는다.
-
----
-
-# Agent Guard / 무한루프 방지
-
-```text
-AGENT_MAX_ROUNDS=30
-AGENT_MAX_IDENTICAL_CALLS=3
-TOOL_TIMEOUT_SECONDS=60
-TERMINAL_TIMEOUT_SECONDS=120
-```
-
-```text
-native tool_call
- ↓
-구조 검증
- ↓
-(tool_name, normalized_arguments) fingerprint
- ↓
-반복 횟수 검사
- ↓
-실행
- ↓
-진행 상태 기록
- ↓
-다음 round
-```
-
-PC 전체 접근 권한과 무한 실행 허용은 별개의 문제다. 접근 범위는 넓게 두되 반복/timeout/contract failure는 runtime guard가 구조적으로 막는다.
-
----
-
-# 오류 처리 원칙
-
-실패는 정상적인 데이터다.
-
-```json
-{
-  "ok": false,
-  "error": "file_not_found",
-  "path": "..."
-}
-```
-
-금지:
-
-```text
-오류 문자열을 보고 몰래 성공으로 간주
-실패한 tool 대신 framework가 임의의 다른 tool 호출
-필수 필드가 없는데 default 값으로 의미를 만들어냄
-모델 응답 계약을 regex/string heuristic으로 복구
-실패한 작업을 최종 응답에서 완료했다고 표현
-```
-
----
-
-# 현재 파일 골격
-
-```text
-mai/
-├─ agent/
-│  ├─ runtime.py
-│  ├─ loop.py
-│  ├─ guards.py
-│  └─ context.py
-├─ llm/
-│  ├─ __init__.py
-│  ├─ ollama.py
-│  └─ models.py
-├─ memory/
-│  ├─ runtime.py
-│  ├─ graph/
-│  ├─ activation/
-│  ├─ recall/
-│  ├─ extraction/
-│  └─ tools.py
-├─ tools/
-│  ├─ registry.py
-│  ├─ filesystem.py
-│  ├─ terminal.py
-│  ├─ code.py
-│  ├─ web.py
-│  ├─ documents.py
-│  └─ images.py
-└─ app/
-   └─ runtime.py
-```
-
----
-
-# 현재 구현 상태
-
-## 구현됨
-
-```text
-[Ollama adapter]
-- configurable model / host / think / options
-- native messages 전달
-- native tools 전달
-- message.content 보존
-- message.thinking 보존
-- parallel native tool_calls 보존
-- normalized assistant_message 생성
-- malformed native response를 명시적 protocol error로 처리
-- test용 client injection 지원
-```
-
-## 아직 골격만 존재
-
-```text
-Agent Runtime
-Tool Registry
-Agent Guards
-Filesystem / Terminal / Code / Web / Document / Image Tools
-Memory Graph / Activation / Recall / Extraction / Memory Tools
-Application/UI runtime
-```
-
----
-
-# 구현 순서
-
-```text
-1. Ollama Adapter                 ← 현재 구현 완료
-       ↓
-2. Native Tool Registry
-       ↓
-3. Minimal Agent Loop
-       ↓
-4. Agent Guards / Error semantics
-       ↓
-5. Filesystem + Terminal
-       ↓
-6. Code / Document / Image / Web
-       ↓
-7. Memory Graph Repository
-       ↓
-8. Activation + Automatic Recall
-       ↓
-9. Explicit Memory Tools
-       ↓
-10. Memory Extraction
-       ↓
-11. Conversation/App Runtime
-       ↓
-12. Live Ornith integration tests
-```
-
----
-
-# 설계 원칙 요약
-
-```text
-Model decides meaning.
-Framework enforces structure.
-Tools perform side effects.
-Memory persists cognition.
-Failures remain visible.
-```
-
-> **Memory는 Agent의 tool이 아니라 Agent가 매 턴 사용하는 독립 cognitive subsystem이고, memory tools는 그 subsystem을 능동적으로 탐색하기 위한 추가 인터페이스다.**
-
-> **Ollama native tool calling은 Agent framework 자체가 아니라 model ↔ tool protocol이며, Agent loop와 실제 실행 책임은 MAI가 가진다.**
-
-> **MAI는 workspace에 갇힌 coding agent가 아니라, 실행한 OS 사용자 계정 범위의 로컬 PC 전체를 다루는 개인 에이전트를 목표로 한다.**
+이 구분은 프로젝트의 기능 범위를 둘로 나누기 위한 것이 아니라, source tree에서 현재 어느 코드가 이식 완료됐는지를 확인하기 위한 개발 상태 표시다.
