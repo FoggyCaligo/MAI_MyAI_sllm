@@ -4,7 +4,7 @@ MAI MyAI sLLM은 **그래프 기반 장기기억을 소형 로컬 언어모델(s
 
 ## 도구
 
-모든 실행 도구는 `ToolRegistry`에 등록되어 Ollama native function schema로 모델에 노출된다. Registry는 이름·설명·Pydantic 입력 계약·handler·timeout만 관리하며 문자열 휴리스틱으로 route를 정하지 않는다. 현재 Ollama adapter, native Tool Registry, Agent Runtime, structural Agent Guard, PC-wide Filesystem/Terminal tools가 구현되어 있다. 파일 도구는 repository 밖 절대경로를 허용하며 MAI 프로세스를 실행한 OS 사용자 계정의 실제 권한을 따른다. `terminal_run`도 동일한 사용자 권한으로 로컬 shell을 실행하고 stdout/stderr/returncode/timeout을 숨기지 않는다. Memory v1에는 `memory_search(node_id)`가 추가되며, 이 도구는 선택한 permanent Node의 정확히 1-hop을 Working Graph에 merge하고 새로 보이는 노드들이 현재 사용자 anchor와 연결되는 최소 경로도 함께 유지한다. 향후 code/document/image/web 도구도 같은 native registry 위에 구현한다.
+모든 실행 도구는 `ToolRegistry`에 등록되어 Ollama native function schema로 모델에 노출된다. Registry는 이름·설명·Pydantic 입력 계약·handler·timeout만 관리하며 문자열 휴리스틱으로 route를 정하지 않는다. 현재 Ollama adapter, native Tool Registry, Agent Runtime, structural Agent Guard, PC-wide Filesystem/Terminal, Code/File discovery가 구현되어 있다. Filesystem에는 `file_list`, `file_search`, `file_read`, `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy`가 있고 repository 밖 절대경로도 허용한다. Code discovery에는 파일 내용의 정확한 literal/regex 검색을 하는 `code_search`, 라인 번호를 보존해 범위를 읽는 `code_read`, Python AST에서 class/function/method를 구조적으로 읽는 `code_symbols`가 있다. 다른 언어의 symbol을 문자열 패턴으로 추측하지 않으며, 그런 경우에는 `code_search`로 실제 소스 내용을 탐색한다. `terminal_run`은 동일한 OS 사용자 권한으로 local shell을 실행하고 stdout/stderr/returncode/timeout을 숨기지 않는다. Memory의 `memory_search(node_id)`는 선택한 permanent Node의 정확히 1-hop을 Working Graph에 merge하고 새로 보이는 노드들이 현재 사용자 anchor와 연결되는 최소 경로도 함께 유지한다. Document/Image/Web 도구는 아직 구현 대상이다.
 
 ## 파일 구조와 전체 작동 구조
 
@@ -15,9 +15,13 @@ mai/
 │  └─ ollama.py             # Ollama native adapter
 ├─ tools/
 │  ├─ registry.py           # native schema + validation + invocation
+│  ├─ local.py              # local-PC tool registration bundle
 │  ├─ filesystem.py         # PC-wide filesystem
+│  ├─ code.py               # content search / line read / Python AST symbols
 │  ├─ terminal.py           # local shell
-│  └─ ...                   # code/document/image/web
+│  ├─ documents.py          # planned
+│  ├─ images.py             # planned
+│  └─ web.py                # planned
 ├─ agent/
 │  ├─ runtime.py
 │  ├─ loop.py               # native multi-round tool loop
@@ -63,7 +67,8 @@ Initial Working Graph
 AgentLoop + AgentGuard
    ↓
 Ollama native tool_calls
-   ├─ filesystem / terminal / web / ...
+   ├─ file_list / file_search / code_search / code_read / code_symbols
+   ├─ terminal_run / future document/image/web tools
    └─ memory_search(node)
           ↓
        Permanent Graph 1-hop
@@ -93,6 +98,17 @@ Post-response Memory Writer 1회
 ```
 
 `required=true`는 final 전에 해당 capability가 최소 한 번 성공해야 한다는 뜻이고, `required=false`는 사용 금지가 아니다. Agent는 실행 중 새 정보에 따라 다른 도구를 자유롭게 추가 호출할 수 있다.
+
+Code/File discovery의 역할은 generic filesystem과 구분한다.
+
+```text
+file_list / file_search = 경로와 파일 이름을 찾음
+code_search             = 파일 내부의 실제 문자열/정규식 위치를 찾음
+code_read               = 찾은 위치 주변을 line 단위로 읽음
+code_symbols            = 명시적 parser가 지원하는 구조적 symbol을 읽음
+```
+
+`code_search`는 검색 대상 확장자를 코드가 임의로 추측하지 않는다. `include_globs`/`exclude_globs`, literal/regex mode, case sensitivity, encoding, 파일 크기 상한을 호출자가 명시할 수 있다. decode할 수 없거나 크기 상한을 넘긴 파일은 `skipped`에 이유를 남기며 조용히 성공 처리하지 않는다. `code_symbols`는 현재 Python 표준 AST parser만 지원하며 다른 언어의 class/function을 정규식으로 추측하지 않는다.
 
 Memory의 저장/탐색 역할은 다음처럼 분리한다.
 
@@ -154,4 +170,4 @@ Embedding은 `EmbeddingProvider` 경계 뒤에서 Ollama `/api/embed`를 사용�
 pytest
 ```
 
-현재 Memory v1에서 MK4식 사용자 anchor/원문 Utterance/Fact/Concept/typed edge/provenance schema, Sentence_Breaker concept identity, `sqlite-vec` backend, replaceable `VectorIndex`/`EmbeddingProvider` 경계, 사용자 anchor를 포함한 Working Graph recall, one-hop native `memory_search`, post-response fact-write 경계와 frozen required-tool enforcement가 구현되고 있다. 모델 기반 preflight planner와 실제 FactExtractor 연결은 다음 구현 단계이며, 이 경계는 `MEMORY_V1.md`의 저장 의미를 바꾸지 않고 연결하도록 둔다.
+현재 Memory v1에서 MK4식 사용자 anchor/원문 Utterance/Fact/Concept/typed edge/provenance schema, Sentence_Breaker concept identity, `sqlite-vec` backend, replaceable `VectorIndex`/`EmbeddingProvider` 경계, 사용자 anchor를 포함한 Working Graph recall, one-hop native `memory_search`, post-response fact-write 경계와 frozen required-tool enforcement가 구현되고 있다. Tool 계층에서는 Filesystem/Terminal/Code discovery까지 실제 구현되어 있으며 Document/Image/Web와 모델 기반 preflight planner/FactExtractor 연결은 다음 구현 단계다.
