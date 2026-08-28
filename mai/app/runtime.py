@@ -107,7 +107,12 @@ class MAIRuntime:
 
     def _registry_for(self, principal: AccessPrincipal, working: WorkingGraph) -> ToolRegistry:
         registry = ToolRegistry()
-        register_memory_tools(registry, self.memory, working, user_id=principal.user_id)
+        register_memory_tools(
+            registry,
+            self.memory,
+            working,
+            user_id=principal.memory_user_id,
+        )
         register_time_tools(registry)
         register_external_information_tools(registry)
         if principal.role is AccessRole.OWNER:
@@ -130,7 +135,7 @@ class MAIRuntime:
             raise ValueError("prompt must be non-empty")
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
-        evidence = self.memory.record_raw_user_evidence(principal.user_id, prompt)
+        evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
         working = WorkingGraph()
         registry = self._registry_for(principal, working)
         agent = AgentRuntime(adapter, registry)
@@ -141,7 +146,7 @@ class MAIRuntime:
 
         successful_tool_results = tuple(execution.content for execution in result.tool_executions if execution.ok)
         await self.memory.finish_turn(
-            user_id=principal.user_id,
+            user_id=principal.memory_user_id,
             user_text=prompt,
             final_answer=result.content,
             user_evidence=evidence,
