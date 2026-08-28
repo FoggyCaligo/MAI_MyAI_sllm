@@ -1,6 +1,7 @@
-"""Structured document-reading tools for PDF, DOCX, XLSX, and PPTX files."""
+"""Structured document-reading tools for PDF, DOCX, XLSX, CSV, and PPTX files."""
 from __future__ import annotations
 
+import csv
 import os
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,11 @@ class DocumentReadInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1)
     max_chars: int = Field(default=50000, ge=1, le=500000)
+    encoding: str = Field(
+        default="utf-8-sig",
+        min_length=1,
+        description="Text encoding used for CSV files. Ignored for other document formats.",
+    )
 
 
 def _resolve(path: str, cwd: str | Path | None) -> Path:
@@ -64,6 +70,14 @@ def _read_xlsx(path: Path) -> dict[str, Any]:
         workbook.close()
 
 
+def _read_csv(path: Path, *, encoding: str) -> dict[str, Any]:
+    rows: list[list[str]] = []
+    with path.open("r", encoding=encoding, newline="") as handle:
+        reader = csv.reader(handle)
+        rows.extend(list(reader))
+    return {"kind": "csv", "rows": rows, "encoding": encoding}
+
+
 def _read_pptx(path: Path) -> dict[str, Any]:
     from pptx import Presentation
 
@@ -79,7 +93,13 @@ def _read_pptx(path: Path) -> dict[str, Any]:
     return {"kind": "pptx", "slides": slides}
 
 
-def document_read(*, path: str, max_chars: int = 50000, cwd: str | Path | None = None) -> dict[str, Any]:
+def document_read(
+    *,
+    path: str,
+    max_chars: int = 50000,
+    encoding: str = "utf-8-sig",
+    cwd: str | Path | None = None,
+) -> dict[str, Any]:
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))
@@ -93,11 +113,14 @@ def document_read(*, path: str, max_chars: int = 50000, cwd: str | Path | None =
         ".xlsx": _read_xlsx,
         ".pptx": _read_pptx,
     }
-    reader = readers.get(suffix)
-    if reader is None:
-        raise ValueError(f"unsupported document extension: {suffix or '<none>'}")
+    if suffix == ".csv":
+        structured = _read_csv(target, encoding=encoding)
+    else:
+        reader = readers.get(suffix)
+        if reader is None:
+            raise ValueError(f"unsupported document extension: {suffix or '<none>'}")
+        structured = reader(target)
 
-    structured = reader(target)
     text_parts: list[str] = []
     details: dict[str, Any]
     kind = structured["kind"]
@@ -114,6 +137,12 @@ def document_read(*, path: str, max_chars: int = 50000, cwd: str | Path | None =
                 {"title": sheet["title"], "row_count": len(sheet["rows"])}
                 for sheet in structured["sheets"]
             ]
+        }
+    elif kind == "csv":
+        text_parts = ["\t".join(row) for row in structured["rows"]]
+        details = {
+            "row_count": len(structured["rows"]),
+            "encoding": structured["encoding"],
         }
     elif kind == "pptx":
         text_parts = [item["text"] for item in structured["slides"]]
@@ -143,8 +172,9 @@ def register_document_tools(
     registry.add(
         name="document_read",
         description=(
-            "Read structured local document files. Supports PDF, DOCX, XLSX, and PPTX. "
-            "Use this instead of file_read when the target is one of those binary document formats."
+            "Read structured local document files. Supports PDF, DOCX, XLSX, CSV, and PPTX. "
+            "CSV defaults to UTF-8 with optional BOM; pass encoding explicitly for other encodings such as cp949. "
+            "Use this instead of file_read when structured rows/pages/slides are important."
         ),
         input_model=DocumentReadInput,
         handler=handler,
