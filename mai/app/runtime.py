@@ -111,17 +111,12 @@ class MAIRuntime:
 
     def _registry_for(self, principal: AccessPrincipal, working: WorkingGraph) -> ToolRegistry:
         registry = ToolRegistry()
-        register_memory_tools(
-            registry,
-            self.memory,
-            working,
-            user_id=principal.memory_user_id,
-        )
+        register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         register_time_tools(registry)
         register_external_information_tools(registry)
-        register_document_tools(registry)
+        register_document_tools(registry, cwd=self.cwd)
         if self.vision_model is not None:
-            register_image_tools(registry, model=self.vision_model, host=self.ollama_host)
+            register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:
             register_local_pc_tools(registry, cwd=self.cwd)
         elif principal.role is AccessRole.TRIAL:
