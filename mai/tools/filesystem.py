@@ -76,6 +76,14 @@ def _resolve(path: str, cwd: str | Path | None) -> Path:
     return candidate.resolve(strict=False)
 
 
+def _require_within_root(path: str, *, root: str | Path) -> Path:
+    boundary = Path(root).expanduser().resolve(strict=False)
+    target = _resolve(path, boundary)
+    if not target.is_relative_to(boundary):
+        raise PermissionError(f"path is outside allowed root: {target}")
+    return target
+
+
 def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500, cwd: str | Path | None = None) -> dict[str, Any]:
     root = _resolve(path, cwd)
     if not root.exists():
@@ -202,6 +210,41 @@ def _register_bindings(registry: ToolRegistry, bindings: tuple[tuple[str, str, t
 def register_filesystem_read_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
     """Register only non-mutating filesystem capabilities."""
     _register_bindings(registry, _READ_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
+
+
+def register_upload_scoped_write_tools(
+    registry: ToolRegistry,
+    *,
+    upload_root: str | Path,
+    timeout_seconds: float | None = None,
+) -> None:
+    """Allow trial users to create/replace text files only inside the upload root."""
+    root = Path(upload_root).expanduser().resolve(strict=False)
+
+    def scoped_write(*, path: str, content: str, encoding: str = "utf-8") -> dict[str, Any]:
+        target = _require_within_root(path, root=root)
+        return file_write(path=str(target), content=content, encoding=encoding)
+
+    def scoped_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False) -> dict[str, Any]:
+        target = _require_within_root(path, root=root)
+        return file_create(path=str(target), content=content, encoding=encoding, create_parents=create_parents)
+
+    registry.add(
+        name="file_write",
+        description="Replace an existing text file only when it is inside the MAI upload directory.",
+        input_model=FileWriteInput,
+        handler=scoped_write,
+        timeout_seconds=timeout_seconds,
+        category="filesystem",
+    )
+    registry.add(
+        name="file_create",
+        description="Create a new text file only inside the MAI upload directory.",
+        input_model=FileCreateInput,
+        handler=scoped_create,
+        timeout_seconds=timeout_seconds,
+        category="filesystem",
+    )
 
 
 def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
