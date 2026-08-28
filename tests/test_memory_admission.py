@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from mai.memory.admission import (
-    is_recall_only_turn,
+    should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
     successful_tool_names,
@@ -34,25 +34,6 @@ def test_successful_memory_recall_tools_detects_persistent_memory_reads() -> Non
     )
 
 
-def test_recall_only_turn_requires_all_successful_tools_to_be_memory_reads() -> None:
-    assert is_recall_only_turn((
-        Execution("memory_overview", True),
-        Execution("memory_search", True),
-    )) is True
-
-    assert is_recall_only_turn((
-        Execution("memory_overview", True),
-        Execution("file_search", True),
-    )) is False
-
-    assert is_recall_only_turn((
-        Execution("memory_overview", False),
-        Execution("file_search", True),
-    )) is False
-
-    assert is_recall_only_turn(()) is False
-
-
 def test_successful_non_recall_tool_results_excludes_recall_results() -> None:
     executions = (
         Execution("memory_recall", True, "old persistent memory"),
@@ -67,10 +48,55 @@ def test_successful_non_recall_tool_results_excludes_recall_results() -> None:
     )
 
 
-def test_non_memory_tool_turns_remain_eligible_for_storage() -> None:
+def test_pure_recall_with_no_new_facts_is_skipped() -> None:
+    executions = (
+        Execution("memory_overview", True, "old memories"),
+        Execution("memory_search", True, "expanded old memories"),
+    )
+    assert should_skip_recall_without_new_facts(
+        executions,
+        extracted_facts=(),
+        extraction_succeeded=True,
+    ) is True
+
+
+def test_recall_only_tool_usage_does_not_drop_new_user_fact() -> None:
+    executions = (Execution("memory_recall", True, "old memory"),)
+    assert should_skip_recall_without_new_facts(
+        executions,
+        extracted_facts=("사용자는 최근 목표를 Y로 변경했다",),
+        extraction_succeeded=True,
+    ) is False
+
+
+def test_recall_plus_non_recall_tool_can_store_extracted_fact() -> None:
+    executions = (
+        Execution("memory_recall", True, "old memory"),
+        Execution("document_read", True, "new document evidence"),
+    )
+    assert should_skip_recall_without_new_facts(
+        executions,
+        extracted_facts=("문서에서 사용자의 새 계획이 확인됐다",),
+        extraction_succeeded=True,
+    ) is False
+
+
+def test_extraction_failure_fails_safe_and_preserves_recall_turn() -> None:
+    executions = (Execution("memory_recall", True, "old memory"),)
+    assert should_skip_recall_without_new_facts(
+        executions,
+        extracted_facts=(),
+        extraction_succeeded=False,
+    ) is False
+
+
+def test_non_recall_turn_is_not_suppressed_even_without_facts() -> None:
     executions = (
         Execution("file_search", True, "files"),
         Execution("calculator", True, "42"),
     )
-    assert successful_memory_recall_tools(executions) == ()
-    assert is_recall_only_turn(executions) is False
+    assert should_skip_recall_without_new_facts(
+        executions,
+        extracted_facts=(),
+        extraction_succeeded=True,
+    ) is False
