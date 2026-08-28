@@ -19,11 +19,11 @@ from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter
 
 
-_DATE_RE = re.compile(r"(?<!\w)(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?!\w)")
+_DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
 _NUMBER_RE = re.compile(
-    r"(?<![\w.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?![\w.])"
+    r"(?<![A-Za-z0-9_.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?![A-Za-z0-9_.])"
 )
-_KOREAN_UNIT_RE = re.compile(r"(?<!\w)([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
+_KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 
 _EVIDENCE_REVIEW_SYSTEM = """
