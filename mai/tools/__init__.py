@@ -1,5 +1,6 @@
 """Native tool implementations and registry."""
 
+from .calculator import CalculatorError, CalculatorInput, calculator, register_calculator_tools
 from .code import code_read, code_search, code_symbols, register_code_tools
 from .documents import document_read, register_document_tools
 from .external import register_external_information_tools
@@ -33,6 +34,8 @@ from .time import current_time, register_time_tools
 from .web import WebFetchError, WebSearchError, register_web_tools, web_fetch, web_search
 
 __all__ = [
+    "CalculatorError",
+    "CalculatorInput",
     "DuplicateToolError",
     "EmptyToolInput",
     "ImageAnalyzer",
@@ -46,6 +49,7 @@ __all__ = [
     "UnknownToolError",
     "WebFetchError",
     "WebSearchError",
+    "calculator",
     "code_read",
     "code_search",
     "code_symbols",
@@ -60,6 +64,7 @@ __all__ = [
     "file_move",
     "file_copy",
     "market_data",
+    "register_calculator_tools",
     "register_code_tools",
     "register_document_tools",
     "register_external_information_tools",
