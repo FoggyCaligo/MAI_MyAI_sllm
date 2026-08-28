@@ -30,6 +30,25 @@ class ToolExecution:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentFailureContext:
+    """Execution evidence retained when an agent run terminates with an error."""
+
+    messages: tuple[Message, ...]
+    tool_executions: tuple[ToolExecution, ...]
+    model_rounds: int
+
+
+class AgentRunFailure(AgentRuntimeError):
+    """A failed agent run with the original error identity and execution evidence."""
+
+    def __init__(self, cause: Exception, *, context: AgentFailureContext) -> None:
+        self.error_type = type(cause).__name__
+        self.error_message = str(cause)
+        self.context = context
+        super().__init__(f"{self.error_type}: {self.error_message}")
+
+
+@dataclass(frozen=True, slots=True)
 class AgentRunResult:
     content: str
     thinking: str
@@ -60,46 +79,58 @@ class AgentLoop:
         guard = AgentGuard(self.guard_config)
         round_number = 1
 
-        while True:
-            guard.before_model_round(round_number)
-            turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
-            history.append(dict(turn.assistant_message))
+        try:
+            while True:
+                guard.before_model_round(round_number)
+                turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
+                history.append(dict(turn.assistant_message))
 
-            if not turn.tool_calls:
-                missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(successful_tools)
-                if missing:
-                    raise UnsatisfiedToolRequirements(
-                        "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
+                if not turn.tool_calls:
+                    missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(successful_tools)
+                    if missing:
+                        raise UnsatisfiedToolRequirements(
+                            "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
+                        )
+                    return AgentRunResult(
+                        content=turn.content,
+                        thinking=turn.thinking,
+                        messages=tuple(history),
+                        tool_executions=tuple(executions),
+                        model_rounds=round_number,
+                        final_turn=turn,
                     )
-                return AgentRunResult(
-                    content=turn.content,
-                    thinking=turn.thinking,
+
+                guard.before_tool_round(round_number)
+                round_observations: list[ExecutionObservation] = []
+                for call in turn.tool_calls:
+                    call_fp = guard.before_tool_call(call.name, call.arguments)
+                    execution = await self._execute_tool(call)
+                    executions.append(execution)
+                    if execution.ok:
+                        successful_tools.add(execution.name)
+                    history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
+                    observation = ExecutionObservation(
+                        call_fingerprint=call_fp,
+                        ok=execution.ok,
+                        content_fingerprint=content_fingerprint(execution.content),
+                        error_type=execution.error_type,
+                    )
+                    guard.after_tool_execution(observation)
+                    round_observations.append(observation)
+
+                guard.after_tool_round(round_observations)
+                round_number += 1
+        except AgentRunFailure:
+            raise
+        except Exception as exc:
+            raise AgentRunFailure(
+                exc,
+                context=AgentFailureContext(
                     messages=tuple(history),
                     tool_executions=tuple(executions),
                     model_rounds=round_number,
-                    final_turn=turn,
-                )
-
-            guard.before_tool_round(round_number)
-            round_observations: list[ExecutionObservation] = []
-            for call in turn.tool_calls:
-                call_fp = guard.before_tool_call(call.name, call.arguments)
-                execution = await self._execute_tool(call)
-                executions.append(execution)
-                if execution.ok:
-                    successful_tools.add(execution.name)
-                history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
-                observation = ExecutionObservation(
-                    call_fingerprint=call_fp,
-                    ok=execution.ok,
-                    content_fingerprint=content_fingerprint(execution.content),
-                    error_type=execution.error_type,
-                )
-                guard.after_tool_execution(observation)
-                round_observations.append(observation)
-
-            guard.after_tool_round(round_observations)
-            round_number += 1
+                ),
+            ) from exc
 
     async def _execute_tool(self, call: NativeToolCall) -> ToolExecution:
         try:
