@@ -37,6 +37,44 @@ class MemoryRuntime:
         self.ensure_user(user_id)
         return self.recall.recall_query(user_id=user_id, query=query)
 
+    def memory_overview(self, *, user_id: str, limit: int) -> dict[str, object]:
+        """Return recent user-grounded memories without lexical matching."""
+        if limit < 1:
+            raise ValueError("memory overview limit must be >= 1")
+        anchor = self.ensure_user(user_id)
+        rows = self.graph.connection.execute(
+            """
+            SELECT n.id
+            FROM edges e
+            JOIN nodes n ON n.id = e.to_node_id
+            WHERE e.from_node_id = ?
+              AND e.relation IN ('spoke', 'asserted_fact')
+            ORDER BY n.last_seen_at DESC, n.id DESC
+            LIMIT ?
+            """,
+            (anchor.id, limit),
+        ).fetchall()
+        nodes = [self.graph.get_node(int(row["id"])) for row in rows]
+        return {
+            "user_anchor": {
+                "id": anchor.id,
+                "type": anchor.node_type,
+                "text": anchor.canonical_text,
+                "payload": anchor.payload,
+            },
+            "memories": [
+                {
+                    "id": node.id,
+                    "type": node.node_type,
+                    "text": node.canonical_text,
+                    "payload": node.payload,
+                    "created_at": node.created_at,
+                    "last_seen_at": node.last_seen_at,
+                }
+                for node in nodes
+            ],
+        }
+
     def memory_search(self, working: WorkingGraph, *, user_id: str, node_id: int) -> dict[str, object]:
         return self.recall.expand_one_hop(working, user_id=user_id, node_id=node_id)
 

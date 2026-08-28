@@ -78,6 +78,7 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1)
     session_id: str = Field(default="default", min_length=1)
+    model: str | None = None
 
 
 class ToolExecutionResponse(BaseModel):
@@ -85,6 +86,7 @@ class ToolExecutionResponse(BaseModel):
     arguments: dict[str, object]
     ok: bool
     error_type: str | None
+    result: str
 
 
 class ChatResponse(BaseModel):
@@ -108,7 +110,22 @@ async def root() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, object]:
     runtime = _get_runtime()
-    return {"status": "ok", "model": runtime.model, "tailscale_serve": _tailscale is not None}
+    return {
+        "status": "ok",
+        "model": runtime.model,
+        "tailscale_serve": _tailscale is not None,
+        "memory_db": str(runtime.memory_db_path),
+    }
+
+
+@app.get("/models")
+async def models() -> dict[str, object]:
+    runtime = _get_runtime()
+    try:
+        installed = await runtime.list_models()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    return {"models": installed, "current": runtime.model}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -118,7 +135,11 @@ async def chat(request: ChatRequest) -> ChatResponse:
     limit = _history_limit()
     prior = history[-limit:] if limit else []
     try:
-        result = await runtime.run_user_message(request.message, prior_messages=prior)
+        result = await runtime.run_user_message(
+            request.message,
+            prior_messages=prior,
+            model=request.model,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
 
@@ -129,7 +150,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
     return ChatResponse(
         answer=result.answer,
-        model=runtime.model,
+        model=result.model,
         model_rounds=result.model_rounds,
         tools=[ToolExecutionResponse(**tool) for tool in result.tools],
     )
