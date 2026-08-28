@@ -18,6 +18,7 @@ from ..memory.runtime import MemoryRuntime
 from ..memory.segmenter import SentenceBreakerSegmenter
 from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
+from ..tools.calculator import register_calculator_tools
 from ..tools.documents import register_document_tools
 from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
@@ -30,9 +31,13 @@ from .access import AccessPrincipal, AccessRole
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
 
-Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, or the terminal.
+Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, calculation, or the terminal.
 
 Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use document_read for PDF, DOCX, XLSX, CSV, or PPTX files. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
+
+Preserve factual values exactly as they appear in user messages and tool results unless the user explicitly asks to transform them. Do not silently replace, round, reinterpret, or normalize a supplied number into a different value. Distinguish source facts from derived calculations: for example, a profitable sale does not imply that a separately stated target price was reached.
+
+For arithmetic that materially affects the answer, use the calculator tool instead of mental arithmetic. This includes sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step numeric comparisons. When a result depends on quantities that were not provided, do not silently assume a quantity such as one unit or one share; state the missing assumption or limit the result to per-unit values.
 
 Trial accounts may receive file_write and file_create, but those handlers are structurally restricted to the MAI upload directory. Do not claim that such tools can modify arbitrary local paths.
 
@@ -118,6 +123,7 @@ class MAIRuntime:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         register_time_tools(registry)
+        register_calculator_tools(registry)
         register_external_information_tools(registry)
         register_document_tools(registry, cwd=self.cwd)
         if self.vision_model is not None:
