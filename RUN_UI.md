@@ -118,9 +118,22 @@ TAILSCALE_SERVE=true
 python run_server.py
 ```
 
-MAI는 `tailscale serve <MAI_PORT>`를 foreground child process로 실행한다. Tailscale CLI가 표시하는 tailnet URL로 다른 Tailscale 기기에서 접속한다. 서버가 정상 종료되면 해당 Serve child process도 종료한다.
+MAI는 `tailscale serve <MAI_PORT>`를 foreground child process로 실행하고, 이어서 `tailscale serve status`를 실행해 Tailscale이 보고하는 접속 상태와 URL을 그대로 터미널에 출력한다. 예시는 다음과 같다.
 
-Tailscale 실행 파일이 PATH에 없거나 Serve 권한/설정 문제로 command가 즉시 실패하면 MAI startup도 실패한다. 이를 성공처럼 우회하지 않는다.
+```text
+MAI local: http://127.0.0.1:8000
+MAI Tailscale Serve:
+Available within your tailnet:
+https://example-device.example-tailnet.ts.net
+
+|-- / proxy http://127.0.0.1:8000
+```
+
+`TAILSCALE_SERVE=false`이면 startup에서 `MAI Tailscale Serve: disabled`가 명시적으로 출력된다. 따라서 URL이 보이지 않을 때 Serve가 꺼져 있는지 바로 확인할 수 있다.
+
+Tailscale Serve는 **같은 tailnet의 허용된 기기/사용자에서 접속하는 기능**이다. MK4의 `start_public_tailscale.ps1`에서 사용했던 Tailscale Funnel과는 다르며, 현재 MAI는 이 설정만으로 인터넷 전체에 공개되지 않는다. 공개 인터넷 노출이 필요하다면 Funnel 도입을 별도 보안 결정으로 다룬다.
+
+Tailscale 실행 파일이 PATH에 없거나 `tailscale serve`가 시작 직후 종료되거나 `tailscale serve status`가 실패하면 MAI startup도 실패한다. status 결과가 비어 있어도 성공으로 처리하지 않는다. 서버가 정상 종료되면 foreground Serve child process도 종료한다.
 
 ## 5. 현재 C runtime
 
