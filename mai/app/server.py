@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from .runtime import MAIRuntime
 from .tailscale import TailscaleServe
 
+
+load_dotenv()
 
 _STATIC_DIR = Path(__file__).with_name("static")
 _runtime: MAIRuntime | None = None
@@ -105,11 +108,7 @@ async def root() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, object]:
     runtime = _get_runtime()
-    return {
-        "status": "ok",
-        "model": runtime.model,
-        "tailscale_serve": _tailscale is not None,
-    }
+    return {"status": "ok", "model": runtime.model, "tailscale_serve": _tailscale is not None}
 
 
 @app.post("/chat", response_model=ChatResponse)
