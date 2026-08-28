@@ -10,6 +10,7 @@ string-marker heuristics for causal or semantic relations.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
@@ -94,8 +95,16 @@ class FinalReview:
 class FinalGroundingVerifier:
     """Combine numeric grounding with conservative evidence/alignment review."""
 
-    def __init__(self, reviewer_adapter: OllamaAdapter | None = None) -> None:
+    def __init__(
+        self,
+        reviewer_adapter: OllamaAdapter | None = None,
+        *,
+        reviewer_timeout_seconds: float = 15.0,
+    ) -> None:
+        if reviewer_timeout_seconds <= 0:
+            raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
+        self.reviewer_timeout_seconds = reviewer_timeout_seconds
 
     async def verify(
         self,
@@ -103,6 +112,7 @@ class FinalGroundingVerifier:
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         successful_tool_results: Sequence[tuple[str, str]],
+        allow_semantic_review: bool = True,
     ) -> FinalVerificationResult:
         numeric_issue = self._numeric_issue(
             candidate=candidate,
@@ -118,8 +128,14 @@ class FinalGroundingVerifier:
             )
             return FinalVerificationResult(ok=False, issues=(numeric_issue,))
 
-        if self.reviewer_adapter is None:
-            self._log_result(numeric="pass", evidence="skipped", alignment="skipped", reasons=())
+        if self.reviewer_adapter is None or not allow_semantic_review:
+            reason = () if self.reviewer_adapter is None else ("semantic review retry budget exhausted",)
+            self._log_result(
+                numeric="pass",
+                evidence="skipped",
+                alignment="skipped",
+                reasons=reason,
+            )
             return FinalVerificationResult(ok=True)
 
         review = await self._review_final(
@@ -160,8 +176,6 @@ class FinalGroundingVerifier:
         for _, content in successful_tool_results:
             evidence.update(_extract_material_numeric_facts(content))
 
-        # No numeric evidence means this guard has no basis to police ordinary
-        # general-knowledge numbers.
         if not evidence:
             return None
 
@@ -184,38 +198,48 @@ class FinalGroundingVerifier:
         messages: Sequence[Mapping[str, Any]],
         successful_tool_results: Sequence[tuple[str, str]],
     ) -> FinalReview:
-        user_evidence = [
+        user_messages = [
             str(message.get("content"))
             for message in messages
             if message.get("role") == "user" and isinstance(message.get("content"), str)
         ]
-        current_user_request = user_evidence[-1] if user_evidence else ""
-        conversation_context = [
-            {"role": str(message.get("role") or ""), "content": str(message.get("content") or "")}
+        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
+
+        # Keep only recent conversational context and avoid duplicating all user
+        # messages in a separate evidence field. Tool results are also bounded so
+        # a multi-image/document run cannot make the reviewer arbitrarily slow.
+        context_messages = [
+            {
+                "role": str(message.get("role") or ""),
+                "content": _clip_text(str(message.get("content") or ""), 1800),
+            }
             for message in messages[:-1]
             if message.get("role") in {"user", "assistant"}
             and isinstance(message.get("content"), str)
-        ]
+        ][-10:]
         tool_evidence = [
-            {"tool": name, "result": content}
-            for name, content in successful_tool_results
+            {"tool": name, "result": _clip_text(content, 3500)}
+            for name, content in successful_tool_results[-10:]
         ]
         payload = {
             "current_user_request": current_user_request,
-            "conversation_context": conversation_context,
-            "user_evidence": user_evidence,
+            "conversation_context": context_messages,
             "successful_tool_results": tool_evidence,
-            "candidate_final": candidate,
+            "candidate_final": _clip_text(candidate, 6000),
         }
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+        )
         try:
-            turn = await self.reviewer_adapter.chat(ChatRequest(
-                messages=(
-                    {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ),
-                tools=(),
-                think=False,
-            ))
+            turn = await asyncio.wait_for(
+                self.reviewer_adapter.chat(request),
+                timeout=self.reviewer_timeout_seconds,
+            )
             data = json.loads(turn.content)
             evidence_verdict = str(data.get("evidence_verdict") or "").strip().lower()
             alignment_verdict = str(data.get("alignment_verdict") or "").strip().lower()
@@ -228,8 +252,6 @@ class FinalGroundingVerifier:
                 evidence_verdict = "uncertain"
             if alignment_verdict not in {"aligned", "misaligned", "uncertain"}:
                 alignment_verdict = "uncertain"
-            # An explicit blocking verdict without a concrete reason is treated
-            # as reviewer uncertainty rather than a release-blocking failure.
             if not reasons:
                 if evidence_verdict == "unsupported":
                     evidence_verdict = "uncertain"
@@ -240,9 +262,16 @@ class FinalGroundingVerifier:
                 alignment_verdict=alignment_verdict,
                 reasons=reasons,
             )
+        except TimeoutError:
+            _LOG.warning(
+                "MAI final verification reviewer timed out after %.1fs; failing open",
+                self.reviewer_timeout_seconds,
+            )
+            return FinalReview(
+                evidence_verdict="uncertain",
+                alignment_verdict="uncertain",
+            )
         except Exception:
-            # Reviewer failure must not become a new availability failure or a
-            # false rejection of an otherwise usable answer.
             return FinalReview(
                 evidence_verdict="uncertain",
                 alignment_verdict="uncertain",
@@ -258,6 +287,16 @@ class FinalGroundingVerifier:
             alignment,
             reason_text,
         )
+
+
+def _clip_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    if limit < 80:
+        return text[:limit]
+    head = (limit * 2) // 3
+    tail = limit - head - 24
+    return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
 def _extract_material_numeric_facts(text: str) -> set[str]:
@@ -292,9 +331,6 @@ def _extract_material_numeric_facts(text: str) -> set[str]:
         except InvalidOperation:
             continue
 
-        # Ignore small bare integers such as list counts or "two cases". Keep
-        # dates, percentages, decimals, comma-grouped values, large values, and
-        # Korean financial units as material numeric facts.
         is_decimal = "." in raw
         is_comma_grouped = "," in token
         if not is_percent and not is_decimal and not is_comma_grouped and abs(value) < 100:

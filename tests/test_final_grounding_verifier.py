@@ -53,6 +53,21 @@ class ReviewerAdapter:
         }))
 
 
+class SlowReviewerAdapter:
+    def __init__(self, delay_seconds: float):
+        self.delay_seconds = delay_seconds
+        self.requests = []
+
+    async def chat(self, request):
+        self.requests.append(deepcopy(request))
+        await asyncio.sleep(self.delay_seconds)
+        return turn(json.dumps({
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "reasons": [],
+        }))
+
+
 def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None:
     main = SequenceAdapter([
         "케이씨텍은 72,000원에 팔았습니다.",
@@ -67,7 +82,6 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.content == "케이씨텍은 70,000원에 팔았습니다."
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
-    # The first candidate is rejected deterministically before semantic review.
     assert len(reviewer.requests) == 1
 
 
@@ -137,6 +151,47 @@ def test_reviewer_parse_failure_fails_open() -> None:
 
     assert result.content == "일반적인 설명입니다."
     assert result.model_rounds == 1
+
+
+def test_reviewer_timeout_fails_open_without_hanging(caplog) -> None:
+    main = SequenceAdapter(["요청한 결과입니다."])
+    reviewer = SlowReviewerAdapter(delay_seconds=0.05)
+    verifier = FinalGroundingVerifier(
+        reviewer_adapter=reviewer,
+        reviewer_timeout_seconds=0.005,
+    )
+    caplog.set_level(logging.WARNING, logger="uvicorn.error")
+
+    result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
+
+    assert result.content == "요청한 결과입니다."
+    assert result.model_rounds == 1
+    assert "reviewer timed out" in caplog.text
+
+
+def test_semantic_verification_retries_are_bounded() -> None:
+    main = SequenceAdapter([
+        "첫 번째 빗나간 답변입니다.",
+        "두 번째 빗나간 답변입니다.",
+        "세 번째 답변은 retry budget 때문에 semantic review 없이 반환됩니다.",
+    ])
+    reviewer = ReviewerAdapter([
+        ("supported", "misaligned", ("Does not answer the request.",)),
+        ("supported", "misaligned", ("Still does not answer the request.",)),
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    runtime = AgentRuntime(
+        main,
+        ToolRegistry(),
+        final_verifier=verifier,
+        max_semantic_verification_retries=2,
+    )
+
+    result = run(runtime.run_user_message("내 요청에 답해줘"))
+
+    assert result.content.startswith("세 번째 답변은")
+    assert result.model_rounds == 3
+    assert len(reviewer.requests) == 2
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
