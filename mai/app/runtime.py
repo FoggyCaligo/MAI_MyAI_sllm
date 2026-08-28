@@ -18,16 +18,18 @@ from ..memory.runtime import MemoryRuntime
 from ..memory.segmenter import SentenceBreakerSegmenter
 from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
-from ..tools.local import register_local_pc_tools
+from ..tools.external import register_external_information_tools
+from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
+from .access import AccessPrincipal, AccessRole
 
 
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
 
-Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, or the terminal.
+Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, the web, market data, or the terminal.
 
-Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer.
+Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use web or market tools for current external information when those tools are available.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 
@@ -49,18 +51,14 @@ class MAIRuntime:
     def __init__(
         self,
         *,
-        user_id: str,
         model: str,
         ollama_host: str,
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
         cwd: str | Path | None = None,
     ) -> None:
-        if not user_id.strip():
-            raise ValueError("user_id must be non-empty")
         if not model.strip():
             raise ValueError("model must be non-empty")
-        self.user_id = user_id
         self.cwd = cwd
         self.ollama_host = ollama_host
         self.model = model
@@ -76,7 +74,6 @@ class MAIRuntime:
             self.recall,
             now=lambda: datetime.now(timezone.utc),
         )
-        self.memory.ensure_user(user_id)
         self._adapters: dict[str, OllamaAdapter] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
 
@@ -107,55 +104,55 @@ class MAIRuntime:
             names.append(name.strip())
         return tuple(names)
 
+    def _registry_for(self, principal: AccessPrincipal, working: WorkingGraph) -> ToolRegistry:
+        registry = ToolRegistry()
+        register_memory_tools(registry, self.memory, working, user_id=principal.user_id)
+        register_external_information_tools(registry)
+        if principal.role is AccessRole.OWNER:
+            register_local_pc_tools(registry, cwd=self.cwd)
+        elif principal.role is AccessRole.TRIAL:
+            register_readonly_local_tools(registry, cwd=self.cwd)
+        else:
+            raise ValueError(f"unsupported access role: {principal.role!r}")
+        return registry
+
     async def run_user_message(
         self,
         prompt: str,
         *,
+        principal: AccessPrincipal,
         prior_messages: Sequence[Mapping[str, Any]] = (),
         model: str | None = None,
     ) -> MAIRunResult:
         if not prompt.strip():
             raise ValueError("prompt must be non-empty")
-
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
-        evidence = self.memory.record_raw_user_evidence(self.user_id, prompt)
-        registry = ToolRegistry()
-        register_local_pc_tools(registry, cwd=self.cwd)
+        evidence = self.memory.record_raw_user_evidence(principal.user_id, prompt)
         working = WorkingGraph()
-        register_memory_tools(registry, self.memory, working, user_id=self.user_id)
+        registry = self._registry_for(principal, working)
         agent = AgentRuntime(adapter, registry)
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
         result = await agent.run_user_message(prompt, prior_messages=messages)
 
-        successful_tool_results = tuple(
-            execution.content for execution in result.tool_executions if execution.ok
-        )
+        successful_tool_results = tuple(execution.content for execution in result.tool_executions if execution.ok)
         await self.memory.finish_turn(
-            user_id=self.user_id,
+            user_id=principal.user_id,
             user_text=prompt,
             final_answer=result.content,
             user_evidence=evidence,
             successful_tool_results=successful_tool_results,
         )
-        tools = tuple(
-            {
-                "name": execution.name,
-                "arguments": execution.arguments,
-                "ok": execution.ok,
-                "error_type": execution.error_type,
-                "result": execution.content,
-            }
-            for execution in result.tool_executions
-        )
-        return MAIRunResult(
-            answer=result.content,
-            model=selected_model,
-            model_rounds=result.model_rounds,
-            tools=tools,
-        )
+        tools = tuple({
+            "name": execution.name,
+            "arguments": execution.arguments,
+            "ok": execution.ok,
+            "error_type": execution.error_type,
+            "result": execution.content,
+        } for execution in result.tool_executions)
+        return MAIRunResult(answer=result.content, model=selected_model, model_rounds=result.model_rounds, tools=tools)
 
     def close(self) -> None:
         self.segmenter.close()
