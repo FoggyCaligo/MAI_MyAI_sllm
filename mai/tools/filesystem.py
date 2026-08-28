@@ -82,7 +82,6 @@ def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500,
         raise FileNotFoundError(str(root))
     if not root.is_dir():
         raise NotADirectoryError(str(root))
-
     iterator = root.rglob("*") if recursive else root.iterdir()
     items: list[dict[str, Any]] = []
     truncated = False
@@ -91,13 +90,7 @@ def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500,
             truncated = True
             break
         stat = entry.stat()
-        items.append({
-            "path": str(entry),
-            "name": entry.name,
-            "type": "directory" if entry.is_dir() else "file",
-            "size": None if entry.is_dir() else stat.st_size,
-            "modified_ns": stat.st_mtime_ns,
-        })
+        items.append({"path": str(entry), "name": entry.name, "type": "directory" if entry.is_dir() else "file", "size": None if entry.is_dir() else stat.st_size, "modified_ns": stat.st_mtime_ns})
     return {"root": str(root), "items": items, "truncated": truncated}
 
 
@@ -107,11 +100,9 @@ def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: s
         raise FileNotFoundError(str(base))
     if not base.is_dir():
         raise NotADirectoryError(str(base))
-
     results: list[str] = []
     for current_root, dirs, files in os.walk(base):
-        names = [*dirs, *files]
-        for name in names:
+        for name in [*dirs, *files]:
             full = Path(current_root) / name
             relative = str(full.relative_to(base))
             if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(relative, pattern):
@@ -183,25 +174,36 @@ def file_copy(*, source: str, destination: str, create_parents: bool = False, cw
         raise FileNotFoundError(str(src))
     if create_parents:
         dst.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_dir():
-        copied = Path(shutil.copytree(src, dst))
-    else:
-        copied = Path(shutil.copy2(src, dst))
+    copied = Path(shutil.copytree(src, dst)) if src.is_dir() else Path(shutil.copy2(src, dst))
     return {"source": str(src), "destination": str(copied)}
 
 
-def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
-    bindings = (
-        ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed.", FileListInput, file_list),
-        ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root.", FileSearchInput, file_search),
-        ("file_read", "Read a UTF-8 or explicitly encoded local text file from any accessible path.", FileReadInput, file_read),
-        ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
-        ("file_create", "Create a new local text file and fail if it already exists.", FileCreateInput, file_create),
-        ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
-        ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
-        ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
-    )
+_READ_BINDINGS = (
+    ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed.", FileListInput, file_list),
+    ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root.", FileSearchInput, file_search),
+    ("file_read", "Read a UTF-8 or explicitly encoded local text file from any accessible path.", FileReadInput, file_read),
+)
+_WRITE_BINDINGS = (
+    ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
+    ("file_create", "Create a new local text file and fail if it already exists.", FileCreateInput, file_create),
+    ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
+    ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
+    ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
+)
+
+
+def _register_bindings(registry: ToolRegistry, bindings: tuple[tuple[str, str, type[BaseModel], Any], ...], *, cwd: str | Path | None, timeout_seconds: float | None) -> None:
     for name, description, input_model, function in bindings:
         def handler(_function=function, **kwargs: Any) -> Any:
             return _function(cwd=cwd, **kwargs)
         registry.add(name=name, description=description, input_model=input_model, handler=handler, timeout_seconds=timeout_seconds, category="filesystem")
+
+
+def register_filesystem_read_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
+    """Register only non-mutating filesystem capabilities."""
+    _register_bindings(registry, _READ_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
+
+
+def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
+    """Register read and mutating filesystem capabilities."""
+    _register_bindings(registry, _READ_BINDINGS + _WRITE_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
