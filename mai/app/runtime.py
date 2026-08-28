@@ -146,6 +146,7 @@ class MAIRuntime:
                 "arguments": execution.arguments,
                 "ok": execution.ok,
                 "error_type": execution.error_type,
+                "result": execution.content,
             }
             for execution in result.tool_executions
         )
