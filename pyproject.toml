@@ -4,9 +4,12 @@ version = "0.1.0"
 description = "Ollama-native personal agent runtime with graph memory"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.116.0",
   "ollama>=0.6.0",
   "pydantic>=2.0",
+  "python-dotenv>=1.0.0",
   "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
+  "uvicorn>=0.35.0",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +20,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["mai*"]
 exclude = ["data*", "tests*"]
+
+[tool.setuptools.package-data]
+"mai.app" = ["static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

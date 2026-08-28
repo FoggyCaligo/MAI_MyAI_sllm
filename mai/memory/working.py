@@ -1,4 +1,4 @@
-"""Per-turn Working Graph assembled from recall and explicit expansion."""
+"""Per-turn Working Graph assembled from explicit recall and expansion."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -19,6 +19,11 @@ class WorkingGraph:
             self.edges[edge.id] = edge
         if mark_expanded:
             self.expanded_node_ids.add(neighborhood.center_node_id)
+
+    def merge_working(self, other: "WorkingGraph") -> None:
+        self.nodes.update(other.nodes)
+        self.edges.update(other.edges)
+        self.expanded_node_ids.update(other.expanded_node_ids)
 
     def snapshot(self) -> dict[str, object]:
         return {
