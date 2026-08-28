@@ -12,7 +12,7 @@ python -m pip install -e ".[dev]"
 `.env.example`을 `.env`로 복사한 뒤 기본 모델, memory DB, 허용 ID를 지정한다.
 
 ```env
-MAIN_MODEL=gemma4:e4b
+MAIN_MODEL=ornith-1.5:9b
 VISION_MODEL=
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
@@ -35,11 +35,31 @@ OWNER_MEMORY_ID=local-user
 
 `VISION_MODEL`은 선택 사항이다. 비워두면 `image_analyze` 자체가 ToolRegistry에 노출되지 않는다. 이미지 분석을 사용하려면 Ollama에 설치되어 있고 이미지 입력을 지원하는 모델 이름을 지정한다.
 
-`TRIAL_IDS`는 쉼표로 구분하며 비워둘 수 있다. Trial은 별도의 memory mapping 설정 없이 각 로그인 ID 자체를 자신의 memory identity로 사용한다. `OWNER_MEMORY_ID`가 trial ID와 충돌하면 startup이 실패한다.
+`TRIAL_IDS`는 쉼표로 구분하며 비워둘 수 있다. Trial은 각 로그인 ID 자체를 자신의 memory identity로 사용한다. `OWNER_MEMORY_ID`가 trial ID와 충돌하면 startup이 실패한다.
 
 등록되지 않은 ID는 `/login` 단계에서 거부된다. 인증은 ID-only이며 로그인 성공 시 서버가 임시 Bearer session token을 발급한다.
 
-## 2. 권한과 읽기 도구
+## 2. 모델 선택
+
+Owner와 Trial의 model 권한은 다르다.
+
+```text
+owner
+  GET /models -> 설치된 Ollama model 전체
+  /chat model -> 선택 가능
+
+trial
+  GET /models -> MAIN_MODEL 하나만
+  /chat model -> MAIN_MODEL로 고정
+```
+
+Owner는 Web UI 상단 selector에서 설치된 Ollama 모델을 선택할 수 있다.
+
+Trial에서는 selector가 `MAIN_MODEL` 하나만 받는다. 더 중요한 제한은 서버 쪽에 있다. Trial client가 UI를 우회해 `/chat`에 다른 model 이름을 직접 보내면 HTTP 403으로 거부한다. model을 생략하거나 현재 `MAIN_MODEL`과 같은 값을 보내는 요청만 허용한다.
+
+별도 `TRIAL_MODEL` 설정은 사용하지 않는다. 따라서 `.env`의 `MAIN_MODEL`을 바꾸면 Trial의 고정 모델도 함께 바뀐다. `MAIN_MODEL`을 설정하지 않은 경우 runtime 기본값은 `ornith-1.5:9b`다.
+
+## 3. 권한과 읽기 도구
 
 Owner는 현재 등록된 모든 native tool을 사용할 수 있다. Trial은 arbitrary local mutation과 terminal을 받지 않지만 읽기 계열과 외부 정보 계열은 사용할 수 있다.
 
@@ -68,7 +88,7 @@ trial 추가 capability
 
 Trial의 `file_write`와 `file_create`는 이름은 owner 도구와 같지만 handler 단계에서 `mai_uploads` 경계 검사를 거친다. 해당 폴더 밖 경로는 `PermissionError`로 실패한다. Trial에는 `file_delete`, `file_move`, `file_copy`, `terminal_run`을 노출하지 않는다.
 
-## 3. 로컬 UI와 파일 업로드
+## 4. 로컬 UI와 파일 업로드
 
 ```bash
 python run_server.py
@@ -80,7 +100,7 @@ python run_server.py
 http://127.0.0.1:8000
 ```
 
-처음에는 ID login 화면만 보인다. 허용 ID로 로그인한 뒤 Ollama 설치 모델을 상단 selector에서 선택할 수 있다. 선택한 모델은 해당 요청에 직접 사용되며 `MAIN_MODEL`은 기본 선택값이다.
+처음에는 ID login 화면만 보인다. Owner는 상단 model selector를 사용할 수 있고 Trial은 configured default model 하나로 고정된다.
 
 메시지 입력창의 `＋` 버튼으로 파일을 업로드할 수 있다. 업로드는 인증된 owner/trial 모두 사용할 수 있고 서버 실행 디렉터리의 다음 위치에 저장된다.
 
@@ -104,9 +124,9 @@ http://127.0.0.1:8000
 
 응답은 기본 Markdown 요소를 렌더링하며, 각 응답 아래의 `tool log`에서 tool name, 성공/실패 상태, arguments, result를 확인할 수 있다. 새 메시지와 응답이 추가되면 message pane은 자동으로 최하단으로 스크롤된다.
 
-## 4. Tailscale Funnel 공개
+## 5. Tailscale Funnel 공개
 
-MAI는 MK4와 같은 방향으로 **Tailscale Funnel을 사용해 인터넷에 공개**할 수 있다. `.env`에서 다음을 켠다.
+MAI는 **Tailscale Funnel을 사용해 인터넷에 공개**할 수 있다. `.env`에서 다음을 켠다.
 
 ```env
 TAILSCALE_FUNNEL=true
@@ -139,11 +159,11 @@ https://example-device.example-tailnet.ts.net
 
 `TAILSCALE_FUNNEL=false`이면 startup에서 Funnel이 비활성화됐다고 명시적으로 출력한다.
 
-`--bg` Funnel 설정은 Tailscale에 지속 저장되므로 MAI 프로세스를 종료할 때 자동으로 Funnel 설정을 지우지 않는다. 이후 다시 MAI를 시작하면 같은 Funnel을 현재 `MAI_PORT`로 갱신한다. Funnel을 직접 끄려면 Tailscale CLI의 `tailscale funnel ... off` 또는 `tailscale funnel reset`을 사용한다.
+`--bg` Funnel 설정은 Tailscale에 지속 저장되므로 MAI 프로세스를 종료할 때 자동으로 Funnel 설정을 지우지 않는다. 이후 다시 MAI를 시작하면 같은 Funnel을 현재 `MAI_PORT`로 갱신한다.
 
-Tailscale Funnel을 처음 쓰는 환경에서는 Tailscale 측 요구조건(MagicDNS, HTTPS 인증서, Funnel 권한)이 충족되어야 한다. `tailscale funnel` 또는 `tailscale funnel status`가 실패하면 MAI startup도 실패하며 오류를 그대로 드러낸다.
+Tailscale Funnel을 처음 쓰는 환경에서는 Tailscale 측 요구조건이 충족되어야 한다. `tailscale funnel` 또는 `tailscale funnel status`가 실패하면 MAI startup도 실패하며 오류를 그대로 드러낸다.
 
-## 5. 현재 C runtime
+## 6. 현재 C runtime
 
 기본 요청 경로에는 Tool Requirement Preflight와 automatic recall이 없다.
 
