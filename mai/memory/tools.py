@@ -8,6 +8,11 @@ from .runtime import MemoryRuntime
 from .working import WorkingGraph
 
 
+class MemoryRecallInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, description="Semantic query for recalling this user's persistent memory")
+
+
 class MemorySearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     node_id: int = Field(gt=0, description="Working/permanent memory node to expand by exactly one graph hop")
@@ -19,8 +24,33 @@ def register_memory_tools(
     working: WorkingGraph,
     *,
     user_id: str,
+    include_recall_entry: bool = False,
 ) -> None:
-    """Register deliberate one-hop recall for the current account/agent turn."""
+    """Register memory tools for one account/agent turn.
+
+    `include_recall_entry` is intentionally opt-in. The normal A-path can keep
+    automatic recall semantics unchanged, while the pure-agent experiment exposes
+    `memory_recall(query)` as the only initial semantic-memory entry point.
+    """
+
+    if include_recall_entry:
+        def memory_recall(query: str) -> dict[str, object]:
+            recalled = memory.explicit_recall(user_id=user_id, query=query)
+            working.merge_snapshot(recalled)
+            return working.snapshot()
+
+        registry.add(
+            name="memory_recall",
+            description=(
+                "Search this user's persistent memory semantically from a free-text query. "
+                "Use this when answering requires information from the user's past conversations, "
+                "preferences, decisions, projects, or other stored personal context. It returns "
+                "typed graph nodes plus directly addressable source utterances and user-anchor paths."
+            ),
+            input_model=MemoryRecallInput,
+            handler=memory_recall,
+            category="memory",
+        )
 
     def memory_search(node_id: int) -> dict[str, object]:
         return memory.memory_search(working, user_id=user_id, node_id=node_id)
