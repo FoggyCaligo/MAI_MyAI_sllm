@@ -13,7 +13,12 @@ from ..agent.runtime import AgentRuntime
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
-from ..memory.admission import successful_memory_recall_tools
+from ..memory.admission import (
+    is_recall_only_turn,
+    successful_memory_recall_tools,
+    successful_non_recall_tool_results,
+    successful_tool_names,
+)
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -173,20 +178,28 @@ class MAIRuntime:
         result = await agent.run_user_message(prompt, prior_messages=messages)
 
         recall_tools = successful_memory_recall_tools(result.tool_executions)
-        if recall_tools:
+        all_successful_tools = successful_tool_names(result.tool_executions)
+        if is_recall_only_turn(result.tool_executions):
             _LOG.info(
-                "MAI memory admission skipped reason=recall_turn tools=%s",
+                "MAI memory admission skipped reason=recall_only_turn tools=%s",
                 ",".join(recall_tools),
             )
         else:
             evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
+            extraction_tool_results = successful_non_recall_tool_results(result.tool_executions)
             await self.memory.finish_turn(
                 user_id=principal.memory_user_id,
                 user_text=prompt,
                 final_answer=result.content,
                 user_evidence=evidence,
+                successful_tool_results=extraction_tool_results,
             )
-            _LOG.info("MAI memory admission stored source=user_utterance chars=%d", len(prompt))
+            _LOG.info(
+                "MAI memory admission stored source=user_utterance chars=%d tools=%s extraction_tool_results=%d",
+                len(prompt),
+                ",".join(all_successful_tools) if all_successful_tools else "-",
+                len(extraction_tool_results),
+            )
 
         tools = tuple({
             "name": execution.name,
