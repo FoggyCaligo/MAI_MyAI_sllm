@@ -1,5 +1,6 @@
 """Native tool implementations and registry."""
 
+from .code import code_read, code_search, code_symbols, register_code_tools
 from .filesystem import (
     register_filesystem_tools,
     file_list,
@@ -31,6 +32,9 @@ __all__ = [
     "ToolRegistry",
     "ToolRegistryError",
     "UnknownToolError",
+    "code_read",
+    "code_search",
+    "code_symbols",
     "file_list",
     "file_search",
     "file_read",
@@ -39,6 +43,7 @@ __all__ = [
     "file_delete",
     "file_move",
     "file_copy",
+    "register_code_tools",
     "register_filesystem_tools",
     "register_local_pc_tools",
     "terminal_run",
