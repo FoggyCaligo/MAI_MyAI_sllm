@@ -21,7 +21,7 @@ OWNER_MEMORY_ID=local-user
 TRIAL_IDS=trial-a,trial-b
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
-TAILSCALE_SERVE=false
+TAILSCALE_FUNNEL=false
 ```
 
 `OWNER_ID`와 `OWNER_MEMORY_ID`는 필수다. `OWNER_ID`는 Web UI 로그인에 사용하는 인증 ID이고, `OWNER_MEMORY_ID`는 owner가 graph memory에서 사용할 User Anchor identity다. 둘은 같아도 되지만 같은 개념으로 취급하지 않는다.
@@ -104,36 +104,44 @@ http://127.0.0.1:8000
 
 응답은 기본 Markdown 요소를 렌더링하며, 각 응답 아래의 `tool log`에서 tool name, 성공/실패 상태, arguments, result를 확인할 수 있다. 새 메시지와 응답이 추가되면 message pane은 자동으로 최하단으로 스크롤된다.
 
-## 4. Tailscale Serve
+## 4. Tailscale Funnel 공개
 
-`.env`에서 다음을 켠다.
+MAI는 MK4와 같은 방향으로 **Tailscale Funnel을 사용해 인터넷에 공개**할 수 있다. `.env`에서 다음을 켠다.
 
 ```env
-TAILSCALE_SERVE=true
+TAILSCALE_FUNNEL=true
 ```
 
-그 뒤 동일하게 실행한다.
+이전 `TAILSCALE_SERVE` 설정은 폐기했다. `.env`에 `TAILSCALE_SERVE=true`가 남아 있으면 MAI는 잘못된 tailnet-only 모드로 조용히 실행하지 않고 startup에서 명확히 실패하며 `TAILSCALE_FUNNEL=true`로 바꾸라고 알린다.
+
+그 뒤 실행한다.
 
 ```bash
 python run_server.py
 ```
 
-MAI는 `tailscale serve <MAI_PORT>`를 foreground child process로 실행하고, 이어서 `tailscale serve status`를 실행해 Tailscale이 보고하는 접속 상태와 URL을 그대로 터미널에 출력한다. 예시는 다음과 같다.
+MAI는 다음 명령과 같은 방식으로 public Funnel을 background 설정한다.
+
+```bash
+tailscale funnel --bg --yes 8000
+```
+
+그 뒤 `tailscale funnel status`를 실행해 Tailscale 자체가 보고하는 공개 URL과 proxy mapping을 터미널에 출력한다.
 
 ```text
 MAI local: http://127.0.0.1:8000
-MAI Tailscale Serve:
-Available within your tailnet:
+MAI Tailscale Funnel (public internet):
+Available on the internet:
 https://example-device.example-tailnet.ts.net
 
 |-- / proxy http://127.0.0.1:8000
 ```
 
-`TAILSCALE_SERVE=false`이면 startup에서 `MAI Tailscale Serve: disabled`가 명시적으로 출력된다. 따라서 URL이 보이지 않을 때 Serve가 꺼져 있는지 바로 확인할 수 있다.
+`TAILSCALE_FUNNEL=false`이면 startup에서 Funnel이 비활성화됐다고 명시적으로 출력한다.
 
-Tailscale Serve는 **같은 tailnet의 허용된 기기/사용자에서 접속하는 기능**이다. MK4의 `start_public_tailscale.ps1`에서 사용했던 Tailscale Funnel과는 다르며, 현재 MAI는 이 설정만으로 인터넷 전체에 공개되지 않는다. 공개 인터넷 노출이 필요하다면 Funnel 도입을 별도 보안 결정으로 다룬다.
+`--bg` Funnel 설정은 Tailscale에 지속 저장되므로 MAI 프로세스를 종료할 때 자동으로 Funnel 설정을 지우지 않는다. 이후 다시 MAI를 시작하면 같은 Funnel을 현재 `MAI_PORT`로 갱신한다. Funnel을 직접 끄려면 Tailscale CLI의 `tailscale funnel ... off` 또는 `tailscale funnel reset`을 사용한다.
 
-Tailscale 실행 파일이 PATH에 없거나 `tailscale serve`가 시작 직후 종료되거나 `tailscale serve status`가 실패하면 MAI startup도 실패한다. status 결과가 비어 있어도 성공으로 처리하지 않는다. 서버가 정상 종료되면 foreground Serve child process도 종료한다.
+Tailscale Funnel을 처음 쓰는 환경에서는 Tailscale 측 요구조건(MagicDNS, HTTPS 인증서, Funnel 권한)이 충족되어야 한다. `tailscale funnel` 또는 `tailscale funnel status`가 실패하면 MAI startup도 실패하며 오류를 그대로 드러낸다.
 
 ## 5. 현재 C runtime
 
