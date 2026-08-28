@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
-
-import pytest
 
 from mai.llm.models import NativeToolCall
 from mai.tools.registry import ToolRegistry
@@ -21,12 +20,11 @@ def test_current_time_returns_timezone_aware_local_and_utc_values():
     assert isinstance(result["utc_offset_seconds"], int)
 
 
-@pytest.mark.asyncio
-async def test_register_time_tools_exposes_zero_argument_native_tool():
+def test_register_time_tools_exposes_zero_argument_native_tool():
     registry = ToolRegistry()
     register_time_tools(registry)
 
     assert registry.names() == ("current_time",)
-    result = await registry.invoke(NativeToolCall(name="current_time", arguments={}))
+    result = asyncio.run(registry.invoke(NativeToolCall(name="current_time", arguments={})))
     assert "local_iso" in result
     assert "utc_iso" in result
