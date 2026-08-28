@@ -36,7 +36,7 @@ def register_memory_tools(
     if include_recall_entry:
         def memory_recall(query: str) -> dict[str, object]:
             recalled = memory.explicit_recall(user_id=user_id, query=query)
-            working.merge_snapshot(recalled)
+            working.merge_working(recalled)
             return working.snapshot()
 
         registry.add(
