@@ -36,7 +36,7 @@ class FakeConceptIndex:
         )[:limit]
 
 
-def test_production_memory_registration_exposes_recall_by_default(tmp_path):
+def test_production_memory_registration_exposes_recall_and_overview_by_default(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
@@ -53,12 +53,19 @@ def test_production_memory_registration_exposes_recall_by_default(tmp_path):
         working = WorkingGraph()
         registry = ToolRegistry()
         register_memory_tools(registry, memory, working, user_id="alice")
-        assert registry.names() == ("memory_recall", "memory_search")
+        assert registry.names() == ("memory_recall", "memory_overview", "memory_search")
 
-        result = asyncio.run(registry.invoke(NativeToolCall(
+        recalled = asyncio.run(registry.invoke(NativeToolCall(
             name="memory_recall",
             arguments={"query": "모카"},
         )))
-        assert any(node["type"] == "utterance" and "모카" in node["text"] for node in result["nodes"])
+        assert any(node["type"] == "utterance" and "모카" in node["text"] for node in recalled["nodes"])
+
+        overview = asyncio.run(registry.invoke(NativeToolCall(
+            name="memory_overview",
+            arguments={"limit": 5},
+        )))
+        assert overview["user_anchor"]["payload"]["user_id"] == "alice"
+        assert any(item["type"] == "utterance" and "모카" in item["text"] for item in overview["memories"])
     finally:
         graph.close()
