@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
         memory_db_path=os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3"),
         sentence_breaker_db_path=os.environ.get("SENTENCE_BREAKER_DB_PATH", "./data/sentence_breaker.sqlite3"),
+        vision_model=os.environ.get("VISION_MODEL") or None,
         cwd=os.environ.get("MAI_CWD") or None,
     )
     if _env_bool("TAILSCALE_SERVE", False):
@@ -151,7 +152,12 @@ async def root() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, object]:
     runtime = _get_runtime()
-    return {"status": "ok", "model": runtime.model, "tailscale_serve": _tailscale is not None}
+    return {
+        "status": "ok",
+        "model": runtime.model,
+        "vision_model": runtime.vision_model,
+        "tailscale_serve": _tailscale is not None,
+    }
 
 
 @app.post("/login", response_model=LoginResponse)
