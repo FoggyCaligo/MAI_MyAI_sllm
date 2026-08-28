@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -11,6 +12,9 @@ from ..tools.registry import ToolRegistry
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
 from .requirements import FrozenToolRequirements, UnsatisfiedToolRequirements
 from .verification import FinalGroundingVerifier
+
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 class AgentRuntimeError(RuntimeError):
@@ -67,11 +71,15 @@ class AgentLoop:
         *,
         guard_config: GuardConfig | None = None,
         final_verifier: FinalGroundingVerifier | None = None,
+        max_semantic_verification_retries: int = 2,
     ) -> None:
+        if max_semantic_verification_retries < 0:
+            raise ValueError("max_semantic_verification_retries must be non-negative")
         self.adapter = adapter
         self.registry = registry
         self.guard_config = guard_config or GuardConfig()
         self.final_verifier = final_verifier
+        self.max_semantic_verification_retries = max_semantic_verification_retries
 
     async def run(
         self,
@@ -87,6 +95,7 @@ class AgentLoop:
         tools = self.registry.native_schemas()
         guard = AgentGuard(self.guard_config)
         round_number = 1
+        semantic_verification_retries = 0
 
         try:
             while True:
@@ -101,6 +110,9 @@ class AgentLoop:
                             "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
                         )
                     if self.final_verifier is not None:
+                        allow_semantic_review = (
+                            semantic_verification_retries < self.max_semantic_verification_retries
+                        )
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
                             messages=history,
@@ -109,11 +121,24 @@ class AgentLoop:
                                 for execution in executions
                                 if execution.ok
                             ),
+                            allow_semantic_review=allow_semantic_review,
                         )
                         if not verification.ok:
+                            semantic_failure = any(
+                                issue.code in {"evidence_grounding_failed", "task_alignment_failed"}
+                                for issue in verification.issues
+                            )
+                            if semantic_failure:
+                                semantic_verification_retries += 1
                             history.append({"role": "system", "content": verification.feedback_message()})
                             round_number += 1
                             continue
+                        if not allow_semantic_review:
+                            _LOG.warning(
+                                "MAI final semantic verification retry budget exhausted after %d retries; "
+                                "returning candidate after numeric grounding",
+                                self.max_semantic_verification_retries,
+                            )
                     return AgentRunResult(
                         content=turn.content,
                         thinking=turn.thinking,
