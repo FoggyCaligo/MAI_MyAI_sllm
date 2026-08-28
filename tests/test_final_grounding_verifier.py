@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 
 from mai.agent.runtime import AgentRuntime
@@ -28,7 +29,7 @@ class SequenceAdapter:
         self.requests = []
 
     async def chat(self, request):
-        self.requests.append(request)
+        self.requests.append(deepcopy(request))
         if not self.contents:
             raise AssertionError("unexpected extra model call")
         return turn(self.contents.pop(0))
@@ -40,7 +41,7 @@ class ReviewerAdapter:
         self.requests = []
 
     async def chat(self, request):
-        self.requests.append(request)
+        self.requests.append(deepcopy(request))
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         verdict, reasons = self.reviews.pop(0)
@@ -114,3 +115,16 @@ def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() 
     result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("핵심을 정리해줘"))
 
     assert result.content == "핵심은 2가지입니다."
+
+
+def test_material_number_followed_by_korean_text_is_grounded() -> None:
+    main = SequenceAdapter(["현재가는 63,200원이고 목표가는 67,400원입니다."])
+    reviewer = ReviewerAdapter([("supported", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message(
+        "현재가는 63,200원이고 목표가는 67,400원이야."
+    ))
+
+    assert result.content == "현재가는 63,200원이고 목표가는 67,400원입니다."
+    assert result.model_rounds == 1
