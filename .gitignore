@@ -4,6 +4,7 @@ __pycache__/
 .env
 data/
 mai_uploads/
+*.egg-info/
 *.sqlite3
 *.db
 .pytest_cache/
