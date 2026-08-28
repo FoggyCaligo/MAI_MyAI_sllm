@@ -130,7 +130,7 @@ def install() -> None:
         chat_job_store.attach_task(job.job_id, task)
         return {"job_id": job.job_id, "status": job.status}
 
-    @app.get("/chat/jobs/{job_id}")
+    @app.get("/chat/jobs/{job_id}", response_model=None)
     async def get_chat_job(
         job_id: str,
         authorization: str | None = Header(default=None),
