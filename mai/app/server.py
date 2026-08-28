@@ -22,7 +22,6 @@ from .tailscale import TailscaleFunnel
 load_dotenv()
 
 _STATIC_DIR = Path(__file__).with_name("static")
-_UPLOAD_DIR = Path("mai_uploads").resolve()
 _runtime: MAIRuntime | None = None
 _access_policy: AccessPolicy | None = None
 _tailscale: TailscaleFunnel | None = None
@@ -187,7 +186,7 @@ def _principal_from_authorization(authorization: str | None) -> tuple[str, Acces
     return token, principal
 
 
-def _safe_upload_name(filename: str | None) -> str:
+def _validated_upload_filename(filename: str | None) -> str:
     if filename is None or not filename.strip():
         raise HTTPException(status_code=400, detail="uploaded file must have a filename")
     clean = filename.strip()
@@ -269,14 +268,16 @@ async def upload_file(
     file: UploadFile = File(...),
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
-    _principal_from_authorization(authorization)
-    filename = _safe_upload_name(file.filename)
-    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    target = (_UPLOAD_DIR / filename).resolve()
-    if target.parent != _UPLOAD_DIR:
-        raise HTTPException(status_code=400, detail="uploaded filename resolved outside mai_uploads")
+    _, principal = _principal_from_authorization(authorization)
+    runtime = _get_runtime()
+    filename = _validated_upload_filename(file.filename)
+    upload_root = runtime.upload_root.resolve()
+    upload_root.mkdir(parents=True, exist_ok=True)
+    target = (upload_root / filename).resolve()
+    if target.parent != upload_root:
+        raise HTTPException(status_code=400, detail="uploaded filename resolved outside upload root")
     if target.exists():
-        raise HTTPException(status_code=409, detail="a file with that name already exists in mai_uploads")
+        raise HTTPException(status_code=409, detail="a file with that name already exists in upload root")
 
     try:
         with target.open("xb") as handle:
@@ -289,7 +290,12 @@ async def upload_file(
     finally:
         await file.close()
 
-    return {"filename": filename, "path": str(target), "bytes": target.stat().st_size}
+    return {
+        "filename": filename,
+        "path": str(target),
+        "bytes": target.stat().st_size,
+        "uploaded_by": principal.auth_user_id,
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
