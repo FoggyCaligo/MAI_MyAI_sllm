@@ -35,14 +35,16 @@ class SequenceAdapter:
 
 
 class ReviewerAdapter:
-    def __init__(self, verdict: str, reasons=()):
-        self.verdict = verdict
-        self.reasons = list(reasons)
+    def __init__(self, reviews):
+        self.reviews = list(reviews)
         self.requests = []
 
     async def chat(self, request):
         self.requests.append(request)
-        return turn(json.dumps({"verdict": self.verdict, "reasons": self.reasons}))
+        if not self.reviews:
+            raise AssertionError("unexpected extra reviewer call")
+        verdict, reasons = self.reviews.pop(0)
+        return turn(json.dumps({"verdict": verdict, "reasons": list(reasons)}))
 
 
 def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None:
@@ -50,7 +52,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
         "케이씨텍은 72,000원에 팔았습니다.",
         "케이씨텍은 70,000원에 팔았습니다.",
     ])
-    reviewer = ReviewerAdapter("supported")
+    reviewer = ReviewerAdapter([("supported", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
@@ -68,24 +70,23 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
         "두 화면의 차이는 전부 미실현 평가익입니다.",
         "두 화면은 산식이 다르므로 차이의 원인은 이 자료만으로 확정할 수 없습니다.",
     ])
-    reviewer = ReviewerAdapter(
-        "unsupported",
-        ["The candidate invents a reconciliation that is not established by the supplied evidence."],
-    )
+    reviewer = ReviewerAdapter([
+        ("unsupported", ("The candidate invents a reconciliation not established by the evidence.",)),
+        ("supported", ()),
+    ])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
     result = run(runtime.run_user_message("두 화면의 의미를 비교해줘."))
 
-    # The same reviewer would reject every candidate, so switch it after the first call.
-    # This assertion checks that the first unsupported verdict was fed back into the next round.
-    assert result.model_rounds >= 2
+    assert result.content.startswith("두 화면은 산식이 다르므로")
+    assert result.model_rounds == 2
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
 def test_evidence_reviewer_uncertain_does_not_block_release() -> None:
     main = SequenceAdapter(["현재 자료만으로는 단정하기 어렵습니다."])
-    reviewer = ReviewerAdapter("uncertain", ["Evidence is insufficient to decide."])
+    reviewer = ReviewerAdapter([("uncertain", ("Evidence is insufficient to decide.",))])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
 
     result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("판단해줘"))
@@ -107,7 +108,7 @@ def test_evidence_reviewer_parse_failure_fails_open() -> None:
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
     main = SequenceAdapter(["핵심은 2가지입니다."])
-    reviewer = ReviewerAdapter("supported")
+    reviewer = ReviewerAdapter([("supported", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
 
     result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("핵심을 정리해줘"))
