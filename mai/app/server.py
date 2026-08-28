@@ -10,10 +10,11 @@ from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..agent import AgentRunFailure
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
 from .runtime import MAIRuntime
 from .tailscale import TailscaleFunnel
@@ -195,6 +196,16 @@ def _validated_upload_filename(filename: str | None) -> str:
     return clean
 
 
+def _tool_payload(execution: object) -> dict[str, object]:
+    return {
+        "name": getattr(execution, "name"),
+        "arguments": getattr(execution, "arguments"),
+        "ok": getattr(execution, "ok"),
+        "error_type": getattr(execution, "error_type"),
+        "result": getattr(execution, "content"),
+    }
+
+
 @app.get("/", include_in_schema=False)
 async def root() -> FileResponse:
     return FileResponse(_STATIC_DIR / "index.html")
@@ -299,7 +310,10 @@ async def upload_file(
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, authorization: str | None = Header(default=None)) -> ChatResponse:
+async def chat(
+    request: ChatRequest,
+    authorization: str | None = Header(default=None),
+) -> ChatResponse | JSONResponse:
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
     try:
@@ -315,6 +329,7 @@ async def chat(request: ChatRequest, authorization: str | None = Header(default=
     history = _chat_sessions[session_key]
     limit = _history_limit()
     prior = history[-limit:] if limit else []
+    active_model = selected_model or runtime.model
     try:
         result = await runtime.run_user_message(
             request.message,
@@ -322,8 +337,28 @@ async def chat(request: ChatRequest, authorization: str | None = Header(default=
             prior_messages=prior,
             model=selected_model,
         )
+    except AgentRunFailure as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error_type": exc.error_type,
+                "detail": exc.error_message,
+                "model": active_model,
+                "model_rounds": exc.context.model_rounds,
+                "tools": [_tool_payload(execution) for execution in exc.context.tool_executions],
+            },
+        )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error_type": type(exc).__name__,
+                "detail": str(exc),
+                "model": active_model,
+                "model_rounds": 0,
+                "tools": [],
+            },
+        )
 
     history.append({"role": "user", "content": request.message})
     history.append({"role": "assistant", "content": result.answer})

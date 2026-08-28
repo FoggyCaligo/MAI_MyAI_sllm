@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -19,6 +20,28 @@ class TerminalRunInput(BaseModel):
     command: str = Field(min_length=1)
     cwd: str | None = None
     timeout_seconds: float | None = Field(default=None, gt=0)
+
+
+class TerminalRunError(RuntimeError):
+    """Base class for terminal commands that completed unsuccessfully."""
+
+    def __init__(self, message: str, result: dict[str, Any]) -> None:
+        self.result = result
+        super().__init__(f"{message}: {json.dumps(result, ensure_ascii=False, separators=(',', ':'))}")
+
+
+class TerminalCommandError(TerminalRunError):
+    """The shell command exited with a non-zero return code."""
+
+
+class TerminalTimeoutError(TerminalRunError):
+    """The shell command exceeded its configured timeout."""
+
+
+def _shell_description() -> str:
+    if os.name == "nt":
+        return os.environ.get("COMSPEC") or "cmd.exe"
+    return "/bin/sh"
 
 
 def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
@@ -63,6 +86,7 @@ def _run_command(command: str, cwd: Path, timeout_seconds: float | None) -> dict
     return {
         "command": command,
         "cwd": str(cwd),
+        "shell": _shell_description(),
         "stdout": stdout,
         "stderr": stderr,
         "returncode": process.returncode,
@@ -86,7 +110,12 @@ async def terminal_run(
         raise NotADirectoryError(str(resolved_cwd))
 
     effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
-    return await asyncio.to_thread(_run_command, command, resolved_cwd, effective_timeout)
+    result = await asyncio.to_thread(_run_command, command, resolved_cwd, effective_timeout)
+    if result["timed_out"]:
+        raise TerminalTimeoutError("terminal command timed out", result)
+    if result["returncode"] != 0:
+        raise TerminalCommandError("terminal command exited with a non-zero return code", result)
+    return result
 
 
 def register_terminal_tools(
@@ -110,9 +139,14 @@ def register_terminal_tools(
 
     register_default_cwd = cwd
     register_default_timeout = timeout_seconds
+    shell_description = _shell_description()
     registry.add(
         name="terminal_run",
-        description="Run a shell command on the local PC with the same OS permissions as the MAI process. Paths outside the repository are allowed.",
+        description=(
+            "Run a shell command on the local PC with the same OS permissions as the MAI process. "
+            f"This host executes commands through {shell_description}; do not assume the shell used to launch MAI. "
+            "A non-zero return code or timeout is a real tool failure. Paths outside the repository are allowed."
+        ),
         input_model=TerminalRunInput,
         handler=handler,
         timeout_seconds=None,
