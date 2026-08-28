@@ -26,6 +26,7 @@ from .registry import (
     UnknownToolError,
 )
 from .terminal import register_terminal_tools, terminal_run
+from .time import current_time, register_time_tools
 from .web import WebSearchError, register_web_tools, web_search
 
 __all__ = [
@@ -43,6 +44,7 @@ __all__ = [
     "code_read",
     "code_search",
     "code_symbols",
+    "current_time",
     "file_list",
     "file_search",
     "file_read",
@@ -60,6 +62,7 @@ __all__ = [
     "register_market_tools",
     "register_readonly_local_tools",
     "register_terminal_tools",
+    "register_time_tools",
     "register_web_tools",
     "terminal_run",
     "web_search",

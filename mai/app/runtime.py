@@ -21,15 +21,16 @@ from ..memory.working import WorkingGraph
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
+from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
 
 
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
 
-Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, the web, market data, or the terminal.
+Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, the web, market data, the current local time, or the terminal.
 
-Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use web or market tools for current external information when those tools are available.
+Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use web or market tools for current external information when those tools are available. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 
@@ -107,6 +108,7 @@ class MAIRuntime:
     def _registry_for(self, principal: AccessPrincipal, working: WorkingGraph) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.user_id)
+        register_time_tools(registry)
         register_external_information_tools(registry)
         if principal.role is AccessRole.OWNER:
             register_local_pc_tools(registry, cwd=self.cwd)
