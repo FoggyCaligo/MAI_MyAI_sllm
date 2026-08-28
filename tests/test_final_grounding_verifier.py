@@ -222,6 +222,54 @@ def test_material_number_followed_by_korean_text_is_grounded() -> None:
     assert result.model_rounds == 1
 
 
+def test_image_full_dates_ground_short_month_day_forms() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="스크린샷의 기간은 8.16부터 8.27까지이며 확인일은 8.28입니다.",
+        messages=({"role": "user", "content": "스크린샷을 확인해줘."},),
+        successful_tool_results=((
+            "image_analyze",
+            '{"analysis":"조회기간 2026.08.16 ~ 2026.08.27, 화면 확인일 2026.08.28"}',
+        ),),
+    ))
+
+    assert result.ok is True
+
+
+def test_image_comma_grouped_number_grounds_plain_integer() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="이미지에서 확인된 값은 36081원입니다.",
+        messages=({"role": "user", "content": "이미지 값을 확인해줘."},),
+        successful_tool_results=((
+            "image_analyze",
+            '{"analysis":"표시 금액: 36,081원"}',
+        ),),
+    ))
+
+    assert result.ok is True
+
+
+def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:
+    verifier = FinalGroundingVerifier(reviewer_adapter=None)
+
+    result = run(verifier.verify(
+        candidate="비율은 8.27입니다.",
+        messages=({"role": "user", "content": "이미지 값을 확인해줘."},),
+        successful_tool_results=((
+            "image_analyze",
+            '{"analysis":"조회일 2026.08.28"}',
+        ),),
+    ))
+
+    assert result.ok is False
+    assert result.issues[0].code == "numeric_grounding_failed"
+
+
 def test_verifier_logs_numeric_evidence_and_alignment_verdicts(caplog) -> None:
     main = SequenceAdapter(["요청한 결과입니다."])
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
