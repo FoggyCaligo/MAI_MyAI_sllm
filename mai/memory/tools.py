@@ -30,10 +30,17 @@ def register_memory_tools(
 
     `include_recall_entry` is intentionally opt-in so the normal A-path keeps its
     automatic-recall contract while the C experiment exposes an explicit entry.
+
+    Memory handlers are async even though their current repository operations are
+    synchronous. ToolRegistry executes synchronous handlers in worker threads for
+    timeout support, but MemoryRuntime owns SQLite connections created on the
+    request thread. Keeping these handlers async therefore preserves SQLite's
+    thread-affinity contract instead of weakening the connection with
+    ``check_same_thread=False``.
     """
 
     if include_recall_entry:
-        def memory_recall(query: str) -> dict[str, object]:
+        async def memory_recall(query: str) -> dict[str, object]:
             recalled = memory.explicit_recall(user_id=user_id, query=query)
             working.merge_working(recalled)
             return working.snapshot()
@@ -51,7 +58,7 @@ def register_memory_tools(
             category="memory",
         )
 
-    def memory_search(node_id: int) -> dict[str, object]:
+    async def memory_search(node_id: int) -> dict[str, object]:
         return memory.memory_search(working, user_id=user_id, node_id=node_id)
 
     registry.add(
