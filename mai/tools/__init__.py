@@ -6,6 +6,7 @@ from .external import register_external_information_tools
 from .filesystem import (
     register_filesystem_read_tools,
     register_filesystem_tools,
+    register_upload_scoped_write_tools,
     file_list,
     file_search,
     file_read,
@@ -64,6 +65,7 @@ __all__ = [
     "register_external_information_tools",
     "register_filesystem_read_tools",
     "register_filesystem_tools",
+    "register_upload_scoped_write_tools",
     "register_image_tools",
     "register_local_pc_tools",
     "register_market_tools",
