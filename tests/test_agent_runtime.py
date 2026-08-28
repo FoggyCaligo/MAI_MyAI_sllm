@@ -6,7 +6,7 @@ import json
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from mai.agent import AgentRoundLimitExceeded, AgentRuntime
+from mai.agent import AgentRoundLimitExceeded, AgentRunFailure, AgentRuntime
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
 
@@ -105,7 +105,7 @@ def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
     assert result.tool_executions[0].error_type == "UnknownToolError"
 
 
-def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect() -> None:
+def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect_and_preserves_context() -> None:
     registry = ToolRegistry()
     calls = []
     def echo(text: str):
@@ -115,8 +115,17 @@ def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect() -> No
     repeating = assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "again"}),))
     adapter = FakeAdapter([repeating, repeating])
     runtime = AgentRuntime(adapter, registry, max_rounds=2)
-    with pytest.raises(AgentRoundLimitExceeded, match="max_rounds=2"):
+
+    with pytest.raises(AgentRunFailure) as exc_info:
         run(runtime.run_user_message("loop"))
+
+    failure = exc_info.value
+    assert failure.error_type == "AgentRoundLimitExceeded"
+    assert isinstance(failure.__cause__, AgentRoundLimitExceeded)
+    assert failure.context.model_rounds == 2
+    assert len(failure.context.tool_executions) == 1
+    assert failure.context.tool_executions[0].name == "echo"
+    assert failure.context.tool_executions[0].ok is True
     assert calls == ["again"]
 
 
