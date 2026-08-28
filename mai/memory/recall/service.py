@@ -23,12 +23,14 @@ class RecallService:
         self.segmenter = segmenter
         self.concept_limit = concept_limit
 
-    def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
-        """Build initial Working Graph from concept hits, one-hop evidence, and anchor paths."""
+    def recall_query(self, *, user_id: str, query: str) -> WorkingGraph:
+        """Create a Working Graph directly from an explicit memory query."""
+        if not query.strip():
+            raise ValueError("memory recall query must be non-empty")
         anchor = self.graph.get_user_anchor(user_id)
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
-        segments = tuple(self.segmenter.segment(user_text))
+        segments = tuple(self.segmenter.segment(query))
         hits = self.concept_index.search(segments, limit=self.concept_limit)
         working = WorkingGraph()
         working.nodes[anchor.id] = anchor
@@ -39,6 +41,10 @@ class RecallService:
             if path is not None:
                 working.merge(path, mark_expanded=False)
         return working
+
+    def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
+        """Build initial Working Graph from concept hits, one-hop evidence, and anchor paths."""
+        return self.recall_query(user_id=user_id, query=user_text)
 
     def expand_one_hop(
         self,
