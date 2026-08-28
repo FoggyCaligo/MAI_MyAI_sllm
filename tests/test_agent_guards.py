@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from mai.agent import (
+    AgentRunFailure,
     AgentRuntime,
     GuardConfig,
     NoProgressError,
@@ -57,6 +58,13 @@ def registry_with_echo(handler=None) -> ToolRegistry:
     return registry
 
 
+def _assert_guard_failure(exc_info, expected_type: type[Exception]) -> AgentRunFailure:
+    failure = exc_info.value
+    assert failure.error_type == expected_type.__name__
+    assert isinstance(failure.__cause__, expected_type)
+    return failure
+
+
 def test_repeated_identical_call_is_stopped_before_next_execution() -> None:
     call = NativeToolCall(name="echo", arguments={"text": "same"})
     adapter = FakeAdapter([assistant_turn(call), assistant_turn(call), assistant_turn(call)])
@@ -68,9 +76,11 @@ def test_repeated_identical_call_is_stopped_before_next_execution() -> None:
         guard_config=GuardConfig(max_rounds=10, max_identical_calls=2, max_no_progress_rounds=10),
     )
 
-    with pytest.raises(RepeatedToolCallError):
+    with pytest.raises(AgentRunFailure) as exc_info:
         run(runtime.run_user_message("repeat"))
 
+    failure = _assert_guard_failure(exc_info, RepeatedToolCallError)
+    assert len(failure.context.tool_executions) == 2
     assert executed == ["same", "same"]
 
 
@@ -92,8 +102,12 @@ def test_same_failure_is_stopped_after_configured_retries() -> None:
         ),
     )
 
-    with pytest.raises(RepeatedToolFailureError):
+    with pytest.raises(AgentRunFailure) as exc_info:
         run(runtime.run_user_message("retry failure"))
+
+    failure = _assert_guard_failure(exc_info, RepeatedToolFailureError)
+    assert len(failure.context.tool_executions) == 3
+    assert all(not execution.ok for execution in failure.context.tool_executions)
 
 
 def test_structural_no_progress_detects_identical_round_outcomes() -> None:
@@ -110,8 +124,11 @@ def test_structural_no_progress_detects_identical_round_outcomes() -> None:
         ),
     )
 
-    with pytest.raises(NoProgressError):
+    with pytest.raises(AgentRunFailure) as exc_info:
         run(runtime.run_user_message("no progress"))
+
+    failure = _assert_guard_failure(exc_info, NoProgressError)
+    assert len(failure.context.tool_executions) == 3
 
 
 def test_changed_arguments_reset_structural_no_progress_rounds() -> None:

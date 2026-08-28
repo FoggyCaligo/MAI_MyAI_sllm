@@ -10,7 +10,9 @@ from .guards import (
     RepeatedToolFailureError,
 )
 from .loop import (
+    AgentFailureContext,
     AgentLoop,
+    AgentRunFailure,
     AgentRunResult,
     AgentRuntimeError,
     ToolExecution,
@@ -19,10 +21,12 @@ from .loop import (
 from .runtime import AgentRuntime
 
 __all__ = [
+    "AgentFailureContext",
     "AgentGuard",
     "AgentGuardError",
     "AgentLoop",
     "AgentRoundLimitExceeded",
+    "AgentRunFailure",
     "AgentRunResult",
     "AgentRuntime",
     "AgentRuntimeError",

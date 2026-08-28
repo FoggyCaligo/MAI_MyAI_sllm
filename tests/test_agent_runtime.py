@@ -6,7 +6,7 @@ import json
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from mai.agent import AgentRoundLimitExceeded, AgentRuntime
+from mai.agent import AgentRoundLimitExceeded, AgentRunFailure, AgentRuntime
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
 
@@ -18,6 +18,11 @@ def run(coro):
 class EchoInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str
+
+
+class CommandInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    command: str
 
 
 class FakeAdapter:
@@ -96,6 +101,46 @@ def test_tool_failure_is_returned_as_visible_structured_tool_result() -> None:
     assert payload == {"ok": False, "error_type": "PermissionError", "message": "denied"}
 
 
+def test_model_can_correct_terminal_command_after_five_distinct_failures() -> None:
+    registry = ToolRegistry()
+
+    def terminal(command: str):
+        if command != "working-command":
+            raise RuntimeError(f"failed command: {command}")
+        return {"stdout": "done", "returncode": 0}
+
+    registry.add(
+        name="terminal_run",
+        description="Test terminal.",
+        input_model=CommandInput,
+        handler=terminal,
+    )
+    failed_commands = [f"attempt-{index}" for index in range(1, 6)]
+    adapter = FakeAdapter([
+        *[
+            assistant_turn(calls=(NativeToolCall(name="terminal_run", arguments={"command": command}),))
+            for command in failed_commands
+        ],
+        assistant_turn(calls=(NativeToolCall(name="terminal_run", arguments={"command": "working-command"}),)),
+        assistant_turn(content="completed after correcting the command"),
+    ])
+
+    result = run(AgentRuntime(adapter, registry).run_user_message("run the command"))
+
+    assert result.content == "completed after correcting the command"
+    assert result.model_rounds == 7
+    assert len(result.tool_executions) == 6
+    assert [execution.ok for execution in result.tool_executions] == [False, False, False, False, False, True]
+    for request_index, failed_command in enumerate(failed_commands, start=1):
+        tool_message = adapter.requests[request_index].messages[-1]
+        assert tool_message["role"] == "tool"
+        assert tool_message["tool_name"] == "terminal_run"
+        payload = json.loads(tool_message["content"])
+        assert payload["ok"] is False
+        assert payload["error_type"] == "RuntimeError"
+        assert failed_command in payload["message"]
+
+
 def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(name="missing", arguments={}),)),
@@ -105,7 +150,7 @@ def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
     assert result.tool_executions[0].error_type == "UnknownToolError"
 
 
-def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect() -> None:
+def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect_and_preserves_context() -> None:
     registry = ToolRegistry()
     calls = []
     def echo(text: str):
@@ -115,8 +160,17 @@ def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect() -> No
     repeating = assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "again"}),))
     adapter = FakeAdapter([repeating, repeating])
     runtime = AgentRuntime(adapter, registry, max_rounds=2)
-    with pytest.raises(AgentRoundLimitExceeded, match="max_rounds=2"):
+
+    with pytest.raises(AgentRunFailure) as exc_info:
         run(runtime.run_user_message("loop"))
+
+    failure = exc_info.value
+    assert failure.error_type == "AgentRoundLimitExceeded"
+    assert isinstance(failure.__cause__, AgentRoundLimitExceeded)
+    assert failure.context.model_rounds == 2
+    assert len(failure.context.tool_executions) == 1
+    assert failure.context.tool_executions[0].name == "echo"
+    assert failure.context.tool_executions[0].ok is True
     assert calls == ["again"]
 
 
