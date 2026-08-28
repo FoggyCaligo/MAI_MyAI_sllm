@@ -108,7 +108,7 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
-def test_task_misalignment_rejects_deflection_and_retries() -> None:
+def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
     main = SequenceAdapter([
         "다음 단계로 수익률 그래프나 투자 리포트를 만들어드릴까요?",
         "확인한 스크린샷은 4장이고, 두 장은 실현손익 화면이며 나머지는 누적수익률과 랭킹 화면입니다.",
@@ -123,12 +123,17 @@ def test_task_misalignment_rejects_deflection_and_retries() -> None:
     ])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
 
     result = run(runtime.run_user_message("PC에 있는 8월 매매수익 관련 스크린샷들을 확인해볼래?"))
 
     assert result.content.startswith("확인한 스크린샷은 4장이고")
     assert result.model_rounds == 2
     assert "task_alignment_failed" in main.requests[1].messages[-1]["content"]
+    assert "MAI final reviewer start" in caplog.text
+    assert "MAI final verification numeric=pass evidence=supported alignment=misaligned" in caplog.text
+    assert "MAI final rejected round=1 issues=task_alignment_failed" in caplog.text
+    assert "MAI final accepted round=2" in caplog.text
 
 
 def test_uncertain_review_does_not_block_release() -> None:

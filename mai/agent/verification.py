@@ -205,9 +205,6 @@ class FinalGroundingVerifier:
         ]
         current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
 
-        # Keep only recent conversational context and avoid duplicating all user
-        # messages in a separate evidence field. Tool results are also bounded so
-        # a multi-image/document run cannot make the reviewer arbitrarily slow.
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
@@ -234,6 +231,13 @@ class FinalGroundingVerifier:
             ),
             tools=(),
             think=False,
+        )
+        _LOG.info(
+            "MAI final reviewer start timeout=%.1fs context_messages=%d tool_results=%d candidate_chars=%d",
+            self.reviewer_timeout_seconds,
+            len(context_messages),
+            len(tool_evidence),
+            len(candidate),
         )
         try:
             turn = await asyncio.wait_for(
@@ -271,7 +275,11 @@ class FinalGroundingVerifier:
                 evidence_verdict="uncertain",
                 alignment_verdict="uncertain",
             )
-        except Exception:
+        except Exception as exc:
+            _LOG.warning(
+                "MAI final reviewer failed error_type=%s; failing open",
+                type(exc).__name__,
+            )
             return FinalReview(
                 evidence_verdict="uncertain",
                 alignment_verdict="uncertain",

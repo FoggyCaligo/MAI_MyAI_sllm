@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import json
+import logging
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -140,6 +141,24 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
         assert payload["ok"] is False
         assert payload["error_type"] == "RuntimeError"
         assert failed_command in payload["message"]
+
+
+def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: {"echo": text})
+    adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "hello"}),)),
+        assistant_turn(content="done"),
+    ])
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+
+    result = run(AgentRuntime(adapter, registry).run_user_message("echo hello"))
+
+    assert result.content == "done"
+    assert 'MAI tool call round=1 name=echo args={"text":"hello"}' in caplog.text
+    assert "MAI tool result round=1 name=echo ok=true error_type=-" in caplog.text
+    assert "MAI final candidate round=2" in caplog.text
+    assert "MAI final accepted round=2" in caplog.text
 
 
 def test_unknown_tool_is_not_substituted_with_another_tool() -> None:

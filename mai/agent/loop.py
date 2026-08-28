@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -15,6 +16,7 @@ from .verification import FinalGroundingVerifier
 
 
 _LOG = logging.getLogger("uvicorn.error")
+_TOOL_ARGS_LOG_LIMIT = 800
 
 
 class AgentRuntimeError(RuntimeError):
@@ -100,6 +102,7 @@ class AgentLoop:
         try:
             while True:
                 guard.before_model_round(round_number)
+                _LOG.info("MAI model round start round=%d", round_number)
                 turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
                 history.append(dict(turn.assistant_message))
 
@@ -109,6 +112,12 @@ class AgentLoop:
                         raise UnsatisfiedToolRequirements(
                             "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
                         )
+                    _LOG.info(
+                        "MAI final candidate round=%d chars=%d semantic_retries=%d",
+                        round_number,
+                        len(turn.content),
+                        semantic_verification_retries,
+                    )
                     if self.final_verifier is not None:
                         allow_semantic_review = (
                             semantic_verification_retries < self.max_semantic_verification_retries
@@ -124,12 +133,20 @@ class AgentLoop:
                             allow_semantic_review=allow_semantic_review,
                         )
                         if not verification.ok:
+                            issue_codes = ",".join(issue.code for issue in verification.issues) or "unknown"
                             semantic_failure = any(
                                 issue.code in {"evidence_grounding_failed", "task_alignment_failed"}
                                 for issue in verification.issues
                             )
                             if semantic_failure:
                                 semantic_verification_retries += 1
+                            _LOG.warning(
+                                "MAI final rejected round=%d issues=%s semantic_retries=%d/%d",
+                                round_number,
+                                issue_codes,
+                                semantic_verification_retries,
+                                self.max_semantic_verification_retries,
+                            )
                             history.append({"role": "system", "content": verification.feedback_message()})
                             round_number += 1
                             continue
@@ -139,6 +156,7 @@ class AgentLoop:
                                 "returning candidate after numeric grounding",
                                 self.max_semantic_verification_retries,
                             )
+                    _LOG.info("MAI final accepted round=%d", round_number)
                     return AgentRunResult(
                         content=turn.content,
                         thinking=turn.thinking,
@@ -152,10 +170,27 @@ class AgentLoop:
                 round_observations: list[ExecutionObservation] = []
                 for call in turn.tool_calls:
                     call_fp = guard.before_tool_call(call.name, call.arguments)
+                    _LOG.info(
+                        "MAI tool call round=%d name=%s args=%s",
+                        round_number,
+                        call.name,
+                        _format_log_arguments(call.arguments),
+                    )
+                    started = time.perf_counter()
                     execution = await self._execute_tool(call)
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
                     if execution.ok:
                         successful_tools.add(execution.name)
+                    _LOG.info(
+                        "MAI tool result round=%d name=%s ok=%s error_type=%s elapsed_ms=%d result_chars=%d",
+                        round_number,
+                        execution.name,
+                        str(execution.ok).lower(),
+                        execution.error_type or "-",
+                        elapsed_ms,
+                        len(execution.content),
+                    )
                     history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
                     observation = ExecutionObservation(
                         call_fingerprint=call_fp,
@@ -171,6 +206,7 @@ class AgentLoop:
         except AgentRunFailure:
             raise
         except Exception as exc:
+            _LOG.exception("MAI agent run failed round=%d error_type=%s", round_number, type(exc).__name__)
             raise AgentRunFailure(
                 exc,
                 context=AgentFailureContext(
@@ -187,6 +223,16 @@ class AgentLoop:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
             return ToolExecution(call.name, dict(call.arguments), False, _serialize_tool_content(payload), type(exc).__name__)
         return ToolExecution(call.name, dict(call.arguments), True, _serialize_tool_content(value))
+
+
+def _format_log_arguments(arguments: Mapping[str, Any], *, limit: int = _TOOL_ARGS_LOG_LIMIT) -> str:
+    try:
+        text = json.dumps(dict(arguments), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        text = repr(dict(arguments))
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 18)] + "...[truncated]"
 
 
 def _serialize_tool_content(value: Any) -> str:
