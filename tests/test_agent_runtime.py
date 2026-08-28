@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 
 import pytest
@@ -31,7 +32,7 @@ class FakeAdapter:
         self.requests = []
 
     async def chat(self, request):
-        self.requests.append(request)
+        self.requests.append(deepcopy(request))
         if not self.turns:
             raise AssertionError("unexpected extra model round")
         return self.turns.pop(0)
