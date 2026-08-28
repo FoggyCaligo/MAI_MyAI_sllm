@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 from ollama import AsyncClient
 
 from ..agent.runtime import AgentRuntime
+from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.graph.repository import MemoryGraphRepository
@@ -157,7 +158,11 @@ class MAIRuntime:
         evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
         working = WorkingGraph()
         registry = self._registry_for(principal, working)
-        agent = AgentRuntime(adapter, registry)
+        agent = AgentRuntime(
+            adapter,
+            registry,
+            final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
+        )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
