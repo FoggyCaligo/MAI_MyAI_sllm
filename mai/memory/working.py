@@ -20,6 +20,12 @@ class WorkingGraph:
         if mark_expanded:
             self.expanded_node_ids.add(neighborhood.center_node_id)
 
+    def merge_working(self, other: "WorkingGraph") -> None:
+        """Merge another temporary Working Graph into this turn-local graph."""
+        self.nodes.update(other.nodes)
+        self.edges.update(other.edges)
+        self.expanded_node_ids.update(other.expanded_node_ids)
+
     def snapshot(self) -> dict[str, object]:
         return {
             "nodes": [
