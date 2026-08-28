@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from .access import AccessDeniedError, AccessPolicy, AccessPrincipal
+from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
 from .runtime import MAIRuntime
 from .tailscale import TailscaleFunnel
 
@@ -47,6 +47,36 @@ def _history_limit() -> int:
     if value < 0:
         raise ValueError("SESSION_HISTORY_MESSAGES must be >= 0")
     return value
+
+
+def _visible_models_for_principal(
+    principal: AccessPrincipal,
+    *,
+    runtime_model: str,
+    installed_models: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    if principal.role is AccessRole.TRIAL:
+        return (runtime_model,)
+    if principal.role is AccessRole.OWNER:
+        if installed_models is None:
+            raise ValueError("installed_models is required for owner model selection")
+        return installed_models
+    raise ValueError(f"unsupported access role: {principal.role!r}")
+
+
+def _selected_model_for_principal(
+    principal: AccessPrincipal,
+    *,
+    runtime_model: str,
+    requested_model: str | None,
+) -> str | None:
+    if principal.role is AccessRole.OWNER:
+        return requested_model
+    if principal.role is AccessRole.TRIAL:
+        if requested_model is not None and requested_model.strip() != runtime_model:
+            raise PermissionError("trial accounts are restricted to the configured default model")
+        return None
+    raise ValueError(f"unsupported access role: {principal.role!r}")
 
 
 @asynccontextmanager
@@ -217,13 +247,21 @@ async def logout(authorization: str | None = Header(default=None)) -> dict[str, 
 
 @app.get("/models")
 async def models(authorization: str | None = Header(default=None)) -> dict[str, object]:
-    _principal_from_authorization(authorization)
+    _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
+    if principal.role is AccessRole.TRIAL:
+        visible = _visible_models_for_principal(principal, runtime_model=runtime.model)
+        return {"models": visible, "current": runtime.model, "locked": True}
     try:
         installed = await runtime.list_models()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
-    return {"models": installed, "current": runtime.model}
+    visible = _visible_models_for_principal(
+        principal,
+        runtime_model=runtime.model,
+        installed_models=installed,
+    )
+    return {"models": visible, "current": runtime.model, "locked": False}
 
 
 @app.post("/upload")
@@ -258,6 +296,15 @@ async def upload_file(
 async def chat(request: ChatRequest, authorization: str | None = Header(default=None)) -> ChatResponse:
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
+    try:
+        selected_model = _selected_model_for_principal(
+            principal,
+            runtime_model=runtime.model,
+            requested_model=request.model,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     session_key = (principal.auth_user_id, request.session_id)
     history = _chat_sessions[session_key]
     limit = _history_limit()
@@ -267,7 +314,7 @@ async def chat(request: ChatRequest, authorization: str | None = Header(default=
             request.message,
             principal=principal,
             prior_messages=prior,
-            model=request.model,
+            model=selected_model,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
