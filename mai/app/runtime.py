@@ -176,7 +176,7 @@ class MAIRuntime:
             adapter,
             registry,
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
-            max_grounding_revisions=2,
+            max_semantic_verification_retries=2,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
