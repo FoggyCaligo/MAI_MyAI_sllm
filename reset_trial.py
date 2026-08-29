@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sqlite3
 import sys
 from pathlib import Path
@@ -55,6 +56,17 @@ def _load_trial_principal(trial_id: str):
     if principal.role is not AccessRole.TRIAL:
         raise ValueError("reset_trial.py only accepts IDs configured as trial accounts")
     return principal
+
+
+def _server_is_listening() -> tuple[bool, str, int]:
+    host = os.environ.get("MAI_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    port = int(os.environ.get("MAI_PORT", "8000"))
+    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    try:
+        with socket.create_connection((probe_host, port), timeout=0.35):
+            return True, probe_host, port
+    except OSError:
+        return False, probe_host, port
 
 
 def _json_payload(raw: str) -> dict[str, object]:
@@ -190,6 +202,14 @@ def _reset_memory(db_path: Path, user_id: str, *, dry_run: bool) -> dict[str, in
 def main() -> int:
     load_dotenv()
     args = _parse_args()
+
+    listening, host, port = _server_is_listening()
+    if listening:
+        print(
+            f"Refusing reset: MAI appears to be running at {host}:{port}. Stop the server first.",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         principal = _load_trial_principal(args.trial_id)
