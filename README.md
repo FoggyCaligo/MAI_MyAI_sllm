@@ -184,11 +184,20 @@ Trial 공통 기능
 
 Trial 제한 mutation
   file_write / file_create
-    └─ ./mai_uploads 내부에서만 허용
+    └─ 자기 계정의 전용 upload directory 안에서만 허용
 
 Trial 미노출
   file_delete / file_move / file_copy
   terminal_run
+```
+
+Trial upload directory는 계정끼리 충돌하거나 덮어쓰지 않도록 분리된다. raw trial ID를 경로 이름으로 직접 사용하지 않고 SHA-256 기반의 안정적인 path-safe directory key를 사용한다.
+
+```text
+./mai_uploads/
+└─ trials/
+   ├─ <trial-a의 hash>/
+   └─ <trial-b의 hash>/
 ```
 
 Trial의 model은 `MAIN_MODEL`로 고정된다. `/models`도 trial에게 해당 모델 하나만 반환하고, client가 직접 다른 model을 POST해도 서버가 HTTP 403으로 거부한다.
@@ -207,19 +216,95 @@ http://127.0.0.1:8000
 
 Web UI에는 ID login, owner model selector, Markdown response, expandable tool log, 자동 스크롤, 파일 업로드가 포함되어 있다.
 
-입력창의 `＋` 버튼으로 owner/trial 모두 파일을 업로드할 수 있다. 파일은 다음 폴더에 저장된다.
+입력창의 `＋` 버튼으로 owner/trial 모두 파일을 업로드할 수 있다. 기본 upload root는 다음과 같다.
 
 ```text
 ./mai_uploads/
 ```
 
+필요하면 `.env`에서 바꿀 수 있다.
+
+```env
+MAI_UPLOAD_ROOT=./mai_uploads
+```
+
+Owner는 기존처럼 upload root를 사용한다. Trial은 각 계정별 전용 하위 폴더를 사용하며, `file_write`와 `file_create`도 같은 전용 폴더 안으로 제한된다.
+
 `mai_uploads/`는 `.gitignore`에 포함되어 Git에 올라가지 않는다. 업로드 성공 후 실제 절대경로가 입력창에 추가되므로 모델이 `file_read`, `document_read`, `image_analyze` 등을 바로 사용할 수 있다.
 
-같은 이름의 파일은 조용히 덮어쓰지 않고 HTTP 409로 실패한다. path separator를 포함한 filename도 거부한다.
+같은 계정의 전용 폴더 안에서 같은 이름의 파일은 조용히 덮어쓰지 않고 HTTP 409로 실패한다. path separator를 포함한 filename도 거부한다. 서로 다른 trial 계정은 같은 filename을 각자의 폴더에 독립적으로 올릴 수 있다.
+
+기존 버전에서 `./mai_uploads/` 바로 아래에 저장했던 legacy trial upload는 소유자 정보가 남아 있지 않으므로 자동 migration 또는 자동 삭제하지 않는다.
 
 ---
 
-# 8. Tailscale Funnel 공개
+# 8. Trial 계정 초기화 / 재사용
+
+사용이 끝난 trial ID를 다른 사람에게 다시 줄 때 새 ID를 만들 필요 없이 `reset_trial.py`로 해당 계정을 초기 상태에 가깝게 되돌릴 수 있다.
+
+**반드시 MAI 서버를 먼저 종료한 상태에서 실행한다.** 실행 중에는 memory concept index가 process memory에도 올라가 있으므로 DB만 외부에서 변경하면 runtime cache와 불일치할 수 있다. 스크립트 자체도 설정된 MAI host/port가 열려 있으면 초기화를 거부한다.
+
+먼저 삭제 대상을 확인하려면:
+
+```bash
+python reset_trial.py trial-a --dry-run
+```
+
+실제 초기화:
+
+```bash
+python reset_trial.py trial-a
+```
+
+실행하면 대상 trial ID와 삭제 예정 memory/upload 정보를 보여준 뒤, 같은 trial ID를 다시 입력해야 삭제가 진행된다.
+
+자동 확인이 필요한 경우:
+
+```bash
+python reset_trial.py trial-a --yes
+```
+
+기본 경로가 아닌 DB 또는 upload root를 쓰는 경우 직접 지정할 수도 있다.
+
+```bash
+python reset_trial.py trial-a \
+  --db ./data/memory.sqlite3 \
+  --upload-root ./mai_uploads
+```
+
+Windows PowerShell에서는 한 줄로 실행하거나 PowerShell 문법에 맞게 줄을 나눈다.
+
+초기화 대상:
+
+- 해당 trial의 User Anchor
+- 해당 trial 소유 Utterance / Fact node
+- 해당 Utterance가 참조하는 evidence
+- 해당 trial node 삭제 후 아무 사용자에게도 연결되지 않는 orphan Concept와 Concept index row
+- 해당 trial의 전용 upload directory 전체
+- 서버 재시작으로 사라지는 process-local login/chat session
+
+보존 대상:
+
+- Owner memory
+- 다른 trial의 memory
+- 다른 사용자가 아직 공유하고 있는 Concept node/index
+- 다른 trial의 upload directory
+- owner upload
+- 소유권을 판별할 수 없는 구버전 `./mai_uploads/` root의 legacy file
+
+안전장치:
+
+- `.env`의 `TRIAL_IDS`에 실제 등록된 ID만 허용
+- owner ID는 reset 대상으로 거부
+- MAI 서버가 실행 중이면 거부
+- 기본 실행은 trial ID 재입력 확인 필요
+- `--dry-run` 지원
+
+초기화가 끝난 뒤 다시 `python run_server.py`를 실행하고 해당 trial ID를 새 사용자에게 전달한다.
+
+---
+
+# 9. Tailscale Funnel 공개
 
 MAI는 필요할 경우 **Tailscale Funnel로 Web UI를 public internet에 공개**한다.
 
@@ -246,7 +331,7 @@ Funnel은 인터넷에 공개되므로 Web UI의 ID access control과 trial 권�
 
 ---
 
-# 9. 실패 처리 원칙
+# 10. 실패 처리 원칙
 
 MAI는 실패를 성공처럼 감추지 않는 것을 runtime 계약으로 둔다.
 
@@ -273,7 +358,7 @@ Tailscale Funnel failure
 
 ---
 
-# 10. 설치와 실행
+# 11. 설치와 실행
 
 Python 가상환경에서:
 
@@ -291,6 +376,7 @@ OWNER_MEMORY_ID=local-user
 TRIAL_IDS=trial-a,trial-b
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
+MAI_UPLOAD_ROOT=./mai_uploads
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
 TAILSCALE_FUNNEL=false
@@ -310,7 +396,7 @@ python -m pytest -v
 
 ---
 
-# 11. 프로젝트 핵심
+# 12. 프로젝트 핵심
 
 MAI의 핵심을 한 문장으로 줄이면 다음과 같다.
 
