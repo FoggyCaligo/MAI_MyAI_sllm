@@ -27,6 +27,10 @@ class ToolResultSerializationError(AgentRuntimeError):
     """A tool returned a value that cannot be represented in a tool message."""
 
 
+class EmptyFinalResponseError(AgentRuntimeError):
+    """The model repeatedly attempted to finish with an empty response."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolExecution:
     name: str
@@ -98,6 +102,7 @@ class AgentLoop:
         guard = AgentGuard(self.guard_config)
         round_number = 1
         semantic_verification_retries = 0
+        empty_final_retries = 0
 
         try:
             while True:
@@ -107,6 +112,28 @@ class AgentLoop:
                 history.append(dict(turn.assistant_message))
 
                 if not turn.tool_calls:
+                    if not turn.content.strip():
+                        if empty_final_retries >= 1:
+                            raise EmptyFinalResponseError(
+                                "model returned an empty final response again after a structural retry"
+                            )
+                        empty_final_retries += 1
+                        _LOG.warning(
+                            "MAI empty final response rejected round=%d retry=%d/1",
+                            round_number,
+                            empty_final_retries,
+                        )
+                        history.append({
+                            "role": "system",
+                            "content": (
+                                "Your previous assistant turn attempted to finish with an empty response. "
+                                "Do not finish with empty content. Continue the task: call any additional tools "
+                                "you still need, or provide a non-empty final answer that directly addresses the user."
+                            ),
+                        })
+                        round_number += 1
+                        continue
+
                     missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(successful_tools)
                     if missing:
                         raise UnsatisfiedToolRequirements(
