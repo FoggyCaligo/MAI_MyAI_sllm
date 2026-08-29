@@ -143,6 +143,35 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
         assert failed_command in payload["message"]
 
 
+def test_empty_final_response_gets_one_structural_retry() -> None:
+    adapter = FakeAdapter([
+        assistant_turn(content=""),
+        assistant_turn(content="recovered answer"),
+    ])
+
+    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message("answer me"))
+
+    assert result.content == "recovered answer"
+    assert result.model_rounds == 2
+    retry_message = adapter.requests[1].messages[-1]
+    assert retry_message["role"] == "system"
+    assert "empty response" in retry_message["content"]
+
+
+def test_second_empty_final_response_fails_explicitly() -> None:
+    adapter = FakeAdapter([
+        assistant_turn(content=""),
+        assistant_turn(content="   "),
+    ])
+
+    with pytest.raises(AgentRunFailure) as exc_info:
+        run(AgentRuntime(adapter, ToolRegistry()).run_user_message("answer me"))
+
+    failure = exc_info.value
+    assert failure.error_type == "EmptyFinalResponseError"
+    assert failure.context.model_rounds == 2
+
+
 def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: {"echo": text})
