@@ -56,8 +56,6 @@ For arithmetic that materially affects the answer, use the calculator tool inste
 Trial accounts may receive file_write and file_create, but those handlers are structurally restricted to the MAI upload directory. Do not claim that such tools can modify arbitrary local paths.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
-
-Use tools only when needed. Stable general knowledge that is already sufficient does not require a tool call.
 """.strip()
 
 
