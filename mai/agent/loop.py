@@ -73,15 +73,15 @@ class AgentLoop:
         *,
         guard_config: GuardConfig | None = None,
         final_verifier: FinalGroundingVerifier | None = None,
-        max_semantic_verification_retries: int = 2,
+        max_grounding_revisions: int = 2,
     ) -> None:
-        if max_semantic_verification_retries < 0:
-            raise ValueError("max_semantic_verification_retries must be non-negative")
+        if max_grounding_revisions < 0:
+            raise ValueError("max_grounding_revisions must be non-negative")
         self.adapter = adapter
         self.registry = registry
         self.guard_config = guard_config or GuardConfig()
         self.final_verifier = final_verifier
-        self.max_semantic_verification_retries = max_semantic_verification_retries
+        self.max_grounding_revisions = max_grounding_revisions
 
     async def run(
         self,
@@ -97,7 +97,7 @@ class AgentLoop:
         tools = self.registry.native_schemas()
         guard = AgentGuard(self.guard_config)
         round_number = 1
-        semantic_verification_retries = 0
+        grounding_revisions = 0
 
         try:
             while True:
@@ -112,16 +112,15 @@ class AgentLoop:
                         raise UnsatisfiedToolRequirements(
                             "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
                         )
+                    attempt_number = grounding_revisions + 1
                     _LOG.info(
-                        "MAI final candidate round=%d chars=%d semantic_retries=%d",
+                        "MAI final candidate round=%d chars=%d grounding_attempt=%d/%d",
                         round_number,
                         len(turn.content),
-                        semantic_verification_retries,
+                        attempt_number,
+                        self.max_grounding_revisions + 1,
                     )
                     if self.final_verifier is not None:
-                        allow_semantic_review = (
-                            semantic_verification_retries < self.max_semantic_verification_retries
-                        )
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
                             messages=history,
@@ -130,32 +129,26 @@ class AgentLoop:
                                 for execution in executions
                                 if execution.ok
                             ),
-                            allow_semantic_review=allow_semantic_review,
                         )
                         if not verification.ok:
-                            issue_codes = ",".join(issue.code for issue in verification.issues) or "unknown"
-                            semantic_failure = any(
-                                issue.code in {"evidence_grounding_failed", "task_alignment_failed"}
-                                for issue in verification.issues
-                            )
-                            if semantic_failure:
-                                semantic_verification_retries += 1
-                            _LOG.warning(
-                                "MAI final rejected round=%d issues=%s semantic_retries=%d/%d",
-                                round_number,
-                                issue_codes,
-                                semantic_verification_retries,
-                                self.max_semantic_verification_retries,
-                            )
-                            history.append({"role": "system", "content": verification.feedback_message()})
-                            round_number += 1
-                            continue
-                        if not allow_semantic_review:
-                            _LOG.warning(
-                                "MAI final semantic verification retry budget exhausted after %d retries; "
-                                "returning candidate after numeric grounding",
-                                self.max_semantic_verification_retries,
-                            )
+                            if grounding_revisions >= self.max_grounding_revisions:
+                                _LOG.warning(
+                                    "MAI grounding revision budget exhausted attempts=%d; returning latest candidate issues=%d",
+                                    self.max_grounding_revisions + 1,
+                                    len(verification.issues),
+                                )
+                            else:
+                                grounding_revisions += 1
+                                _LOG.warning(
+                                    "MAI final rejected for unsupported claims round=%d revision=%d/%d issues=%d",
+                                    round_number,
+                                    grounding_revisions,
+                                    self.max_grounding_revisions,
+                                    len(verification.issues),
+                                )
+                                history.append({"role": "system", "content": verification.feedback_message()})
+                                round_number += 1
+                                continue
                     _LOG.info("MAI final accepted round=%d", round_number)
                     return AgentRunResult(
                         content=turn.content,
