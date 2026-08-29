@@ -5,14 +5,16 @@ the selected trial identity, plus concept nodes that become completely orphaned
 after that user's memory is removed. Shared concepts used by another user's
 memory are preserved.
 
-Chat/login sessions are process-local and therefore disappear when the stopped
-server is started again.
+The selected trial account's isolated upload directory is also removed. Chat and
+login sessions are process-local and therefore disappear when the stopped server
+is started again.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import sys
@@ -21,6 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from mai.app.access import AccessPolicy, AccessRole
+from mai.app.uploads import trial_upload_directory
 
 
 def _parse_args() -> argparse.Namespace:
@@ -34,6 +37,11 @@ def _parse_args() -> argparse.Namespace:
         help="Memory SQLite path. Defaults to MEMORY_DB_PATH or ./data/memory.sqlite3.",
     )
     parser.add_argument(
+        "--upload-root",
+        default=None,
+        help="Upload root. Defaults to MAI_UPLOAD_ROOT or ./mai_uploads.",
+    )
+    parser.add_argument(
         "--yes",
         action="store_true",
         help="Skip the interactive confirmation prompt.",
@@ -41,7 +49,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be deleted without changing the database.",
+        help="Show what would be deleted without changing memory or uploads.",
     )
     return parser.parse_args()
 
@@ -165,6 +173,7 @@ def _reset_memory(db_path: Path, user_id: str, *, dry_run: bool) -> dict[str, in
                 "orphan_concepts": 0,
             }
 
+        orphan_ids: set[int] = set()
         with connection:
             # Deleting owned nodes cascades user_anchors and all touching edges.
             _delete_ids(connection, "nodes", "id", owned_node_ids)
@@ -199,6 +208,28 @@ def _reset_memory(db_path: Path, user_id: str, *, dry_run: bool) -> dict[str, in
         connection.close()
 
 
+def _upload_stats(upload_dir: Path) -> tuple[int, int]:
+    if not upload_dir.exists():
+        return 0, 0
+    files = 0
+    total_bytes = 0
+    for path in upload_dir.rglob("*"):
+        if path.is_file():
+            files += 1
+            try:
+                total_bytes += path.stat().st_size
+            except OSError:
+                pass
+    return files, total_bytes
+
+
+def _reset_uploads(upload_dir: Path, *, dry_run: bool) -> dict[str, int]:
+    files, total_bytes = _upload_stats(upload_dir)
+    if not dry_run and upload_dir.exists():
+        shutil.rmtree(upload_dir)
+    return {"files": files, "bytes": total_bytes}
+
+
 def main() -> int:
     load_dotenv()
     args = _parse_args()
@@ -220,19 +251,27 @@ def main() -> int:
     db_path = Path(
         args.db or os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3")
     ).expanduser().resolve()
+    upload_root = Path(
+        args.upload_root or os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads")
+    ).expanduser().resolve(strict=False)
+    upload_dir = trial_upload_directory(upload_root, principal.auth_user_id)
 
     try:
         preview = _reset_memory(db_path, principal.memory_user_id, dry_run=True)
+        upload_preview = _reset_uploads(upload_dir, dry_run=True)
     except Exception as exc:
-        print(f"Could not inspect trial memory: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"Could not inspect trial data: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
     print(f"Trial account : {principal.auth_user_id}")
     print(f"Memory user   : {principal.memory_user_id}")
     print(f"Database      : {db_path}")
+    print(f"Upload dir    : {upload_dir}")
     print(f"Owned nodes   : {preview['owned_nodes']}")
     print(f"Touching edges: {preview['edges']}")
     print(f"Evidence rows : {preview['evidence']}")
+    print(f"Upload files  : {upload_preview['files']}")
+    print(f"Upload bytes  : {upload_preview['bytes']}")
 
     if args.dry_run:
         print("Dry run only; nothing was deleted.")
@@ -248,6 +287,7 @@ def main() -> int:
 
     try:
         result = _reset_memory(db_path, principal.memory_user_id, dry_run=False)
+        upload_result = _reset_uploads(upload_dir, dry_run=False)
     except sqlite3.OperationalError as exc:
         print(
             "Reset failed. Make sure the MAI server is stopped before running this utility. "
@@ -260,10 +300,12 @@ def main() -> int:
         return 2
 
     print("Reset complete.")
-    print(f"Deleted owned nodes : {result['owned_nodes']}")
-    print(f"Removed edges       : {result['edges']}")
-    print(f"Deleted evidence    : {result['evidence']}")
-    print(f"Removed orphan concepts: {result['orphan_concepts']}")
+    print(f"Deleted owned nodes     : {result['owned_nodes']}")
+    print(f"Removed edges           : {result['edges']}")
+    print(f"Deleted evidence        : {result['evidence']}")
+    print(f"Removed orphan concepts : {result['orphan_concepts']}")
+    print(f"Deleted upload files    : {upload_result['files']}")
+    print(f"Deleted upload bytes    : {upload_result['bytes']}")
     print("Start MAI again before handing the trial ID to the next user.")
     return 0
 
