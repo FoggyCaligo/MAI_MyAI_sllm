@@ -189,7 +189,14 @@ def file_copy(*, source: str, destination: str, create_parents: bool = False, cw
 _READ_BINDINGS = (
     ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed.", FileListInput, file_list),
     ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root.", FileSearchInput, file_search),
-    ("file_read", "Read a UTF-8 or explicitly encoded local text file from any accessible path.", FileReadInput, file_read),
+    (
+        "file_read",
+        "Read a UTF-8 or explicitly encoded local text file from any accessible path. "
+        "Do not guess an unconfirmed file path. If the project structure is unknown, or a file_read path fails, "
+        "discover the actual path with file_list, file_search, or code_search before retrying.",
+        FileReadInput,
+        file_read,
+    ),
 )
 _WRITE_BINDINGS = (
     ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
