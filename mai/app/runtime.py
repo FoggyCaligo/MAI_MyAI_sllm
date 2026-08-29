@@ -1,6 +1,7 @@
 """Production composition root for MAI's pure-agent C runtime."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -105,6 +106,7 @@ class MAIRuntime:
         )
         self._adapters: dict[str, OllamaAdapter] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     def _adapter_for(self, model: str) -> OllamaAdapter:
         clean_model = model.strip()
@@ -172,21 +174,51 @@ class MAIRuntime:
             adapter,
             registry,
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
+            max_grounding_revisions=2,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
         result = await agent.run_user_message(prompt, prior_messages=messages)
 
-        recall_tools = successful_memory_recall_tools(result.tool_executions)
-        all_successful_tools = successful_tool_names(result.tool_executions)
-        extraction_tool_results = successful_non_recall_tool_results(result.tool_executions)
+        tools = tuple({
+            "name": execution.name,
+            "arguments": execution.arguments,
+            "ok": execution.ok,
+            "error_type": execution.error_type,
+            "result": execution.content,
+        } for execution in result.tool_executions)
+
+        task = asyncio.create_task(
+            self._postprocess_memory(
+                prompt=prompt,
+                final_answer=result.content,
+                principal=principal,
+                tool_executions=result.tool_executions,
+            )
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+        return MAIRunResult(answer=result.content, model=selected_model, model_rounds=result.model_rounds, tools=tools)
+
+    async def _postprocess_memory(
+        self,
+        *,
+        prompt: str,
+        final_answer: str,
+        principal: AccessPrincipal,
+        tool_executions: Sequence[Any],
+    ) -> None:
+        recall_tools = successful_memory_recall_tools(tool_executions)
+        all_successful_tools = successful_tool_names(tool_executions)
+        extraction_tool_results = successful_non_recall_tool_results(tool_executions)
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
         try:
             fact_texts = await self.memory.extract_facts(
                 user_text=prompt,
-                final_answer=result.content,
+                final_answer=final_answer,
                 successful_tool_results=extraction_tool_results,
             )
             extraction_succeeded = self.memory.fact_extractor is not None
@@ -202,21 +234,23 @@ class MAIRuntime:
                 str(exc),
             )
 
-        if should_skip_recall_without_new_facts(
-            result.tool_executions,
-            extracted_facts=fact_texts,
-            extraction_succeeded=extraction_succeeded,
-        ):
-            _LOG.info(
-                "MAI memory admission skipped reason=recall_without_new_facts tools=%s",
-                ",".join(recall_tools),
-            )
-        else:
+        try:
+            if should_skip_recall_without_new_facts(
+                tool_executions,
+                extracted_facts=fact_texts,
+                extraction_succeeded=extraction_succeeded,
+            ):
+                _LOG.info(
+                    "MAI memory admission skipped reason=recall_without_new_facts tools=%s",
+                    ",".join(recall_tools),
+                )
+                return
+
             evidence = self.memory.record_raw_user_evidence(principal.memory_user_id, prompt)
             await self.memory.finish_turn(
                 user_id=principal.memory_user_id,
                 user_text=prompt,
-                final_answer=result.content,
+                final_answer=final_answer,
                 user_evidence=evidence,
                 successful_tool_results=extraction_tool_results,
                 fact_texts=fact_texts,
@@ -228,17 +262,17 @@ class MAIRuntime:
                 len(fact_texts),
                 len(extraction_tool_results),
             )
-
-        tools = tuple({
-            "name": execution.name,
-            "arguments": execution.arguments,
-            "ok": execution.ok,
-            "error_type": execution.error_type,
-            "result": execution.content,
-        } for execution in result.tool_executions)
-        return MAIRunResult(answer=result.content, model=selected_model, model_rounds=result.model_rounds, tools=tools)
+        except Exception as exc:
+            _LOG.warning(
+                "MAI background memory admission failed error_type=%s message=%s",
+                type(exc).__name__,
+                str(exc),
+            )
 
     def close(self) -> None:
+        for task in tuple(self._background_tasks):
+            task.cancel()
+        self._background_tasks.clear()
         self.segmenter.close()
         self.concept_index.close()
         self.graph.close()
