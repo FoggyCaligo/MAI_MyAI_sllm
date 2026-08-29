@@ -18,6 +18,7 @@ from ..agent import AgentRunFailure
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
 from .runtime import MAIRuntime
 from .tailscale import TailscaleFunnel
+from .uploads import principal_upload_directory
 
 
 load_dotenv()
@@ -100,7 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         memory_db_path=os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3"),
         sentence_breaker_db_path=os.environ.get("SENTENCE_BREAKER_DB_PATH", "./data/sentence_breaker.sqlite3"),
         vision_model=os.environ.get("VISION_MODEL") or None,
-        upload_root="./mai_uploads",
+        upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
     print(f"MAI local: http://{host}:{port}", flush=True)
@@ -282,13 +283,13 @@ async def upload_file(
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
     filename = _validated_upload_filename(file.filename)
-    upload_root = runtime.upload_root.resolve()
-    upload_root.mkdir(parents=True, exist_ok=True)
-    target = (upload_root / filename).resolve()
-    if target.parent != upload_root:
-        raise HTTPException(status_code=400, detail="uploaded filename resolved outside upload root")
+    upload_dir = principal_upload_directory(runtime.upload_root, principal).resolve()
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    target = (upload_dir / filename).resolve()
+    if target.parent != upload_dir:
+        raise HTTPException(status_code=400, detail="uploaded filename resolved outside account upload directory")
     if target.exists():
-        raise HTTPException(status_code=409, detail="a file with that name already exists in upload root")
+        raise HTTPException(status_code=409, detail="a file with that name already exists in this account upload directory")
 
     try:
         with target.open("xb") as handle:
