@@ -25,7 +25,7 @@ class RecallService:
         segments = tuple(self.segmenter.segment(query))
         hits = self.concept_index.search(segments, limit=self.concept_limit)
         working = WorkingGraph()
-        working.nodes[anchor.id] = anchor
+        self._merge_user_anchor_context(working, user_id=user_id)
         for hit in hits:
             neighborhood = self.graph.one_hop(hit.node_id)
             working.merge(neighborhood)
@@ -44,4 +44,18 @@ class RecallService:
             path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
             if path is not None:
                 working.merge(path, mark_expanded=False)
+        self._merge_user_anchor_context(working, user_id=user_id)
         return working.snapshot()
+
+    def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
+        """Always expose the user anchor plus its direct neighbors without marking it expanded.
+
+        Recall already preserves the shortest path from each recalled node back to the
+        user's anchor. Adding the anchor's own one-hop neighborhood keeps stable core
+        identity/profile facts near the root visible even when the lexical hit lands in
+        a distant, newer part of the memory graph.
+        """
+        anchor = self.graph.get_user_anchor(user_id)
+        if anchor is None:
+            raise KeyError(f"user anchor for '{user_id}' does not exist")
+        working.merge(self.graph.one_hop(anchor.id), mark_expanded=False)
