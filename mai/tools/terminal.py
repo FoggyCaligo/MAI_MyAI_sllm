@@ -124,6 +124,9 @@ def register_terminal_tools(
     cwd: str | Path | None = None,
     timeout_seconds: float | None = 120,
 ) -> None:
+    register_default_cwd = Path(cwd or os.getcwd()).expanduser().resolve(strict=False)
+    register_default_timeout = timeout_seconds
+
     async def handler(
         command: str,
         cwd: str | None = None,
@@ -137,14 +140,15 @@ def register_terminal_tools(
             default_timeout_seconds=register_default_timeout,
         )
 
-    register_default_cwd = cwd
-    register_default_timeout = timeout_seconds
     shell_description = _shell_description()
     registry.add(
         name="terminal_run",
         description=(
             "Run a shell command on the local PC with the same OS permissions as the MAI process. "
             f"This host executes commands through {shell_description}; do not assume the shell used to launch MAI. "
+            f"The runtime already starts commands in this working directory: {register_default_cwd}. "
+            "Use that current working directory by default; do not guess or prepend a project path with cd. "
+            "Set the cwd argument only when the task explicitly requires running in a different directory. "
             "A non-zero return code or timeout is a real tool failure. Paths outside the repository are allowed."
         ),
         input_model=TerminalRunInput,
