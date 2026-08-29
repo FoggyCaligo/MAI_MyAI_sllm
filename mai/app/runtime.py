@@ -36,6 +36,7 @@ from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
+from .uploads import principal_upload_directory
 
 
 _LOG = logging.getLogger("uvicorn.error")
@@ -150,7 +151,7 @@ class MAIRuntime:
             register_readonly_local_tools(
                 registry,
                 cwd=self.cwd,
-                upload_root=self.upload_root,
+                upload_root=principal_upload_directory(self.upload_root, principal),
             )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
