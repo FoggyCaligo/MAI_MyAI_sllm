@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 
 from fastapi import Header
@@ -140,10 +141,12 @@ def install() -> None:
     @app.get("/", include_in_schema=False)
     async def resumable_root() -> HTMLResponse:
         index_path = Path(server._STATIC_DIR) / "index.html"
+        script_path = Path(server._STATIC_DIR) / "resumable-chat.js"
         html = index_path.read_text(encoding="utf-8-sig")
-        asset = '  <script src="/static/resumable-chat.js"></script>\n'
+        script_digest = hashlib.sha256(script_path.read_bytes()).hexdigest()[:16]
+        asset = f'  <script src="/static/resumable-chat.js?v={script_digest}"></script>\n'
         html = html.replace("</body>", asset + "</body>", 1)
-        return HTMLResponse(html)
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     @app.post("/chat/jobs")
     async def start_chat_job(
