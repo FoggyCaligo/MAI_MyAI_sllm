@@ -8,7 +8,7 @@ import logging
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from mai.agent import AgentRoundLimitExceeded, AgentRunFailure, AgentRuntime
+from mai.agent import AgentRunFailure, AgentRuntime
 from mai.agent.requirements import FrozenToolRequirements
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
@@ -139,27 +139,74 @@ def test_required_tool_handler_failure_still_satisfies_preflight_obligation() ->
     assert result.tool_executions[0].handler_started is True
 
 
-def test_required_tool_argument_failure_does_not_satisfy_preflight_obligation() -> None:
+def test_required_tool_argument_failure_returns_model_to_correction_round() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={}),)),
         assistant_turn(content="I am done."),
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "corrected"}),)),
+        assistant_turn(content="I used the required tool."),
     ])
     requirements = FrozenToolRequirements(frozenset({"echo"}))
 
-    with pytest.raises(AgentRunFailure) as exc_info:
-        run(
-            AgentRuntime(adapter, registry).run_user_message(
-                "use echo",
-                requirements=requirements,
-            )
+    result = run(
+        AgentRuntime(adapter, registry).run_user_message(
+            "use echo",
+            requirements=requirements,
         )
+    )
 
-    failure = exc_info.value
-    assert failure.error_type == "UnsatisfiedToolRequirements"
-    assert failure.context.tool_executions[0].error_type == "ToolArgumentsError"
-    assert failure.context.tool_executions[0].handler_started is False
+    assert result.content == "I used the required tool."
+    assert result.model_rounds == 4
+    assert result.tool_executions[0].error_type == "ToolArgumentsError"
+    assert result.tool_executions[0].handler_started is False
+    assert result.tool_executions[1].ok is True
+    correction_message = adapter.requests[2].messages[-1]
+    assert correction_message["role"] == "system"
+    assert "missing required tools" in correction_message["content"]
+    assert "echo" in correction_message["content"]
+
+
+def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    adapter = FakeAdapter([
+        assistant_turn(content="I can answer without it."),
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "required"}),)),
+        assistant_turn(content="done after required tool"),
+    ])
+    requirements = FrozenToolRequirements(frozenset({"echo"}))
+
+    result = run(
+        AgentRuntime(adapter, registry).run_user_message(
+            "do the task",
+            requirements=requirements,
+        )
+    )
+
+    assert result.content == "done after required tool"
+    assert result.model_rounds == 3
+    correction_message = adapter.requests[1].messages[-1]
+    assert correction_message["role"] == "system"
+    assert "echo" in correction_message["content"]
+
+
+def test_model_can_continue_beyond_thirty_rounds_when_each_round_makes_progress() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    turns = [
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": f"step-{index}"}),))
+        for index in range(1, 33)
+    ]
+    turns.append(assistant_turn(content="completed long task"))
+    adapter = FakeAdapter(turns)
+
+    result = run(AgentRuntime(adapter, registry).run_user_message("long task"))
+
+    assert result.content == "completed long task"
+    assert result.model_rounds == 33
+    assert len(result.tool_executions) == 32
 
 
 def test_model_can_correct_terminal_command_after_five_distinct_failures() -> None:
@@ -258,31 +305,6 @@ def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
     result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message("use missing"))
     assert result.tool_executions[0].error_type == "UnknownToolError"
     assert result.tool_executions[0].handler_started is False
-
-
-def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect_and_preserves_context() -> None:
-    registry = ToolRegistry()
-    calls = []
-    def echo(text: str):
-        calls.append(text)
-        return text
-    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=echo)
-    repeating = assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "again"}),))
-    adapter = FakeAdapter([repeating, repeating])
-    runtime = AgentRuntime(adapter, registry, max_rounds=2)
-
-    with pytest.raises(AgentRunFailure) as exc_info:
-        run(runtime.run_user_message("loop"))
-
-    failure = exc_info.value
-    assert failure.error_type == "AgentRoundLimitExceeded"
-    assert isinstance(failure.__cause__, AgentRoundLimitExceeded)
-    assert failure.context.model_rounds == 2
-    assert len(failure.context.tool_executions) == 1
-    assert failure.context.tool_executions[0].name == "echo"
-    assert failure.context.tool_executions[0].ok is True
-    assert failure.context.tool_executions[0].handler_started is True
-    assert calls == ["again"]
 
 
 def test_runtime_rejects_empty_user_message() -> None:
