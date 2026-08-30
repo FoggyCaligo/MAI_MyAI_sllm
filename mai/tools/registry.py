@@ -71,8 +71,6 @@ class ToolDefinition:
             raise ValueError("timeout_seconds must be positive when provided")
 
     def native_schema(self) -> ToolSchema:
-        """Return the Ollama/OpenAI-style native function schema."""
-
         return {
             "type": "function",
             "function": {
@@ -83,24 +81,12 @@ class ToolDefinition:
         }
 
     def validate_arguments(self, arguments: Mapping[str, Any]) -> BaseModel:
-        """Validate one model-produced argument object without coercive repair."""
-
         try:
             return self.input_model.model_validate(dict(arguments), strict=True)
         except ValidationError as exc:
-            raise ToolArgumentsError(
-                f"invalid arguments for native tool '{self.name}'"
-            ) from exc
+            raise ToolArgumentsError(f"invalid arguments for native tool '{self.name}'") from exc
 
     async def invoke(self, arguments: Mapping[str, Any]) -> Any:
-        """Validate and execute this definition's handler.
-
-        Handler exceptions are intentionally not converted into success-shaped
-        fallback values. Async and sync handlers are both supported. Sync
-        handlers run in a worker thread so a configured timeout can actually
-        interrupt the await path instead of blocking the event loop.
-        """
-
         validated = self.validate_arguments(arguments)
         kwargs = validated.model_dump()
 
@@ -115,14 +101,10 @@ class ToolDefinition:
 
 
 class ToolRegistry:
-    """Registry shared by the future Agent Runtime and Ollama adapter boundary."""
-
     def __init__(self) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
 
     def register(self, definition: ToolDefinition) -> ToolDefinition:
-        """Register exactly one definition and reject duplicate names."""
-
         if definition.name in self._definitions:
             raise DuplicateToolError(f"tool '{definition.name}' is already registered")
         self._definitions[definition.name] = definition
@@ -139,8 +121,6 @@ class ToolRegistry:
         category: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> ToolDefinition:
-        """Convenience constructor plus registration for an executable tool."""
-
         return self.register(
             ToolDefinition(
                 name=name,
@@ -163,20 +143,30 @@ class ToolRegistry:
             raise UnknownToolError(f"native tool '{name}' is not registered") from exc
 
     def names(self) -> tuple[str, ...]:
-        """Return names in registration order for deterministic inspection."""
-
         return tuple(self._definitions)
 
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(self._definitions.values())
 
     def native_schemas(self) -> tuple[ToolSchema, ...]:
-        """Return the exact schemas to pass through ChatRequest.tools."""
-
         return tuple(definition.native_schema() for definition in self._definitions.values())
 
-    async def invoke(self, call: NativeToolCall) -> Any:
-        """Execute the exact native call selected by the model."""
+    def model_context(self) -> tuple[dict[str, Any], ...]:
+        """Return explicit runtime context declared by tools for the model.
 
+        Only the reserved `model_context` metadata field is exposed. Tool names
+        are carried as identifiers; the registry does not infer semantics from them.
+        """
+        contexts: list[dict[str, Any]] = []
+        for definition in self._definitions.values():
+            raw_context = definition.metadata.get("model_context")
+            if raw_context is None:
+                continue
+            if not isinstance(raw_context, Mapping):
+                raise TypeError(f"tool '{definition.name}' model_context metadata must be a mapping")
+            contexts.append({"tool": definition.name, "context": dict(raw_context)})
+        return tuple(contexts)
+
+    async def invoke(self, call: NativeToolCall) -> Any:
         definition = self.get(call.name)
         return await definition.invoke(call.arguments)
