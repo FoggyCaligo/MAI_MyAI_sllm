@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -194,10 +194,14 @@ class ToolRegistry:
     def definitions(self) -> tuple[ToolDefinition, ...]:
         return tuple(self._definitions.values())
 
-    def native_schemas(self) -> tuple[ToolSchema, ...]:
-        """Return the exact schemas to pass through ChatRequest.tools."""
+    def native_schemas(self, names: Sequence[str] | None = None) -> tuple[ToolSchema, ...]:
+        """Return exact native schemas, optionally restricted to explicit tool names."""
 
-        return tuple(definition.native_schema() for definition in self._definitions.values())
+        if names is None:
+            definitions = self._definitions.values()
+        else:
+            definitions = (self.get(name) for name in names)
+        return tuple(definition.native_schema() for definition in definitions)
 
     def model_context(self) -> tuple[dict[str, Any], ...]:
         """Return runtime facts explicitly declared for model consumption.
