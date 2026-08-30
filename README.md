@@ -25,11 +25,15 @@ Pure-agent Runtime
   ↓
 Local Ollama Model
   ↓ native tool calls
-Memory / Time / Files / Code / Documents / Images / Web / Market / Terminal
+Memory / Time / Calculator / Files / Code / Documents / Images / Web / Market / Terminal
+  ↓
+Candidate Final
+  ↓
+Final Grounding / Alignment Verification
   ↓
 Final Response
   ↓
-Post-response Memory Write
+Background Memory Extraction / Admission
 ```
 
 LLM은 답변 생성, 상황 판단, tool 선택을 담당한다. 장기기억의 본체는 LLM 안에 있지 않으므로 메인 모델을 교체해도 memory DB 자체는 유지된다.
@@ -49,9 +53,19 @@ native tool selection
   ↓
 ToolRegistry execution
   ↓
+Candidate Final
+  ↓
+FinalGroundingVerifier
+  ├─ deterministic numeric grounding
+  ├─ semantic evidence grounding
+  └─ task alignment review
+  ↓
 Final Response
   ↓
-MemoryRuntime.finish_turn()
+background memory post-processing
+  ├─ fact extraction
+  ├─ recall-only + new facts 없음 → persistent write 생략
+  └─ 그 외 → raw utterance + concepts + facts 저장
 ```
 
 production 경로에는 별도의 Tool Requirement Preflight나 automatic recall이 없다. 모델은 현재 노출된 native tool schema를 보고 필요한 기능을 스스로 선택한다.
@@ -63,6 +77,8 @@ production 경로에는 별도의 Tool Requirement Preflight나 automatic recall
 - `memory_search(node_id)`: 선택한 memory node 주변을 one-hop 확장한다.
 
 이 구조는 framework가 사용자 문장의 문자열 패턴을 보고 tool 필요 여부를 정하는 방식이 아니다. 의미 판단은 모델이 하고, runtime은 schema·권한·실행·실패 계약을 강제한다.
+
+최종 응답 검증은 tool 필요 여부를 다시 판단하는 preflight가 아니다. 이미 생성된 candidate final이 현재 user/tool evidence와 충돌하지 않는지, 사용자의 실제 요청을 다른 작업으로 바꾸지 않았는지를 release 전에 확인하는 별도 gate다. semantic reviewer는 timeout과 retry budget을 가지며, verifier 자체가 무한히 응답을 붙잡지 않도록 제한한다.
 
 ---
 
@@ -105,7 +121,22 @@ Graph neighborhood / User Anchor path
 
 따라서 메인 LLM을 교체했다고 해서 embedding 좌표계를 다시 만들 필요가 없다. FTS5 검색 결과는 Concept identity를 새로 정의하지 않으며, Concept identity는 Sentence_Breaker의 canonical segment가 결정한다.
 
-현재 production memory write는 최종 응답 뒤 별도 lifecycle에서 실행한다. raw user evidence와 Concept graph는 저장되며, model-backed `FactExtractor`는 아직 production runtime에 연결되어 있지 않다. 이 상태를 fallback으로 숨기지 않는다.
+현재 production memory write는 최종 응답이 사용자에게 반환된 뒤 background lifecycle에서 실행된다. model-backed `OllamaFactExtractor`가 raw user turn, final answer context, 성공한 non-recall tool evidence를 바탕으로 durable fact 후보를 추출한다.
+
+기존 persistent memory를 다시 읽은 `memory_overview`, `memory_recall`, `memory_search` 결과는 fact extraction evidence에서 제외한다. 따라서 과거 기억을 읽었다는 이유만으로 같은 내용을 새 사실처럼 재저장하지 않는다.
+
+```text
+recall 사용 + extraction 성공 + new facts 없음
+  → persistent write 생략
+
+recall 사용 + extraction 성공 + new facts 있음
+  → 새 user utterance와 extracted facts 저장
+
+extraction 실패
+  → 실패를 숨기지 않고 raw user turn은 보존하는 방향으로 admission
+```
+
+Fact extraction에는 별도 고정 `MEMORY_MODEL`을 두지 않는다. **각 turn에서 실제 답변에 사용된 선택 모델과 동일한 Ollama 모델**을 `think=False` extraction adapter로 사용한다. 따라서 사용 가능한 모델이 `gemma4:e4b` 하나뿐인 환경이라면 main response와 memory extraction 모두 그 모델로 동작할 수 있다.
 
 ---
 
@@ -119,6 +150,7 @@ MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. tool call을
 |---|---|---|
 | Memory | `memory_overview`, `memory_recall`, `memory_search` | 장기기억 조회·확장 |
 | Time | `current_time` | host OS의 현재 local/UTC 시간 조회 |
+| Calculation | `calculator` | Decimal 기반 제한식 산술 계산 |
 | Filesystem | `file_list`, `file_search`, `file_read` | PC 파일 탐색과 읽기 |
 | Filesystem mutation | `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy` | 파일 생성·수정·삭제·이동·복사 |
 | Code | `code_search`, `code_read`, `code_symbols` | 코드 검색·line read·Python AST symbol 탐색 |
@@ -127,6 +159,8 @@ MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. tool call을
 | Web | `web_search`, `web_fetch` | 웹 검색과 public URL 본문 읽기 |
 | Market | `market_data` | 한국 상장주식의 현재 시세/밸류에이션 조회 |
 | Terminal | `terminal_run` | 로컬 shell command 실행 |
+
+중요한 합계, 차이, 수익률, 비율, aggregate 계산은 main model의 암산보다 `calculator`를 사용하도록 production system prompt에 명시한다.
 
 `image_analyze`는 `.env`의 `VISION_MODEL`이 설정된 경우에만 ToolRegistry에 등록된다.
 
@@ -165,7 +199,7 @@ Trial은 각 로그인 ID 자체를 memory identity로 사용한다. Owner memor
 
 ### Owner
 
-Owner는 설치된 Ollama 모델 중 원하는 모델을 선택할 수 있고 현재 등록된 전체 도구를 사용할 수 있다.
+Owner는 설치된 Ollama 모델 중 원하는 모델을 선택할 수 있고 현재 등록된 전체 도구를 사용할 수 있다. Owner가 UI에서 모델을 바꾸면 해당 turn의 main agent뿐 아니라 post-response fact extraction도 같은 모델을 사용한다.
 
 ### Trial
 
@@ -175,6 +209,7 @@ Trial은 읽기·검색·기억·웹·시장·시간 기능을 사용할 수 있
 Trial 공통 기능
   memory_overview / memory_recall / memory_search
   current_time
+  calculator
   file_list / file_search / file_read
   code_search / code_read / code_symbols
   document_read
@@ -202,7 +237,7 @@ Trial upload directory는 계정끼리 충돌하거나 덮어쓰지 않도록 �
 
 Trial의 model은 `MAIN_MODEL`로 고정된다. `/models`도 trial에게 해당 모델 하나만 반환하고, client가 직접 다른 model을 POST해도 서버가 HTTP 403으로 거부한다.
 
-`MAIN_MODEL` 기본값은 현재 `ornith-1.5:9b`이며, 설정을 바꾸면 trial의 고정 모델도 함께 바뀐다.
+`MAIN_MODEL` 기본값은 현재 `ornith-1.5:9b`이며, 설정을 바꾸면 trial의 main agent와 memory fact extraction 모델도 함께 바뀐다.
 
 ---
 
@@ -356,6 +391,19 @@ Tailscale Funnel failure
 
 필수 계약을 문자열 비교, 임시 우회, fallback 남용으로 덮지 않는다.
 
+Agent loop에는 구조적 무한루프 방지 guard가 존재한다. 현재 guard는 전체 round 수, 동일 native call 반복, 동일 call의 동일 failure 반복, 동일 execution signature가 이어지는 no-progress round를 제한한다. 이 guard는 사용자 문장의 의미나 tool result 의미를 문자열 규칙으로 해석하지 않고 canonical call/result fingerprint만 비교한다.
+
+현재 기본값은 다음과 같다.
+
+```env
+AGENT_MAX_ROUNDS=30
+AGENT_MAX_IDENTICAL_CALLS=3
+AGENT_MAX_IDENTICAL_FAILURES=2
+AGENT_MAX_NO_PROGRESS_ROUNDS=2
+```
+
+이 값은 안전한 무한루프 차단과 실패 복구 기회 사이의 정책 값이다. 동일 실패를 얼마나 오래 모델에게 다시 보여줄지에 대한 정책은 별도 조정 대상이며, 실패 자체를 성공으로 바꾸거나 숨기는 방식으로 해결하지 않는다.
+
 ---
 
 # 11. 설치와 실행
@@ -381,6 +429,8 @@ MAI_HOST=127.0.0.1
 MAI_PORT=8000
 TAILSCALE_FUNNEL=false
 ```
+
+`MEMORY_MODEL`은 사용하지 않는다. memory fact extraction은 항상 해당 turn의 선택 모델과 동일한 모델을 사용한다.
 
 실행:
 

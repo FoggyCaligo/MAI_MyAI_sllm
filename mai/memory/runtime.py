@@ -84,11 +84,13 @@ class MemoryRuntime:
         user_text: str,
         final_answer: str,
         successful_tool_results: Sequence[str] = (),
+        fact_extractor: FactExtractor | None = None,
     ) -> tuple[str, ...]:
         """Extract facts before graph admission so recall-only turns can be filtered safely."""
-        if self.fact_extractor is None:
+        extractor = self.fact_extractor if fact_extractor is None else fact_extractor
+        if extractor is None:
             return ()
-        raw_facts = await self.fact_extractor.extract(
+        raw_facts = await extractor.extract(
             user_text=user_text,
             final_answer=final_answer,
             successful_tool_results=successful_tool_results,
