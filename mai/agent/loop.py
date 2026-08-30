@@ -349,7 +349,7 @@ class AgentLoop:
         *,
         available_tool_names: frozenset[str],
     ) -> ToolExecution:
-        if call.name not in available_tool_names:
+        if call.name not in available_tool_names and self.registry.has(call.name):
             exc = ToolUnavailableInRoundError(
                 f"native tool '{call.name}' was not exposed in the current model round"
             )
