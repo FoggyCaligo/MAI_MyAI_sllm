@@ -1,5 +1,16 @@
 (() => {
   const previousFetch = window.fetch.bind(window);
+  const rememberedUserIdKey = 'MAI:last-login-id';
+
+  function restoreRememberedUserId() {
+    const loginIdInput = document.getElementById('login-id');
+    if (!loginIdInput || loginIdInput.value) return;
+    const remembered = localStorage.getItem(rememberedUserIdKey);
+    if (remembered) loginIdInput.value = remembered;
+  }
+
+  restoreRememberedUserId();
+  window.addEventListener('pageshow', restoreRememberedUserId);
 
   window.fetch = async function(input, init = {}) {
     const url = typeof input === 'string' ? input : input?.url;
@@ -20,7 +31,11 @@
       ...init,
       body: JSON.stringify({...payload, user_pw: password}),
     });
-    if (response.ok && passwordInput) passwordInput.value = '';
+    if (response.ok) {
+      const userId = typeof payload.user_id === 'string' ? payload.user_id.trim() : '';
+      if (userId) localStorage.setItem(rememberedUserIdKey, userId);
+      if (passwordInput) passwordInput.value = '';
+    }
     return response;
   };
 })();
