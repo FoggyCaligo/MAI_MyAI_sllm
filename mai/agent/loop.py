@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
-from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
 from .requirements import FrozenToolRequirements, UnsatisfiedToolRequirements
+from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
 
@@ -38,6 +38,11 @@ class ToolExecution:
     ok: bool
     content: str
     error_type: str | None = None
+    model_content: str | None = None
+
+    @property
+    def context_content(self) -> str:
+        return self.content if self.model_content is None else self.model_content
 
 
 ToolExecutionObserver = Callable[[ToolExecution], None]
@@ -76,12 +81,13 @@ class AgentRunResult:
 class AgentLoop:
     def __init__(
         self,
-        adapter: OllamaAdapter,
+        adapter,
         registry: ToolRegistry,
         *,
         guard_config: GuardConfig | None = None,
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
+        tool_result_store: ToolResultStore | None = None,
     ) -> None:
         if max_semantic_verification_retries < 0:
             raise ValueError("max_semantic_verification_retries must be non-negative")
@@ -90,6 +96,7 @@ class AgentLoop:
         self.guard_config = guard_config or GuardConfig()
         self.final_verifier = final_verifier
         self.max_semantic_verification_retries = max_semantic_verification_retries
+        self.tool_result_store = tool_result_store
 
     async def run(
         self,
@@ -154,14 +161,12 @@ class AgentLoop:
                         semantic_verification_retries,
                     )
                     if self.final_verifier is not None:
-                        allow_semantic_review = (
-                            semantic_verification_retries < self.max_semantic_verification_retries
-                        )
+                        allow_semantic_review = semantic_verification_retries < self.max_semantic_verification_retries
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
                             messages=history,
                             successful_tool_results=tuple(
-                                (execution.name, execution.content)
+                                (execution.name, execution.context_content)
                                 for execution in executions
                                 if execution.ok
                             ),
@@ -221,15 +226,16 @@ class AgentLoop:
                     if execution.ok:
                         successful_tools.add(execution.name)
                     _LOG.info(
-                        "MAI tool result round=%d name=%s ok=%s error_type=%s elapsed_ms=%d result_chars=%d",
+                        "MAI tool result round=%d name=%s ok=%s error_type=%s elapsed_ms=%d result_chars=%d model_chars=%d",
                         round_number,
                         execution.name,
                         str(execution.ok).lower(),
                         execution.error_type or "-",
                         elapsed_ms,
                         len(execution.content),
+                        len(execution.context_content),
                     )
-                    history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
+                    history.append({"role": "tool", "tool_name": call.name, "content": execution.context_content})
                     observation = ExecutionObservation(
                         call_fingerprint=call_fp,
                         ok=execution.ok,
@@ -264,8 +270,28 @@ class AgentLoop:
             value = await self.registry.invoke(call)
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
-            return ToolExecution(call.name, dict(call.arguments), False, _serialize_tool_content(payload), type(exc).__name__)
-        return ToolExecution(call.name, dict(call.arguments), True, _serialize_tool_content(value))
+            content = _serialize_tool_content(payload)
+            return ToolExecution(
+                name=call.name,
+                arguments=dict(call.arguments),
+                ok=False,
+                content=content,
+                error_type=type(exc).__name__,
+                model_content=self._model_content(content),
+            )
+        content = _serialize_tool_content(value)
+        return ToolExecution(
+            name=call.name,
+            arguments=dict(call.arguments),
+            ok=True,
+            content=content,
+            model_content=self._model_content(content),
+        )
+
+    def _model_content(self, content: str) -> str:
+        if self.tool_result_store is None:
+            return content
+        return self.tool_result_store.model_view(content)
 
 
 def _format_log_arguments(arguments: Mapping[str, Any], *, limit: int = _TOOL_ARGS_LOG_LIMIT) -> str:
