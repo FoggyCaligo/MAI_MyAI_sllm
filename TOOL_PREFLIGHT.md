@@ -10,7 +10,7 @@ Preflight는 semantic router이지만 문자열 heuristic은 사용하지 않는
 
 ## 실행 방식
 
-Preflight는 main agent와 같은 선택 모델을 사용하며 한 번만 호출한다.
+Preflight는 main agent와 같은 선택 모델을 사용한다.
 
 ```text
 think=False
@@ -18,11 +18,23 @@ tools=()
 structured response_format
 ```
 
+현재 등록 tool 전체를 한 번에 판단하지 않는다. Registry 순서를 유지한 채 **최대 5개씩 batch로 나누고**, 각 batch를 별도 structured-output 호출로 판단한다.
+
+예를 들어 12개 tool이 노출되어 있으면 호출 단위는 다음과 같다.
+
+```text
+batch 1: tool 0~4
+batch 2: tool 5~9
+batch 3: tool 10~11
+```
+
+각 batch에는 그 batch의 tool 정의만 `available_tools`와 response schema에 포함된다. 한 batch의 판단 결과가 다른 batch의 schema를 바꾸지는 않는다.
+
 `recent_dialogue`는 reference를 해석하기 위한 context다. 이전 사실이나 이전 tool/research 성공을 자동으로 증명하는 evidence로 취급하지 않는다.
 
 ## 동적 boolean response schema
 
-Runtime은 현재 노출된 `ToolDefinition` 목록을 순회해 JSON Schema를 동적으로 만든다.
+Runtime은 각 batch의 `ToolDefinition` 목록을 순회해 JSON Schema를 동적으로 만든다.
 
 각 등록 tool은 다음 형태의 required property가 된다.
 
@@ -35,7 +47,7 @@ Runtime은 현재 노출된 `ToolDefinition` 목록을 순회해 JSON Schema를 
 
 즉 모델이 tool name을 생성하는 방식이 아니다. Tool name은 schema에 이미 고정되어 있고 모델은 각 tool에 `true` 또는 `false`만 채운다.
 
-예를 들어 현재 registry에 다음 세 tool이 노출되어 있다면:
+예를 들어 한 batch에 다음 세 tool이 들어 있다면:
 
 ```text
 web_search
@@ -53,14 +65,14 @@ calculator
 }
 ```
 
-Schema는 모든 현재 tool name을 `required`에 포함하고 `additionalProperties=false`를 사용한다.
+Schema는 해당 batch의 모든 tool name을 `required`에 포함하고 `additionalProperties=false`를 사용한다.
 
 따라서:
 
-- tool 누락은 contract violation
+- batch 내부 tool 누락은 contract violation
 - unknown property는 contract violation
 - boolean이 아닌 값은 contract violation
-- 새 tool이 registry에 추가되면 preflight code 수정 없이 schema에 자동 반영
+- 새 tool이 registry에 추가되면 preflight code 수정 없이 batch 분할 및 schema에 자동 반영
 - 각 tool 설명은 별도 하드코딩 표가 아니라 기존 `ToolDefinition.description`을 그대로 재사용
 
 ## 판단 계약
@@ -77,7 +89,7 @@ Optional detail만을 위해 tool을 강제하지 않는다.
 
 ## Frozen requirements
 
-Structured result에서 `true`인 tool만 `FrozenToolRequirements`로 변환된다.
+각 batch의 structured result에서 `true`인 decision을 모두 합친 뒤 한 번 `FrozenToolRequirements`로 변환한다.
 
 이 집합은 해당 run 동안 변하지 않는다.
 
@@ -85,6 +97,6 @@ Main agent가 required tool의 handler execution result 없이 final을 시도�
 
 ## 실패 원칙
 
-Preflight structured output이 schema를 위반하면 실패로 드러낸다.
+어느 batch든 structured output이 schema를 위반하거나 model call 자체가 실패하면 preflight 전체가 실패한다.
 
-문자열 비교, 임시 fallback, unknown output 의미 추측으로 실패를 `false`나 empty requirement로 바꾸지 않는다.
+실패한 batch를 `false`로 간주하거나 empty requirement로 바꾸는 fallback은 두지 않는다. 문자열 비교나 unknown output 의미 추측으로 실패를 숨기지 않는다.
