@@ -29,6 +29,7 @@ async def _execute_chat(
     principal: object,
     *,
     on_tool_execution=None,
+    on_model_turn=None,
 ) -> tuple[int, dict[str, object]]:
     runtime = server._get_runtime()
     try:
@@ -52,6 +53,7 @@ async def _execute_chat(
             prior_messages=prior,
             model=selected_model,
             on_tool_execution=on_tool_execution,
+            on_model_turn=on_model_turn,
         )
     except AgentRunFailure as exc:
         return 500, {
@@ -85,10 +87,20 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
             def publish_tool(execution: object) -> None:
                 chat_job_store.append_tool(job_id, server._tool_payload(execution))
 
+            def publish_model_turn(round_number: int, turn: object) -> None:
+                raw_thinking = getattr(turn, "thinking", "")
+                thinking = raw_thinking if isinstance(raw_thinking, str) and raw_thinking.strip() else None
+                chat_job_store.update_model_progress(
+                    job_id,
+                    thinking=thinking,
+                    model_round=round_number,
+                )
+
             status_code, payload = await _execute_chat(
                 request,
                 principal,
                 on_tool_execution=publish_tool,
+                on_model_turn=publish_model_turn,
             )
         if status_code == 200:
             chat_job_store.complete(job_id, payload)
