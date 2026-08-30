@@ -224,7 +224,7 @@ class MAIRuntime:
             adapter,
             registry,
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
-            max_semantic_verification_retries=30,
+            max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
         )
 
