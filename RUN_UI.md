@@ -1,113 +1,192 @@
 # MAI Web UI / Tailscale 실행
 
-이 문서는 pure-agent C production Web UI의 실행과 계정 설정 방법을 기록한다.
+이 문서는 현재 production Web UI의 설치, 계정, persistent chat, model access, Tailscale Funnel 실행 방법을 기록한다.
 
-## 1. 설치와 계정 설정
+---
+
+## 1. 설치
 
 ```bash
 source .venv/Scripts/activate
 python -m pip install -e ".[dev]"
 ```
 
-`.env.example`을 `.env`로 복사한다.
+`.env.example`을 `.env`로 복사한 뒤 실제 계정과 환경에 맞게 수정한다.
+
+기본 예시:
 
 ```env
+OLLAMA_HOST=http://127.0.0.1:11434
 MAIN_MODEL=gemma4:e4b
 VISION_MODEL=
+
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
 CHAT_DB_PATH=./data/chat.sqlite3
 
-OWNER_USERS=[{"user_id":"owner","user_pw":"내비밀번호","db_id":"local-user"}]
+OWNER_USERS=[{"user_id":"owner","user_pw":"change-me","db_id":"local-user"}]
 TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]
 
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
+SESSION_HISTORY_MESSAGES=24
 TAILSCALE_FUNNEL=false
 ```
 
-Owner와 Trial 모두 각 계정을 하나의 `user_info` record로 정의한다. record에는 정확히 세 필드가 있다.
+`.env`는 Git에 올리지 않는다. `user_pw`가 현재 설계상 plaintext이기 때문이다.
+
+---
+
+## 2. user_info 구조
+
+Owner와 Trial 모두 정확히 세 string field를 갖는 record로 정의한다.
 
 ```text
 user_id
   Web UI 로그인 ID
-  나중에 변경 가능
+  변경 가능
 
 user_pw
-  Web UI 로그인 비밀번호
-  현재 설계에서는 .env에 평문 문자열로 저장
+  로그인 비밀번호
+  local .env에 plaintext 저장
 
 db_id
-  memory/chat 등 persistent data의 내부 identity
-  로그인 ID를 바꾸더라도 기존 데이터를 이어 쓰려면 그대로 유지
+  stable persistent identity
+  memory / Web chat / trial upload ownership 기준
 ```
 
-예를 들어 기존 memory graph가 `local-user`로 쌓여 있다면 로그인 ID를 새로 정해도 DB migration은 필요 없다.
+예를 들어 기존 memory graph가 `local-user`로 쌓여 있다면 로그인 ID를 바꿔도 `db_id`만 유지하면 된다.
 
 ```env
-OWNER_USERS=[{"user_id":"원하는-로그인-ID","user_pw":"내비밀번호","db_id":"local-user"}]
+OWNER_USERS=[{"user_id":"new-login-name","user_pw":"new-password","db_id":"local-user"}]
 ```
 
-이후 로그인 ID를 다시 바꾸고 싶다면 `user_id`만 바꾸고 `db_id`는 유지한다.
+이 경우 memory DB migration 없이 기존 `local-user` 기억과 Web chat을 계속 사용한다.
 
-```env
-OWNER_USERS=[{"user_id":"new-login-name","user_pw":"내비밀번호","db_id":"local-user"}]
-```
+모든 `user_id`는 고유해야 하고 모든 `db_id`도 고유해야 한다. 다른 계정의 `user_id`와 `db_id`가 교차 충돌하는 설정도 startup에서 거부한다.
 
-그러면 기존 `local-user` memory와 Web UI chat history는 계속 같은 계정 데이터로 연결된다.
+Legacy `OWNER_ID`, `OWNER_MEMORY_ID`, `OWNER_ACCOUNTS`, `TRIAL_IDS`는 fallback으로 사용하지 않는다.
 
-`OWNER_USERS`에는 여러 owner를 넣을 수 있고 `TRIAL_USERS`에도 여러 trial을 넣을 수 있다. 모든 `user_id`는 계정 간 고유해야 하고 모든 `db_id`도 고유해야 한다. 다른 계정의 `user_id`와 `db_id`가 교차 충돌하는 설정도 startup에서 거부한다.
+---
 
-기존 `OWNER_ID`, `OWNER_MEMORY_ID`, `OWNER_ACCOUNTS`, `TRIAL_IDS`는 새 인증 계약의 fallback으로 사용하지 않는다. `OWNER_USERS`가 없으면 startup이 명확하게 실패한다.
+## 3. 로그인과 세션
 
-`user_pw`는 요청대로 평문이다. `.env`는 Git에 올리지 않아야 한다. 로그인 실패 응답은 ID가 틀렸는지 비밀번호가 틀렸는지 구분하지 않는다.
+Owner/Trial 모두 ID + password로 로그인한다. 성공하면 서버가 Bearer token을 발급한다.
 
-`VISION_MODEL`은 선택 사항이다. 비워두면 `image_analyze`가 ToolRegistry에 노출되지 않는다.
+같은 `user_id`로 새 로그인하면 기존 token을 폐기한다. 즉 **new-login-wins** 정책이다.
 
-## 2. 로그인과 세션
+브라우저는 마지막으로 성공 로그인한 `user_id`만 localStorage에 기억한다. Password는 저장하지 않는다.
 
-Owner/Trial 모두 ID + 비밀번호로 로그인한다. 성공하면 서버가 임시 Bearer token을 발급한다.
+따라서 PC에서 사용하다 폰으로 같은 계정에 로그인해 PC token이 무효화되어도, PC로 돌아오면 ID는 이미 입력된 상태이고 password만 다시 입력하면 된다.
 
-같은 `user_id`로 새 로그인하면 기존 token은 즉시 폐기된다. 즉 한 계정은 한쪽 로그인만 유지하며 새 로그인이 우선한다.
+로그인 실패 응답은 ID가 틀렸는지 password가 틀렸는지 구분해 노출하지 않는다.
 
-브라우저는 마지막으로 성공 로그인한 `user_id`만 localStorage에 기억한다. 다른 기기 로그인으로 현재 session이 끊기거나 브라우저를 닫았다 다시 열어도 ID 입력란은 복원된다. 비밀번호는 저장하지 않으므로 다시 접속할 때는 비밀번호만 입력하면 된다.
+---
 
-대화 기록은 로그인 ID가 아니라 `db_id` 기준으로 `CHAT_DB_PATH`의 SQLite에 저장된다. 따라서 브라우저나 폰을 닫았다가 다시 접속해도 같은 `db_id`의 기존 conversation을 복원할 수 있다. background chat job이 사용자가 자리를 비운 동안 끝났다면 완료된 assistant answer도 persistent chat history에 저장되어 다음 접속 때 표시된다.
+## 4. Persistent chat
 
-### Chat DB 테이블과 기존 DB 호환
+대화 기록은 로그인 ID가 아니라 `db_id` 기준으로 `CHAT_DB_PATH`의 SQLite에 저장된다.
 
-`CHAT_DB_PATH`는 기존 MAI가 이미 사용하던 SQLite 파일을 가리킬 수도 있으므로, Web UI의 persistent conversation은 일반적인 `chat_messages`가 아니라 전용 `web_chat_messages` 테이블에 저장한다.
-
-startup 시 다음 규칙을 사용한다.
-
-- `web_chat_messages`가 없고, 기존 `chat_messages`가 #134/#135 persistent-chat이 만든 **정확히 알려진 schema**라면 `web_chat_messages`로 구조적으로 이관한다.
-- 기존 `chat_messages`가 다른 schema라면 다른 MAI 데이터로 간주해 수정하거나 삭제하지 않고 그대로 보존한다.
-- 그 경우 Web UI는 같은 SQLite 파일 안에 별도의 `web_chat_messages`를 새로 만든다.
-- `web_chat_messages` 자체가 알 수 없는 schema라면 조용히 우회하지 않고 startup에서 명확하게 실패한다.
-
-따라서 업그레이드를 위해 기존 `data/chat.sqlite3`를 삭제할 필요가 없다. 기존 데이터가 있는 파일을 그대로 둔 채 새 버전의 `python run_server.py`를 실행하면 된다.
-
-모델에게 전달하는 문맥은 전체 UI 기록과 별개로 최근 `SESSION_HISTORY_MESSAGES`개로 제한할 수 있다.
-
-## 3. 모델 선택
-
-`.env.example`의 기본 `MAIN_MODEL`은 여러 계정의 동시 사용을 고려해 `gemma4:e4b`로 둔다. Owner는 설치된 다른 Ollama 모델을 선택할 수 있지만 Trial은 `MAIN_MODEL`로 고정된다.
+Web UI 전용 table:
 
 ```text
-owner
-  GET /models -> 설치된 Ollama model 전체
-  /chat model -> 선택 가능
-
-trial
-  GET /models -> MAIN_MODEL 하나만
-  /chat model -> MAIN_MODEL로 고정
+web_chat_messages
 ```
 
-Trial client가 UI를 우회해 다른 model을 직접 요청해도 서버가 HTTP 403으로 거부한다.
+기존 SQLite 파일 안에 다른 용도의 `chat_messages`가 있어도 함부로 변형하지 않는다.
 
-## 4. 권한과 도구
+Startup migration 규칙:
 
-Owner는 전체 native tool을 사용할 수 있다. Trial은 arbitrary local mutation과 terminal을 받지 않지만 읽기/외부 정보 계열은 사용할 수 있다.
+- `web_chat_messages`가 없고 기존 `chat_messages`가 과거 persistent-chat의 정확히 알려진 schema이면 구조적으로 이관
+- 기존 `chat_messages`가 unrelated schema이면 그대로 보존하고 별도 `web_chat_messages` 생성
+- `web_chat_messages` 자체가 알 수 없는 schema이면 startup failure
+
+따라서 기존 `data/chat.sqlite3`를 업그레이드 때문에 삭제할 필요가 없다.
+
+UI는 full persisted conversation을 복원할 수 있지만, model에게 넘기는 conversational context는 최근 `SESSION_HISTORY_MESSAGES`개로 제한할 수 있다.
+
+Browser/device가 사라져도 server process가 살아 있으면 running resumable chat job은 계속될 수 있다. 완료된 assistant answer는 persistent chat에 저장되어 다음 접속에서 보인다.
+
+단, running job 자체는 process-memory state이므로 server process restart 이후 계산을 이어서 수행하는 durable queue는 아니다.
+
+---
+
+## 5. 모델 선택
+
+기본 `MAIN_MODEL`은 다음과 같다.
+
+```env
+MAIN_MODEL=gemma4:e4b
+```
+
+여러 계정의 동시 사용을 고려해 가벼운 모델을 기본으로 둔다.
+
+Owner:
+
+```text
+GET /models -> 설치된 Ollama models
+/chat -> 선택 가능
+```
+
+Trial:
+
+```text
+GET /models -> MAIN_MODEL 하나
+/chat -> MAIN_MODEL 고정
+```
+
+Trial client가 UI를 우회해 다른 model을 직접 보내도 server boundary에서 거부한다.
+
+Memory fact extraction은 해당 chat turn에서 실제 사용한 동일 model을 `think=False`로 사용한다. 별도 `MEMORY_MODEL`은 없다.
+
+---
+
+## 6. Tool requirement preflight와 final verifier
+
+각 user request는 main agent 전에 model-based tool requirement preflight를 거친다.
+
+Preflight는 user request, 최근 대화, 현재 available tool schema를 보고 이번 요청에 반드시 필요한 native tool을 structured output으로 선택한다. 선택된 required tools는 해당 run 동안 frozen된다.
+
+Main agent가 required tool 없이 final을 시도하면 correction round가 발생한다.
+
+Final answer는 release 전에 verifier를 거친다. 현재 주요 검증 축:
+
+```text
+numeric grounding
+claim/evidence grounding
+scope preservation
+temporal consistency
+action outcome verification
+task alignment
+evidence coverage
+```
+
+Evidence coverage는 이미 확보된 useful evidence를 model이 너무 조심스럽게 버리고 generic answer로 후퇴하는 것을 막기 위한 축이다. 추가 검색 가능성이나 exhaustive completeness 자체를 요구하지 않는다.
+
+Coverage correction은 최대 2회다. 이후에는 coverage 부족만으로 final을 더 붙잡지 않는다.
+
+---
+
+## 7. Failure recovery
+
+Main planner/agent가 fatal failure로 끝나면, 이미 확보된 tool evidence를 이용해 `FailureAnswerFinalizer`가 한 번 user-visible recovery answer를 만들 수 있다.
+
+이 recovery는 tool을 추가 호출하지 않으며:
+
+- 실패를 숨기지 않고
+- 성공하지 않은 결과를 성공했다고 하지 않으며
+- 확인된 부분과 실패/미확인 부분을 구분하고
+- 가능한 useful partial answer를 반환한다.
+
+Recovery 자체도 실패하면 원래 failure가 드러난다.
+
+---
+
+## 8. Owner / Trial tool 권한
+
+Owner는 전체 native tool을 사용할 수 있다.
+
+Trial은 read/search 계열과 자기 upload directory 내부의 제한된 write만 사용할 수 있다.
 
 ```text
 공통
@@ -125,12 +204,65 @@ owner 추가
   terminal_run
 
 trial 추가
-  file_write / file_create   # 자기 upload directory 안에서만
+  file_write / file_create
+  └─ 자기 upload directory 내부만
 ```
 
-Trial upload directory도 `db_id`에서 파생된다. 따라서 Trial의 `user_id`를 바꿔도 같은 `db_id`를 유지하면 기존 upload directory가 그대로 연결된다.
+Trial upload ownership은 `db_id` 기준이다. `user_id`를 바꿔도 같은 `db_id`를 유지하면 기존 upload directory가 이어진다.
 
-## 5. 로컬 UI 실행
+---
+
+## 9. 파일 업로드
+
+기본 upload root:
+
+```text
+./mai_uploads/
+```
+
+필요하면:
+
+```env
+MAI_UPLOAD_ROOT=./mai_uploads
+```
+
+Owner는 upload root를 사용하고 Trial은 `db_id`에서 파생된 전용 directory를 사용한다.
+
+같은 account directory에서 같은 filename을 조용히 overwrite하지 않고 HTTP 409로 실패한다. Filename에 path separator를 허용하지 않는다.
+
+업로드된 파일의 실제 path가 input에 추가되므로 model이 `file_read`, `document_read`, `image_analyze` 등을 사용할 수 있다.
+
+---
+
+## 10. Trial 초기화
+
+`.env.example`의 기본 체험 계정:
+
+```text
+ID: 체험판
+PW: 0000
+```
+
+다른 사용자에게 재사용하기 전 server를 종료하고 dry-run을 먼저 확인한다.
+
+```bash
+python reset_trial.py 체험판 --dry-run
+python reset_trial.py 체험판
+```
+
+Reset은 `user_id`로 account를 찾고 persistent ownership은 `db_id` 기준으로 제거한다.
+
+대상:
+
+- 해당 Trial memory
+- `web_chat_messages`의 해당 `db_id` conversation
+- 해당 Trial upload directory
+
+Unrelated legacy chat table은 임의 삭제하지 않는다.
+
+---
+
+## 11. 로컬 실행
 
 ```bash
 python run_server.py
@@ -142,29 +274,9 @@ python run_server.py
 http://127.0.0.1:8000
 ```
 
-로그인 화면에는 ID와 비밀번호 입력란이 표시된다. 비밀번호는 로그인 요청에만 사용하며 browser storage에 별도로 저장하지 않는다.
+---
 
-파일 업로드 root 기본값은 `./mai_uploads/`이다. 같은 계정 폴더에서 같은 이름을 조용히 덮어쓰지 않고 HTTP 409로 실패한다.
-
-## 6. Trial 계정 초기화
-
-기본 `.env.example`의 체험 계정은 다음과 같다.
-
-```text
-ID: 체험판
-PW: 0000
-```
-
-Trial ID를 다른 사람에게 재사용하려면 서버를 먼저 종료하고 `reset_trial.py`를 사용한다.
-
-```bash
-python reset_trial.py 체험판 --dry-run
-python reset_trial.py 체험판
-```
-
-초기화 대상은 해당 Trial의 `user_id`로 계정을 찾은 뒤, 실제 persistent memory/chat/upload ownership은 그 계정의 `db_id`를 기준으로 삭제한다. Web UI chat은 `web_chat_messages`만 대상으로 하며, schema가 다른 기존 `chat_messages` 테이블은 건드리지 않는다.
-
-## 7. Tailscale Funnel
+## 12. Tailscale Funnel
 
 `.env`:
 
@@ -178,28 +290,18 @@ TAILSCALE_FUNNEL=true
 python run_server.py
 ```
 
-MAI는 `tailscale funnel --bg --yes <MAI_PORT>`에 해당하는 공개 Funnel을 설정하고 Tailscale이 보고하는 public URL과 proxy mapping을 출력한다. `TAILSCALE_SERVE`는 폐기된 설정이며 true로 남아 있으면 startup에서 실패한다.
+MAI는 Tailscale background Funnel을 구성하고 public URL / proxy status를 terminal에 출력한다.
 
-## 8. Identity 흐름
+Legacy `TAILSCALE_SERVE=true`는 retired configuration이다. True로 남아 있으면 다른 방식으로 silent fallback하지 않고 startup에서 실패한다.
 
-```text
-.env user_info
-  ├─ user_id  -> 로그인 / 현재 session token 식별
-  ├─ user_pw  -> 로그인 인증
-  └─ db_id    -> stable persistent identity
-                   ├─ Memory User Anchor
-                   ├─ Web UI Chat history
-                   └─ Trial upload ownership
+---
 
-Authenticated Principal
-  ↓ role
-ToolRegistry permissions
-  ↓
-Main LLM + native tools
-  ↓
-Final verification
-  ↓
-Final response + background memory update(db_id)
+## 13. 테스트
+
+전체 regression test:
+
+```bash
+python -m pytest -q
 ```
 
-핵심 계약은 `user_id`를 이름표처럼 변경 가능하게 두고, 실제 장기 데이터 연결은 `db_id`가 담당한다는 것이다.
+Runtime, auth, persistent chat, tool preflight, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.
