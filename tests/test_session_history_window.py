@@ -58,3 +58,32 @@ def test_session_history_endpoint_respects_configured_window(tmp_path, monkeypat
         "message-5",
         "message-6",
     ]
+
+
+def test_session_history_endpoint_preserves_metadata_inside_limited_window(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SESSION_HISTORY_MESSAGES", "2")
+    store = ChatSessionStore(tmp_path / "chat.sqlite3")
+    store.append(db_id="local-user", session_id="default", role="user", content="old")
+    store.append(
+        db_id="local-user",
+        session_id="default",
+        role="assistant",
+        content="with-tools",
+        metadata={"model": "test-model", "tools": [{"name": "web_search", "ok": True}]},
+    )
+    store.append(db_id="local-user", session_id="default", role="user", content="latest")
+
+    principal = AccessPrincipal(user_id="owner", db_id="local-user", role=AccessRole.OWNER)
+    monkeypatch.setattr(server, "_chat_session_store", store)
+    monkeypatch.setattr(server, "_auth_sessions", {"token": principal})
+
+    payload = run(server.get_session_history("default", authorization="Bearer token"))
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": "with-tools",
+            "metadata": {"model": "test-model", "tools": [{"name": "web_search", "ok": True}]},
+        },
+        {"role": "user", "content": "latest"},
+    ]
