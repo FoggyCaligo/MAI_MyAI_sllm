@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -12,6 +13,7 @@ from ollama import AsyncClient
 
 from ..agent.loop import ModelTurnObserver, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
+from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
@@ -50,6 +52,8 @@ Your capabilities are defined by the native tools supplied with this request. Do
 
 Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use document_read for PDF, DOCX, XLSX, CSV, or PPTX files. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
+Large tool results may be represented by a bounded page containing a result_id, range metadata, and content. When more of that exact result is required, use tool_result_read with the supplied result_id and an explicit offset/limit rather than assuming omitted content.
+
 Preserve factual values exactly as they appear in user messages and tool results unless the user explicitly asks to transform them. Do not silently replace, round, reinterpret, or normalize a supplied number into a different value. Distinguish source facts from derived calculations: for example, a profitable sale does not imply that a separately stated target price was reached.
 
 Keep the meaning and scope of each source field, metric, screen, and time range separate unless the available evidence establishes that they use the same definition. Similar labels or related values do not make two metrics interchangeable. When comparing values from different sources or screens, do not attribute their difference to a specific cause unless that cause is supported by the source definitions, a verified calculation rule, or other evidence. If the relationship is uncertain, say what is known and leave the cause unresolved rather than inventing a reconciliation.
@@ -83,13 +87,19 @@ class MAIRuntime:
         vision_model: str | None = None,
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
+        max_inline_tool_result_chars: int | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
+        if max_inline_tool_result_chars is None:
+            max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "16000"))
+        if max_inline_tool_result_chars < 1024:
+            raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.cwd = cwd
         self.ollama_host = ollama_host
         self.model = model
         self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
+        self.max_inline_tool_result_chars = max_inline_tool_result_chars
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
         self.upload_root.mkdir(parents=True, exist_ok=True)
         self.memory_db_path = Path(memory_db_path).expanduser().resolve()
@@ -147,7 +157,12 @@ class MAIRuntime:
             names.append(name.strip())
         return tuple(names)
 
-    def _registry_for(self, principal: AccessPrincipal, working: WorkingGraph) -> ToolRegistry:
+    def _registry_for(
+        self,
+        principal: AccessPrincipal,
+        working: WorkingGraph,
+        tool_result_store: ToolResultStore,
+    ) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         register_time_tools(registry)
@@ -166,6 +181,7 @@ class MAIRuntime:
             )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
+        register_tool_result_tools(registry, tool_result_store)
         return registry
 
     async def run_user_message(
@@ -184,12 +200,14 @@ class MAIRuntime:
         adapter = self._adapter_for(selected_model)
         fact_extractor = self._fact_extractor_for(selected_model)
         working = WorkingGraph()
-        registry = self._registry_for(principal, working)
+        tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
+        registry = self._registry_for(principal, working, tool_result_store)
         agent = AgentRuntime(
             adapter,
             registry,
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
             max_semantic_verification_retries=2,
+            tool_result_store=tool_result_store,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]

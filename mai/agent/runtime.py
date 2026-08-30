@@ -9,6 +9,7 @@ from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
 from .requirements import FrozenToolRequirements
+from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
 
@@ -22,6 +23,7 @@ class AgentRuntime:
         max_rounds: int | None = None,
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
+        tool_result_store: ToolResultStore | None = None,
     ) -> None:
         if guard_config is not None and max_rounds is not None:
             raise ValueError("pass guard_config or max_rounds, not both")
@@ -33,6 +35,7 @@ class AgentRuntime:
             guard_config=guard_config,
             final_verifier=final_verifier,
             max_semantic_verification_retries=max_semantic_verification_retries,
+            tool_result_store=tool_result_store,
         )
 
     async def run(
