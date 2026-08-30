@@ -96,16 +96,15 @@ class MAIRuntime:
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
         self.concept_index = SqliteFtsConceptIndex(self.memory_db_path)
         self.recall = RecallService(self.graph, self.concept_index, self.segmenter)
-        fact_adapter = OllamaAdapter(ModelConfig(model=model, host=ollama_host, think=False))
         self.memory = MemoryRuntime(
             self.graph,
             self.concept_index,
             self.segmenter,
             self.recall,
             now=lambda: datetime.now(timezone.utc),
-            fact_extractor=OllamaFactExtractor(fact_adapter),
         )
         self._adapters: dict[str, OllamaAdapter] = {}
+        self._fact_extractors: dict[str, OllamaFactExtractor] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
         self._background_tasks: set[asyncio.Task[None]] = set()
 
@@ -118,6 +117,17 @@ class MAIRuntime:
             adapter = OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True))
             self._adapters[clean_model] = adapter
         return adapter
+
+    def _fact_extractor_for(self, model: str) -> OllamaFactExtractor:
+        clean_model = model.strip()
+        if not clean_model:
+            raise ValueError("model must be non-empty")
+        extractor = self._fact_extractors.get(clean_model)
+        if extractor is None:
+            adapter = OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False))
+            extractor = OllamaFactExtractor(adapter)
+            self._fact_extractors[clean_model] = extractor
+        return extractor
 
     async def list_models(self) -> tuple[str, ...]:
         response = await self._ollama_client.list()
@@ -169,6 +179,7 @@ class MAIRuntime:
             raise ValueError("prompt must be non-empty")
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
+        fact_extractor = self._fact_extractor_for(selected_model)
         working = WorkingGraph()
         registry = self._registry_for(principal, working)
         agent = AgentRuntime(
@@ -196,6 +207,7 @@ class MAIRuntime:
                 final_answer=result.content,
                 principal=principal,
                 tool_executions=result.tool_executions,
+                fact_extractor=fact_extractor,
             )
         )
         self._background_tasks.add(task)
@@ -210,6 +222,7 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
+        fact_extractor: OllamaFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
@@ -221,8 +234,9 @@ class MAIRuntime:
                 user_text=prompt,
                 final_answer=final_answer,
                 successful_tool_results=extraction_tool_results,
+                fact_extractor=fact_extractor,
             )
-            extraction_succeeded = self.memory.fact_extractor is not None
+            extraction_succeeded = True
             _LOG.info(
                 "MAI memory extraction ok facts=%d tool_results=%d",
                 len(fact_texts),
