@@ -19,12 +19,15 @@ class ModelConfig:
     host: str = "http://127.0.0.1:11434"
     think: ThinkSetting = True
     options: Mapping[str, Any] = field(default_factory=dict)
+    request_timeout_seconds: float = 120.0
 
     def __post_init__(self) -> None:
         if not self.model.strip():
             raise ValueError("model must be a non-empty Ollama model name")
         if not self.host.strip():
             raise ValueError("host must be a non-empty Ollama host")
+        if self.request_timeout_seconds <= 0:
+            raise ValueError("request_timeout_seconds must be positive")
 
 
 @dataclass(frozen=True, slots=True)

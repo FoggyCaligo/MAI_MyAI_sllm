@@ -175,6 +175,25 @@ class ToolRegistry:
 
         return tuple(definition.native_schema() for definition in self._definitions.values())
 
+    def model_context(self) -> tuple[dict[str, Any], ...]:
+        """Return runtime facts explicitly declared for model consumption.
+
+        Only the reserved `model_context` metadata field is exposed. The
+        registry does not infer meaning from tool names or metadata values.
+        """
+
+        contexts: list[dict[str, Any]] = []
+        for definition in self._definitions.values():
+            raw_context = definition.metadata.get("model_context")
+            if raw_context is None:
+                continue
+            if not isinstance(raw_context, Mapping):
+                raise TypeError(
+                    f"tool '{definition.name}' model_context metadata must be a mapping"
+                )
+            contexts.append({"tool": definition.name, "context": dict(raw_context)})
+        return tuple(contexts)
+
     async def invoke(self, call: NativeToolCall) -> Any:
         """Execute the exact native call selected by the model."""
 

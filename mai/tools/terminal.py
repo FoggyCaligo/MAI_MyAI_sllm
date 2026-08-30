@@ -43,6 +43,10 @@ def _shell_description() -> str:
     return "/bin/sh"
 
 
+def _shell_family() -> str:
+    return "cmd" if os.name == "nt" else "sh"
+
+
 def _terminate_process_tree(pid: int) -> None:
     if os.name == "nt":
         subprocess.run(
@@ -141,6 +145,7 @@ def register_terminal_tools(
         )
 
     shell_description = _shell_description()
+    shell_family = _shell_family()
     registry.add(
         name="terminal_run",
         description=(
@@ -161,4 +166,12 @@ def register_terminal_tools(
         handler=handler,
         timeout_seconds=None,
         category="terminal",
+        metadata={
+            "model_context": {
+                "shell": shell_description,
+                "shell_family": shell_family,
+                "default_cwd": str(register_default_cwd),
+                "posix_shell_syntax": shell_family == "sh",
+            }
+        },
     )

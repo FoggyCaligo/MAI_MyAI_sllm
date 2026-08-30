@@ -1,6 +1,7 @@
 """High-level AgentRuntime lifecycle orchestration."""
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
@@ -16,6 +17,10 @@ from .verification import FinalGroundingVerifier
 
 USER_VISIBLE_RESULT_CONTRACT = """
 The user cannot see internal native tool calls, tool results, terminal stdout/stderr, or server logs unless you explicitly include the relevant information in your final answer. Never refer to unseen internal output as if it were already visible to the user. After using tools, make the final answer self-contained: directly report the requested result, including material success/failure details and any evidence the user needs to understand the outcome.
+""".strip()
+
+TOOL_RUNTIME_CONTEXT_CONTRACT = """
+The following JSON is authoritative runtime context declared structurally by registered native tools. Respect it when constructing tool arguments. In particular, do not assume a different operating system, shell, working directory, or command syntax than the values declared here.
 """.strip()
 
 
@@ -54,9 +59,16 @@ class AgentRuntime:
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
+        runtime_context = self.loop.registry.model_context()
+        effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
+        if runtime_context:
+            effective_messages.insert(0, {
+                "role": "system",
+                "content": TOOL_RUNTIME_CONTEXT_CONTRACT + "\n" + json.dumps(runtime_context, ensure_ascii=False, separators=(",", ":")),
+            })
         with temporary_artifact_scope() as artifacts:
             result = await self.loop.run(
-                messages,
+                effective_messages,
                 think=think,
                 options=options,
                 requirements=requirements,

@@ -6,6 +6,7 @@ Ollama's native chat protocol.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -20,6 +21,10 @@ class OllamaAdapterError(RuntimeError):
 
 class OllamaRequestError(OllamaAdapterError):
     """Ollama rejected or failed a chat request."""
+
+
+class OllamaChatTimeoutError(OllamaAdapterError):
+    """Ollama did not complete one chat turn within the configured deadline."""
 
 
 class OllamaProtocolError(OllamaAdapterError):
@@ -54,7 +59,14 @@ class OllamaAdapter:
             payload["options"] = options
 
         try:
-            response = await self._client.chat(**payload)
+            response = await asyncio.wait_for(
+                self._client.chat(**payload),
+                timeout=self.config.request_timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise OllamaChatTimeoutError(
+                f"Ollama chat request exceeded {self.config.request_timeout_seconds:g} seconds"
+            ) from exc
         except ResponseError as exc:
             raise OllamaRequestError("Ollama chat request failed") from exc
 
