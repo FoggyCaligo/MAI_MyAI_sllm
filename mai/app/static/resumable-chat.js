@@ -135,22 +135,19 @@
     return nativeFetch(input, init);
   };
 
+  async function discoverActiveJob() {
+    const response = await nativeFetch('/chat/jobs/active', {
+      headers: headersWithAuth(),
+      cache: 'no-store',
+    });
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => ({}));
+    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    return jobs.length ? jobs[0] : null;
+  }
+
   async function recoverPendingJob() {
     if (recovering || currentSubmissionJobId) return;
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return;
-
-    let saved;
-    try {
-      saved = JSON.parse(raw);
-    } catch (_) {
-      localStorage.removeItem(storageKey);
-      return;
-    }
-    if (!saved?.job_id) {
-      localStorage.removeItem(storageKey);
-      return;
-    }
 
     recovering = true;
     let pending = null;
@@ -159,6 +156,23 @@
       const auth = await nativeFetch('/me', {headers: headersWithAuth(), cache: 'no-store'});
       if (auth.status === 401) return;
       if (!auth.ok) return;
+
+      let saved = null;
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        try {
+          saved = JSON.parse(raw);
+        } catch (_) {
+          localStorage.removeItem(storageKey);
+        }
+      }
+
+      if (!saved?.job_id) {
+        const active = await discoverActiveJob();
+        if (!active?.job_id) return;
+        saved = {job_id: active.job_id, created_at: Date.now()};
+        localStorage.setItem(storageKey, JSON.stringify(saved));
+      }
 
       setCurrentJob(saved.job_id);
       if (typeof addThinking === 'function') pending = addThinking();
