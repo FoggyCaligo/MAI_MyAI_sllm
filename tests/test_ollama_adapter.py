@@ -22,7 +22,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_adapter_passes_native_tools_thinking_and_options() -> None:
+def test_adapter_passes_native_tools_thinking_options_and_response_format() -> None:
     client = FakeClient({
         "message": {
             "role": "assistant",
@@ -56,6 +56,12 @@ def test_adapter_passes_native_tools_thinking_and_options() -> None:
         ),
         client=client,
     )
+    response_format = {
+        "type": "object",
+        "properties": {"answer": {"type": "string"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
 
     turn = run(adapter.chat(ChatRequest(
         messages=[{"role": "user", "content": "read both"}],
@@ -72,6 +78,7 @@ def test_adapter_passes_native_tools_thinking_and_options() -> None:
             },
         }],
         options={"num_ctx": 32768},
+        response_format=response_format,
     )))
 
     assert turn.content == ""
@@ -86,6 +93,7 @@ def test_adapter_passes_native_tools_thinking_and_options() -> None:
     assert payload["stream"] is False
     assert payload["tools"][0]["function"]["name"] == "file_read"
     assert payload["options"] == {"temperature": 0.2, "num_ctx": 32768}
+    assert payload["format"] == response_format
 
 
 def test_request_can_override_think_setting() -> None:
@@ -101,6 +109,7 @@ def test_request_can_override_think_setting() -> None:
     assert turn.thinking == ""
     assert turn.tool_calls == ()
     assert client.calls[0]["think"] is False
+    assert "format" not in client.calls[0]
 
 
 def test_invalid_native_tool_call_fails_visibly() -> None:

@@ -57,6 +57,11 @@ def test_preflight_freezes_model_selected_known_tools() -> None:
     request = adapter.requests[0]
     assert request.tools == ()
     assert request.think is False
+    assert request.response_format is not None
+    assert request.response_format["type"] == "object"
+    assert request.response_format["additionalProperties"] is False
+    assert request.response_format["required"] == ["required_tools"]
+    assert request.response_format["properties"]["required_tools"]["type"] == "array"
     payload = json.loads(request.messages[1]["content"])
     assert payload["user_request"] == "MAI 프로젝트 폴더에서 pytest를 돌려줘."
     assert payload["available_tools"][0]["name"] == "terminal_run"
@@ -80,8 +85,17 @@ def test_preflight_unknown_tool_fails_explicitly() -> None:
         ))
 
 
-def test_preflight_invalid_json_fails_explicitly() -> None:
+def test_preflight_structured_output_violation_fails_explicitly() -> None:
     planner = OllamaToolRequirementPlanner(FakeAdapter("not-json"))
 
-    with pytest.raises(ToolRequirementPlanningError, match="invalid JSON"):
+    with pytest.raises(ToolRequirementPlanningError, match="structured output schema"):
+        run(planner.plan(user_text="안녕", recent_dialogue=[], tools=()))
+
+
+def test_preflight_rejects_extra_structured_fields() -> None:
+    planner = OllamaToolRequirementPlanner(
+        FakeAdapter('{"required_tools":[],"unexpected":true}')
+    )
+
+    with pytest.raises(ToolRequirementPlanningError, match="structured output schema"):
         run(planner.plan(user_text="안녕", recent_dialogue=[], tools=()))

@@ -245,6 +245,26 @@
     return jobs.length ? jobs[0] : null;
   }
 
+  async function resolveRecoveryJobId(saved) {
+    if (saved?.job_id) {
+      try {
+        const response = await nativeFetch(`/chat/jobs/${encodeURIComponent(saved.job_id)}`, {
+          headers: headersWithAuth(),
+          cache: 'no-store',
+        });
+        if (response.status !== 404) return saved.job_id;
+        localStorage.removeItem(storageKey);
+      } catch (_) {
+        return saved.job_id;
+      }
+    }
+
+    const active = await discoverActiveJob();
+    if (!active?.job_id) return null;
+    localStorage.setItem(storageKey, JSON.stringify({job_id: active.job_id, created_at: Date.now()}));
+    return active.job_id;
+  }
+
   async function recoverPendingJob() {
     if (recovering || currentSubmissionJobId) return;
 
@@ -267,14 +287,9 @@
         }
       }
 
-      if (!saved?.job_id) {
-        const active = await discoverActiveJob();
-        if (!active?.job_id) return;
-        saved = {job_id: active.job_id, created_at: Date.now()};
-        localStorage.setItem(storageKey, JSON.stringify(saved));
-      }
+      recoveredJobId = await resolveRecoveryJobId(saved);
+      if (!recoveredJobId) return;
 
-      recoveredJobId = saved.job_id;
       setCurrentJob(recoveredJobId);
       if (typeof addThinking === 'function') pending = addThinking();
       setLiveProgressWrap(pending?.wrap || latestMaiWrap());

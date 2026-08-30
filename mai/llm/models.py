@@ -70,3 +70,4 @@ class ChatRequest:
     tools: Sequence[Mapping[str, Any]] = ()
     think: ThinkSetting | None = None
     options: Mapping[str, Any] | None = None
+    response_format: Mapping[str, Any] | str | None = None

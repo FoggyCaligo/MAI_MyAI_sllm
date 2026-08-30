@@ -57,6 +57,12 @@ class OllamaAdapter:
         }
         if options:
             payload["options"] = options
+        if request.response_format is not None:
+            payload["format"] = (
+                dict(request.response_format)
+                if isinstance(request.response_format, Mapping)
+                else request.response_format
+            )
 
         try:
             response = await asyncio.wait_for(
