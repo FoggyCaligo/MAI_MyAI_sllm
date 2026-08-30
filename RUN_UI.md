@@ -103,7 +103,7 @@ Startup migration 규칙:
 
 따라서 기존 `data/chat.sqlite3`를 업그레이드 때문에 삭제할 필요가 없다.
 
-UI는 full persisted conversation을 복원할 수 있지만, model에게 넘기는 conversational context는 최근 `SESSION_HISTORY_MESSAGES`개로 제한할 수 있다.
+`SESSION_HISTORY_MESSAGES`는 model conversational context와 Web UI 복원 범위에 동일하게 적용된다. 기본값 `24`이면 model에게 최근 24 messages를 전달하고, 새로 로그인하거나 페이지를 다시 열었을 때 화면에도 같은 최근 24 messages만 복원한다. 더 오래된 기록은 SQLite에 남아 있지만 현재 UI/model context에는 포함하지 않는다.
 
 Browser/device가 사라져도 server process가 살아 있으면 running resumable chat job은 계속될 수 있다. 완료된 assistant answer는 persistent chat에 저장되어 다음 접속에서 보인다.
 
