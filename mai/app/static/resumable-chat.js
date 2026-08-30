@@ -117,6 +117,7 @@
     const input = document.getElementById('msg-input');
     if (!sendButton || !input) return;
 
+    sendButton.style.color = '';
     if (!currentSubmissionJobId) {
       if (typeof syncSendButton === 'function') syncSendButton();
       return;
@@ -124,7 +125,8 @@
 
     const hasMessage = Boolean(input.value.trim());
     sendButton.textContent = hasMessage ? '전송' : '중단';
-    sendButton.classList.toggle('stop-mode', !hasMessage);
+    sendButton.classList.remove('stop-mode');
+    sendButton.style.color = hasMessage ? '' : 'var(--danger)';
     sendButton.disabled = false;
   }
 
