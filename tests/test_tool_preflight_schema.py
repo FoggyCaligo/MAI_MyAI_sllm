@@ -78,7 +78,7 @@ class _BatchAwareAdapter:
         return SimpleNamespace(content=content)
 
 
-def test_planner_splits_tools_into_ordered_batches_of_five_and_unions_decisions() -> None:
+def test_planner_splits_tools_into_batches_of_five_and_unions_decisions() -> None:
     tools = tuple(_tool(f"tool_{index}") for index in range(12))
     adapter = _BatchAwareAdapter({"tool_1", "tool_6", "tool_11"})
     planner = OllamaToolRequirementPlanner(adapter)
@@ -86,20 +86,60 @@ def test_planner_splits_tools_into_ordered_batches_of_five_and_unions_decisions(
     result = _run(planner.plan(user_text="do the task", recent_dialogue=(), tools=tools))
 
     assert result.required_tools == frozenset({"tool_1", "tool_6", "tool_11"})
-    assert [request.response_format["required"] for request in adapter.requests] == [
+    assert sorted(request.response_format["required"] for request in adapter.requests) == sorted([
         ["tool_0", "tool_1", "tool_2", "tool_3", "tool_4"],
         ["tool_5", "tool_6", "tool_7", "tool_8", "tool_9"],
         ["tool_10", "tool_11"],
-    ]
+    ])
     payload_batches = [
         [tool["name"] for tool in json.loads(request.messages[1]["content"])["available_tools"]]
         for request in adapter.requests
     ]
-    assert payload_batches == [
+    assert sorted(payload_batches) == sorted([
         ["tool_0", "tool_1", "tool_2", "tool_3", "tool_4"],
         ["tool_5", "tool_6", "tool_7", "tool_8", "tool_9"],
         ["tool_10", "tool_11"],
-    ]
+    ])
+
+
+class _ParallelProbeAdapter:
+    def __init__(self, expected_calls: int) -> None:
+        self.expected_calls = expected_calls
+        self.started = 0
+        self.all_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def chat(self, request):
+        self.started += 1
+        if self.started == self.expected_calls:
+            self.all_started.set()
+        await self.release.wait()
+        return SimpleNamespace(content=json.dumps({
+            name: False
+            for name in request.response_format["required"]
+        }))
+
+
+async def _assert_batches_start_concurrently() -> None:
+    tools = tuple(_tool(f"tool_{index}") for index in range(12))
+    adapter = _ParallelProbeAdapter(expected_calls=3)
+    planner = OllamaToolRequirementPlanner(adapter)
+
+    task = asyncio.create_task(planner.plan(
+        user_text="do the task",
+        recent_dialogue=(),
+        tools=tools,
+    ))
+    await asyncio.wait_for(adapter.all_started.wait(), timeout=1.0)
+    adapter.release.set()
+    result = await task
+
+    assert adapter.started == 3
+    assert result.required_tools == frozenset()
+
+
+def test_planner_starts_all_batches_concurrently() -> None:
+    _run(_assert_batches_start_concurrently())
 
 
 @pytest.mark.parametrize(

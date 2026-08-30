@@ -30,6 +30,8 @@ batch 3: tool 10~11
 
 각 batch에는 그 batch의 tool 정의만 `available_tools`와 response schema에 포함된다. 한 batch의 판단 결과가 다른 batch의 schema를 바꾸지는 않는다.
 
+모든 batch classification은 같은 preflight 단계에서 **동시에 시작**한다. Runtime은 모든 batch 결과가 성공적으로 돌아온 뒤에만 decision을 합친다. 어느 batch 하나라도 실패하면 전체 preflight가 실패한다.
+
 `recent_dialogue`는 reference를 해석하기 위한 context다. 이전 사실이나 이전 tool/research 성공을 자동으로 증명하는 evidence로 취급하지 않는다.
 
 ## 동적 boolean response schema

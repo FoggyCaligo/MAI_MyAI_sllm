@@ -1,6 +1,7 @@
 """Model-driven preflight for freezing required native tools before agent execution."""
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Sequence
 
@@ -84,10 +85,41 @@ def _parse_batch_decisions(
 
 
 class OllamaToolRequirementPlanner:
-    """Classify available tools in small structured batches and freeze required tools."""
+    """Classify small tool batches concurrently and freeze the required-tool union."""
 
     def __init__(self, adapter: OllamaAdapter) -> None:
         self.adapter = adapter
+
+    async def _classify_batch(
+        self,
+        *,
+        user_text: str,
+        recent_dialogue: Sequence[dict[str, object]],
+        batch: Sequence[ToolDefinition],
+    ) -> dict[str, bool]:
+        available_tools = [
+            {
+                "name": definition.name,
+                "description": definition.description,
+                "parameters": definition.input_model.model_json_schema(),
+            }
+            for definition in batch
+        ]
+        payload: dict[str, Any] = {
+            "user_request": user_text,
+            "recent_dialogue": list(recent_dialogue),
+            "available_tools": available_tools,
+        }
+        turn = await self.adapter.chat(ChatRequest(
+            messages=(
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+            response_format=_decision_schema(batch),
+        ))
+        return _parse_batch_decisions(turn.content, batch)
 
     async def plan(
         self,
@@ -99,30 +131,18 @@ class OllamaToolRequirementPlanner:
         if not user_text.strip():
             raise ValueError("user_text must be non-empty")
 
+        batches = _tool_batches(tools)
+        batch_decisions = await asyncio.gather(*(
+            self._classify_batch(
+                user_text=user_text,
+                recent_dialogue=recent_dialogue,
+                batch=batch,
+            )
+            for batch in batches
+        ))
+
         decisions: dict[str, bool] = {}
-        for batch in _tool_batches(tools):
-            available_tools = [
-                {
-                    "name": definition.name,
-                    "description": definition.description,
-                    "parameters": definition.input_model.model_json_schema(),
-                }
-                for definition in batch
-            ]
-            payload: dict[str, Any] = {
-                "user_request": user_text,
-                "recent_dialogue": list(recent_dialogue),
-                "available_tools": available_tools,
-            }
-            turn = await self.adapter.chat(ChatRequest(
-                messages=(
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                ),
-                tools=(),
-                think=False,
-                response_format=_decision_schema(batch),
-            ))
-            decisions.update(_parse_batch_decisions(turn.content, batch))
+        for batch_result in batch_decisions:
+            decisions.update(batch_result)
 
         return FrozenToolRequirements.from_decisions(decisions)
