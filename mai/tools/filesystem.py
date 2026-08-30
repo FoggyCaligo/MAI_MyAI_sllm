@@ -86,6 +86,15 @@ def _require_within_root(path: str, *, root: str | Path) -> Path:
     return target
 
 
+def _collection_window(*, returned_count: int, truncated: bool) -> dict[str, Any]:
+    return {
+        "returned_count": returned_count,
+        "total_count": None if truncated else returned_count,
+        "has_more": truncated,
+        "complete": not truncated,
+    }
+
+
 def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500, cwd: str | Path | None = None) -> dict[str, Any]:
     root = _resolve(path, cwd)
     if not root.exists():
@@ -101,7 +110,12 @@ def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500,
             break
         stat = entry.stat()
         items.append({"path": str(entry), "name": entry.name, "type": "directory" if entry.is_dir() else "file", "size": None if entry.is_dir() else stat.st_size, "modified_ns": stat.st_mtime_ns})
-    return {"root": str(root), "items": items, "truncated": truncated}
+    return {
+        "root": str(root),
+        "items": items,
+        "truncated": truncated,
+        "collection": _collection_window(returned_count=len(items), truncated=truncated),
+    }
 
 
 def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: str | Path | None = None) -> dict[str, Any]:
@@ -111,6 +125,7 @@ def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: s
     if not base.is_dir():
         raise NotADirectoryError(str(base))
     results: list[str] = []
+    truncated = False
     for current_root, dirs, files in os.walk(base):
         for name in [*dirs, *files]:
             full = Path(current_root) / name
@@ -118,8 +133,17 @@ def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: s
             if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(relative, pattern):
                 results.append(str(full))
                 if len(results) >= max_results:
-                    return {"root": str(base), "pattern": pattern, "results": results, "truncated": True}
-    return {"root": str(base), "pattern": pattern, "results": results, "truncated": False}
+                    truncated = True
+                    break
+        if truncated:
+            break
+    return {
+        "root": str(base),
+        "pattern": pattern,
+        "results": results,
+        "truncated": truncated,
+        "collection": _collection_window(returned_count=len(results), truncated=truncated),
+    }
 
 
 def file_read(*, path: str, encoding: str = "utf-8", max_chars: int | None = None, cwd: str | Path | None = None) -> dict[str, Any]:
@@ -141,15 +165,7 @@ def file_write(*, path: str, content: str, encoding: str = "utf-8", cwd: str | P
     return {"path": str(target), "bytes": target.stat().st_size}
 
 
-def file_create(
-    *,
-    path: str,
-    content: str = "",
-    encoding: str = "utf-8",
-    create_parents: bool = False,
-    lifecycle: Literal["persistent", "temporary"] = "persistent",
-    cwd: str | Path | None = None,
-) -> dict[str, Any]:
+def file_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent", cwd: str | Path | None = None) -> dict[str, Any]:
     target = _resolve(path, cwd)
     if target.exists():
         raise FileExistsError(str(target))
@@ -201,28 +217,13 @@ def file_copy(*, source: str, destination: str, create_parents: bool = False, cw
 
 
 _READ_BINDINGS = (
-    ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed.", FileListInput, file_list),
-    ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root.", FileSearchInput, file_search),
-    (
-        "file_read",
-        "Read a UTF-8 or explicitly encoded local text file from any accessible path. "
-        "Do not guess an unconfirmed file path. If the project structure is unknown, or a file_read path fails, "
-        "discover the actual path with file_list, file_search, or code_search before retrying.",
-        FileReadInput,
-        file_read,
-    ),
+    ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed. collection.complete=false means the returned items are only a partial collection.", FileListInput, file_list),
+    ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root. collection.complete=false means more matches may exist beyond the returned results.", FileSearchInput, file_search),
+    ("file_read", "Read a UTF-8 or explicitly encoded local text file from any accessible path. Do not guess an unconfirmed file path. If the project structure is unknown, or a file_read path fails, discover the actual path with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
 )
 _WRITE_BINDINGS = (
     ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
-    (
-        "file_create",
-        "Create a new local text file and fail if it already exists. "
-        "Use lifecycle=temporary for scratch files created only to inspect, verify, or complete the current request; "
-        "temporary files are removed automatically after the final answer is approved. "
-        "Use the default lifecycle=persistent for files the user asked to keep.",
-        FileCreateInput,
-        file_create,
-    ),
+    ("file_create", "Create a new local text file and fail if it already exists. Use lifecycle=temporary for scratch files created only to inspect, verify, or complete the current request; temporary files are removed automatically after the final answer is approved. Use the default lifecycle=persistent for files the user asked to keep.", FileCreateInput, file_create),
     ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
     ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
     ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
@@ -237,61 +238,23 @@ def _register_bindings(registry: ToolRegistry, bindings: tuple[tuple[str, str, t
 
 
 def register_filesystem_read_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
-    """Register only non-mutating filesystem capabilities."""
     _register_bindings(registry, _READ_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
 
 
-def register_upload_scoped_write_tools(
-    registry: ToolRegistry,
-    *,
-    upload_root: str | Path,
-    timeout_seconds: float | None = None,
-) -> None:
-    """Allow trial users to create/replace text files only inside the upload root."""
+def register_upload_scoped_write_tools(registry: ToolRegistry, *, upload_root: str | Path, timeout_seconds: float | None = None) -> None:
     root = Path(upload_root).expanduser().resolve(strict=False)
 
     def scoped_write(*, path: str, content: str, encoding: str = "utf-8") -> dict[str, Any]:
         target = _require_within_root(path, root=root)
         return file_write(path=str(target), content=content, encoding=encoding)
 
-    def scoped_create(
-        *,
-        path: str,
-        content: str = "",
-        encoding: str = "utf-8",
-        create_parents: bool = False,
-        lifecycle: Literal["persistent", "temporary"] = "persistent",
-    ) -> dict[str, Any]:
+    def scoped_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent") -> dict[str, Any]:
         target = _require_within_root(path, root=root)
-        return file_create(
-            path=str(target),
-            content=content,
-            encoding=encoding,
-            create_parents=create_parents,
-            lifecycle=lifecycle,
-        )
+        return file_create(path=str(target), content=content, encoding=encoding, create_parents=create_parents, lifecycle=lifecycle)
 
-    registry.add(
-        name="file_write",
-        description="Replace an existing text file only when it is inside the MAI upload directory.",
-        input_model=FileWriteInput,
-        handler=scoped_write,
-        timeout_seconds=timeout_seconds,
-        category="filesystem",
-    )
-    registry.add(
-        name="file_create",
-        description=(
-            "Create a new text file only inside the MAI upload directory. "
-            "Use lifecycle=temporary only for current-request scratch files; use persistent for user-requested output."
-        ),
-        input_model=FileCreateInput,
-        handler=scoped_create,
-        timeout_seconds=timeout_seconds,
-        category="filesystem",
-    )
+    registry.add(name="file_write", description="Replace an existing text file only when it is inside the MAI upload directory.", input_model=FileWriteInput, handler=scoped_write, timeout_seconds=timeout_seconds, category="filesystem")
+    registry.add(name="file_create", description="Create a new text file only inside the MAI upload directory. Use lifecycle=temporary only for current-request scratch files; use persistent for user-requested output.", input_model=FileCreateInput, handler=scoped_create, timeout_seconds=timeout_seconds, category="filesystem")
 
 
 def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
-    """Register read and mutating filesystem capabilities."""
     _register_bindings(registry, _READ_BINDINGS + _WRITE_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
