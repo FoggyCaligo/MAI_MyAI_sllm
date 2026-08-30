@@ -1,0 +1,6 @@
+﻿STATUS=OK
+PUBLIC_KEY_AUTH=enabled
+PASSWORD_AUTH=disabled
+KEYBOARD_INTERACTIVE_AUTH=disabled
+AUTHORIZED_KEYS=C:\ProgramData\ssh\administrators_authorized_keys
+FINGERPRINT=256 SHA256:0//frlh9qOJbTuTFMQwB/V8Y4znPtMctxXUrbySp5TQ u0_a511@localhost (ED25519)

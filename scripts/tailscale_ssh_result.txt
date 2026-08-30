@@ -1,0 +1,6 @@
+﻿STATUS=OK
+WINDOWS_USER=bigla
+TAILSCALE_IP=100.82.106.53
+SSH_PORT=22
+PASSWORD_AUTH=temporarily-enabled
+CONFIG_BACKUP=C:\ProgramData\ssh\sshd_config.mai-backup
