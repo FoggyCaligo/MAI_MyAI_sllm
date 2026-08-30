@@ -12,14 +12,14 @@ python -m pip install -e ".[dev]"
 `.env.example`을 `.env`로 복사한다.
 
 ```env
-MAIN_MODEL=ornith-1.5:9b
+MAIN_MODEL=gemma4:e4b
 VISION_MODEL=
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
 CHAT_DB_PATH=./data/chat.sqlite3
 
-OWNER_USERS=[{"user_id":"tpdlsemflajtlswodyd","user_pw":"내비밀번호","db_id":"local-user"}]
-TRIAL_USERS=[{"user_id":"trial-a","user_pw":"trial-password","db_id":"trial-db-a"}]
+OWNER_USERS=[{"user_id":"owner","user_pw":"내비밀번호","db_id":"local-user"}]
+TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]
 
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
@@ -45,7 +45,7 @@ db_id
 예를 들어 기존 memory graph가 `local-user`로 쌓여 있다면 로그인 ID를 새로 정해도 DB migration은 필요 없다.
 
 ```env
-OWNER_USERS=[{"user_id":"tpdlsemflajtlswodyd","user_pw":"내비밀번호","db_id":"local-user"}]
+OWNER_USERS=[{"user_id":"원하는-로그인-ID","user_pw":"내비밀번호","db_id":"local-user"}]
 ```
 
 이후 로그인 ID를 다시 바꾸고 싶다면 `user_id`만 바꾸고 `db_id`는 유지한다.
@@ -54,7 +54,7 @@ OWNER_USERS=[{"user_id":"tpdlsemflajtlswodyd","user_pw":"내비밀번호","db_id
 OWNER_USERS=[{"user_id":"new-login-name","user_pw":"내비밀번호","db_id":"local-user"}]
 ```
 
-그러면 기존 `local-user` memory와 chat history는 계속 같은 계정 데이터로 연결된다.
+그러면 기존 `local-user` memory와 Web UI chat history는 계속 같은 계정 데이터로 연결된다.
 
 `OWNER_USERS`에는 여러 owner를 넣을 수 있고 `TRIAL_USERS`에도 여러 trial을 넣을 수 있다. 모든 `user_id`는 계정 간 고유해야 하고 모든 `db_id`도 고유해야 한다. 다른 계정의 `user_id`와 `db_id`가 교차 충돌하는 설정도 startup에서 거부한다.
 
@@ -70,11 +70,28 @@ Owner/Trial 모두 ID + 비밀번호로 로그인한다. 성공하면 서버가 
 
 같은 `user_id`로 새 로그인하면 기존 token은 즉시 폐기된다. 즉 한 계정은 한쪽 로그인만 유지하며 새 로그인이 우선한다.
 
+브라우저는 마지막으로 성공 로그인한 `user_id`만 localStorage에 기억한다. 다른 기기 로그인으로 현재 session이 끊기거나 브라우저를 닫았다 다시 열어도 ID 입력란은 복원된다. 비밀번호는 저장하지 않으므로 다시 접속할 때는 비밀번호만 입력하면 된다.
+
 대화 기록은 로그인 ID가 아니라 `db_id` 기준으로 `CHAT_DB_PATH`의 SQLite에 저장된다. 따라서 브라우저나 폰을 닫았다가 다시 접속해도 같은 `db_id`의 기존 conversation을 복원할 수 있다. background chat job이 사용자가 자리를 비운 동안 끝났다면 완료된 assistant answer도 persistent chat history에 저장되어 다음 접속 때 표시된다.
+
+### Chat DB 테이블과 기존 DB 호환
+
+`CHAT_DB_PATH`는 기존 MAI가 이미 사용하던 SQLite 파일을 가리킬 수도 있으므로, Web UI의 persistent conversation은 일반적인 `chat_messages`가 아니라 전용 `web_chat_messages` 테이블에 저장한다.
+
+startup 시 다음 규칙을 사용한다.
+
+- `web_chat_messages`가 없고, 기존 `chat_messages`가 #134/#135 persistent-chat이 만든 **정확히 알려진 schema**라면 `web_chat_messages`로 구조적으로 이관한다.
+- 기존 `chat_messages`가 다른 schema라면 다른 MAI 데이터로 간주해 수정하거나 삭제하지 않고 그대로 보존한다.
+- 그 경우 Web UI는 같은 SQLite 파일 안에 별도의 `web_chat_messages`를 새로 만든다.
+- `web_chat_messages` 자체가 알 수 없는 schema라면 조용히 우회하지 않고 startup에서 명확하게 실패한다.
+
+따라서 업그레이드를 위해 기존 `data/chat.sqlite3`를 삭제할 필요가 없다. 기존 데이터가 있는 파일을 그대로 둔 채 새 버전의 `python run_server.py`를 실행하면 된다.
 
 모델에게 전달하는 문맥은 전체 UI 기록과 별개로 최근 `SESSION_HISTORY_MESSAGES`개로 제한할 수 있다.
 
 ## 3. 모델 선택
+
+`.env.example`의 기본 `MAIN_MODEL`은 여러 계정의 동시 사용을 고려해 `gemma4:e4b`로 둔다. Owner는 설치된 다른 Ollama 모델을 선택할 수 있지만 Trial은 `MAIN_MODEL`로 고정된다.
 
 ```text
 owner
@@ -131,14 +148,21 @@ http://127.0.0.1:8000
 
 ## 6. Trial 계정 초기화
 
+기본 `.env.example`의 체험 계정은 다음과 같다.
+
+```text
+ID: 체험판
+PW: 0000
+```
+
 Trial ID를 다른 사람에게 재사용하려면 서버를 먼저 종료하고 `reset_trial.py`를 사용한다.
 
 ```bash
-python reset_trial.py trial-a --dry-run
-python reset_trial.py trial-a
+python reset_trial.py 체험판 --dry-run
+python reset_trial.py 체험판
 ```
 
-초기화 대상은 해당 Trial의 `user_id`로 계정을 찾은 뒤, 실제 persistent memory/chat/upload ownership은 그 계정의 `db_id`를 기준으로 삭제한다. 따라서 login ID와 persistent ID를 혼동하지 않는다.
+초기화 대상은 해당 Trial의 `user_id`로 계정을 찾은 뒤, 실제 persistent memory/chat/upload ownership은 그 계정의 `db_id`를 기준으로 삭제한다. Web UI chat은 `web_chat_messages`만 대상으로 하며, schema가 다른 기존 `chat_messages` 테이블은 건드리지 않는다.
 
 ## 7. Tailscale Funnel
 
@@ -164,7 +188,7 @@ MAI는 `tailscale funnel --bg --yes <MAI_PORT>`에 해당하는 공개 Funnel을
   ├─ user_pw  -> 로그인 인증
   └─ db_id    -> stable persistent identity
                    ├─ Memory User Anchor
-                   ├─ Chat history
+                   ├─ Web UI Chat history
                    └─ Trial upload ownership
 
 Authenticated Principal
