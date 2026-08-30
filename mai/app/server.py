@@ -367,14 +367,15 @@ async def get_session_history(
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     _, principal = _principal_from_authorization(authorization)
+    limit = _history_limit()
     return {
         "session_id": session_id,
         "messages": _get_chat_session_store().messages(
             db_id=principal.db_id,
             session_id=session_id,
-            limit=None,
+            limit=limit,
             include_metadata=True,
-        ),
+        ) if limit else [],
     }
 
 
