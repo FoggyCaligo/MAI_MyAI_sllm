@@ -1,8 +1,8 @@
 """Reset one configured MAI trial account for reuse.
 
-Run this while the MAI server is stopped. Memory, persisted chat history, and
-isolated uploads are owned by the account's stable db_id, not its mutable login
-user_id.
+Run this while the MAI server is stopped. Memory, persisted Web UI chat history,
+and isolated uploads are owned by the account's stable db_id, not its mutable
+login user_id.
 """
 from __future__ import annotations
 
@@ -18,7 +18,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from mai.app.access import AccessPolicy, AccessRole
+from mai.app.chat_sessions import LEGACY_CHAT_TABLE, WEB_CHAT_TABLE
 from mai.app.uploads import trial_upload_directory
+
+
+_COMMON_CHAT_COLUMNS = {"id", "session_id", "role", "content", "created_at"}
+_KNOWN_AUTH_CHAT_COLUMNS = _COMMON_CHAT_COLUMNS | {"auth_user_id"}
+_KNOWN_DB_CHAT_COLUMNS = _COMMON_CHAT_COLUMNS | {"db_id"}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -144,36 +150,66 @@ def _reset_memory(db_path: Path, db_id: str, *, dry_run: bool) -> dict[str, int]
         connection.close()
 
 
+def _chat_table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def _chat_table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    return connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone() is not None
+
+
 def _reset_chat_history(chat_db_path: Path, *, user_id: str, db_id: str, dry_run: bool) -> int:
     if not chat_db_path.exists():
         return 0
     connection = sqlite3.connect(chat_db_path)
     connection.row_factory = sqlite3.Row
     try:
-        table = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages'"
-        ).fetchone()
-        if table is None:
-            return 0
-        columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(chat_messages)").fetchall()}
-        if "db_id" in columns:
-            column = "db_id"
-            identities = tuple(dict.fromkeys((db_id, user_id)))
-        elif "auth_user_id" in columns:
-            column = "auth_user_id"
-            identities = tuple(dict.fromkeys((user_id, db_id)))
+        table_name: str | None = None
+        column: str | None = None
+        identities: tuple[str, ...] = ()
+
+        if _chat_table_exists(connection, WEB_CHAT_TABLE):
+            columns = _chat_table_columns(connection, WEB_CHAT_TABLE)
+            if columns == _KNOWN_DB_CHAT_COLUMNS:
+                table_name = WEB_CHAT_TABLE
+                column = "db_id"
+                identities = tuple(dict.fromkeys((db_id, user_id)))
+            elif columns == _KNOWN_AUTH_CHAT_COLUMNS:
+                table_name = WEB_CHAT_TABLE
+                column = "auth_user_id"
+                identities = tuple(dict.fromkeys((user_id, db_id)))
+            else:
+                raise RuntimeError(f"{WEB_CHAT_TABLE} has an unsupported schema")
+        elif _chat_table_exists(connection, LEGACY_CHAT_TABLE):
+            columns = _chat_table_columns(connection, LEGACY_CHAT_TABLE)
+            if columns == _KNOWN_DB_CHAT_COLUMNS:
+                table_name = LEGACY_CHAT_TABLE
+                column = "db_id"
+                identities = tuple(dict.fromkeys((db_id, user_id)))
+            elif columns == _KNOWN_AUTH_CHAT_COLUMNS:
+                table_name = LEGACY_CHAT_TABLE
+                column = "auth_user_id"
+                identities = tuple(dict.fromkeys((user_id, db_id)))
+            else:
+                # This is an unrelated pre-existing MAI table. Trial reset must
+                # not inspect or mutate data that it does not structurally own.
+                return 0
         else:
-            raise RuntimeError("chat_messages has neither db_id nor legacy auth_user_id")
+            return 0
+
         placeholders = ",".join("?" for _ in identities)
         row = connection.execute(
-            f"SELECT COUNT(*) FROM chat_messages WHERE {column} IN ({placeholders})",
+            f"SELECT COUNT(*) FROM {table_name} WHERE {column} IN ({placeholders})",
             identities,
         ).fetchone()
         count = int(row[0])
         if not dry_run and count:
             with connection:
                 connection.execute(
-                    f"DELETE FROM chat_messages WHERE {column} IN ({placeholders})",
+                    f"DELETE FROM {table_name} WHERE {column} IN ({placeholders})",
                     identities,
                 )
         return count
