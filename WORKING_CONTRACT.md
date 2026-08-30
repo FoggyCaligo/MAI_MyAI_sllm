@@ -34,19 +34,37 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 ## 2. Tool requirement preflight
 
-Main agent 실행 전에 `OllamaToolRequirementPlanner`가 같은 선택 모델을 사용해 required native tool 집합을 구조화된 output으로 결정한다.
+Main agent 실행 전에 `OllamaToolRequirementPlanner`가 같은 선택 모델을 사용해 required native tool 집합을 **한 번의 structured-output 호출**로 결정한다.
 
 Planner contract:
 
 - `think=False`
 - `tools=()`
 - strict structured output
-- 결과는 exact registered tool name 목록
-- unknown tool을 선택하면 명시적 실패
+- 현재 노출된 `ToolDefinition` 목록을 순회해 response JSON Schema를 동적으로 생성
+- 각 등록 tool name은 schema의 required boolean property가 됨
+- 각 property의 `description`은 해당 `ToolDefinition.description`을 그대로 사용
+- 모델은 tool name을 새로 생성하지 않고 각 property에 `true` / `false`만 채움
+- 누락된 property, unknown property, non-boolean value는 명시적 structured-output failure
+- `recent_dialogue`는 reference resolution용 context이며, 과거 사실/도구 성공을 자동으로 증명하는 evidence가 아님
+- 사용자가 외부/로컬 source의 search, inspect, verify, compare, re-check를 요청하면 model knowledge만으로 완료했다고 보지 않음
+- 필요한 path, identifier, target이 아직 확립되지 않아 discovery tool이 먼저 필요하면 discovery와 operation tool을 모두 required로 판단
 - optional detail만을 위해 tool을 강제하지 않음
 - 현재 시점과 비교가 필요한 요청은 현재 시간이 이미 확립된 경우가 아니면 available current-time tool을 요구할 수 있음
 
-Planner가 만든 `FrozenToolRequirements`는 해당 run 동안 변하지 않는다.
+예를 들어 현재 registry에 `web_search`, `file_search`, `calculator`가 노출되어 있다면 response schema의 의미적 형태는 다음과 같다.
+
+```json
+{
+  "web_search": true,
+  "file_search": false,
+  "calculator": false
+}
+```
+
+실제 schema는 각 key를 required boolean property로 고정하고 각 property에 registry의 기존 tool description을 포함한다. 따라서 새 tool이 registry에 추가되면 preflight code에 tool name을 하드코딩하지 않아도 해당 boolean property가 자동으로 추가된다.
+
+`true`인 decision만 `FrozenToolRequirements`로 변환되며, 해당 run 동안 이 집합은 변하지 않는다.
 
 Agent가 required tool 실행 결과 없이 final을 시도하면 final을 거부한다. Correction round에서는 아직 missing인 required tool schema만 노출하고, required tool이 handler execution result를 만들 때까지 requirement를 해제하지 않는다.
 
