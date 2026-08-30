@@ -147,8 +147,7 @@
 
     const hasMessage = Boolean(input.value.trim());
     sendButton.textContent = hasMessage ? '전송' : '중단';
-    sendButton.classList.remove('stop-mode');
-    sendButton.style.color = hasMessage ? '' : 'var(--danger)';
+    sendButton.classList.toggle('stop-mode', !hasMessage);
     sendButton.disabled = false;
   }
 
