@@ -85,6 +85,23 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert len(reviewer.requests) == 1
 
 
+def test_numeric_verification_retries_are_bounded() -> None:
+    main = SequenceAdapter([
+        "케이씨텍은 72,000원에 팔았습니다.",
+        "케이씨텍은 72,000원에 팔았습니다.",
+        "케이씨텍은 72,000원에 팔았습니다.",
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=None)
+    runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
+
+    result = run(runtime.run_user_message("케이씨텍은 70,000원에 팔았어."))
+
+    assert result.content == "케이씨텍은 72,000원에 팔았습니다."
+    assert result.model_rounds == 3
+    assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
+    assert "numeric_grounding_failed" in main.requests[2].messages[-1]["content"]
+
+
 def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     main = SequenceAdapter([
         "두 화면의 차이는 전부 미실현 평가익입니다.",
@@ -229,8 +246,10 @@ def test_image_full_dates_ground_short_month_day_forms() -> None:
     result = run(verifier.verify(
         candidate="스크린샷의 기간은 8.16부터 8.27까지이며 확인일은 8.28입니다.",
         messages=({"role": "user", "content": "스크린샷을 확인해줘."},),
-        successful_tool_results=((
+        tool_results=((
             "image_analyze",
+            True,
+            None,
             '{"analysis":"조회기간 2026.08.16 ~ 2026.08.27, 화면 확인일 2026.08.28"}',
         ),),
     ))
@@ -245,13 +264,40 @@ def test_image_comma_grouped_number_grounds_plain_integer() -> None:
     result = run(verifier.verify(
         candidate="이미지에서 확인된 값은 36081원입니다.",
         messages=({"role": "user", "content": "이미지 값을 확인해줘."},),
-        successful_tool_results=((
+        tool_results=((
             "image_analyze",
+            True,
+            None,
             '{"analysis":"표시 금액: 36,081원"}',
         ),),
     ))
 
     assert result.ok is True
+
+
+def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="pytest는 138개를 수집했고 136개가 통과했습니다.",
+        messages=({"role": "user", "content": "pytest 결과를 알려줘."},),
+        tool_results=((
+            "terminal_run",
+            False,
+            "TerminalCommandError",
+            "collected 138 items; 136 passed, 2 failed",
+        ),),
+    ))
+
+    assert result.ok is True
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert payload["tool_results"] == [{
+        "tool": "terminal_run",
+        "ok": False,
+        "error_type": "TerminalCommandError",
+        "result": "collected 138 items; 136 passed, 2 failed",
+    }]
 
 
 def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:
@@ -260,8 +306,10 @@ def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:
     result = run(verifier.verify(
         candidate="비율은 8.27입니다.",
         messages=({"role": "user", "content": "이미지 값을 확인해줘."},),
-        successful_tool_results=((
+        tool_results=((
             "image_analyze",
+            True,
+            None,
             '{"analysis":"조회일 2026.08.28"}',
         ),),
     ))

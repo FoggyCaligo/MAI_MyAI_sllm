@@ -22,6 +22,8 @@ from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter
 
 
+ToolVerificationResult = tuple[str, bool, str | None, str]
+
 _DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
 _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?![A-Za-z0-9_.])"
@@ -45,7 +47,8 @@ Evidence grounding:
 - Use "uncertain" when the evidence is insufficient for you to decide confidently. Uncertainty alone is not a reason to block release.
 - Use "supported" when no material unsupported claim is present.
 - Stable general knowledge does not require current-turn evidence merely because it is factual.
-- Prior assistant text may clarify conversational context but is not factual evidence. User messages and successful tool results are evidence.
+- Prior assistant text may clarify conversational context but is not factual evidence. User messages and observed tool results are evidence.
+- Each tool result includes explicit `ok` and `error_type` fields. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support factual claims about what was observed. However, `ok=false` must never be treated as evidence that the requested operation itself succeeded.
 - Preserve the scope of observed evidence. When a screenshot, table, list, search result, page, or tool result visibly contains only part of a larger collection, claims about the entire collection require evidence that the full collection was actually observed. Do not infer "only", "the highest", "the lowest", "all", "none", "every", "the rest", or equivalent exhaustive/superlative conclusions merely because they are true among the currently visible rows. If the candidate presents such a broader-scope conclusion as fact without evidence that the relevant set is complete, treat that concrete claim as unsupported. A scoped statement such as "among the visible rows" is acceptable when supported.
 
 Task alignment:
@@ -112,13 +115,13 @@ class FinalGroundingVerifier:
         *,
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
-        successful_tool_results: Sequence[tuple[str, str]],
+        tool_results: Sequence[ToolVerificationResult],
         allow_semantic_review: bool = True,
     ) -> FinalVerificationResult:
         numeric_issue = self._numeric_issue(
             candidate=candidate,
             messages=messages,
-            successful_tool_results=successful_tool_results,
+            tool_results=tool_results,
         )
         if numeric_issue is not None:
             self._log_result(
@@ -142,7 +145,7 @@ class FinalGroundingVerifier:
         review = await self._review_final(
             candidate=candidate,
             messages=messages,
-            successful_tool_results=successful_tool_results,
+            tool_results=tool_results,
         )
         issues: list[VerificationIssue] = []
         if review.evidence_verdict == "unsupported":
@@ -165,7 +168,7 @@ class FinalGroundingVerifier:
         *,
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
-        successful_tool_results: Sequence[tuple[str, str]],
+        tool_results: Sequence[ToolVerificationResult],
     ) -> VerificationIssue | None:
         evidence: set[str] = set()
         for message in messages:
@@ -174,7 +177,7 @@ class FinalGroundingVerifier:
             content = message.get("content")
             if isinstance(content, str):
                 evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-        for _, content in successful_tool_results:
+        for _, _, _, content in tool_results:
             evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
         if not evidence:
@@ -190,7 +193,7 @@ class FinalGroundingVerifier:
         return VerificationIssue(
             code="numeric_grounding_failed",
             message=(
-                "These material numeric values do not appear in the user evidence or successful tool results: "
+                "These material numeric values do not appear in the user evidence or observed tool results: "
                 + ", ".join(unsupported)
             ),
         )
@@ -200,7 +203,7 @@ class FinalGroundingVerifier:
         *,
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
-        successful_tool_results: Sequence[tuple[str, str]],
+        tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
         user_messages = [
             str(message.get("content"))
@@ -219,13 +222,18 @@ class FinalGroundingVerifier:
             and isinstance(message.get("content"), str)
         ][-10:]
         tool_evidence = [
-            {"tool": name, "result": _clip_text(content, 3500)}
-            for name, content in successful_tool_results[-10:]
+            {
+                "tool": name,
+                "ok": ok,
+                "error_type": error_type,
+                "result": _clip_text(content, 3500),
+            }
+            for name, ok, error_type, content in tool_results[-10:]
         ]
         payload = {
             "current_user_request": current_user_request,
             "conversation_context": context_messages,
-            "successful_tool_results": tool_evidence,
+            "tool_results": tool_evidence,
             "candidate_final": _clip_text(candidate, 6000),
         }
         request = ChatRequest(
