@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import Header, HTTPException
+from fastapi import Header
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..agent import AgentRunFailure
@@ -140,3 +140,15 @@ def install() -> None:
         if snapshot is None:
             return JSONResponse(status_code=404, content={"detail": "chat job not found"})
         return snapshot
+
+    @app.delete("/chat/jobs/{job_id}", response_model=None)
+    async def cancel_chat_job(
+        job_id: str,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, object] | JSONResponse:
+        _, principal = server._principal_from_authorization(authorization)
+        cancelled = await chat_job_store.cancel_for(job_id=job_id, auth_user_id=principal.auth_user_id)
+        if cancelled is None:
+            return JSONResponse(status_code=404, content={"detail": "chat job not found"})
+        snapshot = chat_job_store.snapshot_for(job_id=job_id, auth_user_id=principal.auth_user_id)
+        return {"cancelled": cancelled, "job": snapshot}
