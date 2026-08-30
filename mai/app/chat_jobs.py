@@ -22,6 +22,8 @@ class ChatJob:
     error: str | None = None
     task: asyncio.Task[Any] | None = None
     tools: list[dict[str, Any]] = field(default_factory=list)
+    thinking: str | None = None
+    model_round: int | None = None
 
 
 class ChatJobStore:
@@ -56,6 +58,12 @@ class ChatJobStore:
     def append_tool(self, job_id: str, tool: dict[str, Any]) -> None:
         job = self._require(job_id)
         job.tools.append(dict(tool))
+        job.updated_at = time.time()
+
+    def update_model_progress(self, job_id: str, *, thinking: str | None, model_round: int) -> None:
+        job = self._require(job_id)
+        job.thinking = thinking
+        job.model_round = model_round
         job.updated_at = time.time()
 
     def complete(self, job_id: str, response: dict[str, Any]) -> None:
@@ -144,6 +152,8 @@ class ChatJobStore:
             "response": job.response,
             "error": job.error,
             "tools": [dict(tool) for tool in job.tools],
+            "thinking": job.thinking,
+            "model_round": job.model_round,
         }
 
     def _require(self, job_id: str) -> ChatJob:
