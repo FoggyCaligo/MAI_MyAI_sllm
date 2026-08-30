@@ -10,10 +10,11 @@ import fnmatch
 import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .artifacts import discard_temporary_artifact, move_temporary_artifact, register_temporary_artifact
 from .registry import ToolRegistry
 
 
@@ -50,6 +51,7 @@ class FileCreateInput(_StrictModel):
     content: str = ""
     encoding: str = "utf-8"
     create_parents: bool = False
+    lifecycle: Literal["persistent", "temporary"] = "persistent"
 
 
 class FileDeleteInput(_StrictModel):
@@ -139,7 +141,15 @@ def file_write(*, path: str, content: str, encoding: str = "utf-8", cwd: str | P
     return {"path": str(target), "bytes": target.stat().st_size}
 
 
-def file_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False, cwd: str | Path | None = None) -> dict[str, Any]:
+def file_create(
+    *,
+    path: str,
+    content: str = "",
+    encoding: str = "utf-8",
+    create_parents: bool = False,
+    lifecycle: Literal["persistent", "temporary"] = "persistent",
+    cwd: str | Path | None = None,
+) -> dict[str, Any]:
     target = _resolve(path, cwd)
     if target.exists():
         raise FileExistsError(str(target))
@@ -147,7 +157,9 @@ def file_create(*, path: str, content: str = "", encoding: str = "utf-8", create
         target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("x", encoding=encoding) as handle:
         handle.write(content)
-    return {"path": str(target), "bytes": target.stat().st_size}
+    if lifecycle == "temporary":
+        register_temporary_artifact(target)
+    return {"path": str(target), "bytes": target.stat().st_size, "lifecycle": lifecycle}
 
 
 def file_delete(*, path: str, recursive: bool = False, cwd: str | Path | None = None) -> dict[str, Any]:
@@ -161,6 +173,7 @@ def file_delete(*, path: str, recursive: bool = False, cwd: str | Path | None = 
             target.rmdir()
     else:
         target.unlink()
+    discard_temporary_artifact(target)
     return {"path": str(target), "deleted": True}
 
 
@@ -172,6 +185,7 @@ def file_move(*, source: str, destination: str, create_parents: bool = False, cw
     if create_parents:
         dst.parent.mkdir(parents=True, exist_ok=True)
     moved = Path(shutil.move(str(src), str(dst)))
+    move_temporary_artifact(src, moved)
     return {"source": str(src), "destination": str(moved)}
 
 
@@ -200,7 +214,15 @@ _READ_BINDINGS = (
 )
 _WRITE_BINDINGS = (
     ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
-    ("file_create", "Create a new local text file and fail if it already exists.", FileCreateInput, file_create),
+    (
+        "file_create",
+        "Create a new local text file and fail if it already exists. "
+        "Use lifecycle=temporary for scratch files created only to inspect, verify, or complete the current request; "
+        "temporary files are removed automatically after the final answer is approved. "
+        "Use the default lifecycle=persistent for files the user asked to keep.",
+        FileCreateInput,
+        file_create,
+    ),
     ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
     ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
     ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
@@ -232,9 +254,22 @@ def register_upload_scoped_write_tools(
         target = _require_within_root(path, root=root)
         return file_write(path=str(target), content=content, encoding=encoding)
 
-    def scoped_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False) -> dict[str, Any]:
+    def scoped_create(
+        *,
+        path: str,
+        content: str = "",
+        encoding: str = "utf-8",
+        create_parents: bool = False,
+        lifecycle: Literal["persistent", "temporary"] = "persistent",
+    ) -> dict[str, Any]:
         target = _require_within_root(path, root=root)
-        return file_create(path=str(target), content=content, encoding=encoding, create_parents=create_parents)
+        return file_create(
+            path=str(target),
+            content=content,
+            encoding=encoding,
+            create_parents=create_parents,
+            lifecycle=lifecycle,
+        )
 
     registry.add(
         name="file_write",
@@ -246,7 +281,10 @@ def register_upload_scoped_write_tools(
     )
     registry.add(
         name="file_create",
-        description="Create a new text file only inside the MAI upload directory.",
+        description=(
+            "Create a new text file only inside the MAI upload directory. "
+            "Use lifecycle=temporary only for current-request scratch files; use persistent for user-requested output."
+        ),
         input_model=FileCreateInput,
         handler=scoped_create,
         timeout_seconds=timeout_seconds,
