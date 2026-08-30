@@ -1,47 +1,80 @@
 # MAI Web UI / Tailscale 실행
 
-이 문서는 pure-agent C를 기본 runtime으로 사용하는 로컬 Web UI 실행 방법을 기록한다.
+이 문서는 pure-agent C production Web UI의 실행과 계정 설정 방법을 기록한다.
 
-## 1. 설치
+## 1. 설치와 계정 설정
 
 ```bash
 source .venv/Scripts/activate
 python -m pip install -e ".[dev]"
 ```
 
-`.env.example`을 `.env`로 복사한 뒤 기본 모델, memory DB, 허용 ID를 지정한다.
+`.env.example`을 `.env`로 복사한다.
 
 ```env
 MAIN_MODEL=ornith-1.5:9b
 VISION_MODEL=
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
-OWNER_ID=my-owner-login
-OWNER_MEMORY_ID=local-user
-TRIAL_IDS=trial-a,trial-b
+CHAT_DB_PATH=./data/chat.sqlite3
+
+OWNER_USERS=[{"user_id":"tpdlsemflajtlswodyd","user_pw":"내비밀번호","db_id":"local-user"}]
+TRIAL_USERS=[{"user_id":"trial-a","user_pw":"trial-password","db_id":"trial-db-a"}]
+
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
 TAILSCALE_FUNNEL=false
 ```
 
-`OWNER_ID`와 `OWNER_MEMORY_ID`는 필수다. `OWNER_ID`는 Web UI 로그인에 사용하는 인증 ID이고, `OWNER_MEMORY_ID`는 owner가 graph memory에서 사용할 User Anchor identity다. 둘은 같아도 되지만 같은 개념으로 취급하지 않는다.
+Owner와 Trial 모두 각 계정을 하나의 `user_info` record로 정의한다. record에는 정확히 세 필드가 있다.
 
-기존 버전에서 `MAI_USER_ID=local-user`로 기억을 쌓았다면 새 설정은 다음처럼 두면 된다.
+```text
+user_id
+  Web UI 로그인 ID
+  나중에 변경 가능
 
-```env
-OWNER_ID=원하는-로그인-ID
-OWNER_MEMORY_ID=local-user
+user_pw
+  Web UI 로그인 비밀번호
+  현재 설계에서는 .env에 평문 문자열로 저장
+
+db_id
+  memory/chat 등 persistent data의 내부 identity
+  로그인 ID를 바꾸더라도 기존 데이터를 이어 쓰려면 그대로 유지
 ```
 
-`VISION_MODEL`은 선택 사항이다. 비워두면 `image_analyze` 자체가 ToolRegistry에 노출되지 않는다. 이미지 분석을 사용하려면 Ollama에 설치되어 있고 이미지 입력을 지원하는 모델 이름을 지정한다.
+예를 들어 기존 memory graph가 `local-user`로 쌓여 있다면 로그인 ID를 새로 정해도 DB migration은 필요 없다.
 
-`TRIAL_IDS`는 쉼표로 구분하며 비워둘 수 있다. Trial은 각 로그인 ID 자체를 자신의 memory identity로 사용한다. `OWNER_MEMORY_ID`가 trial ID와 충돌하면 startup이 실패한다.
+```env
+OWNER_USERS=[{"user_id":"tpdlsemflajtlswodyd","user_pw":"내비밀번호","db_id":"local-user"}]
+```
 
-등록되지 않은 ID는 `/login` 단계에서 거부된다. 인증은 ID-only이며 로그인 성공 시 서버가 임시 Bearer session token을 발급한다.
+이후 로그인 ID를 다시 바꾸고 싶다면 `user_id`만 바꾸고 `db_id`는 유지한다.
 
-## 2. 모델 선택
+```env
+OWNER_USERS=[{"user_id":"new-login-name","user_pw":"내비밀번호","db_id":"local-user"}]
+```
 
-Owner와 Trial의 model 권한은 다르다.
+그러면 기존 `local-user` memory와 chat history는 계속 같은 계정 데이터로 연결된다.
+
+`OWNER_USERS`에는 여러 owner를 넣을 수 있고 `TRIAL_USERS`에도 여러 trial을 넣을 수 있다. 모든 `user_id`는 계정 간 고유해야 하고 모든 `db_id`도 고유해야 한다. 다른 계정의 `user_id`와 `db_id`가 교차 충돌하는 설정도 startup에서 거부한다.
+
+기존 `OWNER_ID`, `OWNER_MEMORY_ID`, `OWNER_ACCOUNTS`, `TRIAL_IDS`는 새 인증 계약의 fallback으로 사용하지 않는다. `OWNER_USERS`가 없으면 startup이 명확하게 실패한다.
+
+`user_pw`는 요청대로 평문이다. `.env`는 Git에 올리지 않아야 한다. 로그인 실패 응답은 ID가 틀렸는지 비밀번호가 틀렸는지 구분하지 않는다.
+
+`VISION_MODEL`은 선택 사항이다. 비워두면 `image_analyze`가 ToolRegistry에 노출되지 않는다.
+
+## 2. 로그인과 세션
+
+Owner/Trial 모두 ID + 비밀번호로 로그인한다. 성공하면 서버가 임시 Bearer token을 발급한다.
+
+같은 `user_id`로 새 로그인하면 기존 token은 즉시 폐기된다. 즉 한 계정은 한쪽 로그인만 유지하며 새 로그인이 우선한다.
+
+대화 기록은 로그인 ID가 아니라 `db_id` 기준으로 `CHAT_DB_PATH`의 SQLite에 저장된다. 따라서 브라우저나 폰을 닫았다가 다시 접속해도 같은 `db_id`의 기존 conversation을 복원할 수 있다. background chat job이 사용자가 자리를 비운 동안 끝났다면 완료된 assistant answer도 persistent chat history에 저장되어 다음 접속 때 표시된다.
+
+모델에게 전달하는 문맥은 전체 UI 기록과 별개로 최근 `SESSION_HISTORY_MESSAGES`개로 제한할 수 있다.
+
+## 3. 모델 선택
 
 ```text
 owner
@@ -53,134 +86,96 @@ trial
   /chat model -> MAIN_MODEL로 고정
 ```
 
-Owner는 Web UI 상단 selector에서 설치된 Ollama 모델을 선택할 수 있다.
+Trial client가 UI를 우회해 다른 model을 직접 요청해도 서버가 HTTP 403으로 거부한다.
 
-Trial에서는 selector가 `MAIN_MODEL` 하나만 받는다. 더 중요한 제한은 서버 쪽에 있다. Trial client가 UI를 우회해 `/chat`에 다른 model 이름을 직접 보내면 HTTP 403으로 거부한다. model을 생략하거나 현재 `MAIN_MODEL`과 같은 값을 보내는 요청만 허용한다.
+## 4. 권한과 도구
 
-별도 `TRIAL_MODEL` 설정은 사용하지 않는다. 따라서 `.env`의 `MAIN_MODEL`을 바꾸면 Trial의 고정 모델도 함께 바뀐다. `MAIN_MODEL`을 설정하지 않은 경우 runtime 기본값은 `ornith-1.5:9b`다.
-
-## 3. 권한과 읽기 도구
-
-Owner는 현재 등록된 모든 native tool을 사용할 수 있다. Trial은 arbitrary local mutation과 terminal을 받지 않지만 읽기 계열과 외부 정보 계열은 사용할 수 있다.
+Owner는 전체 native tool을 사용할 수 있다. Trial은 arbitrary local mutation과 terminal을 받지 않지만 읽기/외부 정보 계열은 사용할 수 있다.
 
 ```text
-공통 read/info capability
-  memory_recall / memory_overview / memory_search
-  current_time
+공통
+  memory_overview / memory_recall / memory_search
+  current_time / calculator
   file_list / file_search / file_read
   code_search / code_read / code_symbols
   document_read
-  image_analyze          # VISION_MODEL이 설정된 경우
+  image_analyze          # VISION_MODEL 설정 시
   web_search / web_fetch
   market_data
 
-owner 추가 capability
+owner 추가
   file_write / file_create / file_delete / file_move / file_copy
   terminal_run
 
-trial 추가 capability
-  file_write / file_create   # mai_uploads 내부로만 구조적으로 제한
+trial 추가
+  file_write / file_create   # 자기 upload directory 안에서만
 ```
 
-`document_read`는 PDF, DOCX, XLSX, CSV, PPTX를 지원한다. 큰 결과는 `max_chars`로 제한할 수 있다. CSV는 기본 `utf-8-sig`로 읽고 필요하면 `encoding="cp949"`처럼 명시할 수 있다.
+Trial upload directory도 `db_id`에서 파생된다. 따라서 Trial의 `user_id`를 바꿔도 같은 `db_id`를 유지하면 기존 upload directory가 그대로 연결된다.
 
-`web_search`는 검색 결과를 찾는 도구이고 `web_fetch`는 이미 알고 있는 특정 public HTTP(S) URL의 본문을 읽는 도구다. `web_fetch`는 loopback/private-network 주소를 거부하고 redirect 대상도 다시 검사한다.
-
-Trial의 `file_write`와 `file_create`는 이름은 owner 도구와 같지만 handler 단계에서 `mai_uploads` 경계 검사를 거친다. 해당 폴더 밖 경로는 `PermissionError`로 실패한다. Trial에는 `file_delete`, `file_move`, `file_copy`, `terminal_run`을 노출하지 않는다.
-
-## 4. 로컬 UI와 파일 업로드
+## 5. 로컬 UI 실행
 
 ```bash
 python run_server.py
 ```
 
-브라우저에서 다음 주소를 연다.
+브라우저:
 
 ```text
 http://127.0.0.1:8000
 ```
 
-처음에는 ID login 화면만 보인다. Owner는 상단 model selector를 사용할 수 있고 Trial은 configured default model 하나로 고정된다.
+로그인 화면에는 ID와 비밀번호 입력란이 표시된다. 비밀번호는 로그인 요청에만 사용하며 browser storage에 별도로 저장하지 않는다.
 
-메시지 입력창의 `＋` 버튼으로 파일을 업로드할 수 있다. 업로드는 인증된 owner/trial 모두 사용할 수 있고 서버 실행 디렉터리의 다음 위치에 저장된다.
+파일 업로드 root 기본값은 `./mai_uploads/`이다. 같은 계정 폴더에서 같은 이름을 조용히 덮어쓰지 않고 HTTP 409로 실패한다.
 
-```text
-./mai_uploads/
+## 6. Trial 계정 초기화
+
+Trial ID를 다른 사람에게 재사용하려면 서버를 먼저 종료하고 `reset_trial.py`를 사용한다.
+
+```bash
+python reset_trial.py trial-a --dry-run
+python reset_trial.py trial-a
 ```
 
-서버 시작 시 해당 폴더가 없으면 생성한다. `.gitignore`가 `mai_uploads/` 전체를 제외하므로 업로드된 파일은 Git 변경사항에 포함되지 않는다.
+초기화 대상은 해당 Trial의 `user_id`로 계정을 찾은 뒤, 실제 persistent memory/chat/upload ownership은 그 계정의 `db_id`를 기준으로 삭제한다. 따라서 login ID와 persistent ID를 혼동하지 않는다.
 
-업로드는 기존 파일을 조용히 덮어쓰지 않는다. 같은 이름의 파일이 이미 있으면 HTTP 409로 실패한다. 파일명에 `/` 또는 `\\` 경로 구분자가 포함된 요청도 거부한다.
+## 7. Tailscale Funnel
 
-업로드 성공 후 Web UI는 실제 저장된 절대경로를 메시지 입력창에 추가한다. 예를 들어:
-
-```text
-업로드된 파일: C:\...\MAI_MyAI_sllm\mai_uploads\report.xlsx
-```
-
-이 상태에서 `이 파일을 읽고 요약해줘` 같은 요청을 덧붙여 전송하면 모델이 `document_read`, `image_analyze`, `file_read` 등 적절한 native tool을 선택할 수 있다.
-
-한 브라우저 session에서는 짧은 대화 history를 유지한다. Chat history는 인증 ID별로 분리되고, 장기기억은 persistent SQLite graph에서 `memory_user_id`별 User Anchor로 저장된다.
-
-응답은 기본 Markdown 요소를 렌더링하며, 각 응답 아래의 `tool log`에서 tool name, 성공/실패 상태, arguments, result를 확인할 수 있다. 새 메시지와 응답이 추가되면 message pane은 자동으로 최하단으로 스크롤된다.
-
-## 5. Tailscale Funnel 공개
-
-MAI는 **Tailscale Funnel을 사용해 인터넷에 공개**할 수 있다. `.env`에서 다음을 켠다.
+`.env`:
 
 ```env
 TAILSCALE_FUNNEL=true
 ```
 
-이전 `TAILSCALE_SERVE` 설정은 폐기했다. `.env`에 `TAILSCALE_SERVE=true`가 남아 있으면 MAI는 잘못된 tailnet-only 모드로 조용히 실행하지 않고 startup에서 명확히 실패하며 `TAILSCALE_FUNNEL=true`로 바꾸라고 알린다.
-
-그 뒤 실행한다.
+실행:
 
 ```bash
 python run_server.py
 ```
 
-MAI는 다음 명령과 같은 방식으로 public Funnel을 background 설정한다.
+MAI는 `tailscale funnel --bg --yes <MAI_PORT>`에 해당하는 공개 Funnel을 설정하고 Tailscale이 보고하는 public URL과 proxy mapping을 출력한다. `TAILSCALE_SERVE`는 폐기된 설정이며 true로 남아 있으면 startup에서 실패한다.
 
-```bash
-tailscale funnel --bg --yes 8000
-```
-
-그 뒤 `tailscale funnel status`를 실행해 Tailscale 자체가 보고하는 공개 URL과 proxy mapping을 터미널에 출력한다.
+## 8. Identity 흐름
 
 ```text
-MAI local: http://127.0.0.1:8000
-MAI Tailscale Funnel (public internet):
-Available on the internet:
-https://example-device.example-tailnet.ts.net
+.env user_info
+  ├─ user_id  -> 로그인 / 현재 session token 식별
+  ├─ user_pw  -> 로그인 인증
+  └─ db_id    -> stable persistent identity
+                   ├─ Memory User Anchor
+                   ├─ Chat history
+                   └─ Trial upload ownership
 
-|-- / proxy http://127.0.0.1:8000
+Authenticated Principal
+  ↓ role
+ToolRegistry permissions
+  ↓
+Main LLM + native tools
+  ↓
+Final verification
+  ↓
+Final response + background memory update(db_id)
 ```
 
-`TAILSCALE_FUNNEL=false`이면 startup에서 Funnel이 비활성화됐다고 명시적으로 출력한다.
-
-`--bg` Funnel 설정은 Tailscale에 지속 저장되므로 MAI 프로세스를 종료할 때 자동으로 Funnel 설정을 지우지 않는다. 이후 다시 MAI를 시작하면 같은 Funnel을 현재 `MAI_PORT`로 갱신한다.
-
-Tailscale Funnel을 처음 쓰는 환경에서는 Tailscale 측 요구조건이 충족되어야 한다. `tailscale funnel` 또는 `tailscale funnel status`가 실패하면 MAI startup도 실패하며 오류를 그대로 드러낸다.
-
-## 6. 현재 C runtime
-
-기본 요청 경로에는 Tool Requirement Preflight와 automatic recall이 없다.
-
-```text
-Authenticated User
-   ↓
-Access identity → role + memory identity
-   ↓
-Access role → ToolRegistry composition
-   ↓
-Main LLM
-   ↓ native tool selection
-memory / time / file / code / document / image / web / market / terminal
-   ↓
-Final Response
-   ↓
-Post-response Memory Update (memory identity 기준)
-```
-
-모델은 현재 제공된 native tool schema와 system capability contract를 보고 필요한 tool을 직접 선택한다. 특정 과거 정보는 `memory_recall(query)`, 특정 주제 없이 넓은 기억 개요가 필요하면 `memory_overview`, 추가 graph 탐색은 `memory_search(node_id)`를 사용할 수 있다.
+핵심 계약은 `user_id`를 이름표처럼 변경 가능하게 두고, 실제 장기 데이터 연결은 `db_id`가 담당한다는 것이다.
