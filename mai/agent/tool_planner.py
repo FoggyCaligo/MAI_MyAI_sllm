@@ -31,6 +31,7 @@ Rules:
 - Judge the user's actual requested outcome, using recent dialogue only to resolve references.
 - Select only exact names from the supplied available_tools list.
 - Require a tool when the requested answer or action depends on information or effects that are not already present in the supplied conversation and that tool is the available way to obtain them.
+- When the requested operation needs an input identifier, path, or target that is not yet established, and another available tool is needed to discover that input before the operation can succeed, require both the discovery tool and the operation tool.
 - Local-PC inspection or execution requests should require the relevant file/code/document/image/terminal tools instead of being replaced with a question to the user when the environment can resolve the task itself.
 - Stored-user-history questions should require the relevant memory tool when the needed fact is not already in the supplied conversation.
 - Current web, market, time, or calculated facts should require the corresponding available tool when needed.
