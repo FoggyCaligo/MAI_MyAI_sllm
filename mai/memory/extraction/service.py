@@ -14,22 +14,14 @@ from ...llm.ollama import OllamaAdapter
 
 
 _FACT_EXTRACTION_SYSTEM = """
-You extract durable, user-grounded facts from one completed conversation turn.
-Return exactly one JSON object: {"facts": [string, ...]}.
+Extract durable facts from one completed turn. Return exactly {"facts": [string, ...]}.
 
-Evidence rules:
+Evidence:
 - The latest user message is primary evidence.
-- successful_tool_results contains only successful NON-RECALL tool results. You may use them as grounding evidence when they establish information relevant to the user's state, project, decision, files, records, or other durable context.
-- The assistant final answer is context only. Do not treat assistant claims as independent evidence.
-- Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
+- Successful non-recall tool results may ground durable user/project/file/record state.
+- The assistant answer is context, not independent evidence. Persistent-memory recall is absent by design; do not recreate it as new facts.
 
-Admission rules:
-- Extract concise facts that would be useful to remember later: explicit user facts, changes, decisions, preferences, plans, corrections, durable project state, or tool-grounded facts tied to the user's context.
-- Do not extract questions, requests, instructions to the assistant, or the mere fact that the user asked for recall/search/checking.
-- A pure recall question such as "do you remember X?" should normally return an empty facts array.
-- A mixed message such as "do you remember X? recently it changed to Y" must extract the new Y information even if recall was also used during the turn.
-- Do not invent missing details or infer a stronger claim than the evidence supports.
-- Deduplicate semantically equivalent facts and keep each fact self-contained.
+Extract concise, self-contained facts worth remembering: explicit facts, changes, corrections, decisions, preferences, plans, durable project state, or tool-grounded user context. Do not store questions, requests, assistant instructions, or the mere fact that recall/search/checking was requested. Pure recall questions normally produce no facts; mixed messages must still capture genuinely new information. Do not invent or strengthen claims beyond the evidence. Deduplicate equivalent facts.
 """.strip()
 
 
