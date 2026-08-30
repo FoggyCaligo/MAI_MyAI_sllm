@@ -180,19 +180,8 @@ class AgentLoop:
                             verification = await self.final_verifier.verify(
                                 candidate=turn.content,
                                 messages=history,
-                                successful_tool_results=tuple(
-                                    (
-                                        execution.name,
-                                        json.dumps(
-                                            {
-                                                "ok": execution.ok,
-                                                "error_type": execution.error_type,
-                                                "content": execution.content,
-                                            },
-                                            ensure_ascii=False,
-                                            separators=(",", ":"),
-                                        ),
-                                    )
+                                tool_results=tuple(
+                                    (execution.name, execution.ok, execution.error_type, execution.content)
                                     for execution in executions
                                 ),
                                 allow_semantic_review=allow_semantic_review,
