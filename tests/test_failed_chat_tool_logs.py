@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from mai.agent import AgentFailureContext, AgentRoundLimitExceeded, AgentRunFailure, ToolExecution
+from mai.agent import AgentFailureContext, AgentRunFailure, NoProgressError, ToolExecution
 from mai.app import server
 from mai.app.access import AccessPrincipal, AccessRole
 
@@ -17,7 +17,7 @@ class FailingRuntime:
 
     async def run_user_message(self, *args, **kwargs):
         raise AgentRunFailure(
-            AgentRoundLimitExceeded("agent reached max_rounds=30 while the model still requested tools"),
+            NoProgressError("agent repeated the same structural state"),
             context=AgentFailureContext(
                 messages=(),
                 tool_executions=(
@@ -29,7 +29,7 @@ class FailingRuntime:
                         error_type="TerminalCommandError",
                     ),
                 ),
-                model_rounds=30,
+                model_rounds=6,
             ),
         )
 
@@ -55,9 +55,9 @@ def test_failed_chat_response_preserves_tool_log(monkeypatch) -> None:
     payload = json.loads(response.body)
 
     assert response.status_code == 500
-    assert payload["error_type"] == "AgentRoundLimitExceeded"
+    assert payload["error_type"] == "NoProgressError"
     assert payload["model"] == "gemma4:e4b"
-    assert payload["model_rounds"] == 30
+    assert payload["model_rounds"] == 6
     assert payload["tools"] == [
         {
             "name": "terminal_run",

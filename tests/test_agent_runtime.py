@@ -8,7 +8,7 @@ import logging
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from mai.agent import AgentRunFailure, AgentRuntime
+from mai.agent import AgentRunFailure, AgentRuntime, GuardConfig
 from mai.agent.requirements import FrozenToolRequirements
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
@@ -63,6 +63,10 @@ def assistant_turn(*, content="", thinking="", calls=()):
         tool_calls=tool_calls,
         assistant_message=message,
     )
+
+
+def _request_tool_names(request) -> list[str]:
+    return [schema["function"]["name"] for schema in request.tools]
 
 
 def test_runtime_completes_native_tool_round_trip() -> None:
@@ -142,6 +146,7 @@ def test_required_tool_handler_failure_still_satisfies_preflight_obligation() ->
 def test_required_tool_argument_failure_returns_model_to_correction_round() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    registry.add(name="other", description="Other tool.", input_model=EchoInput, handler=lambda text: text)
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={}),)),
         assistant_turn(content="I am done."),
@@ -166,11 +171,14 @@ def test_required_tool_argument_failure_returns_model_to_correction_round() -> N
     assert correction_message["role"] == "system"
     assert "missing required tools" in correction_message["content"]
     assert "echo" in correction_message["content"]
+    assert _request_tool_names(adapter.requests[2]) == ["echo"]
+    assert set(_request_tool_names(adapter.requests[3])) == {"echo", "other"}
 
 
 def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    registry.add(name="other", description="Other tool.", input_model=EchoInput, handler=lambda text: text)
     adapter = FakeAdapter([
         assistant_turn(content="I can answer without it."),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "required"}),)),
@@ -190,6 +198,35 @@ def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() ->
     correction_message = adapter.requests[1].messages[-1]
     assert correction_message["role"] == "system"
     assert "echo" in correction_message["content"]
+    assert _request_tool_names(adapter.requests[1]) == ["echo"]
+    assert set(_request_tool_names(adapter.requests[2])) == {"echo", "other"}
+
+
+def test_repeated_final_omission_of_same_requirement_stops_as_no_progress() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    registry.add(name="other", description="Other tool.", input_model=EchoInput, handler=lambda text: text)
+    adapter = FakeAdapter([
+        assistant_turn(content="skip once"),
+        assistant_turn(content="skip twice"),
+        assistant_turn(content="skip three times"),
+    ])
+    requirements = FrozenToolRequirements(frozenset({"echo"}))
+    runtime = AgentRuntime(
+        adapter,
+        registry,
+        guard_config=GuardConfig(max_no_progress_rounds=2),
+    )
+
+    with pytest.raises(AgentRunFailure) as exc_info:
+        run(runtime.run_user_message("use the required tool", requirements=requirements))
+
+    failure = exc_info.value
+    assert failure.error_type == "NoProgressError"
+    assert failure.context.model_rounds == 3
+    assert _request_tool_names(adapter.requests[0]) == ["echo", "other"]
+    assert _request_tool_names(adapter.requests[1]) == ["echo"]
+    assert _request_tool_names(adapter.requests[2]) == ["echo"]
 
 
 def test_model_can_continue_beyond_thirty_rounds_when_each_round_makes_progress() -> None:

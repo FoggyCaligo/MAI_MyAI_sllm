@@ -49,6 +49,26 @@ def test_registry_exports_ollama_native_function_schema() -> None:
     assert set(function["parameters"]["required"]) == {"left", "right"}
 
 
+def test_registry_can_export_only_explicitly_requested_tool_schemas() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        name="first",
+        description="First tool.",
+        input_model=AddInput,
+        handler=lambda left, right: left + right,
+    )
+    registry.add(
+        name="second",
+        description="Second tool.",
+        input_model=AddInput,
+        handler=lambda left, right: left - right,
+    )
+
+    schemas = registry.native_schemas(["second"])
+
+    assert [schema["function"]["name"] for schema in schemas] == ["second"]
+
+
 def test_registry_invokes_exact_native_tool_call() -> None:
     registry = ToolRegistry()
     registry.add(

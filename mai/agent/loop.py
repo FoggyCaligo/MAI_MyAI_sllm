@@ -32,6 +32,10 @@ class EmptyFinalResponseError(AgentRuntimeError):
     """The model repeatedly attempted to finish with an empty response."""
 
 
+class ToolUnavailableInRoundError(AgentRuntimeError):
+    """The model called a registered tool that was not exposed in this round."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolExecution:
     name: str
@@ -114,7 +118,12 @@ class AgentLoop:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
         requirement_observed_tools: set[str] = set()
-        tools = self.registry.native_schemas()
+        frozen_requirements = requirements or FrozenToolRequirements(frozenset())
+        all_tools = self.registry.native_schemas()
+        all_tool_names = frozenset(self.registry.names())
+        active_tools = all_tools
+        active_tool_names = all_tool_names
+        requirement_correction_active = False
         guard = AgentGuard(self.guard_config)
         round_number = 1
         semantic_verification_retries = 0
@@ -125,7 +134,12 @@ class AgentLoop:
         try:
             while True:
                 _LOG.info("MAI model round start round=%d", round_number)
-                turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
+                turn = await self.adapter.chat(ChatRequest(
+                    messages=history,
+                    tools=active_tools,
+                    think=think,
+                    options=options,
+                ))
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
                     history[history_index] = {**previous, "content": compact_content}
@@ -157,9 +171,13 @@ class AgentLoop:
                         round_number += 1
                         continue
 
-                    missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(requirement_observed_tools)
+                    missing = frozen_requirements.missing_from(requirement_observed_tools)
                     if missing:
+                        guard.after_requirement_rejection(missing)
                         missing_tools = sorted(missing)
+                        requirement_correction_active = True
+                        active_tools = self.registry.native_schemas(missing_tools)
+                        active_tool_names = frozenset(missing_tools)
                         _LOG.warning(
                             "MAI final rejected for missing required tools round=%d missing=%s",
                             round_number,
@@ -171,7 +189,8 @@ class AgentLoop:
                                 "Your previous assistant turn attempted to finish before all frozen required native "
                                 "tools produced an execution result. The missing required tools are: "
                                 + ", ".join(missing_tools)
-                                + ". Continue the same task instead of finishing. Call each missing required tool. "
+                                + ". Continue the same task instead of finishing. During this correction round, only "
+                                "the still-missing required tool schemas are available. Call each missing required tool. "
                                 "If a prior call failed before its handler started because of invalid arguments or an "
                                 "unknown tool contract, correct the tool call and try again. These requirements remain "
                                 "frozen for this run."
@@ -256,13 +275,19 @@ class AgentLoop:
                         _format_log_arguments(call.arguments),
                     )
                     started = time.perf_counter()
-                    execution = await self._execute_tool(call)
+                    execution = await self._execute_tool(
+                        call,
+                        available_tool_names=active_tool_names,
+                    )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
                     if execution.handler_started:
+                        was_missing = execution.name in frozen_requirements.missing_from(requirement_observed_tools)
                         requirement_observed_tools.add(execution.name)
+                        if was_missing:
+                            guard.note_requirement_progress()
                     _LOG.info(
                         "MAI tool result round=%d name=%s ok=%s handler_started=%s error_type=%s elapsed_ms=%d visible_chars=%d",
                         round_number,
@@ -291,6 +316,16 @@ class AgentLoop:
                     round_observations.append(observation)
 
                 guard.after_tool_round(round_observations)
+                if requirement_correction_active:
+                    missing_after_round = frozen_requirements.missing_from(requirement_observed_tools)
+                    if missing_after_round:
+                        missing_after_names = sorted(missing_after_round)
+                        active_tools = self.registry.native_schemas(missing_after_names)
+                        active_tool_names = frozenset(missing_after_names)
+                    else:
+                        requirement_correction_active = False
+                        active_tools = all_tools
+                        active_tool_names = all_tool_names
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})
@@ -308,7 +343,29 @@ class AgentLoop:
                 ),
             ) from exc
 
-    async def _execute_tool(self, call: NativeToolCall) -> ToolExecution:
+    async def _execute_tool(
+        self,
+        call: NativeToolCall,
+        *,
+        available_tool_names: frozenset[str],
+    ) -> ToolExecution:
+        if call.name not in available_tool_names and self.registry.has(call.name):
+            exc = ToolUnavailableInRoundError(
+                f"native tool '{call.name}' was not exposed in the current model round"
+            )
+            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+            source_content = _serialize_tool_content(payload)
+            model_content, compact_content = self._model_contents(source_content)
+            return ToolExecution(
+                name=call.name,
+                arguments=dict(call.arguments),
+                ok=False,
+                content=model_content,
+                error_type=type(exc).__name__,
+                handler_started=False,
+                source_content_fingerprint=content_fingerprint(source_content),
+                compact_history_content=compact_content,
+            )
         try:
             value = await self.registry.invoke(call)
         except Exception as exc:
