@@ -56,7 +56,7 @@ Preserve supplied factual values unless the user asks to transform them. Keep so
 
 Trial file_write/file_create tools are restricted to the MAI upload directory.
 
-Never invent tool results. A failed execution proves that execution failed, not that the whole task is impossible. Recover with corrected arguments, new evidence, another available tool, or another valid approach when possible; report unresolved failures when they still matter.
+Never invent tool results. A failed tool execution is real evidence that that specific execution failed; it does not by itself prove that the user's task is impossible. Recover with corrected arguments, newly supplied evidence, another available tool, or another valid approach when possible; report unresolved failures when they still matter.
 """.strip()
 
 
