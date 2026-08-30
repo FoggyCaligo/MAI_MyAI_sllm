@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -18,6 +19,10 @@ def _tool(name: str) -> ToolDefinition:
         input_model=EmptyToolInput,
         handler=lambda: None,
     )
+
+
+def _run(coro):
+    return asyncio.run(coro)
 
 
 def test_decision_schema_embeds_every_tool_as_required_boolean_property_with_description() -> None:
@@ -47,19 +52,17 @@ class _FakeAdapter:
         return SimpleNamespace(content=self.content)
 
 
-@pytest.mark.asyncio
-async def test_planner_uses_dynamic_schema_and_freezes_true_tools() -> None:
+def test_planner_uses_dynamic_schema_and_freezes_true_tools() -> None:
     tools = (_tool("web_search"), _tool("file_search"))
     adapter = _FakeAdapter(json.dumps({"web_search": True, "file_search": False}))
     planner = OllamaToolRequirementPlanner(adapter)
 
-    result = await planner.plan(user_text="find it", recent_dialogue=(), tools=tools)
+    result = _run(planner.plan(user_text="find it", recent_dialogue=(), tools=tools))
 
     assert result.required_tools == frozenset({"web_search"})
     assert adapter.requests[0].response_format == _decision_schema(tools)
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "content",
     [
@@ -68,9 +71,9 @@ async def test_planner_uses_dynamic_schema_and_freezes_true_tools() -> None:
         '{"web_search": true, "file_search": 0}',
     ],
 )
-async def test_planner_rejects_missing_unknown_or_non_boolean_decisions(content: str) -> None:
+def test_planner_rejects_missing_unknown_or_non_boolean_decisions(content: str) -> None:
     tools = (_tool("web_search"), _tool("file_search"))
     planner = OllamaToolRequirementPlanner(_FakeAdapter(content))
 
-    with pytest.raises(ToolRequirementPlanningError):
-        await planner.plan(user_text="find it", recent_dialogue=(), tools=tools)
+    with pytest.raises(ToolRequirementPlanningError, match="structured output schema"):
+        _run(planner.plan(user_text="find it", recent_dialogue=(), tools=tools))

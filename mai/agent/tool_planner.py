@@ -21,9 +21,9 @@ Judge whether the latest user request needs each tool's produced evidence or eff
 
 If the user asks to search, inspect, verify, compare, or re-check external/local sources, model knowledge does not satisfy that request; mark relevant evidence-producing tools true even for stable facts.
 
-If a required path, identifier, or target must first be discovered, mark both discovery and operation tools true.
+If an input identifier, path, or target that is not yet established must be discovered by another tool, mark both discovery and operation tools true.
 
-Use the relevant local, memory, web, market, time, or calculation tool when needed. For time-relative comparisons, require current time unless the latest user request establishes it.
+Use the relevant local, memory, web, market, time, or calculation tool when needed. When comparing dates or time-relative information against the current moment, require current time unless the latest user request establishes it.
 
 Mark optional-detail tools false. Do not answer the task or invent tool arguments.
 """.strip()
@@ -96,11 +96,13 @@ class OllamaToolRequirementPlanner:
         expected = tuple(definition.name for definition in tools)
         if not isinstance(decisions, dict) or set(decisions) != set(expected):
             raise ToolRequirementPlanningError(
-                "tool preflight response must contain every available tool exactly once"
+                "tool preflight response violated the structured output schema: "
+                "tool keys must exactly match available tools"
             )
         if any(type(decisions[name]) is not bool for name in expected):
             raise ToolRequirementPlanningError(
-                "tool preflight response values must all be booleans"
+                "tool preflight response violated the structured output schema: "
+                "all tool decisions must be booleans"
             )
 
         return FrozenToolRequirements.from_decisions(decisions)
