@@ -4,6 +4,7 @@
   const pollDelayMs = 1500;
   let currentSubmissionJobId = null;
   let recovering = false;
+  let cancelButton = null;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -17,6 +18,61 @@
       status,
       headers: {'Content-Type': 'application/json'},
     });
+  }
+
+  function ensureCancelButton() {
+    if (cancelButton) return cancelButton;
+    const sendButton = document.getElementById('send-btn');
+    const parent = sendButton?.parentElement;
+    if (!parent) return null;
+
+    cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.textContent = '중단';
+    cancelButton.hidden = true;
+    cancelButton.style.border = '1px solid var(--border)';
+    cancelButton.style.borderRadius = '8px';
+    cancelButton.style.padding = '7px 12px';
+    cancelButton.style.background = 'transparent';
+    cancelButton.style.color = 'var(--danger)';
+    cancelButton.style.cursor = 'pointer';
+    cancelButton.addEventListener('click', cancelCurrentJob);
+    parent.insertBefore(cancelButton, sendButton);
+    return cancelButton;
+  }
+
+  function setCurrentJob(jobId) {
+    currentSubmissionJobId = jobId;
+    const button = ensureCancelButton();
+    if (!button) return;
+    button.hidden = !jobId;
+    button.disabled = false;
+    button.textContent = '중단';
+  }
+
+  async function cancelCurrentJob() {
+    const jobId = currentSubmissionJobId;
+    if (!jobId) return;
+    const button = ensureCancelButton();
+    if (button) {
+      button.disabled = true;
+      button.textContent = '중단 중…';
+    }
+    try {
+      const response = await nativeFetch(`/chat/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE',
+        headers: headersWithAuth(),
+      });
+      if (!response.ok && button) {
+        button.disabled = false;
+        button.textContent = '중단';
+      }
+    } catch (_) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = '중단';
+      }
+    }
   }
 
   async function pollJob(jobId) {
@@ -49,6 +105,10 @@
         const payload = data.response || {detail: data.error || '대화 작업 실패'};
         return jsonResponse(payload, Number(payload.status_code) || 500);
       }
+      if (data.status === 'cancelled') {
+        localStorage.removeItem(storageKey);
+        return jsonResponse(data.response || {detail: '요청이 취소되었습니다.'}, 499);
+      }
       await sleep(pollDelayMs);
     }
   }
@@ -59,12 +119,12 @@
     const data = await submit.json();
     if (!data.job_id) return jsonResponse({detail: 'chat job id가 반환되지 않았습니다.'}, 500);
 
-    currentSubmissionJobId = data.job_id;
+    setCurrentJob(data.job_id);
     localStorage.setItem(storageKey, JSON.stringify({job_id: data.job_id, created_at: Date.now()}));
     try {
       return await pollJob(data.job_id);
     } finally {
-      currentSubmissionJobId = null;
+      setCurrentJob(null);
     }
   }
 
@@ -100,6 +160,7 @@
       if (auth.status === 401) return;
       if (!auth.ok) return;
 
+      setCurrentJob(saved.job_id);
       if (typeof addThinking === 'function') pending = addThinking();
       const response = await pollJob(saved.job_id);
       const data = await response.json().catch(() => ({}));
@@ -124,11 +185,13 @@
         if (typeof renderToolLog === 'function') renderToolLog(pending.wrap, data.tools || [], data.model_rounds || 0, data.model || 'unknown');
       }
     } finally {
+      setCurrentJob(null);
       recovering = false;
       if (typeof scrollToBottom === 'function') scrollToBottom();
     }
   }
 
+  ensureCancelButton();
   window.addEventListener('pageshow', recoverPendingJob);
   window.addEventListener('focus', recoverPendingJob);
   document.addEventListener('visibilitychange', () => {
