@@ -72,8 +72,19 @@ async def _execute_chat(
             "tools": [],
         }
 
-    server._append_session_message(principal, request.session_id, role="assistant", content=result.answer)
-    return 200, _response_payload(result)
+    response_payload = _response_payload(result)
+    server._append_session_message(
+        principal,
+        request.session_id,
+        role="assistant",
+        content=result.answer,
+        metadata={
+            "model": response_payload["model"],
+            "model_rounds": response_payload["model_rounds"],
+            "tools": response_payload["tools"],
+        },
+    )
+    return 200, response_payload
 
 
 async def _run_job(*, job_id: str, request: server.ChatRequest, principal: object) -> None:

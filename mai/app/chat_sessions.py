@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ LEGACY_CHAT_TABLE = "chat_messages"
 _COMMON_COLUMNS = {"id", "session_id", "role", "content", "created_at"}
 _KNOWN_AUTH_COLUMNS = _COMMON_COLUMNS | {"auth_user_id"}
 _KNOWN_DB_COLUMNS = _COMMON_COLUMNS | {"db_id"}
+_CURRENT_DB_COLUMNS = _KNOWN_DB_COLUMNS | {"metadata_json"}
 
 
 def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
@@ -62,7 +64,12 @@ class ChatSessionStore:
                     connection.execute(
                         f"ALTER TABLE {WEB_CHAT_TABLE} RENAME COLUMN auth_user_id TO db_id"
                     )
-                elif web_columns != _KNOWN_DB_COLUMNS:
+                    web_columns = _KNOWN_DB_COLUMNS
+                if web_columns == _KNOWN_DB_COLUMNS:
+                    connection.execute(
+                        f"ALTER TABLE {WEB_CHAT_TABLE} ADD COLUMN metadata_json TEXT"
+                    )
+                elif web_columns != _CURRENT_DB_COLUMNS:
                     raise RuntimeError(
                         f"{WEB_CHAT_TABLE} has an unsupported schema; refusing to modify it"
                     )
@@ -75,7 +82,8 @@ class ChatSessionStore:
                     session_id TEXT NOT NULL,
                     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
                     content TEXT NOT NULL,
-                    created_at REAL NOT NULL
+                    created_at REAL NOT NULL,
+                    metadata_json TEXT
                 )
                 """
             )
@@ -109,7 +117,15 @@ class ChatSessionStore:
             )
             return int(cursor.rowcount)
 
-    def append(self, *, db_id: str, session_id: str, role: str, content: str) -> int:
+    def append(
+        self,
+        *,
+        db_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        metadata: dict[str, object] | None = None,
+    ) -> int:
         if role not in {"user", "assistant"}:
             raise ValueError("chat role must be 'user' or 'assistant'")
         if not db_id:
@@ -118,13 +134,14 @@ class ChatSessionStore:
             raise ValueError("session_id must be non-empty")
         if not content:
             raise ValueError("chat content must be non-empty")
+        metadata_json = None if metadata is None else json.dumps(metadata, ensure_ascii=False)
         with self._connect() as connection:
             cursor = connection.execute(
                 f"""
-                INSERT INTO {WEB_CHAT_TABLE}(db_id, session_id, role, content, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO {WEB_CHAT_TABLE}(db_id, session_id, role, content, created_at, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (db_id, session_id, role, content, time.time()),
+                (db_id, session_id, role, content, time.time(), metadata_json),
             )
             return int(cursor.lastrowid)
 
@@ -134,7 +151,8 @@ class ChatSessionStore:
         db_id: str,
         session_id: str,
         limit: int | None = None,
-    ) -> list[dict[str, str]]:
+        include_metadata: bool = False,
+    ) -> list[dict[str, object]]:
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative or None")
         if limit == 0:
@@ -143,7 +161,7 @@ class ChatSessionStore:
             if limit is None:
                 rows = connection.execute(
                     f"""
-                    SELECT role, content
+                    SELECT role, content, metadata_json
                     FROM {WEB_CHAT_TABLE}
                     WHERE db_id = ? AND session_id = ?
                     ORDER BY id ASC
@@ -155,7 +173,7 @@ class ChatSessionStore:
                     f"""
                     SELECT role, content
                     FROM (
-                        SELECT id, role, content
+                        SELECT id, role, content, metadata_json
                         FROM {WEB_CHAT_TABLE}
                         WHERE db_id = ? AND session_id = ?
                         ORDER BY id DESC
@@ -165,7 +183,19 @@ class ChatSessionStore:
                     """,
                     (db_id, session_id, limit),
                 ).fetchall()
-        return [{"role": str(row["role"]), "content": str(row["content"])} for row in rows]
+        messages: list[dict[str, object]] = []
+        for row in rows:
+            message: dict[str, object] = {
+                "role": str(row["role"]),
+                "content": str(row["content"]),
+            }
+            if include_metadata and row["metadata_json"]:
+                metadata = json.loads(str(row["metadata_json"]))
+                if not isinstance(metadata, dict):
+                    raise RuntimeError("stored chat message metadata must be an object")
+                message["metadata"] = metadata
+            messages.append(message)
+        return messages
 
     def clear(self, *, db_id: str, session_id: str) -> bool:
         with self._connect() as connection:

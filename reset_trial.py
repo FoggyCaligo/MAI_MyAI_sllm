@@ -25,6 +25,7 @@ from mai.app.uploads import trial_upload_directory
 _COMMON_CHAT_COLUMNS = {"id", "session_id", "role", "content", "created_at"}
 _KNOWN_AUTH_CHAT_COLUMNS = _COMMON_CHAT_COLUMNS | {"auth_user_id"}
 _KNOWN_DB_CHAT_COLUMNS = _COMMON_CHAT_COLUMNS | {"db_id"}
+_CURRENT_DB_CHAT_COLUMNS = _KNOWN_DB_CHAT_COLUMNS | {"metadata_json"}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -173,7 +174,7 @@ def _reset_chat_history(chat_db_path: Path, *, user_id: str, db_id: str, dry_run
 
         if _chat_table_exists(connection, WEB_CHAT_TABLE):
             columns = _chat_table_columns(connection, WEB_CHAT_TABLE)
-            if columns == _KNOWN_DB_CHAT_COLUMNS:
+            if columns == _KNOWN_DB_CHAT_COLUMNS or columns == _CURRENT_DB_CHAT_COLUMNS:
                 table_name = WEB_CHAT_TABLE
                 column = "db_id"
                 identities = tuple(dict.fromkeys((db_id, user_id)))

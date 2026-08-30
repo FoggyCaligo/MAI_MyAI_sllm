@@ -129,7 +129,9 @@ def test_unrelated_existing_chat_messages_table_is_preserved_untouched(tmp_path)
     connection.close()
 
     assert legacy_row == ("legacy-user", "keep-me")
-    assert web_columns == {"id", "db_id", "session_id", "role", "content", "created_at"}
+    assert web_columns == {
+        "id", "db_id", "session_id", "role", "content", "created_at", "metadata_json",
+    }
     assert store.messages(db_id="local-user", session_id="default") == [
         {"role": "user", "content": "new-web-chat"}
     ]
@@ -172,3 +174,28 @@ def test_detached_chat_uses_db_id_for_prior_and_completed_history(tmp_path, monk
         {"role": "user", "content": "새 질문"},
         {"role": "assistant", "content": "나중에 복원할 답변"},
     ]
+
+
+def test_chat_history_restores_assistant_tool_log_metadata(tmp_path) -> None:
+    store = ChatSessionStore(tmp_path / "chat.sqlite3")
+    metadata = {
+        "model": "test-model",
+        "model_rounds": 2,
+        "tools": [{"name": "file_read", "arguments": {"path": "README.md"}, "ok": True}],
+    }
+    store.append(
+        db_id="local-user",
+        session_id="default",
+        role="assistant",
+        content="완료",
+        metadata=metadata,
+    )
+
+    assert store.messages(db_id="local-user", session_id="default") == [
+        {"role": "assistant", "content": "완료"},
+    ]
+    assert store.messages(
+        db_id="local-user",
+        session_id="default",
+        include_metadata=True,
+    ) == [{"role": "assistant", "content": "완료", "metadata": metadata}]

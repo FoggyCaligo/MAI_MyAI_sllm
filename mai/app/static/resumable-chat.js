@@ -209,7 +209,18 @@
     } else {
       normalized.forEach(message => {
         if (message?.role === 'user') addMessage('user', String(message.content || ''));
-        if (message?.role === 'assistant') addMessage('mai', String(message.content || ''));
+        if (message?.role === 'assistant') {
+          const rendered = addMessage('mai', String(message.content || ''));
+          const metadata = message?.metadata;
+          if (metadata && typeof renderToolLog === 'function') {
+            renderToolLog(
+              rendered.wrap,
+              Array.isArray(metadata.tools) ? metadata.tools : [],
+              Number(metadata.model_rounds) || 0,
+              String(metadata.model || 'unknown'),
+            );
+          }
+        }
       });
     }
     renderedHistorySignature = signature;

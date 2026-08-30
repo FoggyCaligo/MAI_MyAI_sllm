@@ -108,12 +108,20 @@ def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int 
     )
 
 
-def _append_session_message(principal: AccessPrincipal, session_id: str, *, role: str, content: str) -> int:
+def _append_session_message(
+    principal: AccessPrincipal,
+    session_id: str,
+    *,
+    role: str,
+    content: str,
+    metadata: dict[str, object] | None = None,
+) -> int:
     return _get_chat_session_store().append(
         db_id=principal.db_id,
         session_id=session_id,
         role=role,
         content=content,
+        metadata=metadata,
     )
 
 
@@ -361,7 +369,12 @@ async def get_session_history(
     _, principal = _principal_from_authorization(authorization)
     return {
         "session_id": session_id,
-        "messages": _session_history(principal, session_id, limit=None),
+        "messages": _get_chat_session_store().messages(
+            db_id=principal.db_id,
+            session_id=session_id,
+            limit=None,
+            include_metadata=True,
+        ),
     }
 
 
