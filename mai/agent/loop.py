@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
-from ..tools.registry import ToolRegistry
+from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
 from .requirements import FrozenToolRequirements, UnsatisfiedToolRequirements
 from .tool_results import ToolResultStore
@@ -39,6 +39,7 @@ class ToolExecution:
     ok: bool
     content: str
     error_type: str | None = None
+    handler_started: bool = False
     source_content_fingerprint: str | None = None
     compact_history_content: str | None = None
 
@@ -112,7 +113,7 @@ class AgentLoop:
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        successful_tools: set[str] = set()
+        requirement_observed_tools: set[str] = set()
         tools = self.registry.native_schemas()
         guard = AgentGuard(self.guard_config)
         round_number = 1
@@ -157,10 +158,11 @@ class AgentLoop:
                         round_number += 1
                         continue
 
-                    missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(successful_tools)
+                    missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(requirement_observed_tools)
                     if missing:
                         raise UnsatisfiedToolRequirements(
-                            "model attempted final answer before required tools succeeded: " + ", ".join(sorted(missing))
+                            "model attempted final answer before required tools produced an execution result: "
+                            + ", ".join(sorted(missing))
                         )
                     _LOG.info(
                         "MAI final candidate round=%d chars=%d semantic_retries=%d numeric_retries=%d",
@@ -245,13 +247,14 @@ class AgentLoop:
                     executions.append(execution)
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
-                    if execution.ok:
-                        successful_tools.add(execution.name)
+                    if execution.handler_started:
+                        requirement_observed_tools.add(execution.name)
                     _LOG.info(
-                        "MAI tool result round=%d name=%s ok=%s error_type=%s elapsed_ms=%d visible_chars=%d",
+                        "MAI tool result round=%d name=%s ok=%s handler_started=%s error_type=%s elapsed_ms=%d visible_chars=%d",
                         round_number,
                         execution.name,
                         str(execution.ok).lower(),
+                        str(execution.handler_started).lower(),
                         execution.error_type or "-",
                         elapsed_ms,
                         len(execution.content),
@@ -304,6 +307,7 @@ class AgentLoop:
                 ok=False,
                 content=model_content,
                 error_type=type(exc).__name__,
+                handler_started=not isinstance(exc, (UnknownToolError, ToolArgumentsError)),
                 source_content_fingerprint=content_fingerprint(source_content),
                 compact_history_content=compact_content,
             )
@@ -314,6 +318,7 @@ class AgentLoop:
             arguments=dict(call.arguments),
             ok=True,
             content=model_content,
+            handler_started=True,
             source_content_fingerprint=content_fingerprint(source_content),
             compact_history_content=compact_content,
         )
