@@ -4,7 +4,6 @@
   const pollDelayMs = 1500;
   let currentSubmissionJobId = null;
   let recovering = false;
-  let cancelButton = null;
   let liveProgressWrap = null;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -113,59 +112,38 @@
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
-  function ensureCancelButton() {
-    if (cancelButton) return cancelButton;
+  function syncSingleSendControl() {
     const sendButton = document.getElementById('send-btn');
-    const parent = sendButton?.parentElement;
-    if (!parent) return null;
+    const input = document.getElementById('msg-input');
+    if (!sendButton || !input) return;
 
-    cancelButton = document.createElement('button');
-    cancelButton.type = 'button';
-    cancelButton.textContent = '중단';
-    cancelButton.hidden = true;
-    cancelButton.style.border = '1px solid var(--border)';
-    cancelButton.style.borderRadius = '8px';
-    cancelButton.style.padding = '7px 12px';
-    cancelButton.style.background = 'transparent';
-    cancelButton.style.color = 'var(--danger)';
-    cancelButton.style.cursor = 'pointer';
-    cancelButton.addEventListener('click', cancelCurrentJob);
-    parent.insertBefore(cancelButton, sendButton);
-    return cancelButton;
+    if (!currentSubmissionJobId) {
+      if (typeof syncSendButton === 'function') syncSendButton();
+      return;
+    }
+
+    const hasMessage = Boolean(input.value.trim());
+    sendButton.textContent = hasMessage ? '전송' : '중단';
+    sendButton.classList.toggle('stop-mode', !hasMessage);
+    sendButton.disabled = false;
   }
 
   function setCurrentJob(jobId) {
     currentSubmissionJobId = jobId;
-    const button = ensureCancelButton();
-    if (!button) return;
-    button.hidden = !jobId;
-    button.disabled = false;
-    button.textContent = '중단';
     if (!jobId) clearLiveProgress();
+    syncSingleSendControl();
   }
 
-  async function cancelCurrentJob() {
-    const jobId = currentSubmissionJobId;
-    if (!jobId) return;
-    const button = ensureCancelButton();
-    if (button) {
-      button.disabled = true;
-      button.textContent = '중단 중…';
-    }
+  async function cancelJob(jobId) {
+    if (!jobId) return false;
     try {
       const response = await nativeFetch(`/chat/jobs/${encodeURIComponent(jobId)}`, {
         method: 'DELETE',
         headers: headersWithAuth(),
       });
-      if (!response.ok && button) {
-        button.disabled = false;
-        button.textContent = '중단';
-      }
+      return response.ok;
     } catch (_) {
-      if (button) {
-        button.disabled = false;
-        button.textContent = '중단';
-      }
+      return false;
     }
   }
 
@@ -215,13 +193,14 @@
     const data = await submit.json();
     if (!data.job_id) return jsonResponse({detail: 'chat job id가 반환되지 않았습니다.'}, 500);
 
+    const jobId = data.job_id;
     setLiveProgressWrap(latestMaiWrap());
-    setCurrentJob(data.job_id);
-    localStorage.setItem(storageKey, JSON.stringify({job_id: data.job_id, created_at: Date.now()}));
+    setCurrentJob(jobId);
+    localStorage.setItem(storageKey, JSON.stringify({job_id: jobId, created_at: Date.now()}));
     try {
-      return await pollJob(data.job_id);
+      return await pollJob(jobId);
     } finally {
-      setCurrentJob(null);
+      if (currentSubmissionJobId === jobId) setCurrentJob(null);
     }
   }
 
@@ -248,6 +227,7 @@
 
     recovering = true;
     let pending = null;
+    let recoveredJobId = null;
     try {
       if (!state?.token) return;
       const auth = await nativeFetch('/me', {headers: headersWithAuth(), cache: 'no-store'});
@@ -271,10 +251,11 @@
         localStorage.setItem(storageKey, JSON.stringify(saved));
       }
 
-      setCurrentJob(saved.job_id);
+      recoveredJobId = saved.job_id;
+      setCurrentJob(recoveredJobId);
       if (typeof addThinking === 'function') pending = addThinking();
       setLiveProgressWrap(pending?.wrap || latestMaiWrap());
-      const response = await pollJob(saved.job_id);
+      const response = await pollJob(recoveredJobId);
       const data = await response.json().catch(() => ({}));
 
       if (response.status === 401) {
@@ -297,13 +278,24 @@
         if (typeof renderToolLog === 'function') renderToolLog(pending.wrap, data.tools || [], data.model_rounds || 0, data.model || 'unknown');
       }
     } finally {
-      setCurrentJob(null);
+      if (recoveredJobId && currentSubmissionJobId === recoveredJobId) setCurrentJob(null);
       recovering = false;
       if (typeof scrollToBottom === 'function') scrollToBottom();
     }
   }
 
-  ensureCancelButton();
+  const chatForm = document.getElementById('chat-form');
+  const messageInput = document.getElementById('msg-input');
+  if (chatForm) {
+    chatForm.addEventListener('submit', () => {
+      const jobId = currentSubmissionJobId;
+      if (jobId) void cancelJob(jobId);
+    });
+  }
+  if (messageInput) {
+    messageInput.addEventListener('input', syncSingleSendControl);
+  }
+
   window.addEventListener('pageshow', recoverPendingJob);
   window.addEventListener('focus', recoverPendingJob);
   document.addEventListener('visibilitychange', () => {
