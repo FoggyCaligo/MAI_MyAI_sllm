@@ -15,11 +15,11 @@ class ToolRequirementPlanningError(RuntimeError):
 
 
 _SYSTEM_PROMPT = """
-You are MAI's tool preflight. Fill every boolean property in the response schema.
+You are MAI's tool preflight. Fill every boolean property in the schema.
 
 Judge whether the latest user request needs each tool's evidence or effect. recent_dialogue is only context for references; it is not evidence that facts are established or prior tools/research succeeded.
 
-If the user asks to search, inspect, verify, compare, or re-check external/local sources, model knowledge does not satisfy that request; mark relevant evidence-producing tools true.
+If the user asks to search, inspect, verify, compare, or re-check external/local sources, model knowledge does not satisfy that request; mark evidence-producing tools true.
 
 If an input identifier, path, or target that is not yet established must be discovered, require both the discovery tool and the operation tool; mark both discovery and operation tools true. This applies to any path, identifier, or target.
 
