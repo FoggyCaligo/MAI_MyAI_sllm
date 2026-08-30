@@ -17,6 +17,9 @@ class ToolExecutionLike(Protocol):
     ok: bool
     content: str
 
+    @property
+    def context_content(self) -> str: ...
+
 
 def successful_tool_names(executions: Iterable[ToolExecutionLike]) -> tuple[str, ...]:
     """Return the distinct successful tool names used during one agent turn."""
@@ -33,15 +36,15 @@ def successful_memory_recall_tools(executions: Iterable[ToolExecutionLike]) -> t
 
 
 def successful_non_recall_tool_results(executions: Iterable[ToolExecutionLike]) -> tuple[str, ...]:
-    """Return successful non-memory-read tool result bodies for fact extraction.
+    """Return successful model-visible non-memory-read results for fact extraction.
 
     Recall results are operational context copied out of existing persistent
-    memory and must not be recycled as new extraction evidence. Results from
-    files, documents, web/search, images, calculators, terminals, and other
-    non-recall tools remain available as grounding for new persistent facts.
+    memory and must not be recycled as new extraction evidence. For large tool
+    outputs, extraction receives exactly the bounded result scope that the main
+    model received rather than silently gaining access to omitted content.
     """
     return tuple(
-        execution.content
+        execution.context_content
         for execution in executions
         if execution.ok and execution.name not in MEMORY_RECALL_TOOL_NAMES
     )
