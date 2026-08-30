@@ -27,15 +27,44 @@
   }
 
   function setLiveProgressWrap(wrap) {
-    clearLiveToolProgress();
+    clearLiveProgress();
     liveProgressWrap = wrap || null;
   }
 
-  function clearLiveToolProgress() {
+  function clearLiveProgress() {
     if (liveProgressWrap) {
       liveProgressWrap.querySelector('[data-live-tool-progress="true"]')?.remove();
+      liveProgressWrap.querySelector('[data-live-thinking="true"]')?.remove();
     }
     liveProgressWrap = null;
+  }
+
+  function renderLiveThinking(thinking) {
+    if (!liveProgressWrap) return;
+    const bubble = liveProgressWrap.querySelector('.bubble');
+    if (!bubble) return;
+
+    let placeholder = bubble.querySelector('[data-live-thinking="true"]');
+    const text = typeof thinking === 'string' ? thinking.trim() : '';
+    if (!text) {
+      placeholder?.remove();
+      return;
+    }
+
+    if (!placeholder) {
+      placeholder = document.createElement('div');
+      placeholder.dataset.liveThinking = 'true';
+      placeholder.style.marginTop = '8px';
+      placeholder.style.color = 'var(--text-dim)';
+      placeholder.style.opacity = '0.78';
+      placeholder.style.fontSize = '13px';
+      placeholder.style.lineHeight = '1.55';
+      placeholder.style.whiteSpace = 'pre-wrap';
+      placeholder.style.overflowWrap = 'anywhere';
+      bubble.appendChild(placeholder);
+    }
+    placeholder.textContent = text;
+    if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
   function renderLiveToolProgress(tools) {
@@ -112,7 +141,7 @@
     button.hidden = !jobId;
     button.disabled = false;
     button.textContent = '중단';
-    if (!jobId) clearLiveToolProgress();
+    if (!jobId) clearLiveProgress();
   }
 
   async function cancelCurrentJob() {
@@ -161,6 +190,7 @@
       if (!res.ok) return res;
 
       const data = await res.json();
+      renderLiveThinking(data.thinking);
       renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
       if (data.status === 'completed') {
         localStorage.removeItem(storageKey);
