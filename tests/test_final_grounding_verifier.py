@@ -50,6 +50,8 @@ class ReviewerAdapter:
             "evidence_verdict": evidence_verdict,
             "alignment_verdict": alignment_verdict,
             "reasons": list(reasons),
+            "claims": [],
+            "action_verdict": "not_applicable",
         }))
 
 
@@ -77,6 +79,8 @@ class SlowReviewerAdapter:
             "evidence_verdict": "supported",
             "alignment_verdict": "aligned",
             "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
         }))
 
 
@@ -358,6 +362,13 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert isinstance(schema, dict)
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
+        "evidence_verdict",
+        "alignment_verdict",
+        "reasons",
+        "claims",
+        "action_verdict",
+    }
     assert "claims" in schema["properties"]
     assert "action_verdict" in schema["properties"]
 
