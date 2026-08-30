@@ -19,7 +19,7 @@ import logging
 import re
 from typing import Any, Literal, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter
@@ -40,7 +40,7 @@ You are a judgment-only final-answer release reviewer. You cannot call tools, ch
 
 Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while still allowing useful truthful partial answers.
 
-Your response is constrained by the supplied structured-output schema. Populate these fields:
+Your response is constrained by the supplied structured-output schema. Populate every required field:
 - evidence_verdict: "supported", "unsupported", or "uncertain"
 - alignment_verdict: "aligned", "misaligned", or "uncertain"
 - reasons: concrete blocking defects only
@@ -61,14 +61,15 @@ Evidence scope preservation:
 - When evidence covers only part of a set or state, exhaustive, exclusive, global, superlative, or broader-scope conclusions require evidence that the broader scope was actually observed.
 - If the evidence supports a narrower statement but the candidate asserts a broader one, mark that claim unsupported with defect "scope_expansion".
 - Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
+- Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
 Action outcome verification:
 - Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
-- If no state-changing outcome is at issue, action_verdict is "not_applicable".
+- If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
 - A successful action/tool invocation is evidence that the tool contract reported success. It is not automatically evidence for a broader requested end state.
-- Use "verified" only when the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
+- Use "verified" only when the candidate claims completion and the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
 - Use "unverified" when an action was attempted or reported successful but the candidate claims completion beyond what resulting-state evidence establishes.
-- Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved.
+- Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
 Task alignment and partial-answer policy:
@@ -98,26 +99,20 @@ class _ClaimReviewPayload(BaseModel):
         "contradiction",
         "unsupported_inference",
         "missing_evidence",
-    ] = "none"
-    reason: str = ""
+    ]
+    reason: str
 
 
 class _FinalReviewPayload(BaseModel):
-    """Provider-structured reviewer response.
-
-    The first three fields preserve the pre-existing review contract. The new
-    claim/action fields have defaults so tests and older compatible reviewer
-    implementations can still be interpreted conservatively while production
-    requests ask the provider for the full schema.
-    """
+    """Strict provider-structured reviewer response."""
 
     model_config = ConfigDict(extra="forbid")
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
-    reasons: list[str] = Field(default_factory=list)
-    claims: list[_ClaimReviewPayload] = Field(default_factory=list)
-    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"] = "not_applicable"
+    reasons: list[str]
+    claims: list[_ClaimReviewPayload]
+    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,7 +330,9 @@ class FinalGroundingVerifier:
                 "error_type": error_type,
                 "result": _clip_text(content, 3500),
             }
-            for index, (name, ok, error_type, content) in enumerate(tool_results[-10:], start=max(0, len(tool_results) - 10))
+            for index, (name, ok, error_type, content) in enumerate(
+                tool_results[-10:], start=max(0, len(tool_results) - 10)
+            )
         ]
         payload = {
             "current_user_request": current_user_request,
