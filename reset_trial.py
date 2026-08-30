@@ -5,9 +5,8 @@ the selected trial identity, plus concept nodes that become completely orphaned
 after that user's memory is removed. Shared concepts used by another user's
 memory are preserved.
 
-The selected trial account's isolated upload directory is also removed. Chat and
-login sessions are process-local and therefore disappear when the stopped server
-is started again.
+The selected trial account's isolated upload directory and persisted chat history
+are also removed so a reused trial ID cannot expose the previous user's data.
 """
 from __future__ import annotations
 
@@ -37,6 +36,11 @@ def _parse_args() -> argparse.Namespace:
         help="Memory SQLite path. Defaults to MEMORY_DB_PATH or ./data/memory.sqlite3.",
     )
     parser.add_argument(
+        "--chat-db",
+        default=None,
+        help="Chat SQLite path. Defaults to CHAT_DB_PATH or ./data/chat.sqlite3.",
+    )
+    parser.add_argument(
         "--upload-root",
         default=None,
         help="Upload root. Defaults to MAI_UPLOAD_ROOT or ./mai_uploads.",
@@ -49,13 +53,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what would be deleted without changing memory or uploads.",
+        help="Show what would be deleted without changing memory, chat history, or uploads.",
     )
     return parser.parse_args()
 
 
 def _load_trial_principal(trial_id: str):
     policy = AccessPolicy.from_env_values(
+        owner_accounts=os.environ.get("OWNER_ACCOUNTS"),
         owner_id=os.environ.get("OWNER_ID"),
         owner_memory_id=os.environ.get("OWNER_MEMORY_ID"),
         trial_ids=os.environ.get("TRIAL_IDS"),
@@ -175,12 +180,9 @@ def _reset_memory(db_path: Path, user_id: str, *, dry_run: bool) -> dict[str, in
 
         orphan_ids: set[int] = set()
         with connection:
-            # Deleting owned nodes cascades user_anchors and all touching edges.
             _delete_ids(connection, "nodes", "id", owned_node_ids)
             _delete_ids(connection, "evidence", "id", evidence_ids)
 
-            # Concepts are global/deduplicated. Remove only those no longer connected
-            # to any user's remaining memory, and keep the persisted lookup index in sync.
             orphan_ids = _orphan_concept_ids(connection)
             if orphan_ids:
                 placeholders = ",".join("?" for _ in orphan_ids)
@@ -204,6 +206,32 @@ def _reset_memory(db_path: Path, user_id: str, *, dry_run: bool) -> dict[str, in
             "evidence": len(evidence_ids),
             "orphan_concepts": len(orphan_ids),
         }
+    finally:
+        connection.close()
+
+
+def _reset_chat_history(chat_db_path: Path, auth_user_id: str, *, dry_run: bool) -> int:
+    if not chat_db_path.exists():
+        return 0
+    connection = sqlite3.connect(chat_db_path)
+    try:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages'"
+        ).fetchone()
+        if table is None:
+            return 0
+        row = connection.execute(
+            "SELECT COUNT(*) FROM chat_messages WHERE auth_user_id = ?",
+            (auth_user_id,),
+        ).fetchone()
+        count = int(row[0])
+        if not dry_run and count:
+            with connection:
+                connection.execute(
+                    "DELETE FROM chat_messages WHERE auth_user_id = ?",
+                    (auth_user_id,),
+                )
+        return count
     finally:
         connection.close()
 
@@ -251,6 +279,9 @@ def main() -> int:
     db_path = Path(
         args.db or os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3")
     ).expanduser().resolve()
+    chat_db_path = Path(
+        args.chat_db or os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3")
+    ).expanduser().resolve(strict=False)
     upload_root = Path(
         args.upload_root or os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads")
     ).expanduser().resolve(strict=False)
@@ -258,6 +289,7 @@ def main() -> int:
 
     try:
         preview = _reset_memory(db_path, principal.memory_user_id, dry_run=True)
+        chat_preview = _reset_chat_history(chat_db_path, principal.auth_user_id, dry_run=True)
         upload_preview = _reset_uploads(upload_dir, dry_run=True)
     except Exception as exc:
         print(f"Could not inspect trial data: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -266,10 +298,12 @@ def main() -> int:
     print(f"Trial account : {principal.auth_user_id}")
     print(f"Memory user   : {principal.memory_user_id}")
     print(f"Database      : {db_path}")
+    print(f"Chat database : {chat_db_path}")
     print(f"Upload dir    : {upload_dir}")
     print(f"Owned nodes   : {preview['owned_nodes']}")
     print(f"Touching edges: {preview['edges']}")
     print(f"Evidence rows : {preview['evidence']}")
+    print(f"Chat messages : {chat_preview}")
     print(f"Upload files  : {upload_preview['files']}")
     print(f"Upload bytes  : {upload_preview['bytes']}")
 
@@ -287,6 +321,7 @@ def main() -> int:
 
     try:
         result = _reset_memory(db_path, principal.memory_user_id, dry_run=False)
+        chat_result = _reset_chat_history(chat_db_path, principal.auth_user_id, dry_run=False)
         upload_result = _reset_uploads(upload_dir, dry_run=False)
     except sqlite3.OperationalError as exc:
         print(
@@ -304,6 +339,7 @@ def main() -> int:
     print(f"Removed edges           : {result['edges']}")
     print(f"Deleted evidence        : {result['evidence']}")
     print(f"Removed orphan concepts : {result['orphan_concepts']}")
+    print(f"Deleted chat messages   : {chat_result}")
     print(f"Deleted upload files    : {upload_result['files']}")
     print(f"Deleted upload bytes    : {upload_result['bytes']}")
     print("Start MAI again before handing the trial ID to the next user.")

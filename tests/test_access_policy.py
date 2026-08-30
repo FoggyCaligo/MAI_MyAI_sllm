@@ -29,7 +29,22 @@ def test_access_policy_separates_owner_login_and_memory_identity():
         policy.authenticate("unknown")
 
 
-def test_access_policy_requires_owner_and_owner_memory_identity():
+def test_access_policy_supports_multiple_owner_accounts():
+    policy = AccessPolicy.from_env_values(
+        owner_accounts='{"owner-a":"memory-a","owner-b":"memory-b"}',
+        trial_ids=None,
+    )
+
+    first = policy.authenticate("owner-a")
+    second = policy.authenticate("owner-b")
+
+    assert first.memory_user_id == "memory-a"
+    assert second.memory_user_id == "memory-b"
+    assert first.role is AccessRole.OWNER
+    assert second.role is AccessRole.OWNER
+
+
+def test_access_policy_requires_owner_configuration():
     with pytest.raises(ValueError, match="OWNER_ID is required"):
         AccessPolicy.from_env_values(
             owner_id=None,
@@ -42,19 +57,37 @@ def test_access_policy_requires_owner_and_owner_memory_identity():
             owner_memory_id=None,
             trial_ids=None,
         )
+    with pytest.raises(ValueError, match="non-empty JSON object"):
+        AccessPolicy.from_env_values(owner_accounts="{}", trial_ids=None)
+
+
+def test_access_policy_rejects_ambiguous_owner_configuration():
+    with pytest.raises(ValueError, match="cannot be combined"):
+        AccessPolicy.from_env_values(
+            owner_accounts='{"owner-a":"memory-a"}',
+            owner_id="owner",
+            owner_memory_id="memory",
+            trial_ids=None,
+        )
+
+
+def test_access_policy_rejects_duplicate_owner_memory_identity():
+    with pytest.raises(ValueError, match="memory identities must be unique"):
+        AccessPolicy.from_env_values(
+            owner_accounts='{"owner-a":"shared","owner-b":"shared"}',
+            trial_ids=None,
+        )
 
 
 def test_access_policy_rejects_auth_or_memory_collision_with_trial():
     with pytest.raises(ValueError):
         AccessPolicy.from_env_values(
-            owner_id="same",
-            owner_memory_id="owner-memory",
+            owner_accounts='{"same":"owner-memory"}',
             trial_ids="same",
         )
     with pytest.raises(ValueError):
         AccessPolicy.from_env_values(
-            owner_id="owner",
-            owner_memory_id="trial-a",
+            owner_accounts='{"owner":"trial-a"}',
             trial_ids="trial-a",
         )
 

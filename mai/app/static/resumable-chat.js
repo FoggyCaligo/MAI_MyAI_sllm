@@ -5,6 +5,12 @@
   let currentSubmissionJobId = null;
   let recovering = false;
   let liveProgressWrap = null;
+  let historySyncing = false;
+  let renderedHistorySignature = null;
+
+  // MAI currently exposes one continuing conversation per account. Keeping the
+  // session id stable lets PC and phone restore the same server-side history.
+  if (typeof state === 'object' && state) state.sessionId = 'default';
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -157,6 +163,79 @@
     syncSingleSendControl();
   }
 
+  function showExpiredLogin() {
+    sessionStorage.removeItem('MAI:auth-token');
+    if (typeof state === 'object' && state) state.token = null;
+    renderedHistorySignature = null;
+    if (typeof showLogin === 'function') {
+      showLogin('다른 기기에서 새로 로그인했거나 세션이 만료되었습니다. 다시 로그인해주세요.');
+    }
+  }
+
+  function clearVisibleConversation() {
+    const host = document.getElementById('messages');
+    if (!host) return;
+    host.replaceChildren();
+    const empty = document.createElement('div');
+    empty.id = 'empty-state';
+    const big = document.createElement('div');
+    big.className = 'big';
+    big.textContent = 'MAI';
+    const hint = document.createElement('div');
+    hint.textContent = '메시지를 입력하세요.';
+    empty.append(big, hint);
+    host.appendChild(empty);
+    renderedHistorySignature = null;
+  }
+
+  function renderPersistentHistory(messages) {
+    const host = document.getElementById('messages');
+    if (!host || typeof addMessage !== 'function') return;
+    const normalized = Array.isArray(messages) ? messages : [];
+    const signature = JSON.stringify([state?.userId || null, normalized]);
+    if (signature === renderedHistorySignature) return;
+
+    host.replaceChildren();
+    if (!normalized.length) {
+      const empty = document.createElement('div');
+      empty.id = 'empty-state';
+      const big = document.createElement('div');
+      big.className = 'big';
+      big.textContent = 'MAI';
+      const hint = document.createElement('div');
+      hint.textContent = '메시지를 입력하세요.';
+      empty.append(big, hint);
+      host.appendChild(empty);
+    } else {
+      normalized.forEach(message => {
+        if (message?.role === 'user') addMessage('user', String(message.content || ''));
+        if (message?.role === 'assistant') addMessage('mai', String(message.content || ''));
+      });
+    }
+    renderedHistorySignature = signature;
+    if (typeof scrollToBottom === 'function') scrollToBottom('auto', true);
+  }
+
+  async function syncPersistentHistory() {
+    if (historySyncing || currentSubmissionJobId || !state?.token) return;
+    historySyncing = true;
+    try {
+      const response = await nativeFetch(`/session/${encodeURIComponent(state.sessionId || 'default')}`, {
+        headers: headersWithAuth(),
+        cache: 'no-store',
+      });
+      if (response.status === 401) {
+        showExpiredLogin();
+        return;
+      }
+      if (!response.ok) return;
+      const data = await response.json().catch(() => ({}));
+      renderPersistentHistory(Array.isArray(data.messages) ? data.messages : []);
+    } finally {
+      historySyncing = false;
+    }
+  }
+
   async function cancelJob(jobId) {
     if (!jobId) return false;
     try {
@@ -231,6 +310,15 @@
     const url = typeof input === 'string' ? input : input?.url;
     const method = String(init?.method || 'GET').toUpperCase();
     if (url === '/chat' && method === 'POST') return submitDetachedChat(init);
+    if (url === '/login' && method === 'POST') {
+      return nativeFetch(input, init).then(response => {
+        if (response.ok) {
+          clearVisibleConversation();
+          setTimeout(recoverPendingJob, 0);
+        }
+        return response;
+      });
+    }
     return nativeFetch(input, init);
   };
 
@@ -239,6 +327,10 @@
       headers: headersWithAuth(),
       cache: 'no-store',
     });
+    if (response.status === 401) {
+      showExpiredLogin();
+      return null;
+    }
     if (!response.ok) return null;
     const data = await response.json().catch(() => ({}));
     const jobs = Array.isArray(data.jobs) ? data.jobs : [];
@@ -252,6 +344,10 @@
           headers: headersWithAuth(),
           cache: 'no-store',
         });
+        if (response.status === 401) {
+          showExpiredLogin();
+          return null;
+        }
         if (response.status !== 404) return saved.job_id;
         localStorage.removeItem(storageKey);
       } catch (_) {
@@ -274,8 +370,13 @@
     try {
       if (!state?.token) return;
       const auth = await nativeFetch('/me', {headers: headersWithAuth(), cache: 'no-store'});
-      if (auth.status === 401) return;
+      if (auth.status === 401) {
+        showExpiredLogin();
+        return;
+      }
       if (!auth.ok) return;
+
+      await syncPersistentHistory();
 
       let saved = null;
       const raw = localStorage.getItem(storageKey);
@@ -298,7 +399,7 @@
 
       if (response.status === 401) {
         pending?.row?.remove();
-        if (typeof showLogin === 'function') showLogin(data.detail || '세션 만료');
+        showExpiredLogin();
         return;
       }
 
@@ -309,6 +410,7 @@
         } else if (typeof addMessage === 'function') {
           addMessage('mai', data.answer || '');
         }
+        renderedHistorySignature = null;
       } else if (pending) {
         pending.bubble.classList.add('error');
         const prefix = data.error_type ? `${data.error_type}: ` : '';
@@ -318,6 +420,7 @@
     } finally {
       if (recoveredJobId && currentSubmissionJobId === recoveredJobId) setCurrentJob(null);
       recovering = false;
+      if (!currentSubmissionJobId) void syncPersistentHistory();
       if (typeof scrollToBottom === 'function') scrollToBottom();
     }
   }
