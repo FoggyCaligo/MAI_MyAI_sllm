@@ -39,8 +39,6 @@ class AccessPrincipal:
     db_id: str
     role: AccessRole
 
-    # Compatibility aliases for runtime/tool code that still uses the older
-    # names. Persistent identity semantics are db_id, not the mutable user_id.
     @property
     def auth_user_id(self) -> str:
         return self.user_id
@@ -89,6 +87,17 @@ class AccessPolicy:
             owners={info.user_id: info for info in owners},
             trials={info.user_id: info for info in trials},
         )
+
+    def configured_principal(self, user_id: str) -> AccessPrincipal:
+        clean = user_id.strip()
+        info = self.owners.get(clean)
+        role = AccessRole.OWNER
+        if info is None:
+            info = self.trials.get(clean)
+            role = AccessRole.TRIAL
+        if info is None:
+            raise AccessDeniedError("configured account does not exist")
+        return AccessPrincipal(user_id=info.user_id, db_id=info.db_id, role=role)
 
     def authenticate(self, submitted_id: str, submitted_password: str) -> AccessPrincipal:
         user_id = submitted_id.strip()
