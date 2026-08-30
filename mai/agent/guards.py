@@ -20,7 +20,7 @@ class RepeatedToolFailureError(AgentGuardError):
 
 
 class NoProgressError(AgentGuardError):
-    """Consecutive tool rounds produced the same structural execution signature."""
+    """The agent repeated the same structural state without making progress."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,14 +55,16 @@ class AgentGuard:
     """Per-run structural guard state.
 
     The guard never interprets user text, tool names, or result meaning. It only
-    compares canonical native-call arguments and exact execution outcomes.
+    compares canonical native-call arguments, exact execution outcomes, and the
+    exact frozen set of missing required tools.
 
     Recovery policy:
     - changed calls or changed outcomes are treated as structural progress;
     - an identical failure streak is surfaced to the model before it is stopped;
     - after the model has observed the configured number of identical failures,
       only another unchanged call is blocked;
-    - repeated identical calls and no-progress rounds remain structural stops.
+    - repeated identical calls, repeated tool-round outcomes, and repeated final
+      attempts with the same missing requirements are structural no-progress stops.
     """
 
     def __init__(self, config: GuardConfig | None = None) -> None:
@@ -72,6 +74,8 @@ class AgentGuard:
         self._failure_streak_count = 0
         self._previous_round_signature: str | None = None
         self._identical_rounds = 0
+        self._previous_missing_requirements: frozenset[str] | None = None
+        self._identical_requirement_rejections = 0
 
     def before_tool_call(self, name: str, arguments: Mapping[str, Any]) -> str:
         fingerprint = call_fingerprint(name, arguments)
@@ -139,6 +143,28 @@ class AgentGuard:
                 "consecutive tool rounds produced the same structural result more than "
                 f"{self.config.max_no_progress_rounds} times"
             )
+
+    def after_requirement_rejection(self, missing: frozenset[str]) -> None:
+        """Stop only when the same frozen requirement omission keeps repeating."""
+
+        if not missing:
+            raise ValueError("missing requirements must be non-empty")
+        if missing == self._previous_missing_requirements:
+            self._identical_requirement_rejections += 1
+        else:
+            self._previous_missing_requirements = missing
+            self._identical_requirement_rejections = 1
+        if self._identical_requirement_rejections > self.config.max_no_progress_rounds:
+            raise NoProgressError(
+                "model repeatedly attempted a final answer with the same unsatisfied tool requirements more than "
+                f"{self.config.max_no_progress_rounds} times"
+            )
+
+    def note_requirement_progress(self) -> None:
+        """Reset requirement-omission no-progress state after a required handler starts."""
+
+        self._previous_missing_requirements = None
+        self._identical_requirement_rejections = 0
 
 
 def call_fingerprint(name: str, arguments: Mapping[str, Any]) -> str:
