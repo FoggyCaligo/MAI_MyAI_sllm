@@ -155,17 +155,16 @@ def code_search(
         "end_line": end_line,
         "results": results,
         "truncated": truncated,
+        "collection": {
+            "returned_count": len(results),
+            "total_count": None if truncated else len(results),
+            "has_more": truncated,
+            "complete": not truncated,
+        },
     }
 
 
-def code_read(
-    *,
-    path: str,
-    start_line: int = 1,
-    end_line: int | None = None,
-    encoding: str = "utf-8",
-    cwd: str | Path | None = None,
-) -> dict[str, Any]:
+def code_read(*, path: str, start_line: int = 1, end_line: int | None = None, encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
     """Read an exact inclusive line range with stable line numbers."""
 
     target = _resolve(path, cwd)
@@ -184,13 +183,7 @@ def code_read(
         {"line": index, "text": lines[index - 1]}
         for index in range(start_line, min(effective_end, total_lines) + 1)
     ]
-    return {
-        "path": str(target),
-        "start_line": start_line,
-        "end_line": min(effective_end, total_lines),
-        "total_lines": total_lines,
-        "lines": selected,
-    }
+    return {"path": str(target), "start_line": start_line, "end_line": min(effective_end, total_lines), "total_lines": total_lines, "lines": selected}
 
 
 class _PythonSymbolVisitor(ast.NodeVisitor):
@@ -200,13 +193,7 @@ class _PythonSymbolVisitor(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         qualified = ".".join([*self._classes, node.name])
-        self.symbols.append({
-            "name": node.name,
-            "qualified_name": qualified,
-            "kind": "class",
-            "line": node.lineno,
-            "end_line": getattr(node, "end_lineno", node.lineno),
-        })
+        self.symbols.append({"name": node.name, "qualified_name": qualified, "kind": "class", "line": node.lineno, "end_line": getattr(node, "end_lineno", node.lineno)})
         self._classes.append(node.name)
         self.generic_visit(node)
         self._classes.pop()
@@ -222,22 +209,10 @@ class _PythonSymbolVisitor(ast.NodeVisitor):
 
     def _add_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, kind: str) -> None:
         qualified = ".".join([*self._classes, node.name])
-        self.symbols.append({
-            "name": node.name,
-            "qualified_name": qualified,
-            "kind": kind,
-            "line": node.lineno,
-            "end_line": getattr(node, "end_lineno", node.lineno),
-        })
+        self.symbols.append({"name": node.name, "qualified_name": qualified, "kind": kind, "line": node.lineno, "end_line": getattr(node, "end_lineno", node.lineno)})
 
 
-def code_symbols(
-    *,
-    path: str,
-    parser: Literal["python"],
-    encoding: str = "utf-8",
-    cwd: str | Path | None = None,
-) -> dict[str, Any]:
+def code_symbols(*, path: str, parser: Literal["python"], encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
     """Return parser-derived symbols without regex/name-shape guessing."""
 
     target = _resolve(path, cwd)
@@ -255,12 +230,7 @@ def code_symbols(
     return {"path": str(target), "parser": parser, "symbols": visitor.symbols}
 
 
-def register_code_tools(
-    registry: ToolRegistry,
-    *,
-    cwd: str | Path | None = None,
-    timeout_seconds: float | None = 60,
-) -> None:
+def register_code_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = 60) -> None:
     def search_handler(**kwargs: Any) -> dict[str, Any]:
         return code_search(cwd=cwd, **kwargs)
 
@@ -275,29 +245,12 @@ def register_code_tools(
         description=(
             "Search file contents recursively from any accessible local path and return exact matching lines. "
             "Use explicit literal or regex mode, optional include/exclude globs, and optional inclusive start_line/end_line "
-            "bounds applied independently to each candidate file."
+            "bounds applied independently to each candidate file. collection.complete=false means more matches may exist beyond the returned results."
         ),
         input_model=CodeSearchInput,
         handler=search_handler,
         timeout_seconds=timeout_seconds,
         category="code",
     )
-    registry.add(
-        name="code_read",
-        description="Read an inclusive line range from a local text/code file with stable line numbers.",
-        input_model=CodeReadInput,
-        handler=read_handler,
-        timeout_seconds=timeout_seconds,
-        category="code",
-    )
-    registry.add(
-        name="code_symbols",
-        description=(
-            "Parse a source file with an explicit supported parser and return structural symbols. "
-            "Currently supports Python via the standard AST parser; unsupported languages are not guessed."
-        ),
-        input_model=CodeSymbolsInput,
-        handler=symbols_handler,
-        timeout_seconds=timeout_seconds,
-        category="code",
-    )
+    registry.add(name="code_read", description="Read an inclusive line range from a local text/code file with stable line numbers.", input_model=CodeReadInput, handler=read_handler, timeout_seconds=timeout_seconds, category="code")
+    registry.add(name="code_symbols", description="Parse a source file with an explicit supported parser and return structural symbols. Currently supports Python via the standard AST parser; unsupported languages are not guessed.", input_model=CodeSymbolsInput, handler=symbols_handler, timeout_seconds=timeout_seconds, category="code")
