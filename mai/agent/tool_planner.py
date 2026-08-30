@@ -23,15 +23,15 @@ class _ToolRequirementPlan(BaseModel):
 
 
 _SYSTEM_PROMPT = """
-You are MAI's tool-requirement preflight. Return only the required_tools array from the supplied schema, using exact available tool names.
+You are MAI's tool-requirement preflight. Return only required_tools from the schema, using exact available tool names.
 
-Require only tools that must produce an execution result before a valid final answer because the requested outcome depends on information or effects not established by the latest user request itself. Use recent_dialogue only to resolve references and preserve conversational context. Do not treat prior user/assistant dialogue as evidence that a fact is established, that a tool ran, or that requested research/inspection/verification was completed.
+Require tools that must produce an execution result because the requested outcome depends on information/effects not established by the latest user request itself. recent_dialogue is only for reference resolution and conversational context; it is not evidence that facts are established, tools ran, or requested research/inspection/verification was completed.
 
-When the requested operation needs an input identifier, path, or target that is not yet established and another available tool must discover it before the operation can succeed, require both the discovery tool and the operation tool.
+If an operation needs an unestablished identifier, path, or target and another tool must discover it first, require both discovery and operation tools.
 
-If the requested method or deliverable is to discover, search, inspect, verify, compare, or re-check an external/local source, model-training knowledge is not the requested evidence; require tools that produce that evidence even for stable facts.
+If the requested method/deliverable is to discover, search, inspect, verify, compare, or re-check an external/local source, model-training knowledge is not the requested evidence; require evidence-producing tools even for stable facts.
 
-When the environment can resolve a local inspection/action, require the relevant local tool instead of replacing it with a question to the user. Likewise require memory for missing stored-user history and the relevant web/market/time/calculation tool for missing current or derived facts. When comparing dates or time-relative information against the current moment, require the available current-time tool unless the current moment is already established in the latest user request.
+When the environment can resolve local inspection/action, require the relevant local tool instead of asking the user. Likewise require memory for missing stored-user history and relevant web/market/time/calculation tools for missing current or derived facts. For date/time-relative comparisons against the current moment, require the current-time tool unless the latest user request establishes the current moment.
 
 Do not require tools for optional detail. Do not call tools, answer the task, invent arguments, or propose next steps.
 """.strip()
