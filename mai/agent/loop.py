@@ -41,6 +41,7 @@ class ToolExecution:
 
 
 ToolExecutionObserver = Callable[[ToolExecution], None]
+ModelTurnObserver = Callable[[int, ModelTurn], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,7 @@ class AgentLoop:
         options: Mapping[str, Any] | None = None,
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
+        on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
@@ -113,6 +115,8 @@ class AgentLoop:
                 guard.before_model_round(round_number)
                 _LOG.info("MAI model round start round=%d", round_number)
                 turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
+                if on_model_turn is not None:
+                    on_model_turn(round_number, turn)
                 history.append(dict(turn.assistant_message))
 
                 if not turn.tool_calls:
