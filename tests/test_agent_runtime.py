@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from mai.agent import AgentRoundLimitExceeded, AgentRunFailure, AgentRuntime
+from mai.agent.requirements import FrozenToolRequirements
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
 
@@ -75,6 +76,7 @@ def test_runtime_completes_native_tool_round_trip() -> None:
     assert result.content == "The tool returned hello."
     assert result.model_rounds == 2
     assert result.tool_executions[0].ok is True
+    assert result.tool_executions[0].handler_started is True
     followup_messages = adapter.requests[1].messages
     assert followup_messages[2]["role"] == "assistant"
     assert followup_messages[2]["tool_calls"][0]["function"]["name"] == "echo"
@@ -104,6 +106,60 @@ def test_tool_failure_is_returned_as_visible_structured_tool_result() -> None:
     result = run(AgentRuntime(adapter, registry).run_user_message("try"))
     payload = json.loads(result.tool_executions[0].content)
     assert payload == {"ok": False, "error_type": "PermissionError", "message": "denied"}
+    assert result.tool_executions[0].handler_started is True
+
+
+def test_required_tool_handler_failure_still_satisfies_preflight_obligation() -> None:
+    registry = ToolRegistry()
+
+    def terminal(command: str):
+        raise RuntimeError(f"command completed unsuccessfully: {command}")
+
+    registry.add(
+        name="terminal_run",
+        description="Test terminal.",
+        input_model=CommandInput,
+        handler=terminal,
+    )
+    adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="terminal_run", arguments={"command": "pytest"}),)),
+        assistant_turn(content="pytest ran and reported failures."),
+    ])
+    requirements = FrozenToolRequirements(frozenset({"terminal_run"}))
+
+    result = run(
+        AgentRuntime(adapter, registry).run_user_message(
+            "run pytest",
+            requirements=requirements,
+        )
+    )
+
+    assert result.content == "pytest ran and reported failures."
+    assert result.tool_executions[0].ok is False
+    assert result.tool_executions[0].handler_started is True
+
+
+def test_required_tool_argument_failure_does_not_satisfy_preflight_obligation() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={}),)),
+        assistant_turn(content="I am done."),
+    ])
+    requirements = FrozenToolRequirements(frozenset({"echo"}))
+
+    with pytest.raises(AgentRunFailure) as exc_info:
+        run(
+            AgentRuntime(adapter, registry).run_user_message(
+                "use echo",
+                requirements=requirements,
+            )
+        )
+
+    failure = exc_info.value
+    assert failure.error_type == "UnsatisfiedToolRequirements"
+    assert failure.context.tool_executions[0].error_type == "ToolArgumentsError"
+    assert failure.context.tool_executions[0].handler_started is False
 
 
 def test_model_can_correct_terminal_command_after_five_distinct_failures() -> None:
@@ -136,6 +192,7 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
     assert result.model_rounds == 7
     assert len(result.tool_executions) == 6
     assert [execution.ok for execution in result.tool_executions] == [False, False, False, False, False, True]
+    assert all(execution.handler_started for execution in result.tool_executions)
     for request_index, failed_command in enumerate(failed_commands, start=1):
         tool_message = adapter.requests[request_index].messages[-1]
         assert tool_message["role"] == "tool"
@@ -188,7 +245,7 @@ def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
 
     assert result.content == "done"
     assert 'MAI tool call round=1 name=echo args={"text":"hello"}' in caplog.text
-    assert "MAI tool result round=1 name=echo ok=true error_type=-" in caplog.text
+    assert "MAI tool result round=1 name=echo ok=true handler_started=true error_type=-" in caplog.text
     assert "MAI final candidate round=2" in caplog.text
     assert "MAI final accepted round=2" in caplog.text
 
@@ -200,6 +257,7 @@ def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
     ])
     result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message("use missing"))
     assert result.tool_executions[0].error_type == "UnknownToolError"
+    assert result.tool_executions[0].handler_started is False
 
 
 def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect_and_preserves_context() -> None:
@@ -223,6 +281,7 @@ def test_runtime_stops_at_structural_max_rounds_before_extra_side_effect_and_pre
     assert len(failure.context.tool_executions) == 1
     assert failure.context.tool_executions[0].name == "echo"
     assert failure.context.tool_executions[0].ok is True
+    assert failure.context.tool_executions[0].handler_started is True
     assert calls == ["again"]
 
 
