@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -86,10 +87,12 @@ class MAIRuntime:
         vision_model: str | None = None,
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
-        max_inline_tool_result_chars: int = 16000,
+        max_inline_tool_result_chars: int | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
+        if max_inline_tool_result_chars is None:
+            max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "16000"))
         if max_inline_tool_result_chars < 1024:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.cwd = cwd
@@ -221,7 +224,7 @@ class MAIRuntime:
             "arguments": execution.arguments,
             "ok": execution.ok,
             "error_type": execution.error_type,
-            "result": execution.context_content,
+            "result": execution.content,
         } for execution in result.tool_executions)
 
         task = asyncio.create_task(
