@@ -51,7 +51,7 @@ class ChatSessionStore:
         with self._connect() as connection:
             if not _table_exists(connection, WEB_CHAT_TABLE) and _table_exists(connection, LEGACY_CHAT_TABLE):
                 legacy_columns = _table_columns(connection, LEGACY_CHAT_TABLE)
-                if legacy_columns in {_KNOWN_AUTH_COLUMNS, _KNOWN_DB_COLUMNS}:
+                if legacy_columns == _KNOWN_AUTH_COLUMNS or legacy_columns == _KNOWN_DB_COLUMNS:
                     connection.execute(
                         f"ALTER TABLE {LEGACY_CHAT_TABLE} RENAME TO {WEB_CHAT_TABLE}"
                     )
