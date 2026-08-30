@@ -37,66 +37,32 @@ _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
 
 _FINAL_REVIEW_SYSTEM = """
-You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
+You are a judgment-only final-answer reviewer. Do not call or choose tools, rewrite the answer, or add requirements. Review the candidate against the current request, conversation context, and ordered tool evidence, and populate every field required by the response schema.
 
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+Evidence grounding:
+- Review each material factual claim as supported, unsupported, or uncertain. Unsupported includes contradiction, missing support, or evidence that supports only a narrower claim. Use uncertain only for genuine reviewer ambiguity; an unverified proposition stated as fact is normally unsupported.
+- Current user messages and tool results are evidence. Prior assistant text is context only. Stable general knowledge need not appear in current-turn evidence.
+- Failed tool results may support claims about observed stdout, stderr, diagnostics, or errors, but never prove the requested operation succeeded. Keep temporal framing consistent with established dates/times.
 
-Your response is constrained by the supplied structured-output schema. Populate every required field:
-- evidence_verdict: "supported", "unsupported", or "uncertain"
-- alignment_verdict: "aligned", "misaligned", or "uncertain"
-- coverage_verdict: "sufficient", "insufficient", or "uncertain"
-- coverage_reasons: concrete material omissions from already supplied evidence only
-- reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
-- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+Scope and defects:
+- Never allow a claim broader than its evidence. Preserve distinctions such as local vs remote state, one file vs all files, partial rows vs a complete set, one command vs a larger goal, and one source vs a universal conclusion.
+- Mark broader claims as scope_expansion; direct conflicts as contradiction; unsupported causal/semantic conclusions as unsupported_inference; unsupported factual assertions as missing_evidence; otherwise defect none.
 
-Claim-level evidence grounding:
-- For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
-- A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
-- Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
-- Stable general knowledge does not require current-turn evidence merely because it is factual.
-- Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
-- Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
-- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
+Coverage:
+- Judge only information already present in user messages or tool evidence. Coverage is insufficient only when material, user-relevant, supported evidence is omitted so the answer becomes materially less useful, evasive, or generic.
+- Do not require hypothetical extra research, exhaustive detail, optional background, speculation, or unsupported claims. coverage_reasons must name concrete omitted evidence and be empty unless coverage is insufficient.
 
-Evidence scope preservation:
-- A final claim must not be semantically broader than the evidence supporting it.
-- Distinguish local state from remote state, one file from all files, visible rows from a complete collection, one command's effect from a larger goal, and one source's observation from a universal conclusion.
-- When evidence covers only part of a set or state, exhaustive, exclusive, global, superlative, or broader-scope conclusions require evidence that the broader scope was actually observed.
-- If the evidence supports a narrower statement but the candidate asserts a broader one, mark that claim unsupported with defect "scope_expansion".
-- Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
-- Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
+Action outcome:
+- Use not_applicable when no external state-change completion is claimed, including truthful attempted/partial reports.
+- Use verified only when resulting-state evidence establishes the claimed requested outcome at the same scope. Tool success alone does not prove a broader end state. Use unverified when completion exceeds the evidence and contradicted when resulting state disproves it.
 
-Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
-- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
-- Prefer concrete supported results over replacing them with generic advice to check another source later.
-- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
-- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
-- coverage_reasons must identify the concrete already-observed information that the candidate should have used. If coverage is sufficient or uncertain, coverage_reasons should be empty.
+Alignment:
+- Resolve the current request from the latest user message plus context. Misaligned means an essential outcome is missed, substituted, or deflected.
+- Truthful partial answers remain aligned when supported results are preserved and failures/limits are clear. Do not reject merely for admitting failure or uncertainty, and do not add requirements the user did not ask for.
 
-Action outcome verification:
-- Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
-- If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
-- A successful action/tool invocation is evidence that the tool contract reported success. It is not automatically evidence for a broader requested end state.
-- Use "verified" only when the candidate claims completion and the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
-- Use "unverified" when an action was attempted or reported successful but the candidate claims completion beyond what resulting-state evidence establishes.
-- Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
-- Do not demand extra verification for a task that did not request or claim an external state change.
-
-Task alignment and partial-answer policy:
-- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
-- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
-- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
-- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
-- Do reject a candidate that hides a material failure and presents an unverified result as completed.
-- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
-
-Overall verdicts:
-- evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
-- evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
-- evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
+Overall:
+- evidence_verdict is unsupported if any material claim is concretely unsupported; supported when material claims are supported or explicitly scoped as uncertainty/partial results; uncertain only when you cannot decide.
+- reasons contain concrete blocking defects only and should be empty when grounding, alignment, and action have no blocking defect.
 """.strip()
 
 
@@ -144,21 +110,14 @@ class FinalVerificationResult:
         if self.ok:
             return ""
         lines = [
-            "The candidate final answer was rejected by final grounding verification.",
-            "Correct only the concrete defects below. Do not broaden the task or invent additional facts.",
-            "Preserve every supported result that is still useful to the user.",
+            "The final answer was rejected. Fix only the concrete defects below; preserve supported results and do not broaden the task or invent facts.",
         ]
         lines.extend(f"- {issue.code}: {issue.message}" for issue in self.issues)
         if any(issue.code == "evidence_coverage_insufficient" for issue in self.issues):
-            lines.append(
-                "For evidence coverage insufficiency, expand the answer using material user-relevant facts already "
-                "present in the supplied evidence. Do not invent unsupported facts or chase optional completeness."
-            )
+            lines.append("For coverage defects, use the material user-relevant evidence already supplied; do not chase optional completeness.")
         lines.extend([
-            "For any unsupported or unverified portion, either obtain genuinely needed evidence with an available tool, "
-            "or narrow/remove that claim and state clearly what remains unverified or failed.",
-            "A truthful partial answer is preferable to claiming an outcome that the evidence does not establish.",
-            "Return a corrected final answer that directly addresses the user.",
+            "For unsupported or unverified parts, obtain genuinely needed evidence when available or narrow/remove the claim and state what remains uncertain, unverified, or failed.",
+            "Prefer a truthful partial answer to unsupported completion. Return a corrected answer that directly addresses the user.",
         ])
         return "\n".join(lines)
 
