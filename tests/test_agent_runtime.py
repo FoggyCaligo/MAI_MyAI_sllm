@@ -75,7 +75,10 @@ def test_runtime_completes_native_tool_round_trip() -> None:
     assert result.content == "The tool returned hello."
     assert result.model_rounds == 2
     assert result.tool_executions[0].ok is True
-    assert adapter.requests[1].messages[2] == {"role": "tool", "tool_name": "echo", "content": '{"echo":"hello"}'}
+    followup_messages = adapter.requests[1].messages
+    assert followup_messages[2]["role"] == "assistant"
+    assert followup_messages[2]["tool_calls"][0]["function"]["name"] == "echo"
+    assert followup_messages[3] == {"role": "tool", "tool_name": "echo", "content": '{"echo":"hello"}'}
 
 
 def test_runtime_preserves_multiple_tool_calls_in_order() -> None:
