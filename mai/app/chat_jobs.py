@@ -62,6 +62,27 @@ class ChatJobStore:
         job.response = response
         job.updated_at = time.time()
 
+    async def cancel_for(self, *, job_id: str, auth_user_id: str) -> bool | None:
+        self._cleanup()
+        job = self._jobs.get(job_id)
+        if job is None or job.auth_user_id != auth_user_id:
+            return None
+        if job.status in {"completed", "failed", "cancelled"}:
+            return False
+
+        job.status = "cancelling"
+        job.updated_at = time.time()
+        task = job.task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        job.status = "cancelled"
+        job.response = {"detail": "chat job cancelled by user"}
+        job.error = None
+        job.updated_at = time.time()
+        return True
+
     def snapshot_for(self, *, job_id: str, auth_user_id: str) -> dict[str, Any] | None:
         self._cleanup()
         job = self._jobs.get(job_id)
@@ -95,7 +116,7 @@ class ChatJobStore:
         stale = [
             job_id
             for job_id, job in self._jobs.items()
-            if job.status in {"completed", "failed"} and job.updated_at < cutoff
+            if job.status in {"completed", "failed", "cancelled"} and job.updated_at < cutoff
         ]
         for job_id in stale:
             self._jobs.pop(job_id, None)
