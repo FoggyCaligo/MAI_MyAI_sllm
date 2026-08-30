@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any, Sequence
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolDefinition
@@ -14,11 +16,16 @@ class ToolRequirementPlanningError(RuntimeError):
     """The preflight model failed to produce a valid structural tool contract."""
 
 
-_SYSTEM_PROMPT = """
-You are MAI's tool-requirement preflight. Your only job is to decide which available native tools MUST succeed before the main agent is allowed to give a final answer.
+class _ToolRequirementPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-Return exactly one JSON object of this form:
-{"required_tools":["exact_tool_name", ...]}
+    required_tools: list[str]
+
+
+_SYSTEM_PROMPT = """
+You are MAI's tool-requirement preflight. Your only job is to decide which available native tools MUST produce an execution result before the main agent is allowed to give a final answer.
+
+Your response is constrained by the supplied structured-output schema. Populate only the required_tools array with exact available tool names.
 
 Rules:
 - Judge the user's actual requested outcome, using recent dialogue only to resolve references.
@@ -68,20 +75,18 @@ class OllamaToolRequirementPlanner:
             ),
             tools=(),
             think=False,
+            response_format=_ToolRequirementPlan.model_json_schema(),
         ))
 
         try:
-            data = json.loads(turn.content)
-        except json.JSONDecodeError as exc:
-            raise ToolRequirementPlanningError("tool preflight returned invalid JSON") from exc
-        if not isinstance(data, dict):
-            raise ToolRequirementPlanningError("tool preflight must return a JSON object")
-        raw_required = data.get("required_tools")
-        if not isinstance(raw_required, list) or any(not isinstance(item, str) for item in raw_required):
-            raise ToolRequirementPlanningError("tool preflight required_tools must be an array of tool names")
+            plan = _ToolRequirementPlan.model_validate_json(turn.content, strict=True)
+        except ValidationError as exc:
+            raise ToolRequirementPlanningError(
+                "tool preflight response violated the structured output schema"
+            ) from exc
 
         known = {definition.name for definition in tools}
-        required = frozenset(item for item in raw_required)
+        required = frozenset(plan.required_tools)
         unknown = required.difference(known)
         if unknown:
             raise ToolRequirementPlanningError(
