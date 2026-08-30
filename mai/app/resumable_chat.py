@@ -78,7 +78,7 @@ async def _execute_chat(
 
 async def _run_job(*, job_id: str, request: server.ChatRequest, principal: object) -> None:
     try:
-        async with chat_job_store.lock_for(principal.auth_user_id):
+        async with chat_job_store.lock_for(principal.user_id):
             chat_job_store.mark_running(job_id)
 
             def publish_tool(execution: object) -> None:
@@ -129,27 +129,45 @@ def install() -> None:
     _INSTALLED = True
 
     app = server.app
-
-    # Replace only the UI root so the existing index can stay untouched while
-    # resumable-chat.js is injected after the original inline application code.
     app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", None) != "/"]
 
     @app.get("/", include_in_schema=False)
     async def resumable_root() -> HTMLResponse:
         index_path = Path(server._STATIC_DIR) / "index.html"
-        script_path = Path(server._STATIC_DIR) / "resumable-chat.js"
+        resumable_script = Path(server._STATIC_DIR) / "resumable-chat.js"
+        password_script = Path(server._STATIC_DIR) / "login-password.js"
         html = index_path.read_text(encoding="utf-8-sig")
         subtitle_marker = '<div class="subtitle">local personal agent</div>'
         if subtitle_marker not in html:
             raise RuntimeError("MAI subtitle marker is missing from index.html")
         html = html.replace(subtitle_marker, '<div class="subtitle">My - AI</div>', 1)
+
+        login_marker = '<div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /><button class="primary-btn" id="login-btn" type="submit">접속</button></div>'
+        if login_marker not in html:
+            raise RuntimeError("MAI login row marker is missing from index.html")
+        login_html = (
+            '<div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /></div>'
+            '<div class="login-row" style="margin-top:8px"><input id="login-pw" type="password" autocomplete="current-password" placeholder="비밀번호" required />'
+            '<button class="primary-btn" id="login-btn" type="submit">접속</button></div>'
+        )
+        html = html.replace(login_marker, login_html, 1)
+        login_style = (
+            '<style>#login-pw{flex:1;min-width:0;background:#121218;color:var(--text);border:1px solid var(--border);'
+            'border-radius:10px;padding:11px 12px;outline:none}#login-pw:focus{border-color:var(--accent)}</style>\n'
+        )
+        html = html.replace("</head>", login_style + "</head>", 1)
+
         chat_form_marker = '<form id="chat-form">'
         if chat_form_marker not in html:
             raise RuntimeError("chat form marker is missing from index.html")
         html = html.replace(chat_form_marker, '<form id="chat-form" novalidate>', 1)
-        script_digest = hashlib.sha256(script_path.read_bytes()).hexdigest()[:16]
-        asset = f'  <script src="/static/resumable-chat.js?v={script_digest}"></script>\n'
-        html = html.replace("</body>", asset + "</body>", 1)
+        resumable_digest = hashlib.sha256(resumable_script.read_bytes()).hexdigest()[:16]
+        password_digest = hashlib.sha256(password_script.read_bytes()).hexdigest()[:16]
+        assets = (
+            f'  <script src="/static/resumable-chat.js?v={resumable_digest}"></script>\n'
+            f'  <script src="/static/login-password.js?v={password_digest}"></script>\n'
+        )
+        html = html.replace("</body>", assets + "</body>", 1)
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     @app.post("/chat/jobs")
@@ -158,7 +176,7 @@ def install() -> None:
         authorization: str | None = Header(default=None),
     ) -> dict[str, object]:
         _, principal = server._principal_from_authorization(authorization)
-        job = chat_job_store.create(auth_user_id=principal.auth_user_id)
+        job = chat_job_store.create(auth_user_id=principal.user_id)
         task = asyncio.create_task(_run_job(job_id=job.job_id, request=request, principal=principal))
         chat_job_store.attach_task(job.job_id, task)
         return {"job_id": job.job_id, "status": job.status}
@@ -168,7 +186,7 @@ def install() -> None:
         authorization: str | None = Header(default=None),
     ) -> dict[str, object]:
         _, principal = server._principal_from_authorization(authorization)
-        return {"jobs": chat_job_store.active_snapshots_for(auth_user_id=principal.auth_user_id)}
+        return {"jobs": chat_job_store.active_snapshots_for(auth_user_id=principal.user_id)}
 
     @app.get("/chat/jobs/{job_id}", response_model=None)
     async def get_chat_job(
@@ -176,7 +194,7 @@ def install() -> None:
         authorization: str | None = Header(default=None),
     ) -> dict[str, object] | JSONResponse:
         _, principal = server._principal_from_authorization(authorization)
-        snapshot = chat_job_store.snapshot_for(job_id=job_id, auth_user_id=principal.auth_user_id)
+        snapshot = chat_job_store.snapshot_for(job_id=job_id, auth_user_id=principal.user_id)
         if snapshot is None:
             return JSONResponse(status_code=404, content={"detail": "chat job not found"})
         return snapshot
@@ -187,8 +205,8 @@ def install() -> None:
         authorization: str | None = Header(default=None),
     ) -> dict[str, object] | JSONResponse:
         _, principal = server._principal_from_authorization(authorization)
-        cancelled = await chat_job_store.cancel_for(job_id=job_id, auth_user_id=principal.auth_user_id)
+        cancelled = await chat_job_store.cancel_for(job_id=job_id, auth_user_id=principal.user_id)
         if cancelled is None:
             return JSONResponse(status_code=404, content={"detail": "chat job not found"})
-        snapshot = chat_job_store.snapshot_for(job_id=job_id, auth_user_id=principal.auth_user_id)
+        snapshot = chat_job_store.snapshot_for(job_id=job_id, auth_user_id=principal.user_id)
         return {"cancelled": cancelled, "job": snapshot}

@@ -84,7 +84,7 @@ def _store_login_session(principal: AccessPrincipal) -> str:
     previous_tokens = [
         token
         for token, existing in _auth_sessions.items()
-        if existing.auth_user_id == principal.auth_user_id
+        if existing.user_id == principal.user_id
     ]
     for token in previous_tokens:
         _auth_sessions.pop(token, None)
@@ -102,7 +102,7 @@ def _get_chat_session_store() -> ChatSessionStore:
 
 def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int | None = None) -> list[dict[str, str]]:
     return _get_chat_session_store().messages(
-        auth_user_id=principal.auth_user_id,
+        db_id=principal.db_id,
         session_id=session_id,
         limit=limit,
     )
@@ -110,7 +110,7 @@ def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int 
 
 def _append_session_message(principal: AccessPrincipal, session_id: str, *, role: str, content: str) -> int:
     return _get_chat_session_store().append(
-        auth_user_id=principal.auth_user_id,
+        db_id=principal.db_id,
         session_id=session_id,
         role=role,
         content=content,
@@ -128,12 +128,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "remove it or set it to false and set TAILSCALE_FUNNEL=true"
         )
     _access_policy = AccessPolicy.from_env_values(
-        owner_accounts=os.environ.get("OWNER_ACCOUNTS"),
-        owner_id=os.environ.get("OWNER_ID"),
-        owner_memory_id=os.environ.get("OWNER_MEMORY_ID"),
-        trial_ids=os.environ.get("TRIAL_IDS"),
+        owner_users=os.environ.get("OWNER_USERS"),
+        trial_users=os.environ.get("TRIAL_USERS"),
     )
     _chat_session_store = ChatSessionStore(os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3"))
+    # PR #134 initially keyed persisted chat rows by login ID. Move those rows
+    # to the stable db_id when the two differ so changing user_id does not lose
+    # an already-created conversation.
+    for previous_id, db_id in _access_policy.user_to_db_ids().items():
+        _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
+
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
@@ -172,12 +176,13 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1)
+    user_pw: str = Field(min_length=1)
 
 
 class LoginResponse(BaseModel):
     token: str
     user_id: str
-    memory_user_id: str
+    db_id: str
     role: str
 
 
@@ -265,14 +270,14 @@ async def health() -> dict[str, object]:
 @app.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest) -> LoginResponse:
     try:
-        principal = _get_access_policy().authenticate(request.user_id)
+        principal = _get_access_policy().authenticate(request.user_id, request.user_pw)
     except AccessDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     token = _store_login_session(principal)
     return LoginResponse(
         token=token,
-        user_id=principal.auth_user_id,
-        memory_user_id=principal.memory_user_id,
+        user_id=principal.user_id,
+        db_id=principal.db_id,
         role=principal.role.value,
     )
 
@@ -281,8 +286,8 @@ async def login(request: LoginRequest) -> LoginResponse:
 async def me(authorization: str | None = Header(default=None)) -> dict[str, str]:
     _, principal = _principal_from_authorization(authorization)
     return {
-        "user_id": principal.auth_user_id,
-        "memory_user_id": principal.memory_user_id,
+        "user_id": principal.user_id,
+        "db_id": principal.db_id,
         "role": principal.role.value,
     }
 
@@ -344,7 +349,7 @@ async def upload_file(
         "filename": filename,
         "path": str(target),
         "bytes": target.stat().st_size,
-        "uploaded_by": principal.auth_user_id,
+        "uploaded_by": principal.user_id,
     }
 
 
@@ -422,5 +427,5 @@ async def chat(
 @app.delete("/session/{session_id}")
 async def clear_session(session_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
     _, principal = _principal_from_authorization(authorization)
-    removed = _get_chat_session_store().clear(auth_user_id=principal.auth_user_id, session_id=session_id)
+    removed = _get_chat_session_store().clear(db_id=principal.db_id, session_id=session_id)
     return {"cleared": removed}

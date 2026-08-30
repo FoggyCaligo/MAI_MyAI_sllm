@@ -1,14 +1,19 @@
-"""ID-only application access policy.
+"""Credential-based application access policy.
 
-Authorization is an exact membership check against IDs supplied by configuration.
-Authentication identity and memory identity are separate structural concepts.
-There is no semantic or pattern-based identity inference.
+Each configured account has three explicit fields:
+- user_id: mutable login identity,
+- user_pw: plaintext password supplied from local .env configuration,
+- db_id: stable internal identity used for persistent MAI data.
+
+Authorization is exact and structural. There is no semantic or pattern-based
+identity inference.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 import json
+import secrets
 from typing import Mapping
 
 
@@ -18,106 +23,128 @@ class AccessRole(str, Enum):
 
 
 class AccessDeniedError(PermissionError):
-    """The submitted ID is not authorized to use MAI."""
+    """The submitted credentials are not authorized to use MAI."""
+
+
+@dataclass(frozen=True, slots=True)
+class UserInfo:
+    user_id: str
+    user_pw: str
+    db_id: str
 
 
 @dataclass(frozen=True, slots=True)
 class AccessPrincipal:
-    auth_user_id: str
-    memory_user_id: str
+    user_id: str
+    db_id: str
     role: AccessRole
+
+    @property
+    def auth_user_id(self) -> str:
+        return self.user_id
+
+    @property
+    def memory_user_id(self) -> str:
+        return self.db_id
 
 
 @dataclass(frozen=True, slots=True)
 class AccessPolicy:
-    owner_memory_ids: Mapping[str, str]
-    trial_ids: frozenset[str]
+    owners: Mapping[str, UserInfo]
+    trials: Mapping[str, UserInfo]
 
     def __post_init__(self) -> None:
-        if not self.owner_memory_ids:
-            raise ValueError("at least one owner account is required")
+        if not self.owners:
+            raise ValueError("OWNER_USERS must contain at least one account")
 
-        owner_auth_ids = set(self.owner_memory_ids)
-        owner_memory_ids = set(self.owner_memory_ids.values())
-        if len(owner_memory_ids) != len(self.owner_memory_ids):
-            raise ValueError("owner memory identities must be unique")
+        all_infos = [*self.owners.values(), *self.trials.values()]
+        all_user_ids = [info.user_id for info in all_infos]
+        if len(set(all_user_ids)) != len(all_user_ids):
+            raise ValueError("user_id must be unique across owner and trial accounts")
 
-        for owner_id, memory_id in self.owner_memory_ids.items():
-            if not owner_id:
-                raise ValueError("owner login IDs must be non-empty")
-            if owner_id != owner_id.strip():
-                raise ValueError("owner login IDs must not have surrounding whitespace")
-            if not memory_id:
-                raise ValueError("owner memory IDs must be non-empty")
-            if memory_id != memory_id.strip():
-                raise ValueError("owner memory IDs must not have surrounding whitespace")
+        db_ids = [info.db_id for info in all_infos]
+        if len(set(db_ids)) != len(db_ids):
+            raise ValueError("db_id must be unique across all accounts")
 
-        if owner_auth_ids.intersection(self.trial_ids):
-            raise ValueError("owner login IDs must not also appear in TRIAL_IDS")
-        if owner_memory_ids.intersection(self.trial_ids):
-            raise ValueError("owner memory IDs must not collide with trial identities")
-
-        for trial_id in self.trial_ids:
-            if not trial_id:
-                raise ValueError("TRIAL_IDS must not contain empty IDs")
-            if trial_id != trial_id.strip():
-                raise ValueError("TRIAL_IDS entries must not have surrounding whitespace")
+        user_id_set = set(all_user_ids)
+        for info in all_infos:
+            if not info.user_id or info.user_id != info.user_id.strip():
+                raise ValueError("user_id must be non-empty and have no surrounding whitespace")
+            if not info.user_pw:
+                raise ValueError("user_pw must be non-empty")
+            if not info.db_id or info.db_id != info.db_id.strip():
+                raise ValueError("db_id must be non-empty and have no surrounding whitespace")
+            if info.db_id != info.user_id and info.db_id in user_id_set:
+                raise ValueError("db_id must not collide with another account's user_id")
 
     @classmethod
     def from_env_values(
         cls,
         *,
-        owner_accounts: str | None = None,
-        owner_id: str | None = None,
-        owner_memory_id: str | None = None,
-        trial_ids: str | None,
+        owner_users: str | None,
+        trial_users: str | None,
     ) -> "AccessPolicy":
-        if owner_accounts is not None and (owner_id is not None or owner_memory_id is not None):
-            raise ValueError("OWNER_ACCOUNTS cannot be combined with OWNER_ID or OWNER_MEMORY_ID")
-
-        owners: dict[str, str]
-        if owner_accounts is not None:
-            try:
-                decoded = json.loads(owner_accounts)
-            except json.JSONDecodeError as exc:
-                raise ValueError("OWNER_ACCOUNTS must be a JSON object mapping login IDs to memory IDs") from exc
-            if not isinstance(decoded, dict) or not decoded:
-                raise ValueError("OWNER_ACCOUNTS must be a non-empty JSON object")
-            if not all(isinstance(key, str) and isinstance(value, str) for key, value in decoded.items()):
-                raise ValueError("OWNER_ACCOUNTS keys and values must be strings")
-            owners = dict(decoded)
-        else:
-            if owner_id is None:
-                raise ValueError("OWNER_ID is required when OWNER_ACCOUNTS is not set")
-            if owner_memory_id is None:
-                raise ValueError("OWNER_MEMORY_ID is required when OWNER_ACCOUNTS is not set")
-            owners = {owner_id: owner_memory_id}
-
-        trials: list[str] = []
-        if trial_ids:
-            trials = trial_ids.split(",")
-            if len(set(trials)) != len(trials):
-                raise ValueError("TRIAL_IDS must not contain duplicate IDs")
+        owners = _parse_user_infos(owner_users, env_name="OWNER_USERS", required=True)
+        trials = _parse_user_infos(trial_users, env_name="TRIAL_USERS", required=False)
         return cls(
-            owner_memory_ids=owners,
-            trial_ids=frozenset(trials),
+            owners={info.user_id: info for info in owners},
+            trials={info.user_id: info for info in trials},
         )
 
-    def authenticate(self, submitted_id: str) -> AccessPrincipal:
-        auth_user_id = submitted_id.strip()
-        if not auth_user_id:
-            raise AccessDeniedError("ID is required")
-        owner_memory_id = self.owner_memory_ids.get(auth_user_id)
-        if owner_memory_id is not None:
-            return AccessPrincipal(
-                auth_user_id=auth_user_id,
-                memory_user_id=owner_memory_id,
-                role=AccessRole.OWNER,
-            )
-        if auth_user_id in self.trial_ids:
-            return AccessPrincipal(
-                auth_user_id=auth_user_id,
-                memory_user_id=auth_user_id,
-                role=AccessRole.TRIAL,
-            )
-        raise AccessDeniedError("ID is not authorized")
+    def configured_principal(self, user_id: str) -> AccessPrincipal:
+        clean = user_id.strip()
+        info = self.owners.get(clean)
+        role = AccessRole.OWNER
+        if info is None:
+            info = self.trials.get(clean)
+            role = AccessRole.TRIAL
+        if info is None:
+            raise AccessDeniedError("configured account does not exist")
+        return AccessPrincipal(user_id=info.user_id, db_id=info.db_id, role=role)
+
+    def authenticate(self, submitted_id: str, submitted_password: str) -> AccessPrincipal:
+        user_id = submitted_id.strip()
+        if not user_id or not submitted_password:
+            raise AccessDeniedError("ID or password is incorrect")
+
+        info = self.owners.get(user_id)
+        role = AccessRole.OWNER
+        if info is None:
+            info = self.trials.get(user_id)
+            role = AccessRole.TRIAL
+        if info is None or not secrets.compare_digest(submitted_password, info.user_pw):
+            raise AccessDeniedError("ID or password is incorrect")
+
+        return AccessPrincipal(user_id=info.user_id, db_id=info.db_id, role=role)
+
+    def user_to_db_ids(self) -> dict[str, str]:
+        return {info.user_id: info.db_id for info in [*self.owners.values(), *self.trials.values()]}
+
+
+def _parse_user_infos(raw: str | None, *, env_name: str, required: bool) -> tuple[UserInfo, ...]:
+    if raw is None:
+        if required:
+            raise ValueError(f"{env_name} is required")
+        return ()
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{env_name} must be a JSON array of user_info objects") from exc
+    if not isinstance(decoded, list):
+        raise ValueError(f"{env_name} must be a JSON array")
+    if required and not decoded:
+        raise ValueError(f"{env_name} must contain at least one account")
+
+    infos: list[UserInfo] = []
+    expected_keys = {"user_id", "user_pw", "db_id"}
+    for item in decoded:
+        if not isinstance(item, dict) or set(item) != expected_keys:
+            raise ValueError(f"each {env_name} entry must contain exactly user_id, user_pw, and db_id")
+        if not all(isinstance(item[key], str) for key in expected_keys):
+            raise ValueError(f"all {env_name} user_info fields must be strings")
+        infos.append(UserInfo(user_id=item["user_id"], user_pw=item["user_pw"], db_id=item["db_id"]))
+
+    user_ids = [info.user_id for info in infos]
+    if len(set(user_ids)) != len(user_ids):
+        raise ValueError(f"{env_name} must not contain duplicate user_id values")
+    return tuple(infos)
