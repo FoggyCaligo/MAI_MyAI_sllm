@@ -54,6 +54,7 @@ Claim-level evidence grounding:
 - Stable general knowledge does not require current-turn evidence merely because it is factual.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
 - Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
+- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 
 Evidence scope preservation:
 - A final claim must not be semantically broader than the evidence supporting it.
