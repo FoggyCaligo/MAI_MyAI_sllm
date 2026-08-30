@@ -143,6 +143,10 @@ def install() -> None:
         index_path = Path(server._STATIC_DIR) / "index.html"
         script_path = Path(server._STATIC_DIR) / "resumable-chat.js"
         html = index_path.read_text(encoding="utf-8-sig")
+        subtitle_marker = '<div class="subtitle">local personal agent</div>'
+        if subtitle_marker not in html:
+            raise RuntimeError("MAI subtitle marker is missing from index.html")
+        html = html.replace(subtitle_marker, '<div class="subtitle">My - AI</div>', 1)
         chat_form_marker = '<form id="chat-form">'
         if chat_form_marker not in html:
             raise RuntimeError("chat form marker is missing from index.html")

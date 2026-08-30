@@ -11,7 +11,8 @@ from typing import Any, Mapping, Sequence
 
 from ollama import AsyncClient
 
-from ..agent.loop import ModelTurnObserver, ToolExecutionObserver
+from ..agent.failure_recovery import FailureAnswerFinalizer
+from ..agent.loop import AgentRunFailure, ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_planner import OllamaToolRequirementPlanner
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
@@ -200,43 +201,80 @@ class MAIRuntime:
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         fact_extractor = self._fact_extractor_for(selected_model)
-        working = WorkingGraph()
-        tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
-        registry = self._registry_for(principal, working, tool_result_store)
+        tool_executions: Sequence[ToolExecution] = ()
+        model_rounds = 0
 
-        recent_dialogue = [
-            dict(message)
-            for message in prior_messages
-            if message.get("role") in {"user", "assistant"}
-        ][-10:]
-        planner = OllamaToolRequirementPlanner(adapter)
-        requirements = await planner.plan(
-            user_text=prompt,
-            recent_dialogue=recent_dialogue,
-            tools=registry.definitions(),
-        )
-        _LOG.info(
-            "MAI tool preflight required=%s",
-            ",".join(sorted(requirements.required_tools)) if requirements.required_tools else "-",
-        )
+        try:
+            working = WorkingGraph()
+            tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
+            registry = self._registry_for(principal, working, tool_result_store)
 
-        agent = AgentRuntime(
-            adapter,
-            registry,
-            final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
-            max_semantic_verification_retries=2,
-            tool_result_store=tool_result_store,
-        )
+            recent_dialogue = [
+                dict(message)
+                for message in prior_messages
+                if message.get("role") in {"user", "assistant"}
+            ][-10:]
+            planner = OllamaToolRequirementPlanner(adapter)
+            requirements = await planner.plan(
+                user_text=prompt,
+                recent_dialogue=recent_dialogue,
+                tools=registry.definitions(),
+            )
+            _LOG.info(
+                "MAI tool preflight required=%s",
+                ",".join(sorted(requirements.required_tools)) if requirements.required_tools else "-",
+            )
 
-        messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
-        messages.extend(prior_messages)
-        result = await agent.run_user_message(
-            prompt,
-            prior_messages=messages,
-            requirements=requirements,
-            on_tool_execution=on_tool_execution,
-            on_model_turn=on_model_turn,
-        )
+            agent = AgentRuntime(
+                adapter,
+                registry,
+                final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
+                max_semantic_verification_retries=2,
+                tool_result_store=tool_result_store,
+            )
+
+            messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+            messages.extend(prior_messages)
+            result = await agent.run_user_message(
+                prompt,
+                prior_messages=messages,
+                requirements=requirements,
+                on_tool_execution=on_tool_execution,
+                on_model_turn=on_model_turn,
+            )
+            answer = result.content
+            model_rounds = result.model_rounds
+            tool_executions = result.tool_executions
+        except Exception as exc:
+            if isinstance(exc, AgentRunFailure):
+                tool_executions = exc.context.tool_executions
+                model_rounds = exc.context.model_rounds
+            _LOG.warning(
+                "MAI main run failed error_type=%s message=%s; attempting user-visible recovery finalization",
+                type(exc).__name__,
+                str(exc),
+            )
+            try:
+                recovery = await FailureAnswerFinalizer(adapter).finalize(
+                    user_text=prompt,
+                    prior_messages=prior_messages,
+                    cause=exc,
+                    tool_executions=tool_executions,
+                )
+            except Exception as recovery_exc:
+                _LOG.exception(
+                    "MAI failure recovery finalization failed original_error_type=%s recovery_error_type=%s",
+                    type(exc).__name__,
+                    type(recovery_exc).__name__,
+                )
+                raise exc from recovery_exc
+            answer = recovery.answer
+            model_rounds += 1
+            _LOG.info(
+                "MAI failure recovery finalization accepted original_error_type=%s chars=%d",
+                type(exc).__name__,
+                len(answer),
+            )
 
         tools = tuple({
             "name": execution.name,
@@ -244,21 +282,21 @@ class MAIRuntime:
             "ok": execution.ok,
             "error_type": execution.error_type,
             "result": execution.content,
-        } for execution in result.tool_executions)
+        } for execution in tool_executions)
 
         task = asyncio.create_task(
             self._postprocess_memory(
                 prompt=prompt,
-                final_answer=result.content,
+                final_answer=answer,
                 principal=principal,
-                tool_executions=result.tool_executions,
+                tool_executions=tool_executions,
                 fact_extractor=fact_extractor,
             )
         )
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-        return MAIRunResult(answer=result.content, model=selected_model, model_rounds=result.model_rounds, tools=tools)
+        return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools)
 
     async def _postprocess_memory(
         self,
