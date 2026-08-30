@@ -28,31 +28,24 @@ def test_main_agent_prompt_is_compact_without_dropping_core_contracts() -> None:
     )
 
 
-def test_preflight_prompt_is_compact_and_keeps_prerequisite_discovery() -> None:
-    assert len(TOOL_PREFLIGHT_PROMPT) < 1500
+def test_preflight_prompt_is_compact_and_preserves_core_contracts() -> None:
+    assert len(TOOL_PREFLIGHT_PROMPT) < 1000
     _assert_terms(
         TOOL_PREFLIGHT_PROMPT,
         "exact available tool names",
-        "must produce an execution result",
-        "input identifier, path, or target that is not yet established",
-        "require both the discovery tool and the operation tool",
-        "local inspection/action",
-        "memory",
-        "web/market/time/calculation",
-        "current-time tool",
+        "latest user request",
+        "recent_dialogue is only context",
+        "not evidence",
+        "search, inspect, verify, compare, or re-check",
+        "model knowledge does not satisfy that request",
+        "evidence-producing tools",
+        "path, identifier, or target",
+        "both discovery and operation tools",
+        "local, memory, web, market, time, or calculation tool",
+        "time-relative comparisons",
         "optional detail",
-        "Do not call tools",
-    )
-
-
-def test_preflight_requires_evidence_tools_when_research_is_the_requested_method() -> None:
-    _assert_terms(
-        TOOL_PREFLIGHT_PROMPT,
-        "requested method or deliverable",
-        "discover, search, inspect, verify, compare, or re-check",
-        "model-training knowledge is not the requested evidence",
-        "require tools that produce that evidence",
-        "even for stable facts",
+        "Do not answer the task",
+        "invent tool arguments",
     )
 
 
