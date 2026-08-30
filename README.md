@@ -1,436 +1,274 @@
 # MAI MyAI sLLM
 
-**사용자를 장기적으로 기억하고, 그 기억을 바탕으로 대화·검색·문서 이해·로컬 PC 작업까지 이어 가는 로컬 sLLM 개인 에이전트 런타임**이다.
+MAI는 **사용자를 장기적으로 기억하고, 그 기억을 바탕으로 대화·검색·문서 이해·로컬 PC 작업까지 이어 가는 로컬 sLLM 개인 에이전트 런타임**이다.
 
-이 README는 다른 MACHI/MK 문서를 읽지 않아도 현재 MAI의 목적, 장기기억 구조, production runtime, 권한 모델, 도구와 실행 방법을 이해할 수 있도록 작성한다. 메모리 세부 schema는 [`MEMORY_V1.md`](MEMORY_V1.md), 구현 계약은 [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md), Web UI와 Tailscale 실행은 [`RUN_UI.md`](RUN_UI.md)를 기준으로 한다.
+장기기억은 모델 자체에 맡기지 않고 로컬 SQLite graph에 저장한다. 메인 모델을 바꾸더라도 memory DB는 유지되며, 모델은 필요할 때 native tool을 통해 기억과 외부 정보를 조회한다.
+
+세부 문서:
+
+- [`MEMORY_V1.md`](MEMORY_V1.md): memory graph와 retrieval 구조
+- [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md): 현재 runtime 구현 계약
+- [`RUN_UI.md`](RUN_UI.md): Web UI, 계정, Tailscale 실행
 
 ---
 
-# 1. 프로젝트 정의
+## 1. 현재 production 흐름
 
-일반적인 대화형 LLM의 context는 한 대화 안에서는 강하지만, 장기간 사용자를 기억하고 그 기억의 근거까지 보존하는 일은 별도의 문제다.
-
-MAI는 장기기억을 특정 모델이나 서비스 계정 내부에 맡기지 않는다. 사용자 발화와 그로부터 만들어진 구조를 로컬 SQLite graph에 저장하고, 필요할 때 모델이 native tool로 해당 기억을 직접 불러온다.
+현재 production은 pure-agent C 계열의 multi-round native-tool agent다.
 
 ```text
 User
   ↓
-MAI Web / API
+Web/API authentication
   ↓
-Authenticated Principal
-  ├─ auth identity
-  └─ memory identity
+AccessPrincipal(user_id, db_id, role)
   ↓
-Pure-agent Runtime
+Model-based tool requirement preflight
   ↓
-Local Ollama Model
-  ↓ native tool calls
-Memory / Time / Calculator / Files / Code / Documents / Images / Web / Market / Terminal
+Frozen required tools
   ↓
-Candidate Final
-  ↓
-Final Grounding / Alignment Verification
-  ↓
-Final Response
-  ↓
-Background Memory Extraction / Admission
-```
-
-LLM은 답변 생성, 상황 판단, tool 선택을 담당한다. 장기기억의 본체는 LLM 안에 있지 않으므로 메인 모델을 교체해도 memory DB 자체는 유지된다.
-
----
-
-# 2. 현재 production runtime
-
-현재 기본 실행 경로는 **pure-agent C 구조**다.
-
-```text
-User Input
-  ↓
-Main Agent
-  ↓
-native tool selection
-  ↓
-ToolRegistry execution
+Main Agent + Ollama native tool calls
   ↓
 Candidate Final
   ↓
 FinalGroundingVerifier
-  ├─ deterministic numeric grounding
-  ├─ semantic evidence grounding
-  └─ task alignment review
+  ├─ numeric grounding
+  ├─ claim / evidence grounding
+  ├─ scope preservation
+  ├─ temporal consistency
+  ├─ action outcome verification
+  ├─ task alignment
+  └─ evidence coverage
   ↓
 Final Response
   ↓
-background memory post-processing
-  ├─ fact extraction
-  ├─ recall-only + new facts 없음 → persistent write 생략
-  └─ 그 외 → raw utterance + concepts + facts 저장
+Background memory extraction / admission
 ```
 
-production 경로에는 별도의 Tool Requirement Preflight나 automatic recall이 없다. 모델은 현재 노출된 native tool schema를 보고 필요한 기능을 스스로 선택한다.
+### Tool requirement preflight
 
-기억이 필요하면 다음 tool을 명시적으로 사용할 수 있다.
+Main agent 실행 전에 같은 선택 모델을 `think=False`, `tools=()`로 사용해 **이번 요청을 완료하기 위해 반드시 실행 결과가 있어야 하는 native tool 집합**을 구조화된 output으로 결정한다.
 
-- `memory_overview(limit)`: 특정 검색어 없이 사용자의 넓은 기억 개요를 본다.
-- `memory_recall(query)`: 특정 주제의 기억을 검색한다.
-- `memory_search(node_id)`: 선택한 memory node 주변을 one-hop 확장한다.
+이 판단은 문자열 heuristic으로 하지 않는다. 사용자 요청, 최근 대화, 현재 등록된 tool schema를 모델이 보고 의미적으로 판단한다.
 
-이 구조는 framework가 사용자 문장의 문자열 패턴을 보고 tool 필요 여부를 정하는 방식이 아니다. 의미 판단은 모델이 하고, runtime은 schema·권한·실행·실패 계약을 강제한다.
+예를 들어 현재 시점과 비교해야 하는 요청은 현재 시간이 이미 대화에 확립되어 있지 않다면 `current_time`을 required tool로 선택할 수 있다. Required tool 집합은 해당 run 동안 frozen 상태로 유지된다.
 
-최종 응답 검증은 tool 필요 여부를 다시 판단하는 preflight가 아니다. 이미 생성된 candidate final이 현재 user/tool evidence와 충돌하지 않는지, 사용자의 실제 요청을 다른 작업으로 바꾸지 않았는지를 release 전에 확인하는 별도 gate다. semantic reviewer는 timeout과 retry budget을 가지며, verifier 자체가 무한히 응답을 붙잡지 않도록 제한한다.
+Main agent가 required tool을 실행하지 않고 final을 시도하면 runtime이 final을 거부하고 아직 실행되지 않은 required tool만 노출하는 correction round를 준다.
 
 ---
 
-# 3. Graph Long-term Memory
+## 2. Final verification
 
-MAI의 핵심은 검색 가능한 대화 로그가 아니라 **근거와 관계를 보존하는 장기기억 graph**다.
+Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니다. Candidate final을 release하기 전에 user/tool evidence와 비교해 검증하는 별도 reviewer다.
+
+현재 검증 축은 다음과 같다.
+
+- **Numeric grounding**: material numeric value가 user/tool evidence에 존재하는지 deterministic 검사
+- **Claim grounding**: factual claim이 evidence에 실제로 지지되는지 model review
+- **Scope preservation**: 한 파일/한 화면/로컬 상태 근거를 전체/원격/전역 상태로 확장하지 않는지 검사
+- **Temporal consistency**: candidate의 시간 표현이 현재 시점 및 evidence의 날짜/타임스탬프와 모순되지 않는지 검사
+- **Action outcome**: mutation tool 호출 성공만으로 더 넓은 최종 상태 완료를 주장하지 않는지 검사
+- **Task alignment**: 사용자의 실제 요청 대신 다른 작업이나 일반론으로 빠지지 않는지 검사
+- **Evidence coverage**: 이미 확보된 유용한 evidence를 버리고 지나치게 빈약하거나 일반적인 답으로 후퇴하지 않는지 검사
+
+Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판정을 내리지 않는다. **현재 user/tool evidence 안에 이미 있는 구체적이고 사용자에게 중요한 정보를 candidate가 불필요하게 버린 경우**만 대상으로 한다.
+
+Coverage correction은 별도 budget으로 최대 2번이다. 두 번 이후에는 coverage 부족만으로 final을 계속 붙잡지 않는다. Grounding, action, alignment와는 별도 축이다.
+
+Verifier의 structured output이 깨지거나 timeout/failure가 발생하면 reviewer 자체의 실패를 별도 heuristic/fallback으로 의미 복원하지 않는다.
+
+---
+
+## 3. Failure recovery
+
+Main planner/agent 실행이 fatal exception으로 끝나더라도 확보된 tool evidence가 있다면 `FailureAnswerFinalizer`가 **tool을 추가 호출하지 않고** 사용자에게 보여줄 수 있는 마지막 답변을 한 번 생성한다.
+
+Recovery final은 다음을 지켜야 한다.
+
+- 실제 실패를 숨기지 않는다.
+- 성공하지 않은 작업을 성공했다고 주장하지 않는다.
+- 확보된 결과와 실패한 부분을 구분한다.
+- 확인된 사실, 실패, 미확인 상태를 구분한다.
+- 가능한 경우 유용한 partial answer를 반환한다.
+
+Recovery finalization 자체도 실패하면 원래 exception을 다시 드러낸다.
+
+---
+
+## 4. Graph Long-term Memory
+
+MAI memory의 기본 구조는 다음과 같다.
 
 ```text
 User Anchor
-   └─spoke→ Utterance
-                  ├─mentions→ Concept
-                  └─derived_fact→ Fact
-                                      └─mentions→ Concept
+   ├─spoke────────→ Utterance
+   └─asserted_fact→ Fact
+
+Utterance ─derived_fact→ Fact
+Utterance ─mentions────→ Concept
+Fact      ─mentions────→ Concept
 ```
 
-핵심 node는 다음과 같다.
+핵심 node:
 
-- **User Anchor**: memory identity마다 하나씩 존재하는 사용자 기준점
-- **Utterance**: 사용자의 원문 evidence
-- **Fact**: 사용자 발화에서 파생된 의미 단위
-- **Concept**: Sentence_Breaker가 만든 재사용 가능한 개념 단위
+- **User Anchor**: `db_id`마다 하나씩 존재하는 사용자 기준점
+- **Utterance**: 원문 사용자 evidence
+- **Fact**: 발화에서 파생된 durable fact
+- **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 개념
 
-원문은 Fact로 덮어쓰지 않는다. Fact가 있다면 어떤 Utterance에서 나왔는지 provenance를 유지한다.
+원문 Utterance와 파생 Fact는 분리해 보존한다.
 
-현재 Concept retrieval은 embedding/vector DB에 의존하지 않는다.
+Retrieval은 embedding/vector space를 production identity로 사용하지 않는다.
 
 ```text
 query
   ↓ Sentence_Breaker
 canonical segments
   ↓
-Exact hash lookup
+exact hash lookup
   ↓ miss
-SQLite FTS5 lexical search
+SQLite FTS5 lexical retrieval
   ↓
-Concept Node
+Concept Nodes
   ↓
-Graph neighborhood / User Anchor path
+Graph neighborhood
 ```
 
-따라서 메인 LLM을 교체했다고 해서 embedding 좌표계를 다시 만들 필요가 없다. FTS5 검색 결과는 Concept identity를 새로 정의하지 않으며, Concept identity는 Sentence_Breaker의 canonical segment가 결정한다.
+현재 model-visible memory tool:
 
-현재 production memory write는 최종 응답이 사용자에게 반환된 뒤 background lifecycle에서 실행된다. model-backed `OllamaFactExtractor`가 raw user turn, final answer context, 성공한 non-recall tool evidence를 바탕으로 durable fact 후보를 추출한다.
+- `memory_overview(limit)`
+- `memory_recall(query)`
+- `memory_search(node_id)`
 
-기존 persistent memory를 다시 읽은 `memory_overview`, `memory_recall`, `memory_search` 결과는 fact extraction evidence에서 제외한다. 따라서 과거 기억을 읽었다는 이유만으로 같은 내용을 새 사실처럼 재저장하지 않는다.
+`memory_search`는 one-hop 확장이다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
+
+### Post-response memory write
+
+최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다.
+
+Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않되 raw user turn을 보존하는 방향으로 admission한다.
+
+---
+
+## 5. Native tools
+
+MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. Tool routing을 `if text contains ...` 식 문자열 규칙으로 대체하지 않는다.
+
+| 범주 | 주요 도구 |
+|---|---|
+| Memory | `memory_overview`, `memory_recall`, `memory_search` |
+| Time | `current_time` |
+| Calculation | `calculator` |
+| Files | `file_list`, `file_search`, `file_read`, mutation tools |
+| Code | `code_search`, `code_read`, `code_symbols` |
+| Document | `document_read` |
+| Image | `image_analyze` |
+| Web | `web_search`, `web_fetch` |
+| Market | `market_data` |
+| Terminal | `terminal_run` |
+| Tool result paging | `tool_result_read` |
+
+큰 tool result는 bounded page와 `result_id`로 축약될 수 있으며, 모델은 `tool_result_read`로 필요한 범위를 이어 읽는다.
+
+Material arithmetic은 main model 암산보다 `calculator`를 사용하도록 system contract에 명시되어 있다.
+
+`VISION_MODEL`이 비어 있으면 `image_analyze`는 아예 registry에 등록되지 않는다.
+
+---
+
+## 6. 계정: user_id / user_pw / db_id
+
+Owner와 Trial 모두 `.env`에서 `user_info` record로 정의한다.
+
+```env
+OWNER_USERS=[{"user_id":"owner","user_pw":"change-me","db_id":"local-user"}]
+TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]
+```
+
+세 필드의 의미:
 
 ```text
-recall 사용 + extraction 성공 + new facts 없음
-  → persistent write 생략
+user_id
+  로그인 ID
+  나중에 변경 가능
 
-recall 사용 + extraction 성공 + new facts 있음
-  → 새 user utterance와 extracted facts 저장
+user_pw
+  로그인 비밀번호
+  현재 설계에서는 local .env에 평문으로 저장
 
-extraction 실패
-  → 실패를 숨기지 않고 raw user turn은 보존하는 방향으로 admission
+db_id
+  persistent data의 stable identity
+  memory / Web chat / trial upload ownership 기준
 ```
 
-Fact extraction에는 별도 고정 `MEMORY_MODEL`을 두지 않는다. **각 turn에서 실제 답변에 사용된 선택 모델과 동일한 Ollama 모델**을 `think=False` extraction adapter로 사용한다. 따라서 사용 가능한 모델이 `gemma4:e4b` 하나뿐인 환경이라면 main response와 memory extraction 모두 그 모델로 동작할 수 있다.
+따라서 로그인 ID를 바꿔도 `db_id`를 유지하면 기존 memory와 chat을 migration 없이 계속 사용할 수 있다.
+
+모든 `user_id`와 `db_id`는 계정 간 충돌하지 않아야 하며, 교차 충돌도 startup에서 거부한다.
+
+기존 `OWNER_ID`, `OWNER_MEMORY_ID`, `OWNER_ACCOUNTS`, `TRIAL_IDS`는 silent fallback으로 사용하지 않는다.
 
 ---
 
-# 4. Native Tool Agent
+## 7. 로그인 세션과 persistent chat
 
-MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. tool call을 임의 문자열 포맷으로 다시 만들거나 `if text contains ...` 규칙으로 route하지 않는다.
+성공 로그인 시 서버가 Bearer token을 발급한다. 같은 `user_id`로 새 로그인하면 이전 token을 폐기하는 **new-login-wins** 정책이다.
 
-현재 주요 tool은 다음과 같다.
+브라우저는 마지막 성공 로그인한 `user_id`만 localStorage에 기억한다. 비밀번호는 저장하지 않는다. 따라서 다른 기기 로그인으로 기존 세션이 끊겨도 원래 브라우저에는 ID가 남아 있어 비밀번호만 다시 입력하면 된다.
 
-| 범주 | 도구 | 역할 |
-|---|---|---|
-| Memory | `memory_overview`, `memory_recall`, `memory_search` | 장기기억 조회·확장 |
-| Time | `current_time` | host OS의 현재 local/UTC 시간 조회 |
-| Calculation | `calculator` | Decimal 기반 제한식 산술 계산 |
-| Filesystem | `file_list`, `file_search`, `file_read` | PC 파일 탐색과 읽기 |
-| Filesystem mutation | `file_write`, `file_create`, `file_delete`, `file_move`, `file_copy` | 파일 생성·수정·삭제·이동·복사 |
-| Code | `code_search`, `code_read`, `code_symbols` | 코드 검색·line read·Python AST symbol 탐색 |
-| Document | `document_read` | PDF, DOCX, XLSX, CSV, PPTX 읽기 |
-| Image | `image_analyze` | 별도 Ollama vision model을 이용한 이미지 분석 |
-| Web | `web_search`, `web_fetch` | 웹 검색과 public URL 본문 읽기 |
-| Market | `market_data` | 한국 상장주식의 현재 시세/밸류에이션 조회 |
-| Terminal | `terminal_run` | 로컬 shell command 실행 |
+대화 기록은 `db_id` 기준으로 `CHAT_DB_PATH`의 `web_chat_messages` 테이블에 저장한다. 전체 UI history와 모델 context는 분리되어 있으며, 모델에는 최근 `SESSION_HISTORY_MESSAGES`개만 전달할 수 있다.
 
-중요한 합계, 차이, 수익률, 비율, aggregate 계산은 main model의 암산보다 `calculator`를 사용하도록 production system prompt에 명시한다.
-
-`image_analyze`는 `.env`의 `VISION_MODEL`이 설정된 경우에만 ToolRegistry에 등록된다.
-
-`web_fetch`는 public HTTP(S) URL만 읽으며 loopback/private-network 주소와 redirect 목적지를 검사한다. 내부망 접근을 웹 도구로 우회하지 않는다.
-
-파일·코드·문서·이미지·터미널 기능은 owner 기준으로 repository 내부에 제한되지 않는다. MAI 프로세스를 실행한 OS 계정이 접근 가능한 경로를 절대경로로 다룰 수 있다.
+브라우저/폰이 닫혀도 서버 process가 살아 있는 동안 running chat job은 계속될 수 있고, 완료된 assistant answer는 persistent chat에 저장된다. 단, running job 자체는 외부 queue가 아니라 process memory에 있으므로 서버 process restart를 넘겨 이어 실행되지는 않는다.
 
 ---
 
-# 5. 사용자 인증과 memory identity
-
-Web UI 인증은 현재 **ID-only** 방식이다.
-
-```env
-OWNER_ID=my-owner-login
-OWNER_MEMORY_ID=local-user
-TRIAL_IDS=trial-a,trial-b
-```
-
-`OWNER_ID`는 로그인 identity이고 `OWNER_MEMORY_ID`는 graph memory의 User Anchor identity다. 둘은 의도적으로 분리되어 있다.
-
-기존 버전에서 `local-user`라는 User Anchor로 기억을 저장했다면 로그인 ID가 달라져도 다음처럼 기존 기억을 계속 사용할 수 있다.
-
-```env
-OWNER_ID=새로운-로그인-ID
-OWNER_MEMORY_ID=local-user
-```
-
-Trial은 각 로그인 ID 자체를 memory identity로 사용한다. Owner memory identity와 trial identity가 충돌하면 startup이 실패한다.
-
----
-
-# 6. Owner / Trial 권한
-
-권한은 prompt가 아니라 서버와 ToolRegistry/handler 경계에서 강제한다.
+## 8. Owner / Trial 권한
 
 ### Owner
 
-Owner는 설치된 Ollama 모델 중 원하는 모델을 선택할 수 있고 현재 등록된 전체 도구를 사용할 수 있다. Owner가 UI에서 모델을 바꾸면 해당 turn의 main agent뿐 아니라 post-response fact extraction도 같은 모델을 사용한다.
+Owner는 설치된 Ollama 모델 중 선택할 수 있고 전체 local mutation/terminal capability를 사용할 수 있다.
 
 ### Trial
 
-Trial은 읽기·검색·기억·웹·시장·시간 기능을 사용할 수 있지만 arbitrary PC mutation과 terminal은 사용할 수 없다.
+Trial model은 `MAIN_MODEL`로 고정된다. Client가 다른 model을 직접 POST해도 서버가 거부한다.
+
+Trial은 read/search 계열과 자기 upload directory 내부의 `file_write` / `file_create`만 허용된다.
 
 ```text
-Trial 공통 기능
-  memory_overview / memory_recall / memory_search
-  current_time
-  calculator
+Trial 사용 가능
+  memory_*
+  current_time / calculator
   file_list / file_search / file_read
   code_search / code_read / code_symbols
   document_read
-  image_analyze          # VISION_MODEL 설정 시
+  image_analyze   # configured only
   web_search / web_fetch
   market_data
-
-Trial 제한 mutation
-  file_write / file_create
-    └─ 자기 계정의 전용 upload directory 안에서만 허용
+  file_write / file_create   # own upload directory only
 
 Trial 미노출
   file_delete / file_move / file_copy
   terminal_run
 ```
 
-Trial upload directory는 계정끼리 충돌하거나 덮어쓰지 않도록 분리된다. raw trial ID를 경로 이름으로 직접 사용하지 않고 SHA-256 기반의 안정적인 path-safe directory key를 사용한다.
-
-```text
-./mai_uploads/
-└─ trials/
-   ├─ <trial-a의 hash>/
-   └─ <trial-b의 hash>/
-```
-
-Trial의 model은 `MAIN_MODEL`로 고정된다. `/models`도 trial에게 해당 모델 하나만 반환하고, client가 직접 다른 model을 POST해도 서버가 HTTP 403으로 거부한다.
-
-`MAIN_MODEL` 기본값은 현재 `ornith-1.5:9b`이며, 설정을 바꾸면 trial의 main agent와 memory fact extraction 모델도 함께 바뀐다.
+Trial upload ownership 역시 `db_id` 기준이다.
 
 ---
 
-# 7. Web UI와 파일 업로드
+## 9. 기본 실행
 
-`python run_server.py`로 FastAPI Web UI를 실행한다.
-
-```text
-http://127.0.0.1:8000
-```
-
-Web UI에는 ID login, owner model selector, Markdown response, expandable tool log, 자동 스크롤, 파일 업로드가 포함되어 있다.
-
-입력창의 `＋` 버튼으로 owner/trial 모두 파일을 업로드할 수 있다. 기본 upload root는 다음과 같다.
-
-```text
-./mai_uploads/
-```
-
-필요하면 `.env`에서 바꿀 수 있다.
-
-```env
-MAI_UPLOAD_ROOT=./mai_uploads
-```
-
-Owner는 기존처럼 upload root를 사용한다. Trial은 각 계정별 전용 하위 폴더를 사용하며, `file_write`와 `file_create`도 같은 전용 폴더 안으로 제한된다.
-
-`mai_uploads/`는 `.gitignore`에 포함되어 Git에 올라가지 않는다. 업로드 성공 후 실제 절대경로가 입력창에 추가되므로 모델이 `file_read`, `document_read`, `image_analyze` 등을 바로 사용할 수 있다.
-
-같은 계정의 전용 폴더 안에서 같은 이름의 파일은 조용히 덮어쓰지 않고 HTTP 409로 실패한다. path separator를 포함한 filename도 거부한다. 서로 다른 trial 계정은 같은 filename을 각자의 폴더에 독립적으로 올릴 수 있다.
-
-기존 버전에서 `./mai_uploads/` 바로 아래에 저장했던 legacy trial upload는 소유자 정보가 남아 있지 않으므로 자동 migration 또는 자동 삭제하지 않는다.
-
----
-
-# 8. Trial 계정 초기화 / 재사용
-
-사용이 끝난 trial ID를 다른 사람에게 다시 줄 때 새 ID를 만들 필요 없이 `reset_trial.py`로 해당 계정을 초기 상태에 가깝게 되돌릴 수 있다.
-
-**반드시 MAI 서버를 먼저 종료한 상태에서 실행한다.** 실행 중에는 memory concept index가 process memory에도 올라가 있으므로 DB만 외부에서 변경하면 runtime cache와 불일치할 수 있다. 스크립트 자체도 설정된 MAI host/port가 열려 있으면 초기화를 거부한다.
-
-먼저 삭제 대상을 확인하려면:
-
-```bash
-python reset_trial.py trial-a --dry-run
-```
-
-실제 초기화:
-
-```bash
-python reset_trial.py trial-a
-```
-
-실행하면 대상 trial ID와 삭제 예정 memory/upload 정보를 보여준 뒤, 같은 trial ID를 다시 입력해야 삭제가 진행된다.
-
-자동 확인이 필요한 경우:
-
-```bash
-python reset_trial.py trial-a --yes
-```
-
-기본 경로가 아닌 DB 또는 upload root를 쓰는 경우 직접 지정할 수도 있다.
-
-```bash
-python reset_trial.py trial-a \
-  --db ./data/memory.sqlite3 \
-  --upload-root ./mai_uploads
-```
-
-Windows PowerShell에서는 한 줄로 실행하거나 PowerShell 문법에 맞게 줄을 나눈다.
-
-초기화 대상:
-
-- 해당 trial의 User Anchor
-- 해당 trial 소유 Utterance / Fact node
-- 해당 Utterance가 참조하는 evidence
-- 해당 trial node 삭제 후 아무 사용자에게도 연결되지 않는 orphan Concept와 Concept index row
-- 해당 trial의 전용 upload directory 전체
-- 서버 재시작으로 사라지는 process-local login/chat session
-
-보존 대상:
-
-- Owner memory
-- 다른 trial의 memory
-- 다른 사용자가 아직 공유하고 있는 Concept node/index
-- 다른 trial의 upload directory
-- owner upload
-- 소유권을 판별할 수 없는 구버전 `./mai_uploads/` root의 legacy file
-
-안전장치:
-
-- `.env`의 `TRIAL_IDS`에 실제 등록된 ID만 허용
-- owner ID는 reset 대상으로 거부
-- MAI 서버가 실행 중이면 거부
-- 기본 실행은 trial ID 재입력 확인 필요
-- `--dry-run` 지원
-
-초기화가 끝난 뒤 다시 `python run_server.py`를 실행하고 해당 trial ID를 새 사용자에게 전달한다.
-
----
-
-# 9. Tailscale Funnel 공개
-
-MAI는 필요할 경우 **Tailscale Funnel로 Web UI를 public internet에 공개**한다.
-
-```env
-TAILSCALE_FUNNEL=true
-```
-
-실행 시 MAI는 다음과 같은 Funnel 설정을 적용하고 `tailscale funnel status` 결과를 출력한다.
-
-```bash
-tailscale funnel --bg --yes 8000
-```
-
-```text
-MAI local: http://127.0.0.1:8000
-MAI Tailscale Funnel (public internet):
-Available on the internet:
-https://<device>.<tailnet>.ts.net
-```
-
-과거 `TAILSCALE_SERVE=true` 설정은 폐기됐다. 해당 값이 남아 있으면 잘못된 tailnet-only 모드로 조용히 동작하지 않고 startup에서 실패한다.
-
-Funnel은 인터넷에 공개되므로 Web UI의 ID access control과 trial 권한 분리가 실제 보안 경계다.
-
----
-
-# 10. 실패 처리 원칙
-
-MAI는 실패를 성공처럼 감추지 않는 것을 runtime 계약으로 둔다.
-
-명시적 실패 예시는 다음과 같다.
-
-```text
-unknown tool
-invalid tool schema
-Pydantic validation error
-file not found
-permission denied
-unsupported document/image format
-terminal non-zero return code
-terminal timeout
-web/network failure
-invalid public URL target
-SQLite / FTS5 failure
-memory identity conflict
-unauthorized model selection
-Tailscale Funnel failure
-```
-
-필수 계약을 문자열 비교, 임시 우회, fallback 남용으로 덮지 않는다.
-
-Agent loop에는 구조적 무한루프 방지 guard가 존재한다. 현재 guard는 전체 round 수, 동일 native call 반복, 동일 call의 동일 failure 반복, 동일 execution signature가 이어지는 no-progress round를 제한한다. 이 guard는 사용자 문장의 의미나 tool result 의미를 문자열 규칙으로 해석하지 않고 canonical call/result fingerprint만 비교한다.
-
-현재 기본값은 다음과 같다.
-
-```env
-AGENT_MAX_ROUNDS=30
-AGENT_MAX_IDENTICAL_CALLS=3
-AGENT_MAX_IDENTICAL_FAILURES=2
-AGENT_MAX_NO_PROGRESS_ROUNDS=2
-```
-
-이 값은 안전한 무한루프 차단과 실패 복구 기회 사이의 정책 값이다. 동일 실패를 얼마나 오래 모델에게 다시 보여줄지에 대한 정책은 별도 조정 대상이며, 실패 자체를 성공으로 바꾸거나 숨기는 방식으로 해결하지 않는다.
-
----
-
-# 11. 설치와 실행
-
-Python 가상환경에서:
+설치:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-`.env.example`을 `.env`로 복사하고 최소한 owner identity와 memory identity를 설정한다.
+`.env.example`을 `.env`로 복사한 뒤 계정과 모델 설정을 수정한다.
+
+기본 예시 모델:
 
 ```env
-MAIN_MODEL=ornith-1.5:9b
-VISION_MODEL=
-OWNER_ID=my-owner-login
-OWNER_MEMORY_ID=local-user
-TRIAL_IDS=trial-a,trial-b
-MEMORY_DB_PATH=./data/memory.sqlite3
-SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
-MAI_UPLOAD_ROOT=./mai_uploads
-MAI_HOST=127.0.0.1
-MAI_PORT=8000
-TAILSCALE_FUNNEL=false
+MAIN_MODEL=gemma4:e4b
 ```
-
-`MEMORY_MODEL`은 사용하지 않는다. memory fact extraction은 항상 해당 turn의 선택 모델과 동일한 모델을 사용한다.
 
 실행:
 
@@ -438,16 +276,38 @@ TAILSCALE_FUNNEL=false
 python run_server.py
 ```
 
-전체 테스트:
+로컬 UI:
 
-```bash
-python -m pytest -v
+```text
+http://127.0.0.1:8000
 ```
+
+Trial 기본 example:
+
+```text
+ID: 체험판
+PW: 0000
+```
+
+상세 실행과 Tailscale Funnel 설정은 [`RUN_UI.md`](RUN_UI.md)를 참고한다.
 
 ---
 
-# 12. 프로젝트 핵심
+## 10. 실패 원칙
 
-MAI의 핵심을 한 문장으로 줄이면 다음과 같다.
+MAI는 contract violation을 문자열 비교나 임시 fallback으로 성공처럼 숨기지 않는다.
 
-> **사용자가 직접 소유하는 관계형 장기기억을, 교체 가능한 로컬 LLM의 대화와 실제 PC 작업에 연결하는 개인 에이전트 런타임.**
+예:
+
+- invalid tool schema / arguments
+- unknown tool
+- file or permission failure
+- trial permission violation
+- terminal non-zero / timeout
+- web/network failure
+- private URL rejection
+- SQLite / FTS5 failure
+- identity collision
+- Tailscale Funnel failure
+
+실패했을 때는 실패로 드러내되, 이미 확보된 유용한 결과가 있다면 사용자에게 truthful partial answer로 전달하는 것을 우선한다.
