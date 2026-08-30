@@ -7,7 +7,7 @@ from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
-from .loop import AgentLoop, AgentRunResult
+from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
 from .requirements import FrozenToolRequirements
 from .verification import FinalGroundingVerifier
 
@@ -42,8 +42,17 @@ class AgentRuntime:
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
         requirements: FrozenToolRequirements | None = None,
+        on_tool_execution: ToolExecutionObserver | None = None,
+        on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
-        return await self.loop.run(messages, think=think, options=options, requirements=requirements)
+        return await self.loop.run(
+            messages,
+            think=think,
+            options=options,
+            requirements=requirements,
+            on_tool_execution=on_tool_execution,
+            on_model_turn=on_model_turn,
+        )
 
     async def run_user_message(
         self,
@@ -53,9 +62,18 @@ class AgentRuntime:
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
         requirements: FrozenToolRequirements | None = None,
+        on_tool_execution: ToolExecutionObserver | None = None,
+        on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
         messages: list[Message] = [dict(message) for message in prior_messages]
         messages.append({"role": "user", "content": content})
-        return await self.run(messages, think=think, options=options, requirements=requirements)
+        return await self.run(
+            messages,
+            think=think,
+            options=options,
+            requirements=requirements,
+            on_tool_execution=on_tool_execution,
+            on_model_turn=on_model_turn,
+        )

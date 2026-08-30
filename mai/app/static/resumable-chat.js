@@ -5,6 +5,7 @@
   let currentSubmissionJobId = null;
   let recovering = false;
   let cancelButton = null;
+  let liveProgressWrap = null;
 
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -18,6 +19,98 @@
       status,
       headers: {'Content-Type': 'application/json'},
     });
+  }
+
+  function latestMaiWrap() {
+    const wraps = document.querySelectorAll('.msg-row.mai .content-wrap');
+    return wraps.length ? wraps[wraps.length - 1] : null;
+  }
+
+  function setLiveProgressWrap(wrap) {
+    clearLiveProgress();
+    liveProgressWrap = wrap || null;
+  }
+
+  function clearLiveProgress() {
+    if (liveProgressWrap) {
+      liveProgressWrap.querySelector('[data-live-tool-progress="true"]')?.remove();
+      liveProgressWrap.querySelector('[data-live-thinking="true"]')?.remove();
+    }
+    liveProgressWrap = null;
+  }
+
+  function renderLiveThinking(thinking) {
+    if (!liveProgressWrap) return;
+    const bubble = liveProgressWrap.querySelector('.bubble');
+    if (!bubble) return;
+
+    let placeholder = bubble.querySelector('[data-live-thinking="true"]');
+    const text = typeof thinking === 'string' ? thinking.trim() : '';
+    if (!text) {
+      placeholder?.remove();
+      return;
+    }
+
+    if (!placeholder) {
+      placeholder = document.createElement('div');
+      placeholder.dataset.liveThinking = 'true';
+      placeholder.style.marginTop = '8px';
+      placeholder.style.color = 'var(--text-dim)';
+      placeholder.style.opacity = '0.78';
+      placeholder.style.fontSize = '13px';
+      placeholder.style.lineHeight = '1.55';
+      placeholder.style.whiteSpace = 'pre-wrap';
+      placeholder.style.overflowWrap = 'anywhere';
+      bubble.appendChild(placeholder);
+    }
+    placeholder.textContent = text;
+    if (typeof scrollToBottom === 'function') scrollToBottom();
+  }
+
+  function renderLiveToolProgress(tools) {
+    if (!liveProgressWrap || !Array.isArray(tools) || !tools.length) return;
+
+    let details = liveProgressWrap.querySelector('[data-live-tool-progress="true"]');
+    const wasOpen = details?.open ?? false;
+    if (!details) {
+      details = document.createElement('details');
+      details.className = 'tool-log';
+      details.dataset.liveToolProgress = 'true';
+      liveProgressWrap.appendChild(details);
+    }
+
+    details.replaceChildren();
+    details.open = wasOpen;
+    const summary = document.createElement('summary');
+    summary.textContent = `tool log · ${tools.length} call${tools.length === 1 ? '' : 's'} · running`;
+    details.appendChild(summary);
+
+    tools.forEach(tool => {
+      const entry = document.createElement('div');
+      entry.className = 'tool-entry';
+      const head = document.createElement('div');
+      head.className = 'tool-head';
+      const name = document.createElement('span');
+      name.textContent = tool.name;
+      const status = document.createElement('span');
+      status.textContent = tool.ok ? 'ok' : (tool.error_type || 'failed');
+      if (!tool.ok) status.className = 'tool-failed';
+      head.append(name, status);
+
+      const args = document.createElement('div');
+      args.className = 'tool-args';
+      args.textContent = JSON.stringify(tool.arguments, null, 2);
+      entry.append(head, args);
+
+      if (tool.result) {
+        const result = document.createElement('div');
+        result.className = 'tool-result';
+        result.textContent = tool.result;
+        entry.appendChild(result);
+      }
+      details.appendChild(entry);
+    });
+    if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
   function ensureCancelButton() {
@@ -48,6 +141,7 @@
     button.hidden = !jobId;
     button.disabled = false;
     button.textContent = '중단';
+    if (!jobId) clearLiveProgress();
   }
 
   async function cancelCurrentJob() {
@@ -96,6 +190,8 @@
       if (!res.ok) return res;
 
       const data = await res.json();
+      renderLiveThinking(data.thinking);
+      renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
       if (data.status === 'completed') {
         localStorage.removeItem(storageKey);
         return jsonResponse(data.response || {}, 200);
@@ -119,6 +215,7 @@
     const data = await submit.json();
     if (!data.job_id) return jsonResponse({detail: 'chat job id가 반환되지 않았습니다.'}, 500);
 
+    setLiveProgressWrap(latestMaiWrap());
     setCurrentJob(data.job_id);
     localStorage.setItem(storageKey, JSON.stringify({job_id: data.job_id, created_at: Date.now()}));
     try {
@@ -176,6 +273,7 @@
 
       setCurrentJob(saved.job_id);
       if (typeof addThinking === 'function') pending = addThinking();
+      setLiveProgressWrap(pending?.wrap || latestMaiWrap());
       const response = await pollJob(saved.job_id);
       const data = await response.json().catch(() => ({}));
 

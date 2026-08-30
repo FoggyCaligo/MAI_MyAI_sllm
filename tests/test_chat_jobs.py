@@ -18,6 +18,9 @@ def test_chat_job_lifecycle_and_user_scope() -> None:
     pending = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
     assert pending is not None
     assert pending["status"] == "pending"
+    assert pending["tools"] == []
+    assert pending["thinking"] is None
+    assert pending["model_round"] is None
     assert store.snapshot_for(job_id=job.job_id, auth_user_id="other") is None
 
     store.mark_running(job.job_id)
@@ -32,6 +35,61 @@ def test_chat_job_lifecycle_and_user_scope() -> None:
     assert completed["status"] == "completed"
     assert completed["response"] == payload
     assert completed["error"] is None
+
+
+def test_completed_tool_progress_is_visible_before_job_finishes() -> None:
+    store = ChatJobStore()
+    job = store.create(auth_user_id="owner")
+    store.mark_running(job.job_id)
+
+    first = {
+        "name": "file_read",
+        "arguments": {"path": "README.md"},
+        "ok": True,
+        "error_type": None,
+        "result": "contents",
+    }
+    second = {
+        "name": "terminal_run",
+        "arguments": {"command": "bad-command"},
+        "ok": False,
+        "error_type": "TerminalCommandError",
+        "result": "failed",
+    }
+    store.append_tool(job.job_id, first)
+    store.append_tool(job.job_id, second)
+
+    snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert snapshot is not None
+    assert snapshot["status"] == "running"
+    assert snapshot["tools"] == [first, second]
+
+    snapshot["tools"][0]["name"] = "mutated"
+    fresh = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert fresh is not None
+    assert fresh["tools"][0]["name"] == "file_read"
+
+
+def test_latest_model_thinking_is_visible_and_can_be_cleared() -> None:
+    store = ChatJobStore()
+    job = store.create(auth_user_id="owner")
+    store.mark_running(job.job_id)
+
+    store.update_model_progress(
+        job.job_id,
+        thinking="Inspect the file before answering.",
+        model_round=2,
+    )
+    snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert snapshot is not None
+    assert snapshot["thinking"] == "Inspect the file before answering."
+    assert snapshot["model_round"] == 2
+
+    store.update_model_progress(job.job_id, thinking=None, model_round=3)
+    cleared = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert cleared is not None
+    assert cleared["thinking"] is None
+    assert cleared["model_round"] == 3
 
 
 def test_chat_job_failure_preserves_error_payload() -> None:

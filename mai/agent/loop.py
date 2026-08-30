@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..llm.ollama import OllamaAdapter
@@ -38,6 +38,10 @@ class ToolExecution:
     ok: bool
     content: str
     error_type: str | None = None
+
+
+ToolExecutionObserver = Callable[[ToolExecution], None]
+ModelTurnObserver = Callable[[int, ModelTurn], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +98,8 @@ class AgentLoop:
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
         requirements: FrozenToolRequirements | None = None,
+        on_tool_execution: ToolExecutionObserver | None = None,
+        on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
@@ -109,6 +115,8 @@ class AgentLoop:
                 guard.before_model_round(round_number)
                 _LOG.info("MAI model round start round=%d", round_number)
                 turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
+                if on_model_turn is not None:
+                    on_model_turn(round_number, turn)
                 history.append(dict(turn.assistant_message))
 
                 if not turn.tool_calls:
@@ -208,6 +216,8 @@ class AgentLoop:
                     execution = await self._execute_tool(call)
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
+                    if on_tool_execution is not None:
+                        on_tool_execution(execution)
                     if execution.ok:
                         successful_tools.add(execution.name)
                     _LOG.info(
