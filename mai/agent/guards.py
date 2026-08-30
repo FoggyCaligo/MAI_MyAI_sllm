@@ -11,10 +11,6 @@ class AgentGuardError(RuntimeError):
     """Base class for structural guard stops."""
 
 
-class AgentRoundLimitExceeded(AgentGuardError):
-    """The model requested another tool round beyond the configured limit."""
-
-
 class RepeatedToolCallError(AgentGuardError):
     """The same native tool call was requested too many times in one run."""
 
@@ -29,7 +25,6 @@ class NoProgressError(AgentGuardError):
 
 @dataclass(frozen=True, slots=True)
 class GuardConfig:
-    max_rounds: int = 30
     max_identical_calls: int = 10
     warn_identical_failures: int = 3
     max_identical_failures: int = 5
@@ -37,7 +32,6 @@ class GuardConfig:
 
     def __post_init__(self) -> None:
         for name, value in (
-            ("max_rounds", self.max_rounds),
             ("max_identical_calls", self.max_identical_calls),
             ("warn_identical_failures", self.warn_identical_failures),
             ("max_identical_failures", self.max_identical_failures),
@@ -68,7 +62,7 @@ class AgentGuard:
     - an identical failure streak is surfaced to the model before it is stopped;
     - after the model has observed the configured number of identical failures,
       only another unchanged call is blocked;
-    - global round/call ceilings remain as final safety bounds.
+    - repeated identical calls and no-progress rounds remain structural stops.
     """
 
     def __init__(self, config: GuardConfig | None = None) -> None:
@@ -78,20 +72,6 @@ class AgentGuard:
         self._failure_streak_count = 0
         self._previous_round_signature: str | None = None
         self._identical_rounds = 0
-
-    def before_model_round(self, round_number: int) -> None:
-        if round_number > self.config.max_rounds:
-            raise AgentRoundLimitExceeded(
-                f"agent exceeded max_rounds={self.config.max_rounds}"
-            )
-
-    def before_tool_round(self, round_number: int) -> None:
-        """Reject new side effects when no later model round can consume them."""
-
-        if round_number >= self.config.max_rounds:
-            raise AgentRoundLimitExceeded(
-                f"agent reached max_rounds={self.config.max_rounds} while the model still requested tools"
-            )
 
     def before_tool_call(self, name: str, arguments: Mapping[str, Any]) -> str:
         fingerprint = call_fingerprint(name, arguments)
