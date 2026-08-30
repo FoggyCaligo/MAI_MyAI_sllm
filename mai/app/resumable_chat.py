@@ -143,6 +143,10 @@ def install() -> None:
         index_path = Path(server._STATIC_DIR) / "index.html"
         script_path = Path(server._STATIC_DIR) / "resumable-chat.js"
         html = index_path.read_text(encoding="utf-8-sig")
+        chat_form_marker = '<form id="chat-form">'
+        if chat_form_marker not in html:
+            raise RuntimeError("chat form marker is missing from index.html")
+        html = html.replace(chat_form_marker, '<form id="chat-form" novalidate>', 1)
         script_digest = hashlib.sha256(script_path.read_bytes()).hexdigest()[:16]
         asset = f'  <script src="/static/resumable-chat.js?v={script_digest}"></script>\n'
         html = html.replace("</body>", asset + "</body>", 1)
