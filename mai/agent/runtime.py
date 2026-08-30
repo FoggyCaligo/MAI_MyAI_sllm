@@ -7,7 +7,7 @@ from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
-from .loop import AgentLoop, AgentRunResult, ToolExecutionObserver
+from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
 from .requirements import FrozenToolRequirements
 from .verification import FinalGroundingVerifier
 
@@ -43,6 +43,7 @@ class AgentRuntime:
         options: Mapping[str, Any] | None = None,
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
+        on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
         return await self.loop.run(
             messages,
@@ -50,6 +51,7 @@ class AgentRuntime:
             options=options,
             requirements=requirements,
             on_tool_execution=on_tool_execution,
+            on_model_turn=on_model_turn,
         )
 
     async def run_user_message(
@@ -61,6 +63,7 @@ class AgentRuntime:
         options: Mapping[str, Any] | None = None,
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
+        on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
@@ -72,4 +75,5 @@ class AgentRuntime:
             options=options,
             requirements=requirements,
             on_tool_execution=on_tool_execution,
+            on_model_turn=on_model_turn,
         )
