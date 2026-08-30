@@ -23,8 +23,9 @@ class FrozenToolRequirements:
     def from_decisions(cls, decisions: dict[str, bool]) -> "FrozenToolRequirements":
         return cls(frozenset(name for name, required in decisions.items() if required))
 
-    def missing_from(self, successful_tools: set[str]) -> frozenset[str]:
-        return self.required_tools.difference(successful_tools)
+    def missing_from(self, observed_tools: set[str]) -> frozenset[str]:
+        """Return required tools that have not reached their registered handler."""
+        return self.required_tools.difference(observed_tools)
 
 
 class ToolRequirementPlanner(Protocol):
