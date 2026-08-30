@@ -45,6 +45,17 @@ def test_preflight_prompt_is_compact_and_keeps_prerequisite_discovery() -> None:
     )
 
 
+def test_preflight_requires_evidence_tools_when_research_is_the_requested_method() -> None:
+    _assert_terms(
+        TOOL_PREFLIGHT_PROMPT,
+        "requested method or deliverable",
+        "discover, search, inspect, verify, compare, or re-check",
+        "model-training knowledge is not the requested evidence",
+        "require tools that produce that evidence",
+        "even for stable facts",
+    )
+
+
 def test_fact_extraction_prompt_is_compact_and_preserves_evidence_contract() -> None:
     assert len(_FACT_EXTRACTION_SYSTEM) < 1200
     _assert_terms(
