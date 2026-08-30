@@ -24,7 +24,12 @@ def _response_payload(result: object) -> dict[str, object]:
     }
 
 
-async def _execute_chat(request: server.ChatRequest, principal: object) -> tuple[int, dict[str, object]]:
+async def _execute_chat(
+    request: server.ChatRequest,
+    principal: object,
+    *,
+    on_tool_execution=None,
+) -> tuple[int, dict[str, object]]:
     runtime = server._get_runtime()
     try:
         selected_model = server._selected_model_for_principal(
@@ -46,6 +51,7 @@ async def _execute_chat(request: server.ChatRequest, principal: object) -> tuple
             principal=principal,
             prior_messages=prior,
             model=selected_model,
+            on_tool_execution=on_tool_execution,
         )
     except AgentRunFailure as exc:
         return 500, {
@@ -75,7 +81,15 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
     try:
         async with chat_job_store.lock_for(principal.auth_user_id):
             chat_job_store.mark_running(job_id)
-            status_code, payload = await _execute_chat(request, principal)
+
+            def publish_tool(execution: object) -> None:
+                chat_job_store.append_tool(job_id, server._tool_payload(execution))
+
+            status_code, payload = await _execute_chat(
+                request,
+                principal,
+                on_tool_execution=publish_tool,
+            )
         if status_code == 200:
             chat_job_store.complete(job_id, payload)
         else:
