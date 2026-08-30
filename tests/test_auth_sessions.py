@@ -12,52 +12,28 @@ def teardown_function() -> None:
     server._auth_sessions.clear()
 
 
-def test_trial_login_replaces_existing_token_for_same_identity() -> None:
-    principal = AccessPrincipal(
-        auth_user_id="trial1",
-        memory_user_id="trial1",
-        role=AccessRole.TRIAL,
-    )
-
+def test_trial_login_replaces_existing_token_for_same_user_id() -> None:
+    principal = AccessPrincipal(user_id="trial1", db_id="trial-db-1", role=AccessRole.TRIAL)
     first = server._store_login_session(principal)
     second = server._store_login_session(principal)
-
     assert first != second
     assert first not in server._auth_sessions
     assert server._auth_sessions[second] == principal
 
 
-def test_owner_login_replaces_existing_token_for_same_identity() -> None:
-    principal = AccessPrincipal(
-        auth_user_id="owner",
-        memory_user_id="owner-memory",
-        role=AccessRole.OWNER,
-    )
-
+def test_owner_login_replaces_existing_token_for_same_user_id() -> None:
+    principal = AccessPrincipal(user_id="owner", db_id="local-user", role=AccessRole.OWNER)
     first = server._store_login_session(principal)
     second = server._store_login_session(principal)
-
     assert first != second
     assert first not in server._auth_sessions
     assert server._auth_sessions[second] == principal
 
 
 def test_login_does_not_revoke_other_account_identity() -> None:
-    first_principal = AccessPrincipal(
-        auth_user_id="owner-a",
-        memory_user_id="memory-a",
-        role=AccessRole.OWNER,
-    )
-    second_principal = AccessPrincipal(
-        auth_user_id="owner-b",
-        memory_user_id="memory-b",
-        role=AccessRole.OWNER,
-    )
-    trial_principal = AccessPrincipal(
-        auth_user_id="trial1",
-        memory_user_id="trial1",
-        role=AccessRole.TRIAL,
-    )
+    first_principal = AccessPrincipal(user_id="owner-a", db_id="memory-a", role=AccessRole.OWNER)
+    second_principal = AccessPrincipal(user_id="owner-b", db_id="memory-b", role=AccessRole.OWNER)
+    trial_principal = AccessPrincipal(user_id="trial1", db_id="trial-db-1", role=AccessRole.TRIAL)
 
     first = server._store_login_session(first_principal)
     second = server._store_login_session(second_principal)
