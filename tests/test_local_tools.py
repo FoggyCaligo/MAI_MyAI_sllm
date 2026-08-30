@@ -14,6 +14,7 @@ from mai.tools import (
     register_terminal_tools,
 )
 from mai.tools.local import register_readonly_local_tools
+from mai.tools.registry import ToolArgumentsError
 from mai.tools.terminal import TerminalCommandError, TerminalTimeoutError
 
 
@@ -179,6 +180,20 @@ def test_absolute_path_is_not_confined_to_registered_cwd(tmp_path: Path) -> None
         arguments={"path": str(target)},
     )))
     assert result["content"] == "visible"
+
+
+def test_terminal_run_schema_keeps_timeout_internal(tmp_path: Path) -> None:
+    registry = ToolRegistry()
+    register_terminal_tools(registry, cwd=tmp_path, timeout_seconds=5)
+
+    parameters = registry.get("terminal_run").native_schema()["function"]["parameters"]
+    assert set(parameters["properties"]) == {"command", "cwd"}
+
+    with pytest.raises(ToolArgumentsError):
+        run(registry.invoke(NativeToolCall(
+            name="terminal_run",
+            arguments={"command": "echo x", "timeout_seconds": 5},
+        )))
 
 
 def test_terminal_run_nonzero_returncode_is_a_real_failure(tmp_path: Path) -> None:

@@ -19,7 +19,6 @@ class TerminalRunInput(BaseModel):
 
     command: str = Field(min_length=1)
     cwd: str | None = None
-    timeout_seconds: float | None = Field(default=None, gt=0)
 
 
 class TerminalRunError(RuntimeError):
@@ -103,7 +102,6 @@ async def terminal_run(
     *,
     command: str,
     cwd: str | None = None,
-    timeout_seconds: float | None = None,
     default_cwd: str | Path | None = None,
     default_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
@@ -114,8 +112,7 @@ async def terminal_run(
     if not resolved_cwd.is_dir():
         raise NotADirectoryError(str(resolved_cwd))
 
-    effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
-    result = await _run_command(command, resolved_cwd, effective_timeout)
+    result = await _run_command(command, resolved_cwd, default_timeout_seconds)
     if result["timed_out"]:
         raise TerminalTimeoutError("terminal command timed out", result)
     if result["returncode"] != 0:
@@ -135,12 +132,10 @@ def register_terminal_tools(
     async def handler(
         command: str,
         cwd: str | None = None,
-        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         return await terminal_run(
             command=command,
             cwd=cwd,
-            timeout_seconds=timeout_seconds,
             default_cwd=register_default_cwd,
             default_timeout_seconds=register_default_timeout,
         )
@@ -157,6 +152,7 @@ def register_terminal_tools(
             f"The runtime already starts commands in this working directory: {register_default_cwd}. "
             "Use that current working directory by default; do not guess or prepend a project path with cd. "
             "Set the cwd argument only when the task explicitly requires running in a different directory. "
+            "Command timeout is controlled by the runtime and is not a model-supplied argument. "
             "Do not suppress command errors merely to make execution appear successful; preserve meaningful stderr, "
             "exit codes, permission failures, and timeouts so they can be used for recovery. "
             "A non-zero return code or timeout is a real tool failure. Paths outside the repository are allowed."
