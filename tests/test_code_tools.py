@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from mai.llm.models import NativeToolCall
 from mai.tools.code import code_read, code_search, code_symbols, register_code_tools
 from mai.tools.registry import ToolRegistry
@@ -23,17 +25,44 @@ def test_code_search_finds_content_and_respects_explicit_filters(tmp_path):
     assert match["line"] == 2
     assert match["column"] > 0
     assert result["truncated"] is False
+    assert "skipped" not in result
 
 
-def test_code_search_reports_undecodable_files_instead_of_hiding_them(tmp_path):
+def test_code_search_ignores_undecodable_candidates_without_returning_skip_noise(tmp_path):
     (tmp_path / "binary.dat").write_bytes(b"\xff\xfe\xfd")
+    (tmp_path / "source.py").write_text("needle\n", encoding="utf-8")
 
-    result = code_search(root=str(tmp_path), query="anything", encoding="utf-8")
+    result = code_search(root=str(tmp_path), query="needle", encoding="utf-8")
 
-    assert result["results"] == []
-    assert len(result["skipped"]) == 1
-    assert result["skipped"][0]["path"].endswith("binary.dat")
-    assert "UnicodeDecodeError" in result["skipped"][0]["reason"]
+    assert [item["relative_path"] for item in result["results"]] == ["source.py"]
+    assert "skipped" not in result
+
+
+def test_code_search_applies_inclusive_line_bounds_per_candidate_file(tmp_path):
+    (tmp_path / "first.py").write_text("needle\nignore\nneedle\nneedle\n", encoding="utf-8")
+    (tmp_path / "second.py").write_text("needle\nneedle\nnone\nneedle\n", encoding="utf-8")
+
+    result = code_search(
+        root=str(tmp_path),
+        query="needle",
+        include_globs=["*.py"],
+        start_line=2,
+        end_line=3,
+    )
+
+    assert [(item["relative_path"], item["line"]) for item in result["results"]] == [
+        ("first.py", 3),
+        ("second.py", 2),
+    ]
+    assert result["start_line"] == 2
+    assert result["end_line"] == 3
+
+
+def test_code_search_rejects_inverted_line_range(tmp_path):
+    (tmp_path / "source.py").write_text("needle\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="end_line must be >= start_line"):
+        code_search(root=str(tmp_path), query="needle", start_line=3, end_line=2)
 
 
 def test_code_read_returns_requested_line_range(tmp_path):
@@ -88,6 +117,8 @@ def test_code_tools_are_native_registry_tools(tmp_path):
                     "include_globs": ["*.py"],
                     "exclude_globs": [],
                     "encoding": "utf-8",
+                    "start_line": 1,
+                    "end_line": 1,
                     "max_results": 20,
                     "max_file_bytes": 100000,
                 },

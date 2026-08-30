@@ -29,6 +29,8 @@ class CodeSearchInput(_StrictModel):
     include_globs: list[str] = Field(default_factory=list)
     exclude_globs: list[str] = Field(default_factory=list)
     encoding: str = "utf-8"
+    start_line: int = Field(default=1, ge=1)
+    end_line: int | None = Field(default=None, ge=1)
     max_results: int = Field(default=200, ge=1, le=5000)
     max_file_bytes: int = Field(default=2_000_000, ge=1)
 
@@ -91,15 +93,21 @@ def code_search(
     include_globs: list[str] | None = None,
     exclude_globs: list[str] | None = None,
     encoding: str = "utf-8",
+    start_line: int = 1,
+    end_line: int | None = None,
     max_results: int = 200,
     max_file_bytes: int = 2_000_000,
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
     """Search source/text contents recursively and return exact line matches.
 
-    Files that cannot be decoded or exceed the explicit size bound are reported
-    in `skipped`; they are not silently treated as successful searches.
+    Candidate files that cannot be decoded or exceed the explicit size bound are
+    ignored rather than copied into the model-facing result. Root/path contract
+    failures still raise explicitly.
     """
+
+    if end_line is not None and end_line < start_line:
+        raise ValueError("end_line must be >= start_line")
 
     base = _resolve(root, cwd)
     includes = list(include_globs or [])
@@ -108,21 +116,20 @@ def code_search(
     expression = re.compile(query if mode == "regex" else re.escape(query), flags)
 
     results: list[dict[str, Any]] = []
-    skipped: list[dict[str, str]] = []
     truncated = False
 
     for path, relative in _iter_candidate_files(base, includes, excludes):
         size = path.stat().st_size
         if size > max_file_bytes:
-            skipped.append({"path": str(path), "reason": f"file exceeds max_file_bytes ({size} > {max_file_bytes})"})
             continue
         try:
-            text = path.read_text(encoding=encoding)
-        except (UnicodeDecodeError, LookupError) as exc:
-            skipped.append({"path": str(path), "reason": f"{type(exc).__name__}: {exc}"})
+            lines = path.read_text(encoding=encoding).splitlines()
+        except (UnicodeDecodeError, LookupError):
             continue
 
-        for line_number, line in enumerate(text.splitlines(), start=1):
+        effective_end = len(lines) if end_line is None else min(end_line, len(lines))
+        for line_number in range(start_line, effective_end + 1):
+            line = lines[line_number - 1]
             match = expression.search(line)
             if match is None:
                 continue
@@ -144,9 +151,10 @@ def code_search(
         "query": query,
         "mode": mode,
         "case_sensitive": case_sensitive,
+        "start_line": start_line,
+        "end_line": end_line,
         "results": results,
         "truncated": truncated,
-        "skipped": skipped,
     }
 
 
@@ -266,7 +274,8 @@ def register_code_tools(
         name="code_search",
         description=(
             "Search file contents recursively from any accessible local path and return exact matching lines. "
-            "Use explicit literal or regex mode and optional include/exclude globs."
+            "Use explicit literal or regex mode, optional include/exclude globs, and optional inclusive start_line/end_line "
+            "bounds applied independently to each candidate file."
         ),
         input_model=CodeSearchInput,
         handler=search_handler,

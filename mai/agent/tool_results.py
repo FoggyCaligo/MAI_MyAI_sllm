@@ -31,6 +31,14 @@ class StoredToolResult:
     content: str
 
 
+@dataclass(frozen=True, slots=True)
+class ToolResultModelViews:
+    """Initial model-visible page plus the compact history replacement, if needed."""
+
+    initial_content: str
+    compact_history_content: str | None = None
+
+
 class ToolResultStore:
     """Per-agent-run store for full tool output with bounded model-facing views."""
 
@@ -41,11 +49,31 @@ class ToolResultStore:
         self.max_read_chars = max(1, max_inline_chars - 512)
         self._results: dict[str, StoredToolResult] = {}
 
-    def model_view(self, content: str) -> str:
+    def model_views(self, content: str) -> ToolResultModelViews:
         if len(content) <= self.max_inline_chars:
-            return content
+            return ToolResultModelViews(initial_content=content)
         stored = self.store(content)
-        return self._page_text(stored=stored, offset=0, requested_limit=self.max_read_chars)
+        first_page = self._page_text(stored=stored, offset=0, requested_limit=self.max_read_chars)
+        compact_reference = json.dumps(
+            {
+                "result_id": stored.result_id,
+                "total_chars": len(stored.content),
+                "content_compacted": True,
+                "read_with": "tool_result_read",
+                "max_read_chars": self.max_read_chars,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return ToolResultModelViews(
+            initial_content=first_page,
+            compact_history_content=compact_reference,
+        )
+
+    def model_view(self, content: str) -> str:
+        """Compatibility helper returning only the first model-visible view."""
+
+        return self.model_views(content).initial_content
 
     def store(self, content: str) -> StoredToolResult:
         result_id = secrets.token_urlsafe(18)
