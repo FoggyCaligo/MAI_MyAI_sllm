@@ -3,7 +3,6 @@
 from .guards import (
     AgentGuard,
     AgentGuardError,
-    AgentRoundLimitExceeded,
     GuardConfig,
     NoProgressError,
     RepeatedToolCallError,
@@ -25,7 +24,6 @@ __all__ = [
     "AgentGuard",
     "AgentGuardError",
     "AgentLoop",
-    "AgentRoundLimitExceeded",
     "AgentRunFailure",
     "AgentRunResult",
     "AgentRuntime",

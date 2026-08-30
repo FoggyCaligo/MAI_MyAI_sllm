@@ -10,7 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
-from .requirements import FrozenToolRequirements, UnsatisfiedToolRequirements
+from .requirements import FrozenToolRequirements
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
@@ -124,7 +124,6 @@ class AgentLoop:
 
         try:
             while True:
-                guard.before_model_round(round_number)
                 _LOG.info("MAI model round start round=%d", round_number)
                 turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
                 for history_index, compact_content in pending_history_compactions.items():
@@ -160,10 +159,26 @@ class AgentLoop:
 
                     missing = (requirements or FrozenToolRequirements(frozenset())).missing_from(requirement_observed_tools)
                     if missing:
-                        raise UnsatisfiedToolRequirements(
-                            "model attempted final answer before required tools produced an execution result: "
-                            + ", ".join(sorted(missing))
+                        missing_tools = sorted(missing)
+                        _LOG.warning(
+                            "MAI final rejected for missing required tools round=%d missing=%s",
+                            round_number,
+                            ",".join(missing_tools),
                         )
+                        history.append({
+                            "role": "system",
+                            "content": (
+                                "Your previous assistant turn attempted to finish before all frozen required native "
+                                "tools produced an execution result. The missing required tools are: "
+                                + ", ".join(missing_tools)
+                                + ". Continue the same task instead of finishing. Call each missing required tool. "
+                                "If a prior call failed before its handler started because of invalid arguments or an "
+                                "unknown tool contract, correct the tool call and try again. These requirements remain "
+                                "frozen for this run."
+                            ),
+                        })
+                        round_number += 1
+                        continue
                     _LOG.info(
                         "MAI final candidate round=%d chars=%d semantic_retries=%d numeric_retries=%d",
                         round_number,
@@ -230,7 +245,6 @@ class AgentLoop:
                         final_turn=turn,
                     )
 
-                guard.before_tool_round(round_number)
                 round_observations: list[ExecutionObservation] = []
                 round_notices: list[str] = []
                 for call in turn.tool_calls:

@@ -76,7 +76,7 @@ def test_repeated_identical_call_is_stopped_before_next_execution() -> None:
     runtime = AgentRuntime(
         adapter,
         registry,
-        guard_config=GuardConfig(max_rounds=10, max_identical_calls=2, max_no_progress_rounds=10),
+        guard_config=GuardConfig(max_identical_calls=2, max_no_progress_rounds=10),
     )
 
     with pytest.raises(AgentRunFailure) as exc_info:
@@ -98,7 +98,6 @@ def test_same_failure_is_shown_five_times_then_sixth_unchanged_call_is_stopped()
         adapter,
         registry_with_echo(broken),
         guard_config=GuardConfig(
-            max_rounds=10,
             max_identical_calls=10,
             warn_identical_failures=3,
             max_identical_failures=5,
@@ -162,7 +161,6 @@ def test_changed_failure_outcome_breaks_identical_failure_streak() -> None:
         adapter,
         registry_with_echo(broken),
         guard_config=GuardConfig(
-            max_rounds=10,
             max_identical_calls=10,
             warn_identical_failures=2,
             max_identical_failures=2,
@@ -182,7 +180,6 @@ def test_structural_no_progress_detects_identical_round_outcomes() -> None:
         adapter,
         registry_with_echo(),
         guard_config=GuardConfig(
-            max_rounds=10,
             max_identical_calls=10,
             warn_identical_failures=3,
             max_identical_failures=10,
@@ -206,7 +203,7 @@ def test_changed_arguments_reset_structural_no_progress_rounds() -> None:
     runtime = AgentRuntime(
         adapter,
         registry_with_echo(),
-        guard_config=GuardConfig(max_rounds=5, max_no_progress_rounds=1),
+        guard_config=GuardConfig(max_no_progress_rounds=1),
     )
 
     result = run(runtime.run_user_message("make progress"))

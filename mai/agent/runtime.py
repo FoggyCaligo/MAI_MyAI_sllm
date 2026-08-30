@@ -31,15 +31,10 @@ class AgentRuntime:
         registry: ToolRegistry,
         *,
         guard_config: GuardConfig | None = None,
-        max_rounds: int | None = None,
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
         tool_result_store: ToolResultStore | None = None,
     ) -> None:
-        if guard_config is not None and max_rounds is not None:
-            raise ValueError("pass guard_config or max_rounds, not both")
-        if max_rounds is not None:
-            guard_config = GuardConfig(max_rounds=max_rounds)
         self.loop = AgentLoop(
             adapter,
             registry,
