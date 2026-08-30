@@ -38,33 +38,14 @@ class ToolResultStore:
         if max_inline_chars < 1024:
             raise ValueError("max_inline_chars must be >= 1024")
         self.max_inline_chars = max_inline_chars
-        self.max_read_chars = max(1, max_inline_chars - 1024)
+        self.max_read_chars = max(1, max_inline_chars - 512)
         self._results: dict[str, StoredToolResult] = {}
 
     def model_view(self, content: str) -> str:
         if len(content) <= self.max_inline_chars:
             return content
-
         stored = self.store(content)
-        preview = content[: self.max_read_chars]
-        payload = self._page_payload(
-            stored=stored,
-            offset=0,
-            content=preview,
-        )
-        text = self._serialize(payload)
-        if len(text) > self.max_inline_chars:
-            overflow = len(text) - self.max_inline_chars
-            preview = preview[: max(0, len(preview) - overflow)]
-            payload = self._page_payload(
-                stored=stored,
-                offset=0,
-                content=preview,
-            )
-            text = self._serialize(payload)
-        if len(text) > self.max_inline_chars:
-            raise RuntimeError("bounded tool-result envelope exceeds configured inline limit")
-        return text
+        return self._page_text(stored=stored, offset=0, requested_limit=self.max_read_chars)
 
     def store(self, content: str) -> StoredToolResult:
         result_id = secrets.token_urlsafe(18)
@@ -72,7 +53,7 @@ class ToolResultStore:
         self._results[result_id] = stored
         return stored
 
-    def read(self, *, result_id: str, offset: int, limit: int) -> dict[str, object]:
+    def read(self, *, result_id: str, offset: int, limit: int) -> str:
         if limit > self.max_read_chars:
             raise ToolResultReadLimitError(
                 f"limit must be <= {self.max_read_chars} for this runtime"
@@ -81,31 +62,33 @@ class ToolResultStore:
             stored = self._results[result_id]
         except KeyError as exc:
             raise ToolResultNotFoundError(f"unknown tool result id: {result_id}") from exc
-        content = stored.content[offset : offset + limit]
-        return self._page_payload(stored=stored, offset=offset, content=content)
+        return self._page_text(stored=stored, offset=offset, requested_limit=limit)
 
-    def _page_payload(
-        self,
-        *,
-        stored: StoredToolResult,
-        offset: int,
-        content: str,
-    ) -> dict[str, object]:
-        next_offset = offset + len(content)
-        return {
-            "result_id": stored.result_id,
-            "total_chars": len(stored.content),
-            "offset": offset,
-            "returned_chars": len(content),
-            "next_offset": next_offset,
-            "complete": next_offset >= len(stored.content),
-            "max_read_chars": self.max_read_chars,
-            "content": content,
-        }
-
-    @staticmethod
-    def _serialize(payload: dict[str, object]) -> str:
-        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    def _page_text(self, *, stored: StoredToolResult, offset: int, requested_limit: int) -> str:
+        requested = stored.content[offset : offset + requested_limit]
+        page = requested
+        while True:
+            next_offset = offset + len(page)
+            metadata = json.dumps(
+                {
+                    "result_id": stored.result_id,
+                    "total_chars": len(stored.content),
+                    "offset": offset,
+                    "returned_chars": len(page),
+                    "next_offset": next_offset,
+                    "complete": next_offset >= len(stored.content),
+                    "max_read_chars": self.max_read_chars,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            text = metadata + "\n" + page
+            if len(text) <= self.max_inline_chars:
+                return text
+            overflow = len(text) - self.max_inline_chars
+            if not page:
+                raise RuntimeError("tool-result metadata exceeds configured inline limit")
+            page = page[: max(0, len(page) - overflow)]
 
 
 def register_tool_result_tools(registry: ToolRegistry, store: ToolResultStore) -> None:
@@ -113,8 +96,9 @@ def register_tool_result_tools(registry: ToolRegistry, store: ToolResultStore) -
         name="tool_result_read",
         description=(
             "Read another character range from a large tool result that was stored because its full output "
-            "would exceed the model context budget. Use the exact result_id returned by the original tool. "
-            f"limit must be at most {store.max_read_chars}."
+            "would exceed the model-facing result budget. The first output line is JSON range metadata and "
+            "the remaining text is the exact requested page content. Use the exact result_id returned by the "
+            f"original tool. limit must be at most {store.max_read_chars}."
         ),
         input_model=ToolResultReadInput,
         handler=store.read,
