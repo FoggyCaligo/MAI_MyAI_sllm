@@ -28,6 +28,8 @@ Use the relevant local, memory, web, market, time, or calculation tool when need
 Mark optional-detail tools false. Do not answer the task or invent tool arguments.
 """.strip()
 
+_BATCH_SIZE = 5
+
 
 def _decision_schema(tools: Sequence[ToolDefinition]) -> dict[str, Any]:
     properties: dict[str, dict[str, str]] = {}
@@ -46,8 +48,43 @@ def _decision_schema(tools: Sequence[ToolDefinition]) -> dict[str, Any]:
     }
 
 
+def _tool_batches(tools: Sequence[ToolDefinition]) -> tuple[tuple[ToolDefinition, ...], ...]:
+    ordered = tuple(tools)
+    if not ordered:
+        return ((),)
+    return tuple(
+        ordered[index:index + _BATCH_SIZE]
+        for index in range(0, len(ordered), _BATCH_SIZE)
+    )
+
+
+def _parse_batch_decisions(
+    content: str,
+    tools: Sequence[ToolDefinition],
+) -> dict[str, bool]:
+    try:
+        decisions = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ToolRequirementPlanningError(
+            "tool preflight response violated the structured output schema"
+        ) from exc
+
+    expected = tuple(definition.name for definition in tools)
+    if not isinstance(decisions, dict) or set(decisions) != set(expected):
+        raise ToolRequirementPlanningError(
+            "tool preflight response violated the structured output schema: "
+            "tool keys must exactly match the current batch"
+        )
+    if any(type(decisions[name]) is not bool for name in expected):
+        raise ToolRequirementPlanningError(
+            "tool preflight response violated the structured output schema: "
+            "all tool decisions must be booleans"
+        )
+    return decisions
+
+
 class OllamaToolRequirementPlanner:
-    """Ask the selected model to classify every available tool in one structured call."""
+    """Classify available tools in small structured batches and freeze required tools."""
 
     def __init__(self, adapter: OllamaAdapter) -> None:
         self.adapter = adapter
@@ -62,47 +99,30 @@ class OllamaToolRequirementPlanner:
         if not user_text.strip():
             raise ValueError("user_text must be non-empty")
 
-        available_tools = [
-            {
-                "name": definition.name,
-                "description": definition.description,
-                "parameters": definition.input_model.model_json_schema(),
+        decisions: dict[str, bool] = {}
+        for batch in _tool_batches(tools):
+            available_tools = [
+                {
+                    "name": definition.name,
+                    "description": definition.description,
+                    "parameters": definition.input_model.model_json_schema(),
+                }
+                for definition in batch
+            ]
+            payload: dict[str, Any] = {
+                "user_request": user_text,
+                "recent_dialogue": list(recent_dialogue),
+                "available_tools": available_tools,
             }
-            for definition in tools
-        ]
-        payload: dict[str, Any] = {
-            "user_request": user_text,
-            "recent_dialogue": list(recent_dialogue),
-            "available_tools": available_tools,
-        }
-        schema = _decision_schema(tools)
-        turn = await self.adapter.chat(ChatRequest(
-            messages=(
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ),
-            tools=(),
-            think=False,
-            response_format=schema,
-        ))
-
-        try:
-            decisions = json.loads(turn.content)
-        except (json.JSONDecodeError, TypeError) as exc:
-            raise ToolRequirementPlanningError(
-                "tool preflight response violated the structured output schema"
-            ) from exc
-
-        expected = tuple(definition.name for definition in tools)
-        if not isinstance(decisions, dict) or set(decisions) != set(expected):
-            raise ToolRequirementPlanningError(
-                "tool preflight response violated the structured output schema: "
-                "tool keys must exactly match available tools"
-            )
-        if any(type(decisions[name]) is not bool for name in expected):
-            raise ToolRequirementPlanningError(
-                "tool preflight response violated the structured output schema: "
-                "all tool decisions must be booleans"
-            )
+            turn = await self.adapter.chat(ChatRequest(
+                messages=(
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ),
+                tools=(),
+                think=False,
+                response_format=_decision_schema(batch),
+            ))
+            decisions.update(_parse_batch_decisions(turn.content, batch))
 
         return FrozenToolRequirements.from_decisions(decisions)
