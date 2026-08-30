@@ -21,9 +21,9 @@ Judge whether the latest user request needs each tool's evidence or effect. rece
 
 If the user asks to search, inspect, verify, compare, or re-check external/local sources, model knowledge does not satisfy that request; mark relevant evidence-producing tools true.
 
-If a path, identifier, or target that is not yet established must be discovered, require both the discovery tool and the operation tool; mark both discovery and operation tools true.
+If an input identifier, path, or target that is not yet established must be discovered, require both the discovery tool and the operation tool; mark both discovery and operation tools true. This applies to any path, identifier, or target.
 
-Use the relevant local, memory, web, market, time, or calculation tool when needed. When comparing dates or time-relative information against the current moment, require the current-time tool unless the latest user request establishes it.
+Use the relevant local, memory, web, market, time, or calculation tool when needed. For time-relative comparisons against the current moment, require the current-time tool unless the latest user request establishes it.
 
 Mark optional-detail tools false. Do not answer the task or invent tool arguments.
 """.strip()
