@@ -32,18 +32,18 @@ def test_preflight_prompt_is_compact_and_preserves_core_contracts() -> None:
     assert len(TOOL_PREFLIGHT_PROMPT) < 1000
     _assert_terms(
         TOOL_PREFLIGHT_PROMPT,
-        "exact available tool names",
+        "fill every boolean property",
         "latest user request",
         "recent_dialogue is only context",
         "not evidence",
         "search, inspect, verify, compare, or re-check",
         "model knowledge does not satisfy that request",
-        "evidence-producing tools",
+        "evidence-producing tools true",
         "path, identifier, or target",
-        "both discovery and operation tools",
+        "both discovery and operation tools true",
         "local, memory, web, market, time, or calculation tool",
         "time-relative comparisons",
-        "optional detail",
+        "optional-detail tools false",
         "Do not answer the task",
         "invent tool arguments",
     )
