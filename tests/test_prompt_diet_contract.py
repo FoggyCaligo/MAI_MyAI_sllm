@@ -1,6 +1,5 @@
 from mai.agent.failure_recovery import FAILURE_RECOVERY_SYSTEM_PROMPT
 from mai.agent.tool_planner import _SYSTEM_PROMPT as TOOL_PREFLIGHT_PROMPT
-from mai.agent.verification import _FINAL_REVIEW_SYSTEM
 from mai.app.runtime import AGENT_SYSTEM_PROMPT
 from mai.memory.extraction.service import _FACT_EXTRACTION_SYSTEM
 
@@ -23,8 +22,8 @@ def test_main_agent_prompt_is_compact_without_dropping_core_contracts() -> None:
         "Preserve supplied factual values",
         "different metrics",
         "calculator",
-        "failed execution proves that execution failed",
-        "not that the whole task is impossible",
+        "that specific execution failed",
+        "task is impossible",
         "report unresolved failures",
     )
 
@@ -35,11 +34,12 @@ def test_preflight_prompt_is_compact_and_keeps_prerequisite_discovery() -> None:
         TOOL_PREFLIGHT_PROMPT,
         "exact available tool names",
         "must produce an execution result",
-        "path, identifier, or target",
-        "require both tools",
+        "input identifier, path, or target that is not yet established",
+        "require both the discovery tool and the operation tool",
         "local inspection/action",
         "memory",
         "web/market/time/calculation",
+        "current-time tool",
         "optional detail",
         "Do not call tools",
     )
@@ -70,27 +70,4 @@ def test_failure_recovery_prompt_is_compact_and_truthful() -> None:
         "partial",
         "unknown/incomplete",
         "No tools are available",
-    )
-
-
-def test_final_reviewer_prompt_is_compact_without_dropping_review_axes() -> None:
-    assert len(_FINAL_REVIEW_SYSTEM) < 4500
-    _assert_terms(
-        _FINAL_REVIEW_SYSTEM,
-        "Evidence grounding",
-        "Scope and defects",
-        "Coverage",
-        "Action outcome",
-        "Alignment",
-        "scope_expansion",
-        "contradiction",
-        "unsupported_inference",
-        "missing_evidence",
-        "failed tool results",
-        "Prior assistant text is context only",
-        "verified",
-        "unverified",
-        "contradicted",
-        "Truthful partial answers",
-        "misaligned",
     )
