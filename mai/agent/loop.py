@@ -38,11 +38,11 @@ class ToolExecution:
     ok: bool
     content: str
     error_type: str | None = None
-    model_content: str | None = None
+    source_content_fingerprint: str | None = None
 
     @property
     def context_content(self) -> str:
-        return self.content if self.model_content is None else self.model_content
+        return self.content
 
 
 ToolExecutionObserver = Callable[[ToolExecution], None]
@@ -166,7 +166,7 @@ class AgentLoop:
                             candidate=turn.content,
                             messages=history,
                             successful_tool_results=tuple(
-                                (execution.name, execution.context_content)
+                                (execution.name, execution.content)
                                 for execution in executions
                                 if execution.ok
                             ),
@@ -226,20 +226,22 @@ class AgentLoop:
                     if execution.ok:
                         successful_tools.add(execution.name)
                     _LOG.info(
-                        "MAI tool result round=%d name=%s ok=%s error_type=%s elapsed_ms=%d result_chars=%d model_chars=%d",
+                        "MAI tool result round=%d name=%s ok=%s error_type=%s elapsed_ms=%d visible_chars=%d",
                         round_number,
                         execution.name,
                         str(execution.ok).lower(),
                         execution.error_type or "-",
                         elapsed_ms,
                         len(execution.content),
-                        len(execution.context_content),
                     )
-                    history.append({"role": "tool", "tool_name": call.name, "content": execution.context_content})
+                    history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
                     observation = ExecutionObservation(
                         call_fingerprint=call_fp,
                         ok=execution.ok,
-                        content_fingerprint=content_fingerprint(execution.content),
+                        content_fingerprint=(
+                            execution.source_content_fingerprint
+                            or content_fingerprint(execution.content)
+                        ),
                         error_type=execution.error_type,
                     )
                     notice = guard.after_tool_execution(observation)
@@ -270,22 +272,22 @@ class AgentLoop:
             value = await self.registry.invoke(call)
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
-            content = _serialize_tool_content(payload)
+            source_content = _serialize_tool_content(payload)
             return ToolExecution(
                 name=call.name,
                 arguments=dict(call.arguments),
                 ok=False,
-                content=content,
+                content=self._model_content(source_content),
                 error_type=type(exc).__name__,
-                model_content=self._model_content(content),
+                source_content_fingerprint=content_fingerprint(source_content),
             )
-        content = _serialize_tool_content(value)
+        source_content = _serialize_tool_content(value)
         return ToolExecution(
             name=call.name,
             arguments=dict(call.arguments),
             ok=True,
-            content=content,
-            model_content=self._model_content(content),
+            content=self._model_content(source_content),
+            source_content_fingerprint=content_fingerprint(source_content),
         )
 
     def _model_content(self, content: str) -> str:
