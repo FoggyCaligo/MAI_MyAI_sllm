@@ -1,12 +1,8 @@
 """Reset one configured MAI trial account for reuse.
 
-Run this while the MAI server is stopped. The reset removes only memory owned by
-the selected trial identity, plus concept nodes that become completely orphaned
-after that user's memory is removed. Shared concepts used by another user's
-memory are preserved.
-
-The selected trial account's isolated upload directory and persisted chat history
-are also removed so a reused trial ID cannot expose the previous user's data.
+Run this while the MAI server is stopped. Memory, persisted chat history, and
+isolated uploads are owned by the account's stable db_id, not its mutable login
+user_id.
 """
 from __future__ import annotations
 
@@ -22,52 +18,29 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from mai.app.access import AccessPolicy, AccessRole
+from mai.app.chat_sessions import ChatSessionStore
 from mai.app.uploads import trial_upload_directory
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Reset one configured MAI trial account so it can be reused.",
-    )
-    parser.add_argument("trial_id", help="Exact trial ID listed in TRIAL_IDS")
-    parser.add_argument(
-        "--db",
-        default=None,
-        help="Memory SQLite path. Defaults to MEMORY_DB_PATH or ./data/memory.sqlite3.",
-    )
-    parser.add_argument(
-        "--chat-db",
-        default=None,
-        help="Chat SQLite path. Defaults to CHAT_DB_PATH or ./data/chat.sqlite3.",
-    )
-    parser.add_argument(
-        "--upload-root",
-        default=None,
-        help="Upload root. Defaults to MAI_UPLOAD_ROOT or ./mai_uploads.",
-    )
-    parser.add_argument(
-        "--yes",
-        action="store_true",
-        help="Skip the interactive confirmation prompt.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be deleted without changing memory, chat history, or uploads.",
-    )
+    parser = argparse.ArgumentParser(description="Reset one configured MAI trial account so it can be reused.")
+    parser.add_argument("trial_id", help="Exact user_id configured in TRIAL_USERS")
+    parser.add_argument("--db", default=None, help="Memory SQLite path. Defaults to MEMORY_DB_PATH or ./data/memory.sqlite3.")
+    parser.add_argument("--chat-db", default=None, help="Chat SQLite path. Defaults to CHAT_DB_PATH or ./data/chat.sqlite3.")
+    parser.add_argument("--upload-root", default=None, help="Upload root. Defaults to MAI_UPLOAD_ROOT or ./mai_uploads.")
+    parser.add_argument("--yes", action="store_true", help="Skip the interactive confirmation prompt.")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would be deleted without changing data.")
     return parser.parse_args()
 
 
 def _load_trial_principal(trial_id: str):
     policy = AccessPolicy.from_env_values(
-        owner_accounts=os.environ.get("OWNER_ACCOUNTS"),
-        owner_id=os.environ.get("OWNER_ID"),
-        owner_memory_id=os.environ.get("OWNER_MEMORY_ID"),
-        trial_ids=os.environ.get("TRIAL_IDS"),
+        owner_users=os.environ.get("OWNER_USERS"),
+        trial_users=os.environ.get("TRIAL_USERS"),
     )
-    principal = policy.authenticate(trial_id)
+    principal = policy.configured_principal(trial_id)
     if principal.role is not AccessRole.TRIAL:
-        raise ValueError("reset_trial.py only accepts IDs configured as trial accounts")
+        raise ValueError("reset_trial.py only accepts user_id values configured in TRIAL_USERS")
     return principal
 
 
@@ -91,12 +64,8 @@ def _json_payload(raw: str) -> dict[str, object]:
 
 
 def _collect_reset_targets(connection: sqlite3.Connection, user_id: str) -> dict[str, set[int]]:
-    anchor_row = connection.execute(
-        "SELECT node_id FROM user_anchors WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
+    anchor_row = connection.execute("SELECT node_id FROM user_anchors WHERE user_id = ?", (user_id,)).fetchone()
     anchor_ids = {int(anchor_row[0])} if anchor_row is not None else set()
-
     owned_node_ids: set[int] = set(anchor_ids)
     evidence_ids: set[int] = set()
 
@@ -113,12 +82,7 @@ def _collect_reset_targets(connection: sqlite3.Connection, user_id: str) -> dict
             evidence_id = payload.get("evidence_id")
             if isinstance(evidence_id, int) and evidence_id > 0:
                 evidence_ids.add(evidence_id)
-
-    return {
-        "anchor_ids": anchor_ids,
-        "owned_node_ids": owned_node_ids,
-        "evidence_ids": evidence_ids,
-    }
+    return {"anchor_ids": anchor_ids, "owned_node_ids": owned_node_ids, "evidence_ids": evidence_ids}
 
 
 def _count_edges_touching(connection: sqlite3.Connection, node_ids: set[int]) -> int:
@@ -137,17 +101,13 @@ def _delete_ids(connection: sqlite3.Connection, table: str, column: str, ids: se
     if not ids:
         return
     placeholders = ",".join("?" for _ in ids)
-    connection.execute(
-        f"DELETE FROM {table} WHERE {column} IN ({placeholders})",
-        tuple(sorted(ids)),
-    )
+    connection.execute(f"DELETE FROM {table} WHERE {column} IN ({placeholders})", tuple(sorted(ids)))
 
 
 def _orphan_concept_ids(connection: sqlite3.Connection) -> set[int]:
     rows = connection.execute(
         """
-        SELECT n.id
-        FROM nodes n
+        SELECT n.id FROM nodes n
         WHERE n.node_type = 'concept'
           AND NOT EXISTS (
               SELECT 1 FROM edges e
@@ -158,79 +118,47 @@ def _orphan_concept_ids(connection: sqlite3.Connection) -> set[int]:
     return {int(row[0]) for row in rows}
 
 
-def _reset_memory(db_path: Path, user_id: str, *, dry_run: bool) -> dict[str, int]:
+def _reset_memory(db_path: Path, db_id: str, *, dry_run: bool) -> dict[str, int]:
     if not db_path.exists():
         raise FileNotFoundError(f"memory database does not exist: {db_path}")
-
     connection = sqlite3.connect(db_path)
     try:
         connection.execute("PRAGMA foreign_keys = ON")
-        targets = _collect_reset_targets(connection, user_id)
+        targets = _collect_reset_targets(connection, db_id)
         owned_node_ids = targets["owned_node_ids"]
         evidence_ids = targets["evidence_ids"]
         edge_count = _count_edges_touching(connection, owned_node_ids)
-
         if dry_run:
-            return {
-                "owned_nodes": len(owned_node_ids),
-                "edges": edge_count,
-                "evidence": len(evidence_ids),
-                "orphan_concepts": 0,
-            }
+            return {"owned_nodes": len(owned_node_ids), "edges": edge_count, "evidence": len(evidence_ids), "orphan_concepts": 0}
 
         orphan_ids: set[int] = set()
         with connection:
             _delete_ids(connection, "nodes", "id", owned_node_ids)
             _delete_ids(connection, "evidence", "id", evidence_ids)
-
             orphan_ids = _orphan_concept_ids(connection)
             if orphan_ids:
                 placeholders = ",".join("?" for _ in orphan_ids)
                 params = tuple(sorted(orphan_ids))
-                connection.execute(
-                    f"DELETE FROM memory_concept_fts WHERE rowid IN ({placeholders})",
-                    params,
-                )
-                connection.execute(
-                    f"DELETE FROM memory_concept_exact WHERE node_id IN ({placeholders})",
-                    params,
-                )
-                connection.execute(
-                    f"DELETE FROM nodes WHERE id IN ({placeholders})",
-                    params,
-                )
-
-        return {
-            "owned_nodes": len(owned_node_ids),
-            "edges": edge_count,
-            "evidence": len(evidence_ids),
-            "orphan_concepts": len(orphan_ids),
-        }
+                connection.execute(f"DELETE FROM memory_concept_fts WHERE rowid IN ({placeholders})", params)
+                connection.execute(f"DELETE FROM memory_concept_exact WHERE node_id IN ({placeholders})", params)
+                connection.execute(f"DELETE FROM nodes WHERE id IN ({placeholders})", params)
+        return {"owned_nodes": len(owned_node_ids), "edges": edge_count, "evidence": len(evidence_ids), "orphan_concepts": len(orphan_ids)}
     finally:
         connection.close()
 
 
-def _reset_chat_history(chat_db_path: Path, auth_user_id: str, *, dry_run: bool) -> int:
+def _reset_chat_history(chat_db_path: Path, *, user_id: str, db_id: str, dry_run: bool) -> int:
     if not chat_db_path.exists():
         return 0
+    store = ChatSessionStore(chat_db_path)
+    store.migrate_db_id(previous_id=user_id, db_id=db_id)
     connection = sqlite3.connect(chat_db_path)
     try:
-        table = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages'"
-        ).fetchone()
-        if table is None:
-            return 0
-        row = connection.execute(
-            "SELECT COUNT(*) FROM chat_messages WHERE auth_user_id = ?",
-            (auth_user_id,),
-        ).fetchone()
+        row = connection.execute("SELECT COUNT(*) FROM chat_messages WHERE db_id = ?", (db_id,)).fetchone()
         count = int(row[0])
         if not dry_run and count:
             with connection:
-                connection.execute(
-                    "DELETE FROM chat_messages WHERE auth_user_id = ?",
-                    (auth_user_id,),
-                )
+                connection.execute("DELETE FROM chat_messages WHERE db_id = ?", (db_id,))
         return count
     finally:
         connection.close()
@@ -261,13 +189,9 @@ def _reset_uploads(upload_dir: Path, *, dry_run: bool) -> dict[str, int]:
 def main() -> int:
     load_dotenv()
     args = _parse_args()
-
     listening, host, port = _server_is_listening()
     if listening:
-        print(
-            f"Refusing reset: MAI appears to be running at {host}:{port}. Stop the server first.",
-            file=sys.stderr,
-        )
+        print(f"Refusing reset: MAI appears to be running at {host}:{port}. Stop the server first.", file=sys.stderr)
         return 2
 
     try:
@@ -276,59 +200,47 @@ def main() -> int:
         print(f"Refusing reset: {exc}", file=sys.stderr)
         return 2
 
-    db_path = Path(
-        args.db or os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3")
-    ).expanduser().resolve()
-    chat_db_path = Path(
-        args.chat_db or os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3")
-    ).expanduser().resolve(strict=False)
-    upload_root = Path(
-        args.upload_root or os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads")
-    ).expanduser().resolve(strict=False)
-    upload_dir = trial_upload_directory(upload_root, principal.auth_user_id)
+    db_path = Path(args.db or os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3")).expanduser().resolve()
+    chat_db_path = Path(args.chat_db or os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3")).expanduser().resolve(strict=False)
+    upload_root = Path(args.upload_root or os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads")).expanduser().resolve(strict=False)
+    upload_dir = trial_upload_directory(upload_root, principal.db_id)
 
     try:
-        preview = _reset_memory(db_path, principal.memory_user_id, dry_run=True)
-        chat_preview = _reset_chat_history(chat_db_path, principal.auth_user_id, dry_run=True)
+        preview = _reset_memory(db_path, principal.db_id, dry_run=True)
+        chat_preview = _reset_chat_history(chat_db_path, user_id=principal.user_id, db_id=principal.db_id, dry_run=True)
         upload_preview = _reset_uploads(upload_dir, dry_run=True)
     except Exception as exc:
         print(f"Could not inspect trial data: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
-    print(f"Trial account : {principal.auth_user_id}")
-    print(f"Memory user   : {principal.memory_user_id}")
-    print(f"Database      : {db_path}")
-    print(f"Chat database : {chat_db_path}")
-    print(f"Upload dir    : {upload_dir}")
-    print(f"Owned nodes   : {preview['owned_nodes']}")
-    print(f"Touching edges: {preview['edges']}")
-    print(f"Evidence rows : {preview['evidence']}")
-    print(f"Chat messages : {chat_preview}")
-    print(f"Upload files  : {upload_preview['files']}")
-    print(f"Upload bytes  : {upload_preview['bytes']}")
+    print(f"Trial user_id  : {principal.user_id}")
+    print(f"Stable db_id   : {principal.db_id}")
+    print(f"Memory database: {db_path}")
+    print(f"Chat database  : {chat_db_path}")
+    print(f"Upload dir     : {upload_dir}")
+    print(f"Owned nodes    : {preview['owned_nodes']}")
+    print(f"Touching edges : {preview['edges']}")
+    print(f"Evidence rows  : {preview['evidence']}")
+    print(f"Chat messages  : {chat_preview}")
+    print(f"Upload files   : {upload_preview['files']}")
+    print(f"Upload bytes   : {upload_preview['bytes']}")
 
     if args.dry_run:
         print("Dry run only; nothing was deleted.")
         return 0
 
     if not args.yes:
-        confirmation = input(
-            f"Type the trial ID '{principal.auth_user_id}' again to permanently reset it: "
-        ).strip()
-        if confirmation != principal.auth_user_id:
+        confirmation = input(f"Type the trial user_id '{principal.user_id}' again to permanently reset it: ").strip()
+        if confirmation != principal.user_id:
             print("Reset cancelled.")
             return 1
 
     try:
-        result = _reset_memory(db_path, principal.memory_user_id, dry_run=False)
-        chat_result = _reset_chat_history(chat_db_path, principal.auth_user_id, dry_run=False)
+        result = _reset_memory(db_path, principal.db_id, dry_run=False)
+        chat_result = _reset_chat_history(chat_db_path, user_id=principal.user_id, db_id=principal.db_id, dry_run=False)
         upload_result = _reset_uploads(upload_dir, dry_run=False)
     except sqlite3.OperationalError as exc:
-        print(
-            "Reset failed. Make sure the MAI server is stopped before running this utility. "
-            f"SQLite error: {exc}",
-            file=sys.stderr,
-        )
+        print(f"Reset failed. Make sure the MAI server is stopped before running this utility. SQLite error: {exc}", file=sys.stderr)
         return 2
     except Exception as exc:
         print(f"Reset failed: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -342,7 +254,7 @@ def main() -> int:
     print(f"Deleted chat messages   : {chat_result}")
     print(f"Deleted upload files    : {upload_result['files']}")
     print(f"Deleted upload bytes    : {upload_result['bytes']}")
-    print("Start MAI again before handing the trial ID to the next user.")
+    print("Start MAI again before handing the trial user_id to the next user.")
     return 0
 
 
