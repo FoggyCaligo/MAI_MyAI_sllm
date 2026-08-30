@@ -18,6 +18,7 @@ from .verification import FinalGroundingVerifier
 _LOG = logging.getLogger("uvicorn.error")
 _TOOL_ARGS_LOG_LIMIT = 800
 _MAX_NUMERIC_VERIFICATION_RETRIES = 2
+_MAX_COVERAGE_VERIFICATION_RETRIES = 2
 
 
 class AgentRuntimeError(RuntimeError):
@@ -128,6 +129,7 @@ class AgentLoop:
         round_number = 1
         semantic_verification_retries = 0
         numeric_verification_retries = 0
+        coverage_verification_retries = 0
         empty_final_retries = 0
         pending_history_compactions: dict[int, str] = {}
 
@@ -199,11 +201,12 @@ class AgentLoop:
                         round_number += 1
                         continue
                     _LOG.info(
-                        "MAI final candidate round=%d chars=%d semantic_retries=%d numeric_retries=%d",
+                        "MAI final candidate round=%d chars=%d semantic_retries=%d numeric_retries=%d coverage_retries=%d",
                         round_number,
                         len(turn.content),
                         semantic_verification_retries,
                         numeric_verification_retries,
+                        coverage_verification_retries,
                     )
                     if self.final_verifier is not None:
                         if numeric_verification_retries >= _MAX_NUMERIC_VERIFICATION_RETRIES:
@@ -213,6 +216,7 @@ class AgentLoop:
                             )
                         else:
                             allow_semantic_review = semantic_verification_retries < self.max_semantic_verification_retries
+                            allow_coverage_review = coverage_verification_retries < _MAX_COVERAGE_VERIFICATION_RETRIES
                             verification = await self.final_verifier.verify(
                                 candidate=turn.content,
                                 messages=history,
@@ -221,6 +225,7 @@ class AgentLoop:
                                     for execution in executions
                                 ),
                                 allow_semantic_review=allow_semantic_review,
+                                allow_coverage_review=allow_coverage_review,
                             )
                             if not verification.ok:
                                 issue_codes = ",".join(issue.code for issue in verification.issues) or "unknown"
@@ -232,27 +237,39 @@ class AgentLoop:
                                     issue.code in {"evidence_grounding_failed", "task_alignment_failed"}
                                     for issue in verification.issues
                                 )
+                                coverage_failure = any(
+                                    issue.code == "evidence_coverage_insufficient"
+                                    for issue in verification.issues
+                                )
                                 if numeric_failure:
                                     numeric_verification_retries += 1
                                 if semantic_failure:
                                     semantic_verification_retries += 1
+                                if coverage_failure:
+                                    coverage_verification_retries += 1
                                 _LOG.warning(
-                                    "MAI final rejected round=%d issues=%s semantic_retries=%d/%d numeric_retries=%d/%d",
+                                    "MAI final rejected round=%d issues=%s semantic_retries=%d/%d numeric_retries=%d/%d coverage_retries=%d/%d",
                                     round_number,
                                     issue_codes,
                                     semantic_verification_retries,
                                     self.max_semantic_verification_retries,
                                     numeric_verification_retries,
                                     _MAX_NUMERIC_VERIFICATION_RETRIES,
+                                    coverage_verification_retries,
+                                    _MAX_COVERAGE_VERIFICATION_RETRIES,
                                 )
                                 history.append({"role": "system", "content": verification.feedback_message()})
                                 round_number += 1
                                 continue
                             if not allow_semantic_review:
                                 _LOG.warning(
-                                    "MAI final semantic verification retry budget exhausted after %d retries; "
-                                    "returning candidate after numeric grounding",
+                                    "MAI final semantic verification retry budget exhausted after %d retries; semantic review skipped",
                                     self.max_semantic_verification_retries,
+                                )
+                            if not allow_coverage_review:
+                                _LOG.warning(
+                                    "MAI final coverage verification retry budget exhausted after %d retries; coverage review skipped",
+                                    _MAX_COVERAGE_VERIFICATION_RETRIES,
                                 )
                     _LOG.info("MAI final accepted round=%d", round_number)
                     return AgentRunResult(

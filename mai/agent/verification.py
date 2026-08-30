@@ -1,13 +1,14 @@
 """Final-answer grounding verification for MAI.
 
-This module deliberately separates four concerns:
+This module deliberately separates five concerns:
 - deterministic numeric grounding against user/tool evidence,
 - model-based claim-level evidence and scope review,
+- model-based evidence-coverage review,
 - model-based action-outcome verification,
 - model-based task-alignment review.
 
 It does not decide whether a tool should have been used and does not perform
-string-marker heuristics for causal, semantic, or action relations.
+string-marker heuristics for causal, semantic, action, or coverage relations.
 """
 from __future__ import annotations
 
@@ -38,11 +39,13 @@ _LOG = logging.getLogger("uvicorn.error")
 _FINAL_REVIEW_SYSTEM = """
 You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
 
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while still allowing useful truthful partial answers.
+Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
 
 Your response is constrained by the supplied structured-output schema. Populate every required field:
 - evidence_verdict: "supported", "unsupported", or "uncertain"
 - alignment_verdict: "aligned", "misaligned", or "uncertain"
+- coverage_verdict: "sufficient", "insufficient", or "uncertain"
+- coverage_reasons: concrete material omissions from already supplied evidence only
 - reasons: concrete blocking defects only
 - claims: material factual claims from the candidate that matter to the user's request
 - action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
@@ -63,6 +66,14 @@ Evidence scope preservation:
 - If the evidence supports a narrower statement but the candidate asserts a broader one, mark that claim unsupported with defect "scope_expansion".
 - Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
+
+Evidence coverage:
+- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
+- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
+- Prefer concrete supported results over replacing them with generic advice to check another source later.
+- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
+- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
+- coverage_reasons must identify the concrete already-observed information that the candidate should have used. If coverage is sufficient or uncertain, coverage_reasons should be empty.
 
 Action outcome verification:
 - Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
@@ -85,7 +96,7 @@ Overall verdicts:
 - evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
 - evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
 - evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no axis is blocking, reasons should be empty.
+- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
 """.strip()
 
 
@@ -111,6 +122,8 @@ class _FinalReviewPayload(BaseModel):
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
+    coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
+    coverage_reasons: list[str]
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
@@ -136,6 +149,11 @@ class FinalVerificationResult:
             "Preserve every supported result that is still useful to the user.",
         ]
         lines.extend(f"- {issue.code}: {issue.message}" for issue in self.issues)
+        if any(issue.code == "evidence_coverage_insufficient" for issue in self.issues):
+            lines.append(
+                "For evidence coverage insufficiency, expand the answer using material user-relevant facts already "
+                "present in the supplied evidence. Do not invent unsupported facts or chase optional completeness."
+            )
         lines.extend([
             "For any unsupported or unverified portion, either obtain genuinely needed evidence with an available tool, "
             "or narrow/remove that claim and state clearly what remains unverified or failed.",
@@ -157,13 +175,15 @@ class ClaimReview:
 class FinalReview:
     evidence_verdict: str
     alignment_verdict: str
+    coverage_verdict: str = "uncertain"
+    coverage_reasons: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
 
 
 class FinalGroundingVerifier:
-    """Combine numeric grounding with claim, action, and alignment review."""
+    """Combine numeric grounding with claim, coverage, action, and alignment review."""
 
     def __init__(
         self,
@@ -183,6 +203,7 @@ class FinalGroundingVerifier:
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
         allow_semantic_review: bool = True,
+        allow_coverage_review: bool = True,
     ) -> FinalVerificationResult:
         numeric_issue = self._numeric_issue(
             candidate=candidate,
@@ -194,17 +215,19 @@ class FinalGroundingVerifier:
                 numeric="failed",
                 evidence="skipped",
                 alignment="skipped",
+                coverage="skipped",
                 action="skipped",
                 reasons=(numeric_issue.message,),
             )
             return FinalVerificationResult(ok=False, issues=(numeric_issue,))
 
-        if self.reviewer_adapter is None or not allow_semantic_review:
-            reason = () if self.reviewer_adapter is None else ("semantic review retry budget exhausted",)
+        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_coverage_review):
+            reason = () if self.reviewer_adapter is None else ("semantic and coverage review retry budgets exhausted",)
             self._log_result(
                 numeric="pass",
                 evidence="skipped",
                 alignment="skipped",
+                coverage="skipped",
                 action="skipped",
                 reasons=reason,
             )
@@ -216,52 +239,61 @@ class FinalGroundingVerifier:
             tool_results=tool_results,
         )
         issues: list[VerificationIssue] = []
-        unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
-        scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
-        other_claims = tuple(claim for claim in unsupported_claims if claim.defect != "scope_expansion")
 
-        if scope_claims:
-            issues.append(VerificationIssue(
-                code="evidence_scope_expansion",
-                message=_claim_issue_message(
-                    scope_claims,
-                    fallback="The candidate makes a claim broader than the observed evidence.",
-                ),
-            ))
-        if other_claims:
-            issues.append(VerificationIssue(
-                code="claim_grounding_failed",
-                message=_claim_issue_message(
-                    other_claims,
-                    fallback="The candidate contains a material factual claim not established by the evidence.",
-                ),
-            ))
-        if review.evidence_verdict == "unsupported" and not unsupported_claims:
-            reason = "; ".join(review.reasons) or "The reviewer identified a material unsupported factual claim."
-            issues.append(VerificationIssue(code="evidence_grounding_failed", message=reason))
+        if allow_semantic_review:
+            unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
+            scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
+            other_claims = tuple(claim for claim in unsupported_claims if claim.defect != "scope_expansion")
 
-        if review.action_verdict == "unverified":
-            reason = "; ".join(review.reasons) or (
-                "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
-                "does not establish that outcome."
+            if scope_claims:
+                issues.append(VerificationIssue(
+                    code="evidence_scope_expansion",
+                    message=_claim_issue_message(
+                        scope_claims,
+                        fallback="The candidate makes a claim broader than the observed evidence.",
+                    ),
+                ))
+            if other_claims:
+                issues.append(VerificationIssue(
+                    code="claim_grounding_failed",
+                    message=_claim_issue_message(
+                        other_claims,
+                        fallback="The candidate contains a material factual claim not established by the evidence.",
+                    ),
+                ))
+            if review.evidence_verdict == "unsupported" and not unsupported_claims:
+                reason = "; ".join(review.reasons) or "The reviewer identified a material unsupported factual claim."
+                issues.append(VerificationIssue(code="evidence_grounding_failed", message=reason))
+
+            if review.action_verdict == "unverified":
+                reason = "; ".join(review.reasons) or (
+                    "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
+                    "does not establish that outcome."
+                )
+                issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
+            elif review.action_verdict == "contradicted":
+                reason = "; ".join(review.reasons) or (
+                    "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
+                )
+                issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
+
+            if review.alignment_verdict == "misaligned":
+                reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
+                issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
+
+        if allow_coverage_review and review.coverage_verdict == "insufficient":
+            reason = "; ".join(review.coverage_reasons) or (
+                "The candidate omits material user-relevant facts already established by the supplied evidence."
             )
-            issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
-        elif review.action_verdict == "contradicted":
-            reason = "; ".join(review.reasons) or (
-                "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
-            )
-            issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
-
-        if review.alignment_verdict == "misaligned":
-            reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
-            issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
+            issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
             numeric="pass",
-            evidence=review.evidence_verdict,
-            alignment=review.alignment_verdict,
-            action=review.action_verdict,
-            reasons=review.reasons,
+            evidence=review.evidence_verdict if allow_semantic_review else "skipped",
+            alignment=review.alignment_verdict if allow_semantic_review else "skipped",
+            coverage=review.coverage_verdict if allow_coverage_review else "skipped",
+            action=review.action_verdict if allow_semantic_review else "skipped",
+            reasons=review.reasons + review.coverage_reasons,
         )
         return FinalVerificationResult(ok=not issues, issues=tuple(issues))
 
@@ -364,6 +396,7 @@ class FinalGroundingVerifier:
             )
             parsed = _FinalReviewPayload.model_validate_json(turn.content, strict=True)
             reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
+            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
             claims = tuple(
                 ClaimReview(
                     claim=item.claim.strip(),
@@ -376,14 +409,19 @@ class FinalGroundingVerifier:
             )
             evidence_verdict = parsed.evidence_verdict
             alignment_verdict = parsed.alignment_verdict
+            coverage_verdict = parsed.coverage_verdict
             if not reasons and not any(claim.verdict == "unsupported" for claim in claims):
                 if evidence_verdict == "unsupported":
                     evidence_verdict = "uncertain"
             if not reasons and alignment_verdict == "misaligned":
                 alignment_verdict = "uncertain"
+            if not coverage_reasons and coverage_verdict == "insufficient":
+                coverage_verdict = "uncertain"
             return FinalReview(
                 evidence_verdict=evidence_verdict,
                 alignment_verdict=alignment_verdict,
+                coverage_verdict=coverage_verdict,
+                coverage_reasons=coverage_reasons,
                 reasons=reasons,
                 claims=claims,
                 action_verdict=parsed.action_verdict,
@@ -396,6 +434,7 @@ class FinalGroundingVerifier:
             return FinalReview(
                 evidence_verdict="uncertain",
                 alignment_verdict="uncertain",
+                coverage_verdict="uncertain",
             )
         except ValidationError as exc:
             _LOG.warning(
@@ -405,6 +444,7 @@ class FinalGroundingVerifier:
             return FinalReview(
                 evidence_verdict="uncertain",
                 alignment_verdict="uncertain",
+                coverage_verdict="uncertain",
             )
         except Exception as exc:
             _LOG.warning(
@@ -414,6 +454,7 @@ class FinalGroundingVerifier:
             return FinalReview(
                 evidence_verdict="uncertain",
                 alignment_verdict="uncertain",
+                coverage_verdict="uncertain",
             )
 
     @staticmethod
@@ -422,15 +463,17 @@ class FinalGroundingVerifier:
         numeric: str,
         evidence: str,
         alignment: str,
+        coverage: str,
         action: str,
         reasons: Sequence[str],
     ) -> None:
         reason_text = " | ".join(reasons) if reasons else "-"
         _LOG.info(
-            "MAI final verification numeric=%s evidence=%s alignment=%s action=%s reason=%s",
+            "MAI final verification numeric=%s evidence=%s alignment=%s coverage=%s action=%s reason=%s",
             numeric,
             evidence,
             alignment,
+            coverage,
             action,
             reason_text,
         )

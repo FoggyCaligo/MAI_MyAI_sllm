@@ -49,6 +49,8 @@ class ReviewerAdapter:
         return turn(json.dumps({
             "evidence_verdict": evidence_verdict,
             "alignment_verdict": alignment_verdict,
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
             "reasons": list(reasons),
             "claims": [],
             "action_verdict": "not_applicable",
@@ -64,7 +66,10 @@ class StructuredReviewerAdapter:
         self.requests.append(deepcopy(request))
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        return turn(json.dumps(self.reviews.pop(0), ensure_ascii=False))
+        review = dict(self.reviews.pop(0))
+        review.setdefault("coverage_verdict", "sufficient")
+        review.setdefault("coverage_reasons", [])
+        return turn(json.dumps(review, ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -78,6 +83,8 @@ class SlowReviewerAdapter:
         return turn(json.dumps({
             "evidence_verdict": "supported",
             "alignment_verdict": "aligned",
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
@@ -216,6 +223,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
     reviewer = ReviewerAdapter([
         ("supported", "misaligned", ("Does not answer the request.",)),
         ("supported", "misaligned", ("Still does not answer the request.",)),
+        ("supported", "aligned", ()),
     ])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(
@@ -229,7 +237,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 3
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -344,7 +352,7 @@ def test_verifier_logs_numeric_evidence_and_alignment_verdicts(caplog) -> None:
     result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
 
     assert result.content == "요청한 결과입니다."
-    assert "MAI final verification numeric=pass evidence=supported alignment=aligned" in caplog.text
+    assert "MAI final verification numeric=pass evidence=supported alignment=aligned coverage=sufficient" in caplog.text
 
 
 def test_reviewer_request_uses_structured_output_schema() -> None:
@@ -365,11 +373,15 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert set(schema["required"]) == {
         "evidence_verdict",
         "alignment_verdict",
+        "coverage_verdict",
+        "coverage_reasons",
         "reasons",
         "claims",
         "action_verdict",
     }
     assert "claims" in schema["properties"]
+    assert "coverage_verdict" in schema["properties"]
+    assert "coverage_reasons" in schema["properties"]
     assert "action_verdict" in schema["properties"]
 
 
@@ -490,3 +502,82 @@ def test_truthful_partial_answer_is_releaseable_after_failed_step() -> None:
     ))
 
     assert result.ok is True
+
+
+def test_evidence_coverage_rejects_generic_answer_that_omits_available_results() -> None:
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "supported",
+        "alignment_verdict": "aligned",
+        "coverage_verdict": "insufficient",
+        "coverage_reasons": [
+            "The tool evidence already contains a concrete upcoming VTuber event with its date and location, but the candidate only tells the user to check official sites."
+        ],
+        "reasons": [],
+        "claims": [],
+        "action_verdict": "not_applicable",
+    }])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="버튜버 행사는 공식 사이트와 행사 캘린더를 확인하는 것이 가장 좋습니다.",
+        messages=({"role": "user", "content": "지금부터 갈 수 있는 버튜버 오프라인 행사를 찾아줘."},),
+        tool_results=((
+            "web_search",
+            True,
+            None,
+            "Event A is scheduled for 2026-10-10 in Seoul and is a VTuber offline event.",
+        ),),
+    ))
+
+    assert result.ok is False
+    assert result.issues[0].code == "evidence_coverage_insufficient"
+    feedback = result.feedback_message()
+    assert "already present in the supplied evidence" in feedback
+    assert "Do not invent unsupported facts" in feedback
+
+
+def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> None:
+    main = SequenceAdapter([
+        "공식 사이트를 확인해 주세요.",
+        "행사 캘린더를 확인해 주세요.",
+        "여전히 짧지만 세 번째 답변입니다.",
+    ])
+    reviewer = StructuredReviewerAdapter([
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "insufficient",
+            "coverage_reasons": ["Concrete supported result A was omitted."],
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "insufficient",
+            "coverage_reasons": ["Concrete supported result A is still omitted."],
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "insufficient",
+            "coverage_reasons": ["This verdict is ignored because the coverage correction budget is exhausted."],
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
+
+    result = run(runtime.run_user_message("근거에서 확인된 구체적인 행사 정보를 알려줘."))
+
+    assert result.content == "여전히 짧지만 세 번째 답변입니다."
+    assert result.model_rounds == 3
+    assert "evidence_coverage_insufficient" in main.requests[1].messages[-1]["content"]
+    assert "evidence_coverage_insufficient" in main.requests[2].messages[-1]["content"]
+    assert len(reviewer.requests) == 3
