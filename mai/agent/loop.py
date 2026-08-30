@@ -32,6 +32,10 @@ class EmptyFinalResponseError(AgentRuntimeError):
     """The model repeatedly attempted to finish with an empty response."""
 
 
+class ToolUnavailableInRoundError(AgentRuntimeError):
+    """The model called a registered tool that was not exposed in this round."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolExecution:
     name: str
@@ -116,7 +120,9 @@ class AgentLoop:
         requirement_observed_tools: set[str] = set()
         frozen_requirements = requirements or FrozenToolRequirements(frozenset())
         all_tools = self.registry.native_schemas()
+        all_tool_names = frozenset(self.registry.names())
         active_tools = all_tools
+        active_tool_names = all_tool_names
         requirement_correction_active = False
         guard = AgentGuard(self.guard_config)
         round_number = 1
@@ -171,6 +177,7 @@ class AgentLoop:
                         missing_tools = sorted(missing)
                         requirement_correction_active = True
                         active_tools = self.registry.native_schemas(missing_tools)
+                        active_tool_names = frozenset(missing_tools)
                         _LOG.warning(
                             "MAI final rejected for missing required tools round=%d missing=%s",
                             round_number,
@@ -268,7 +275,10 @@ class AgentLoop:
                         _format_log_arguments(call.arguments),
                     )
                     started = time.perf_counter()
-                    execution = await self._execute_tool(call)
+                    execution = await self._execute_tool(
+                        call,
+                        available_tool_names=active_tool_names,
+                    )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
                     if on_tool_execution is not None:
@@ -309,10 +319,13 @@ class AgentLoop:
                 if requirement_correction_active:
                     missing_after_round = frozen_requirements.missing_from(requirement_observed_tools)
                     if missing_after_round:
-                        active_tools = self.registry.native_schemas(sorted(missing_after_round))
+                        missing_after_names = sorted(missing_after_round)
+                        active_tools = self.registry.native_schemas(missing_after_names)
+                        active_tool_names = frozenset(missing_after_names)
                     else:
                         requirement_correction_active = False
                         active_tools = all_tools
+                        active_tool_names = all_tool_names
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})
@@ -330,7 +343,29 @@ class AgentLoop:
                 ),
             ) from exc
 
-    async def _execute_tool(self, call: NativeToolCall) -> ToolExecution:
+    async def _execute_tool(
+        self,
+        call: NativeToolCall,
+        *,
+        available_tool_names: frozenset[str],
+    ) -> ToolExecution:
+        if call.name not in available_tool_names:
+            exc = ToolUnavailableInRoundError(
+                f"native tool '{call.name}' was not exposed in the current model round"
+            )
+            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+            source_content = _serialize_tool_content(payload)
+            model_content, compact_content = self._model_contents(source_content)
+            return ToolExecution(
+                name=call.name,
+                arguments=dict(call.arguments),
+                ok=False,
+                content=model_content,
+                error_type=type(exc).__name__,
+                handler_started=False,
+                source_content_fingerprint=content_fingerprint(source_content),
+                compact_history_content=compact_content,
+            )
         try:
             value = await self.registry.invoke(call)
         except Exception as exc:
