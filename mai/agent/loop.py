@@ -39,6 +39,7 @@ class ToolExecution:
     content: str
     error_type: str | None = None
     source_content_fingerprint: str | None = None
+    compact_history_content: str | None = None
 
     @property
     def context_content(self) -> str:
@@ -116,12 +117,17 @@ class AgentLoop:
         round_number = 1
         semantic_verification_retries = 0
         empty_final_retries = 0
+        pending_history_compactions: dict[int, str] = {}
 
         try:
             while True:
                 guard.before_model_round(round_number)
                 _LOG.info("MAI model round start round=%d", round_number)
                 turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
+                for history_index, compact_content in pending_history_compactions.items():
+                    previous = history[history_index]
+                    history[history_index] = {**previous, "content": compact_content}
+                pending_history_compactions.clear()
                 if on_model_turn is not None:
                     on_model_turn(round_number, turn)
                 history.append(dict(turn.assistant_message))
@@ -235,6 +241,8 @@ class AgentLoop:
                         len(execution.content),
                     )
                     history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
+                    if execution.compact_history_content is not None:
+                        pending_history_compactions[len(history) - 1] = execution.compact_history_content
                     observation = ExecutionObservation(
                         call_fingerprint=call_fp,
                         ok=execution.ok,
@@ -273,27 +281,32 @@ class AgentLoop:
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
             source_content = _serialize_tool_content(payload)
+            model_content, compact_content = self._model_contents(source_content)
             return ToolExecution(
                 name=call.name,
                 arguments=dict(call.arguments),
                 ok=False,
-                content=self._model_content(source_content),
+                content=model_content,
                 error_type=type(exc).__name__,
                 source_content_fingerprint=content_fingerprint(source_content),
+                compact_history_content=compact_content,
             )
         source_content = _serialize_tool_content(value)
+        model_content, compact_content = self._model_contents(source_content)
         return ToolExecution(
             name=call.name,
             arguments=dict(call.arguments),
             ok=True,
-            content=self._model_content(source_content),
+            content=model_content,
             source_content_fingerprint=content_fingerprint(source_content),
+            compact_history_content=compact_content,
         )
 
-    def _model_content(self, content: str) -> str:
+    def _model_contents(self, content: str) -> tuple[str, str | None]:
         if self.tool_result_store is None:
-            return content
-        return self.tool_result_store.model_view(content)
+            return content, None
+        views = self.tool_result_store.model_views(content)
+        return views.initial_content, views.compact_history_content
 
 
 def _format_log_arguments(arguments: Mapping[str, Any], *, limit: int = _TOOL_ARGS_LOG_LIMIT) -> str:
