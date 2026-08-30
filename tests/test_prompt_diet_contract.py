@@ -11,7 +11,7 @@ def _assert_terms(text: str, *terms: str) -> None:
 
 
 def test_main_agent_prompt_is_compact_without_dropping_core_contracts() -> None:
-    assert len(AGENT_SYSTEM_PROMPT) < 2200
+    assert len(AGENT_SYSTEM_PROMPT) < 1800
     _assert_terms(
         AGENT_SYSTEM_PROMPT,
         "native tools",
@@ -19,13 +19,19 @@ def test_main_agent_prompt_is_compact_without_dropping_core_contracts() -> None:
         "path, identifier, or target",
         "discover it",
         "tool_result_read",
-        "Preserve supplied factual values",
-        "different metrics",
+        "Preserve supplied factual values unless user correct them",
+        "relevant tool evidence",
+        "main basis of the final answer",
+        "generic advice",
         "calculator",
-        "that specific execution failed",
-        "task is impossible",
+        "Never invent tool results",
         "report unresolved failures",
     )
+    assert "Trial file_write/file_create tools are restricted" not in AGENT_SYSTEM_PROMPT
+    assert "Keep source facts distinct from derived conclusions" not in AGENT_SYSTEM_PROMPT
+    assert "different metrics, screens, sources, and time ranges" not in AGENT_SYSTEM_PROMPT
+    assert "that specific execution failed" not in AGENT_SYSTEM_PROMPT
+    assert "task is impossible" not in AGENT_SYSTEM_PROMPT
 
 
 def test_preflight_prompt_is_compact_and_preserves_core_contracts() -> None:
@@ -43,10 +49,10 @@ def test_preflight_prompt_is_compact_and_preserves_core_contracts() -> None:
         "both discovery and operation tools true",
         "local, memory, web, market, time, or calculation tool",
         "time-relative comparisons",
-        "optional-detail tools false",
         "Do not answer the task",
         "invent tool arguments",
     )
+    assert "optional-detail" not in TOOL_PREFLIGHT_PROMPT
 
 
 def test_fact_extraction_prompt_is_compact_and_preserves_evidence_contract() -> None:

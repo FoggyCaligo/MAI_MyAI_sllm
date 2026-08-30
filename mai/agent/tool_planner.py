@@ -26,7 +26,7 @@ If an input identifier, path, or target that is not yet established must be disc
 
 Use the relevant local, memory, web, market, time, or calculation tool when needed. For time-relative comparisons against the current moment, require the current-time tool unless the latest user request establishes it.
 
-Mark optional-detail tools false. Do not answer the task or invent tool arguments.
+Do not answer the task or invent tool arguments.
 """.strip()
 
 _BATCH_SIZE = 5
