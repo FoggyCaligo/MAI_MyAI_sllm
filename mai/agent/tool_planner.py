@@ -34,6 +34,7 @@ Rules:
 - Local-PC inspection or execution requests should require the relevant file/code/document/image/terminal tools instead of being replaced with a question to the user when the environment can resolve the task itself.
 - Stored-user-history questions should require the relevant memory tool when the needed fact is not already in the supplied conversation.
 - Current web, market, time, or calculated facts should require the corresponding available tool when needed.
+- When a request depends on comparing dates or time-relative information against the current moment, require the available current-time tool unless the current moment is already established in the supplied conversation.
 - Do not require tools merely because they could add optional detail.
 - Do not call tools, answer the user's task, invent arguments, or propose next steps.
 """.strip()
