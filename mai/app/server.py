@@ -80,6 +80,21 @@ def _selected_model_for_principal(
     raise ValueError(f"unsupported access role: {principal.role!r}")
 
 
+def _store_login_session(principal: AccessPrincipal) -> str:
+    if principal.role is AccessRole.TRIAL:
+        previous_tokens = [
+            token
+            for token, existing in _auth_sessions.items()
+            if existing.role is AccessRole.TRIAL and existing.auth_user_id == principal.auth_user_id
+        ]
+        for token in previous_tokens:
+            _auth_sessions.pop(token, None)
+
+    token = secrets.token_urlsafe(32)
+    _auth_sessions[token] = principal
+    return token
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _runtime, _access_policy, _tailscale
@@ -229,8 +244,7 @@ async def login(request: LoginRequest) -> LoginResponse:
         principal = _get_access_policy().authenticate(request.user_id)
     except AccessDeniedError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    token = secrets.token_urlsafe(32)
-    _auth_sessions[token] = principal
+    token = _store_login_session(principal)
     return LoginResponse(
         token=token,
         user_id=principal.auth_user_id,

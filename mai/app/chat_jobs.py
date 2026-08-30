@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 
+_ACTIVE_STATUSES = {"pending", "running", "cancelling"}
+_TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+
+
 @dataclass
 class ChatJob:
     job_id: str
@@ -62,19 +66,43 @@ class ChatJobStore:
         job.response = response
         job.updated_at = time.time()
 
+    async def cancel_for(self, *, job_id: str, auth_user_id: str) -> bool | None:
+        self._cleanup()
+        job = self._jobs.get(job_id)
+        if job is None or job.auth_user_id != auth_user_id:
+            return None
+        if job.status in _TERMINAL_STATUSES:
+            return False
+
+        job.status = "cancelling"
+        job.updated_at = time.time()
+        task = job.task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        job.status = "cancelled"
+        job.response = {"detail": "chat job cancelled by user"}
+        job.error = None
+        job.updated_at = time.time()
+        return True
+
+    def active_snapshots_for(self, *, auth_user_id: str) -> list[dict[str, Any]]:
+        self._cleanup()
+        jobs = [
+            job
+            for job in self._jobs.values()
+            if job.auth_user_id == auth_user_id and job.status in _ACTIVE_STATUSES
+        ]
+        jobs.sort(key=lambda item: item.created_at)
+        return [self._snapshot(job) for job in jobs]
+
     def snapshot_for(self, *, job_id: str, auth_user_id: str) -> dict[str, Any] | None:
         self._cleanup()
         job = self._jobs.get(job_id)
         if job is None or job.auth_user_id != auth_user_id:
             return None
-        return {
-            "job_id": job.job_id,
-            "status": job.status,
-            "created_at": job.created_at,
-            "updated_at": job.updated_at,
-            "response": job.response,
-            "error": job.error,
-        }
+        return self._snapshot(job)
 
     def lock_for(self, auth_user_id: str) -> asyncio.Lock:
         lock = self._user_locks.get(auth_user_id)
@@ -95,10 +123,21 @@ class ChatJobStore:
         stale = [
             job_id
             for job_id, job in self._jobs.items()
-            if job.status in {"completed", "failed"} and job.updated_at < cutoff
+            if job.status in _TERMINAL_STATUSES and job.updated_at < cutoff
         ]
         for job_id in stale:
             self._jobs.pop(job_id, None)
+
+    @staticmethod
+    def _snapshot(job: ChatJob) -> dict[str, Any]:
+        return {
+            "job_id": job.job_id,
+            "status": job.status,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "response": job.response,
+            "error": job.error,
+        }
 
     def _require(self, job_id: str) -> ChatJob:
         job = self._jobs.get(job_id)

@@ -44,51 +44,56 @@ def _shell_description() -> str:
     return "/bin/sh"
 
 
-def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
+def _terminate_process_tree(pid: int) -> None:
     if os.name == "nt":
         subprocess.run(
-            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
-    else:
-        os.killpg(process.pid, signal.SIGKILL)
+        return
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
-def _run_command(command: str, cwd: Path, timeout_seconds: float | None) -> dict[str, Any]:
+async def _run_command(command: str, cwd: Path, timeout_seconds: float | None) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
 
-    process = subprocess.Popen(
+    process = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd),
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        errors="replace",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
         **kwargs,
     )
+    timed_out = False
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-        timed_out = False
-    except subprocess.TimeoutExpired:
-        _terminate_process_tree(process)
-        stdout, stderr = process.communicate()
+        if timeout_seconds is None:
+            stdout_bytes, stderr_bytes = await process.communicate()
+        else:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+    except asyncio.TimeoutError:
         timed_out = True
+        await asyncio.to_thread(_terminate_process_tree, process.pid)
+        stdout_bytes, stderr_bytes = await process.communicate()
+    except asyncio.CancelledError:
+        await asyncio.to_thread(_terminate_process_tree, process.pid)
+        await process.communicate()
+        raise
 
     return {
         "command": command,
         "cwd": str(cwd),
         "shell": _shell_description(),
-        "stdout": stdout,
-        "stderr": stderr,
+        "stdout": stdout_bytes.decode(errors="replace"),
+        "stderr": stderr_bytes.decode(errors="replace"),
         "returncode": process.returncode,
         "timed_out": timed_out,
     }
@@ -110,7 +115,7 @@ async def terminal_run(
         raise NotADirectoryError(str(resolved_cwd))
 
     effective_timeout = timeout_seconds if timeout_seconds is not None else default_timeout_seconds
-    result = await asyncio.to_thread(_run_command, command, resolved_cwd, effective_timeout)
+    result = await _run_command(command, resolved_cwd, effective_timeout)
     if result["timed_out"]:
         raise TerminalTimeoutError("terminal command timed out", result)
     if result["returncode"] != 0:
