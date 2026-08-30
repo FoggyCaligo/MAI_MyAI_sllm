@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from mai.app import resumable_chat, server
 from mai.app.access import AccessPrincipal, AccessRole
-from mai.app.chat_sessions import ChatSessionStore
+from mai.app.chat_sessions import ChatSessionStore, WEB_CHAT_TABLE
 
 
 def run(coro):
@@ -65,7 +65,7 @@ def test_chat_session_store_clear_is_scoped(tmp_path) -> None:
     assert store.clear(db_id="db-a", session_id="default") is False
 
 
-def test_legacy_login_keyed_chat_rows_migrate_to_db_id(tmp_path) -> None:
+def test_known_login_keyed_persistent_chat_table_migrates_to_web_table(tmp_path) -> None:
     path = tmp_path / "chat.sqlite3"
     connection = sqlite3.connect(path)
     with connection:
@@ -90,6 +90,49 @@ def test_legacy_login_keyed_chat_rows_migrate_to_db_id(tmp_path) -> None:
     store = ChatSessionStore(path)
     assert store.migrate_db_id(previous_id="old-login", db_id="local-user") == 1
     assert store.messages(db_id="local-user", session_id="default") == [{"role": "user", "content": "legacy"}]
+
+    connection = sqlite3.connect(path)
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({WEB_CHAT_TABLE})")}
+    connection.close()
+    assert "chat_messages" not in tables
+    assert WEB_CHAT_TABLE in tables
+    assert "db_id" in columns
+    assert "auth_user_id" not in columns
+
+
+def test_unrelated_existing_chat_messages_table_is_preserved_untouched(tmp_path) -> None:
+    path = tmp_path / "chat.sqlite3"
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.execute(
+            """
+            CREATE TABLE chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                message TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO chat_messages(user_id, message) VALUES (?, ?)",
+            ("legacy-user", "keep-me"),
+        )
+    connection.close()
+
+    store = ChatSessionStore(path)
+    store.append(db_id="local-user", session_id="default", role="user", content="new-web-chat")
+
+    connection = sqlite3.connect(path)
+    legacy_row = connection.execute("SELECT user_id, message FROM chat_messages").fetchone()
+    web_columns = {row[1] for row in connection.execute(f"PRAGMA table_info({WEB_CHAT_TABLE})")}
+    connection.close()
+
+    assert legacy_row == ("legacy-user", "keep-me")
+    assert web_columns == {"id", "db_id", "session_id", "role", "content", "created_at"}
+    assert store.messages(db_id="local-user", session_id="default") == [
+        {"role": "user", "content": "new-web-chat"}
+    ]
 
 
 def test_detached_chat_uses_db_id_for_prior_and_completed_history(tmp_path, monkeypatch) -> None:

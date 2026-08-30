@@ -23,7 +23,7 @@ def test_reset_chat_history_removes_only_selected_trial_db_id(tmp_path) -> None:
     ]
 
 
-def test_reset_chat_history_dry_run_does_not_mutate_legacy_login_keyed_rows(tmp_path) -> None:
+def test_reset_chat_history_dry_run_does_not_mutate_known_legacy_login_rows(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     connection = sqlite3.connect(path)
     with connection:
@@ -39,6 +39,28 @@ def test_reset_chat_history_dry_run_does_not_mutate_legacy_login_keyed_rows(tmp_
     assert _reset_chat_history(path, user_id="trial-a", db_id="trial-db-a", dry_run=True) == 1
     connection = sqlite3.connect(path)
     assert connection.execute("SELECT auth_user_id FROM chat_messages").fetchone()[0] == "trial-a"
+    connection.close()
+
+
+def test_reset_chat_history_ignores_unrelated_chat_messages_schema(tmp_path) -> None:
+    path = tmp_path / "unrelated.sqlite3"
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.execute(
+            "CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, user_id TEXT, message TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO chat_messages(user_id, message) VALUES (?, ?)",
+            ("trial-a", "must-survive"),
+        )
+    connection.close()
+
+    assert _reset_chat_history(path, user_id="trial-a", db_id="trial-db-a", dry_run=False) == 0
+    connection = sqlite3.connect(path)
+    assert connection.execute("SELECT user_id, message FROM chat_messages").fetchone() == (
+        "trial-a",
+        "must-survive",
+    )
     connection.close()
 
 
