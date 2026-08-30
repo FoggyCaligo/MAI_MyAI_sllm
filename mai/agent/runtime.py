@@ -5,6 +5,7 @@ from typing import Any, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
+from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
@@ -53,14 +54,17 @@ class AgentRuntime:
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
-        return await self.loop.run(
-            messages,
-            think=think,
-            options=options,
-            requirements=requirements,
-            on_tool_execution=on_tool_execution,
-            on_model_turn=on_model_turn,
-        )
+        with temporary_artifact_scope() as artifacts:
+            result = await self.loop.run(
+                messages,
+                think=think,
+                options=options,
+                requirements=requirements,
+                on_tool_execution=on_tool_execution,
+                on_model_turn=on_model_turn,
+            )
+            artifacts.cleanup()
+            return result
 
     async def run_user_message(
         self,
