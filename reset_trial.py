@@ -18,7 +18,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from mai.app.access import AccessPolicy, AccessRole
-from mai.app.chat_sessions import ChatSessionStore
 from mai.app.uploads import trial_upload_directory
 
 
@@ -68,7 +67,6 @@ def _collect_reset_targets(connection: sqlite3.Connection, user_id: str) -> dict
     anchor_ids = {int(anchor_row[0])} if anchor_row is not None else set()
     owned_node_ids: set[int] = set(anchor_ids)
     evidence_ids: set[int] = set()
-
     rows = connection.execute(
         "SELECT id, node_type, payload_json FROM nodes WHERE node_type IN ('utterance', 'fact')"
     ).fetchall()
@@ -130,7 +128,6 @@ def _reset_memory(db_path: Path, db_id: str, *, dry_run: bool) -> dict[str, int]
         edge_count = _count_edges_touching(connection, owned_node_ids)
         if dry_run:
             return {"owned_nodes": len(owned_node_ids), "edges": edge_count, "evidence": len(evidence_ids), "orphan_concepts": 0}
-
         orphan_ids: set[int] = set()
         with connection:
             _delete_ids(connection, "nodes", "id", owned_node_ids)
@@ -150,15 +147,35 @@ def _reset_memory(db_path: Path, db_id: str, *, dry_run: bool) -> dict[str, int]
 def _reset_chat_history(chat_db_path: Path, *, user_id: str, db_id: str, dry_run: bool) -> int:
     if not chat_db_path.exists():
         return 0
-    store = ChatSessionStore(chat_db_path)
-    store.migrate_db_id(previous_id=user_id, db_id=db_id)
     connection = sqlite3.connect(chat_db_path)
+    connection.row_factory = sqlite3.Row
     try:
-        row = connection.execute("SELECT COUNT(*) FROM chat_messages WHERE db_id = ?", (db_id,)).fetchone()
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_messages'"
+        ).fetchone()
+        if table is None:
+            return 0
+        columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(chat_messages)").fetchall()}
+        if "db_id" in columns:
+            column = "db_id"
+            identities = tuple(dict.fromkeys((db_id, user_id)))
+        elif "auth_user_id" in columns:
+            column = "auth_user_id"
+            identities = tuple(dict.fromkeys((user_id, db_id)))
+        else:
+            raise RuntimeError("chat_messages has neither db_id nor legacy auth_user_id")
+        placeholders = ",".join("?" for _ in identities)
+        row = connection.execute(
+            f"SELECT COUNT(*) FROM chat_messages WHERE {column} IN ({placeholders})",
+            identities,
+        ).fetchone()
         count = int(row[0])
         if not dry_run and count:
             with connection:
-                connection.execute("DELETE FROM chat_messages WHERE db_id = ?", (db_id,))
+                connection.execute(
+                    f"DELETE FROM chat_messages WHERE {column} IN ({placeholders})",
+                    identities,
+                )
         return count
     finally:
         connection.close()
@@ -193,7 +210,6 @@ def main() -> int:
     if listening:
         print(f"Refusing reset: MAI appears to be running at {host}:{port}. Stop the server first.", file=sys.stderr)
         return 2
-
     try:
         principal = _load_trial_principal(args.trial_id)
     except Exception as exc:
@@ -228,7 +244,6 @@ def main() -> int:
     if args.dry_run:
         print("Dry run only; nothing was deleted.")
         return 0
-
     if not args.yes:
         confirmation = input(f"Type the trial user_id '{principal.user_id}' again to permanently reset it: ").strip()
         if confirmation != principal.user_id:
