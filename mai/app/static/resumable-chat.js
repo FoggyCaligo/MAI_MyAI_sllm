@@ -172,11 +172,27 @@
     }
   }
 
+  function clearVisibleConversation() {
+    const host = document.getElementById('messages');
+    if (!host) return;
+    host.replaceChildren();
+    const empty = document.createElement('div');
+    empty.id = 'empty-state';
+    const big = document.createElement('div');
+    big.className = 'big';
+    big.textContent = 'MAI';
+    const hint = document.createElement('div');
+    hint.textContent = '메시지를 입력하세요.';
+    empty.append(big, hint);
+    host.appendChild(empty);
+    renderedHistorySignature = null;
+  }
+
   function renderPersistentHistory(messages) {
     const host = document.getElementById('messages');
     if (!host || typeof addMessage !== 'function') return;
     const normalized = Array.isArray(messages) ? messages : [];
-    const signature = JSON.stringify(normalized);
+    const signature = JSON.stringify([state?.userId || null, normalized]);
     if (signature === renderedHistorySignature) return;
 
     host.replaceChildren();
@@ -294,6 +310,15 @@
     const url = typeof input === 'string' ? input : input?.url;
     const method = String(init?.method || 'GET').toUpperCase();
     if (url === '/chat' && method === 'POST') return submitDetachedChat(init);
+    if (url === '/login' && method === 'POST') {
+      return nativeFetch(input, init).then(response => {
+        if (response.ok) {
+          clearVisibleConversation();
+          setTimeout(recoverPendingJob, 0);
+        }
+        return response;
+      });
+    }
     return nativeFetch(input, init);
   };
 
