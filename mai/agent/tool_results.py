@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import secrets
 from dataclasses import dataclass
 
@@ -61,6 +62,8 @@ class ToolResultStore:
                 "content_compacted": True,
                 "read_with": "tool_result_read",
                 "max_read_chars": self.max_read_chars,
+                "initial_page": 1,
+                "total_pages_at_max_read_chars": math.ceil(len(stored.content) / self.max_read_chars),
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -97,6 +100,10 @@ class ToolResultStore:
         page = requested
         while True:
             next_offset = offset + len(page)
+            complete = next_offset >= len(stored.content)
+            aligned_page = offset % requested_limit == 0
+            page_number = (offset // requested_limit) + 1 if aligned_page else None
+            total_pages = math.ceil(len(stored.content) / requested_limit)
             metadata = json.dumps(
                 {
                     "result_id": stored.result_id,
@@ -104,8 +111,18 @@ class ToolResultStore:
                     "offset": offset,
                     "returned_chars": len(page),
                     "next_offset": next_offset,
-                    "complete": next_offset >= len(stored.content),
+                    "complete": complete,
                     "max_read_chars": self.max_read_chars,
+                    "pagination": {
+                        "page": page_number,
+                        "page_size": requested_limit,
+                        "returned_count": len(page),
+                        "total_count": len(stored.content),
+                        "total_pages": total_pages,
+                        "has_more": not complete,
+                        "next_page": page_number + 1 if page_number is not None and not complete else None,
+                        "next_offset": next_offset if not complete else None,
+                    },
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -124,9 +141,11 @@ def register_tool_result_tools(registry: ToolRegistry, store: ToolResultStore) -
         name="tool_result_read",
         description=(
             "Read another character range from a large tool result that was stored because its full output "
-            "would exceed the model-facing result budget. The first output line is JSON range metadata and "
-            "the remaining text is the exact requested page content. Use the exact result_id returned by the "
-            f"original tool. limit must be at most {store.max_read_chars}."
+            "would exceed the model-facing result budget. The first output line is JSON pagination/range metadata; "
+            "pagination.has_more=true means the visible content is only a partial result and must not be treated "
+            "as the complete collection. Use the exact result_id returned by the original tool and pagination.next_offset "
+            "to continue. limit must be at most "
+            f"{store.max_read_chars}."
         ),
         input_model=ToolResultReadInput,
         handler=store.read,
