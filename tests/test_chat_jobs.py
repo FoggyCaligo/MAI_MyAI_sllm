@@ -53,6 +53,51 @@ def test_chat_job_failure_preserves_error_payload() -> None:
     assert failed["error"] == "boom"
 
 
+def test_active_jobs_are_scoped_and_sorted_by_creation_time() -> None:
+    store = ChatJobStore()
+    first = store.create(auth_user_id="owner")
+    second = store.create(auth_user_id="owner")
+    store.create(auth_user_id="other")
+
+    active = store.active_snapshots_for(auth_user_id="owner")
+    assert [item["job_id"] for item in active] == [first.job_id, second.job_id]
+
+    store.complete(first.job_id, {"answer": "done"})
+    active_after_complete = store.active_snapshots_for(auth_user_id="owner")
+    assert [item["job_id"] for item in active_after_complete] == [second.job_id]
+
+
+def test_cancel_for_cancels_running_task_and_marks_job_cancelled() -> None:
+    async def scenario() -> None:
+        store = ChatJobStore()
+        job = store.create(auth_user_id="owner")
+        started = asyncio.Event()
+
+        async def worker() -> None:
+            started.set()
+            await asyncio.sleep(3600)
+
+        task = asyncio.create_task(worker())
+        store.attach_task(job.job_id, task)
+        store.mark_running(job.job_id)
+        await started.wait()
+
+        cancelled = await store.cancel_for(job_id=job.job_id, auth_user_id="owner")
+        assert cancelled is True
+        assert task.cancelled()
+
+        snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+        assert snapshot is not None
+        assert snapshot["status"] == "cancelled"
+        assert snapshot["response"] == {"detail": "chat job cancelled by user"}
+        assert store.active_snapshots_for(auth_user_id="owner") == []
+
+        assert await store.cancel_for(job_id=job.job_id, auth_user_id="other") is None
+        assert await store.cancel_for(job_id=job.job_id, auth_user_id="owner") is False
+
+    run(scenario())
+
+
 def test_shutdown_cancels_running_tasks() -> None:
     async def scenario() -> None:
         store = ChatJobStore()
