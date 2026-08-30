@@ -15,15 +15,15 @@ class ToolRequirementPlanningError(RuntimeError):
 
 
 _SYSTEM_PROMPT = """
-You are MAI's tool preflight. Fill every boolean property in the supplied response schema.
+You are MAI's tool preflight. Fill every boolean property in the response schema.
 
-Judge whether the latest user request needs each tool's produced evidence or effect before a valid answer. recent_dialogue is only context for resolving references; it is not evidence that facts are established or prior tools/research succeeded.
+Judge whether the latest user request needs each tool's evidence or effect. recent_dialogue is only context for references; it is not evidence that facts are established or prior tools/research succeeded.
 
-If the user asks to search, inspect, verify, compare, or re-check external/local sources, model knowledge does not satisfy that request; mark relevant evidence-producing tools true even for stable facts.
+If the user asks to search, inspect, verify, compare, or re-check external/local sources, model knowledge does not satisfy that request; mark relevant evidence-producing tools true.
 
-If an input identifier, path, or target that is not yet established must be discovered by another tool, mark both discovery and operation tools true.
+If an input identifier, path, or target that is not yet established must be discovered, require both the discovery tool and the operation tool; mark both discovery and operation tools true.
 
-Use the relevant local, memory, web, market, time, or calculation tool when needed. When comparing dates or time-relative information against the current moment, require current time unless the latest user request establishes it.
+Use the relevant local, memory, web, market, time, or calculation tool when needed. When comparing dates or time-relative information against the current moment, require the current-time tool unless the latest user request establishes it.
 
 Mark optional-detail tools false. Do not answer the task or invent tool arguments.
 """.strip()
