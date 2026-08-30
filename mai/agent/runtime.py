@@ -13,6 +13,11 @@ from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
 
+USER_VISIBLE_RESULT_CONTRACT = """
+The user cannot see internal native tool calls, tool results, terminal stdout/stderr, or server logs unless you explicitly include the relevant information in your final answer. Never refer to unseen internal output as if it were already visible to the user. After using tools, make the final answer self-contained: directly report the requested result, including material success/failure details and any evidence the user needs to understand the outcome.
+""".strip()
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -71,6 +76,7 @@ class AgentRuntime:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
         messages: list[Message] = [dict(message) for message in prior_messages]
+        messages.append({"role": "system", "content": USER_VISIBLE_RESULT_CONTRACT})
         messages.append({"role": "user", "content": content})
         return await self.run(
             messages,
