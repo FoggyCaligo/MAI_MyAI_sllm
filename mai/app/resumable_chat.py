@@ -42,10 +42,9 @@ async def _execute_chat(
     except PermissionError as exc:
         return 403, {"detail": str(exc)}
 
-    session_key = (principal.auth_user_id, request.session_id)
-    history = server._chat_sessions[session_key]
     limit = server._history_limit()
-    prior = history[-limit:] if limit else []
+    prior = server._session_history(principal, request.session_id, limit=limit) if limit else []
+    server._append_session_message(principal, request.session_id, role="user", content=request.message)
     active_model = selected_model or runtime.model
     try:
         result = await runtime.run_user_message(
@@ -73,10 +72,7 @@ async def _execute_chat(
             "tools": [],
         }
 
-    history.append({"role": "user", "content": request.message})
-    history.append({"role": "assistant", "content": result.answer})
-    if limit and len(history) > limit:
-        del history[:-limit]
+    server._append_session_message(principal, request.session_id, role="assistant", content=result.answer)
     return 200, _response_payload(result)
 
 
