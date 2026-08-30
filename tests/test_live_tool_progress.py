@@ -31,9 +31,11 @@ class FakeAdapter:
         return self.turns.pop(0)
 
 
-def assistant_turn(*, content="", calls=()):
+def assistant_turn(*, content="", thinking="", calls=()):
     tool_calls = tuple(calls)
     message = {"role": "assistant", "content": content}
+    if thinking:
+        message["thinking"] = thinking
     if tool_calls:
         message["tool_calls"] = [
             {
@@ -48,7 +50,7 @@ def assistant_turn(*, content="", calls=()):
         ]
     return ModelTurn(
         content=content,
-        thinking="",
+        thinking=thinking,
         tool_calls=tool_calls,
         assistant_message=message,
     )
@@ -108,3 +110,32 @@ def test_failed_tool_execution_is_published_without_hiding_failure() -> None:
     assert observed[0].ok is False
     assert observed[0].error_type == "PermissionError"
     assert "blocked" in observed[0].content
+
+
+def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
+    registry = ToolRegistry()
+    registry.add(
+        name="echo",
+        description="Echo text.",
+        input_model=EchoInput,
+        handler=lambda text: text,
+    )
+    adapter = FakeAdapter([
+        assistant_turn(
+            thinking="I should inspect the tool result first.",
+            calls=(NativeToolCall(name="echo", arguments={"text": "value"}),),
+        ),
+        assistant_turn(content="done", thinking=""),
+    ])
+    observed = []
+
+    result = run(AgentRuntime(adapter, registry).run_user_message(
+        "work",
+        on_model_turn=lambda round_number, turn: observed.append((round_number, turn.thinking)),
+    ))
+
+    assert result.content == "done"
+    assert observed == [
+        (1, "I should inspect the tool result first."),
+        (2, ""),
+    ]
