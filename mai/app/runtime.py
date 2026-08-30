@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 
 from ollama import AsyncClient
 
+from ..agent.loop import ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
@@ -174,6 +175,7 @@ class MAIRuntime:
         principal: AccessPrincipal,
         prior_messages: Sequence[Mapping[str, Any]] = (),
         model: str | None = None,
+        on_tool_execution: ToolExecutionObserver | None = None,
     ) -> MAIRunResult:
         if not prompt.strip():
             raise ValueError("prompt must be non-empty")
@@ -191,7 +193,11 @@ class MAIRuntime:
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
-        result = await agent.run_user_message(prompt, prior_messages=messages)
+        result = await agent.run_user_message(
+            prompt,
+            prior_messages=messages,
+            on_tool_execution=on_tool_execution,
+        )
 
         tools = tuple({
             "name": execution.name,
