@@ -134,7 +134,8 @@ def install() -> None:
     @app.get("/", include_in_schema=False)
     async def resumable_root() -> HTMLResponse:
         index_path = Path(server._STATIC_DIR) / "index.html"
-        script_path = Path(server._STATIC_DIR) / "resumable-chat.js"
+        resumable_script = Path(server._STATIC_DIR) / "resumable-chat.js"
+        password_script = Path(server._STATIC_DIR) / "login-password.js"
         html = index_path.read_text(encoding="utf-8-sig")
         subtitle_marker = '<div class="subtitle">local personal agent</div>'
         if subtitle_marker not in html:
@@ -160,9 +161,13 @@ def install() -> None:
         if chat_form_marker not in html:
             raise RuntimeError("chat form marker is missing from index.html")
         html = html.replace(chat_form_marker, '<form id="chat-form" novalidate>', 1)
-        script_digest = hashlib.sha256(script_path.read_bytes()).hexdigest()[:16]
-        asset = f'  <script src="/static/resumable-chat.js?v={script_digest}"></script>\n'
-        html = html.replace("</body>", asset + "</body>", 1)
+        resumable_digest = hashlib.sha256(resumable_script.read_bytes()).hexdigest()[:16]
+        password_digest = hashlib.sha256(password_script.read_bytes()).hexdigest()[:16]
+        assets = (
+            f'  <script src="/static/resumable-chat.js?v={resumable_digest}"></script>\n'
+            f'  <script src="/static/login-password.js?v={password_digest}"></script>\n'
+        )
+        html = html.replace("</body>", assets + "</body>", 1)
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     @app.post("/chat/jobs")
