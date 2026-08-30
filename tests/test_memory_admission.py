@@ -14,6 +14,10 @@ class Execution:
     ok: bool
     content: str = ""
 
+    @property
+    def context_content(self) -> str:
+        return self.content
+
 
 def test_successful_memory_recall_tools_detects_persistent_memory_reads() -> None:
     executions = (
