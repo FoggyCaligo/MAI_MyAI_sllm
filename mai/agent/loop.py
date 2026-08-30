@@ -124,7 +124,6 @@ class AgentLoop:
 
         try:
             while True:
-                guard.before_model_round(round_number)
                 _LOG.info("MAI model round start round=%d", round_number)
                 turn = await self.adapter.chat(ChatRequest(messages=history, tools=tools, think=think, options=options))
                 for history_index, compact_content in pending_history_compactions.items():
@@ -246,7 +245,6 @@ class AgentLoop:
                         final_turn=turn,
                     )
 
-                guard.before_tool_round(round_number)
                 round_observations: list[ExecutionObservation] = []
                 round_notices: list[str] = []
                 for call in turn.tool_calls:
