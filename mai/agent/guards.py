@@ -20,7 +20,7 @@ class RepeatedToolCallError(AgentGuardError):
 
 
 class RepeatedToolFailureError(AgentGuardError):
-    """The same native tool call failed in the same way too many times."""
+    """The same native tool call kept reproducing one identical failure outcome."""
 
 
 class NoProgressError(AgentGuardError):
@@ -30,19 +30,23 @@ class NoProgressError(AgentGuardError):
 @dataclass(frozen=True, slots=True)
 class GuardConfig:
     max_rounds: int = 30
-    max_identical_calls: int = 3
-    max_identical_failures: int = 2
-    max_no_progress_rounds: int = 2
+    max_identical_calls: int = 10
+    warn_identical_failures: int = 3
+    max_identical_failures: int = 5
+    max_no_progress_rounds: int = 5
 
     def __post_init__(self) -> None:
         for name, value in (
             ("max_rounds", self.max_rounds),
             ("max_identical_calls", self.max_identical_calls),
+            ("warn_identical_failures", self.warn_identical_failures),
             ("max_identical_failures", self.max_identical_failures),
             ("max_no_progress_rounds", self.max_no_progress_rounds),
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.warn_identical_failures > self.max_identical_failures:
+            raise ValueError("warn_identical_failures must be <= max_identical_failures")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,12 +62,20 @@ class AgentGuard:
 
     The guard never interprets user text, tool names, or result meaning. It only
     compares canonical native-call arguments and exact execution outcomes.
+
+    Recovery policy:
+    - changed calls or changed outcomes are treated as structural progress;
+    - an identical failure streak is surfaced to the model before it is stopped;
+    - after the model has observed the configured number of identical failures,
+      only another unchanged call is blocked;
+    - global round/call ceilings remain as final safety bounds.
     """
 
     def __init__(self, config: GuardConfig | None = None) -> None:
         self.config = config or GuardConfig()
         self._call_counts: dict[str, int] = {}
-        self._failure_counts: dict[tuple[str, str | None], int] = {}
+        self._failure_streak_key: tuple[str, str | None, str] | None = None
+        self._failure_streak_count = 0
         self._previous_round_signature: str | None = None
         self._identical_rounds = 0
 
@@ -83,6 +95,16 @@ class AgentGuard:
 
     def before_tool_call(self, name: str, arguments: Mapping[str, Any]) -> str:
         fingerprint = call_fingerprint(name, arguments)
+        if (
+            self._failure_streak_key is not None
+            and self._failure_streak_key[0] == fingerprint
+            and self._failure_streak_count >= self.config.max_identical_failures
+        ):
+            raise RepeatedToolFailureError(
+                "same native tool call already produced the same failure outcome "
+                f"{self._failure_streak_count} consecutive times; refusing another unchanged execution"
+            )
+
         count = self._call_counts.get(fingerprint, 0) + 1
         self._call_counts[fingerprint] = count
         if count > self.config.max_identical_calls:
@@ -91,17 +113,31 @@ class AgentGuard:
             )
         return fingerprint
 
-    def after_tool_execution(self, observation: ExecutionObservation) -> None:
+    def after_tool_execution(self, observation: ExecutionObservation) -> str | None:
         if observation.ok:
-            return
-        key = (observation.call_fingerprint, observation.error_type)
-        count = self._failure_counts.get(key, 0) + 1
-        self._failure_counts[key] = count
-        if count > self.config.max_identical_failures:
-            raise RepeatedToolFailureError(
-                "same native tool call repeated the same failure more than "
-                f"{self.config.max_identical_failures} times"
+            self._failure_streak_key = None
+            self._failure_streak_count = 0
+            return None
+
+        key = (
+            observation.call_fingerprint,
+            observation.error_type,
+            observation.content_fingerprint,
+        )
+        if key == self._failure_streak_key:
+            self._failure_streak_count += 1
+        else:
+            self._failure_streak_key = key
+            self._failure_streak_count = 1
+
+        if self._failure_streak_count == self.config.warn_identical_failures:
+            return (
+                "Structural retry warning: the same native tool call has produced the exact same failure outcome "
+                f"{self._failure_streak_count} consecutive times. The tool failures above are real. "
+                "Do not repeat the identical call unchanged; change the call arguments, choose another available "
+                "tool or approach, or finish by reporting the failure if no valid recovery remains."
             )
+        return None
 
     def after_tool_round(self, observations: Sequence[ExecutionObservation]) -> None:
         signature = _fingerprint([

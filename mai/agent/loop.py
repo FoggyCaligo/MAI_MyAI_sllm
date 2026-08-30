@@ -195,6 +195,7 @@ class AgentLoop:
 
                 guard.before_tool_round(round_number)
                 round_observations: list[ExecutionObservation] = []
+                round_notices: list[str] = []
                 for call in turn.tool_calls:
                     call_fp = guard.before_tool_call(call.name, call.arguments)
                     _LOG.info(
@@ -225,10 +226,15 @@ class AgentLoop:
                         content_fingerprint=content_fingerprint(execution.content),
                         error_type=execution.error_type,
                     )
-                    guard.after_tool_execution(observation)
+                    notice = guard.after_tool_execution(observation)
+                    if notice is not None:
+                        round_notices.append(notice)
                     round_observations.append(observation)
 
                 guard.after_tool_round(round_observations)
+                for notice in dict.fromkeys(round_notices):
+                    _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
+                    history.append({"role": "system", "content": notice})
                 round_number += 1
         except AgentRunFailure:
             raise
