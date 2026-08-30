@@ -7,7 +7,9 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from mai.llm.models import NativeToolCall
+from mai.memory.tools import register_memory_tools
 from mai.tools.registry import (
+    DuplicateModelContextError,
     DuplicateToolError,
     ToolArgumentsError,
     ToolRegistry,
@@ -82,6 +84,49 @@ def test_registry_supports_async_handlers() -> None:
         name="add_numbers",
         arguments={"left": 4, "right": 6},
     ))) == 10
+
+
+def test_shared_model_context_is_emitted_once() -> None:
+    registry = ToolRegistry()
+    registry.add_model_context(
+        key="test_context",
+        context={"kind": "test", "instruction": "prefer current evidence"},
+    )
+
+    assert registry.model_context() == (
+        {
+            "source": "test_context",
+            "context": {"kind": "test", "instruction": "prefer current evidence"},
+        },
+    )
+
+
+def test_duplicate_shared_model_context_key_fails_explicitly() -> None:
+    registry = ToolRegistry()
+    registry.add_model_context(key="same", context={"value": 1})
+
+    with pytest.raises(DuplicateModelContextError, match="already registered"):
+        registry.add_model_context(key="same", context={"value": 2})
+
+
+def test_memory_tools_register_one_temporal_precedence_context() -> None:
+    registry = ToolRegistry()
+
+    register_memory_tools(
+        registry,
+        memory=object(),
+        working=object(),
+        user_id="test-user",
+        include_recall_entry=False,
+    )
+
+    contexts = registry.model_context()
+    assert len(contexts) == 1
+    assert contexts[0]["source"] == "persistent_memory_temporal_precedence"
+    instruction = contexts[0]["context"]["instruction"]
+    assert "past conversations or past known state" in instruction
+    assert "current message and current tool results" in instruction
+    assert "take precedence" in instruction
 
 
 def test_unknown_tool_fails_visibly() -> None:

@@ -20,7 +20,7 @@ The user cannot see internal native tool calls, tool results, terminal stdout/st
 """.strip()
 
 TOOL_RUNTIME_CONTEXT_CONTRACT = """
-The following JSON is authoritative runtime context declared structurally by registered native tools. Respect it when constructing tool arguments. In particular, do not assume a different operating system, shell, working directory, or command syntax than the values declared here.
+The following JSON is authoritative runtime context declared structurally by registered runtime components and native tools. Respect these context blocks when interpreting tool results and constructing tool arguments. Do not infer a different operating system, shell, working directory, temporal authority, or other runtime condition than the declared context supports.
 """.strip()
 
 

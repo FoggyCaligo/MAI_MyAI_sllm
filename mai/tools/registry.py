@@ -28,6 +28,10 @@ class DuplicateToolError(ToolRegistryError):
     """A second tool attempted to register the same native function name."""
 
 
+class DuplicateModelContextError(ToolRegistryError):
+    """A second runtime component attempted to register the same model-context key."""
+
+
 class UnknownToolError(ToolRegistryError):
     """The model requested a tool that is not registered."""
 
@@ -119,6 +123,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
+        self._shared_model_contexts: dict[str, dict[str, Any]] = {}
 
     def register(self, definition: ToolDefinition) -> ToolDefinition:
         """Register exactly one definition and reject duplicate names."""
@@ -153,6 +158,25 @@ class ToolRegistry:
             )
         )
 
+    def add_model_context(self, *, key: str, context: Mapping[str, Any]) -> None:
+        """Register one shared authoritative context block for model consumption.
+
+        Runtime components can declare context once without attaching identical
+        metadata to every tool they register. Keys are structural identifiers,
+        not intent-routing labels, and duplicate keys fail explicitly.
+        """
+
+        clean_key = key.strip()
+        if not clean_key:
+            raise ValueError("model context key must be non-empty")
+        if clean_key in self._shared_model_contexts:
+            raise DuplicateModelContextError(
+                f"model context '{clean_key}' is already registered"
+            )
+        if not isinstance(context, Mapping):
+            raise TypeError("model context must be a mapping")
+        self._shared_model_contexts[clean_key] = dict(context)
+
     def has(self, name: str) -> bool:
         return name in self._definitions
 
@@ -178,11 +202,15 @@ class ToolRegistry:
     def model_context(self) -> tuple[dict[str, Any], ...]:
         """Return runtime facts explicitly declared for model consumption.
 
-        Only the reserved `model_context` metadata field is exposed. The
-        registry does not infer meaning from tool names or metadata values.
+        Shared runtime contexts are emitted once. Tool-specific contexts use the
+        reserved `model_context` metadata field. The registry does not infer
+        meaning from tool names, context keys, or metadata values.
         """
 
-        contexts: list[dict[str, Any]] = []
+        contexts: list[dict[str, Any]] = [
+            {"source": key, "context": dict(context)}
+            for key, context in self._shared_model_contexts.items()
+        ]
         for definition in self._definitions.values():
             raw_context = definition.metadata.get("model_context")
             if raw_context is None:

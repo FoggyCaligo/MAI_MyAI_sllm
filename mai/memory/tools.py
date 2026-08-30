@@ -8,6 +8,17 @@ from .runtime import MemoryRuntime
 from .working import WorkingGraph
 
 
+_MEMORY_MODEL_CONTEXT_KEY = "persistent_memory_temporal_precedence"
+_MEMORY_MODEL_CONTEXT = {
+    "kind": "temporal_precedence",
+    "instruction": (
+        "Information recalled from persistent memory describes past conversations or past known state. "
+        "Use recalled memory only as supporting context. The user's current message and current tool results "
+        "take precedence whenever they differ from, update, or supersede recalled memory."
+    ),
+}
+
+
 class MemoryRecallInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, description="Lexical query for recalling this user's persistent memory")
@@ -29,6 +40,11 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
     Memory handlers remain async so ToolRegistry does not move SQLite-backed work to
     a worker thread. This preserves SQLite thread affinity instead of disabling it.
     """
+    registry.add_model_context(
+        key=_MEMORY_MODEL_CONTEXT_KEY,
+        context=_MEMORY_MODEL_CONTEXT,
+    )
+
     if include_recall_entry:
         async def memory_recall(query: str) -> dict[str, object]:
             recalled = memory.explicit_recall(user_id=user_id, query=query)
