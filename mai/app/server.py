@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import secrets
-from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -16,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..agent import AgentRunFailure
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
+from .chat_sessions import ChatSessionStore
 from .runtime import MAIRuntime
 from .tailscale import TailscaleFunnel
 from .uploads import principal_upload_directory
@@ -26,9 +26,9 @@ load_dotenv()
 _STATIC_DIR = Path(__file__).with_name("static")
 _runtime: MAIRuntime | None = None
 _access_policy: AccessPolicy | None = None
+_chat_session_store: ChatSessionStore | None = None
 _tailscale: TailscaleFunnel | None = None
 _auth_sessions: dict[str, AccessPrincipal] = {}
-_chat_sessions: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -81,23 +81,45 @@ def _selected_model_for_principal(
 
 
 def _store_login_session(principal: AccessPrincipal) -> str:
-    if principal.role is AccessRole.TRIAL:
-        previous_tokens = [
-            token
-            for token, existing in _auth_sessions.items()
-            if existing.role is AccessRole.TRIAL and existing.auth_user_id == principal.auth_user_id
-        ]
-        for token in previous_tokens:
-            _auth_sessions.pop(token, None)
+    previous_tokens = [
+        token
+        for token, existing in _auth_sessions.items()
+        if existing.auth_user_id == principal.auth_user_id
+    ]
+    for token in previous_tokens:
+        _auth_sessions.pop(token, None)
 
     token = secrets.token_urlsafe(32)
     _auth_sessions[token] = principal
     return token
 
 
+def _get_chat_session_store() -> ChatSessionStore:
+    if _chat_session_store is None:
+        raise RuntimeError("chat session store is not initialized")
+    return _chat_session_store
+
+
+def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int | None = None) -> list[dict[str, str]]:
+    return _get_chat_session_store().messages(
+        auth_user_id=principal.auth_user_id,
+        session_id=session_id,
+        limit=limit,
+    )
+
+
+def _append_session_message(principal: AccessPrincipal, session_id: str, *, role: str, content: str) -> int:
+    return _get_chat_session_store().append(
+        auth_user_id=principal.auth_user_id,
+        session_id=session_id,
+        role=role,
+        content=content,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global _runtime, _access_policy, _tailscale
+    global _runtime, _access_policy, _chat_session_store, _tailscale
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
     if _env_bool("TAILSCALE_SERVE", False):
@@ -106,10 +128,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "remove it or set it to false and set TAILSCALE_FUNNEL=true"
         )
     _access_policy = AccessPolicy.from_env_values(
+        owner_accounts=os.environ.get("OWNER_ACCOUNTS"),
         owner_id=os.environ.get("OWNER_ID"),
         owner_memory_id=os.environ.get("OWNER_MEMORY_ID"),
         trial_ids=os.environ.get("TRIAL_IDS"),
     )
+    _chat_session_store = ChatSessionStore(os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3"))
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
@@ -131,13 +155,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         _auth_sessions.clear()
-        _chat_sessions.clear()
         if _tailscale is not None:
             _tailscale.stop()
             _tailscale = None
         if _runtime is not None:
             _runtime.close()
             _runtime = None
+        _chat_session_store = None
         _access_policy = None
 
 
@@ -324,6 +348,18 @@ async def upload_file(
     }
 
 
+@app.get("/session/{session_id}")
+async def get_session_history(
+    session_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, object]:
+    _, principal = _principal_from_authorization(authorization)
+    return {
+        "session_id": session_id,
+        "messages": _session_history(principal, session_id, limit=None),
+    }
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
@@ -340,10 +376,9 @@ async def chat(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    session_key = (principal.auth_user_id, request.session_id)
-    history = _chat_sessions[session_key]
     limit = _history_limit()
-    prior = history[-limit:] if limit else []
+    prior = _session_history(principal, request.session_id, limit=limit) if limit else []
+    _append_session_message(principal, request.session_id, role="user", content=request.message)
     active_model = selected_model or runtime.model
     try:
         result = await runtime.run_user_message(
@@ -375,11 +410,7 @@ async def chat(
             },
         )
 
-    history.append({"role": "user", "content": request.message})
-    history.append({"role": "assistant", "content": result.answer})
-    if limit and len(history) > limit:
-        del history[:-limit]
-
+    _append_session_message(principal, request.session_id, role="assistant", content=result.answer)
     return ChatResponse(
         answer=result.answer,
         model=result.model,
@@ -391,5 +422,5 @@ async def chat(
 @app.delete("/session/{session_id}")
 async def clear_session(session_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
     _, principal = _principal_from_authorization(authorization)
-    removed = _chat_sessions.pop((principal.auth_user_id, session_id), None)
-    return {"cleared": removed is not None}
+    removed = _get_chat_session_store().clear(auth_user_id=principal.auth_user_id, session_id=session_id)
+    return {"cleared": removed}
