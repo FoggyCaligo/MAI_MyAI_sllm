@@ -66,11 +66,31 @@
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
+  function captureToolResultScroll(details) {
+    if (!details) return [];
+    return Array.from(details.querySelectorAll('.tool-result'), result => ({
+      top: result.scrollTop,
+      left: result.scrollLeft,
+    }));
+  }
+
+  function restoreToolResultScroll(details, positions) {
+    if (!details || !positions.length) return;
+    const results = details.querySelectorAll('.tool-result');
+    results.forEach((result, index) => {
+      const position = positions[index];
+      if (!position) return;
+      result.scrollTop = position.top;
+      result.scrollLeft = position.left;
+    });
+  }
+
   function renderLiveToolProgress(tools) {
     if (!liveProgressWrap || !Array.isArray(tools) || !tools.length) return;
 
     let details = liveProgressWrap.querySelector('[data-live-tool-progress="true"]');
     const wasOpen = details?.open ?? false;
+    const resultScrollPositions = captureToolResultScroll(details);
     if (!details) {
       details = document.createElement('details');
       details.className = 'tool-log';
@@ -105,10 +125,12 @@
         const result = document.createElement('div');
         result.className = 'tool-result';
         result.textContent = tool.result;
+        if (typeof containToolResultScroll === 'function') containToolResultScroll(result);
         entry.appendChild(result);
       }
       details.appendChild(entry);
     });
+    restoreToolResultScroll(details, resultScrollPositions);
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
