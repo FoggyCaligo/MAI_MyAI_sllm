@@ -130,6 +130,13 @@ def install() -> None:
         chat_job_store.attach_task(job.job_id, task)
         return {"job_id": job.job_id, "status": job.status}
 
+    @app.get("/chat/jobs/active")
+    async def active_chat_jobs(
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, object]:
+        _, principal = server._principal_from_authorization(authorization)
+        return {"jobs": chat_job_store.active_snapshots_for(auth_user_id=principal.auth_user_id)}
+
     @app.get("/chat/jobs/{job_id}", response_model=None)
     async def get_chat_job(
         job_id: str,
