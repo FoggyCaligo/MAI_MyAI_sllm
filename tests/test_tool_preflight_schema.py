@@ -63,6 +63,45 @@ def test_planner_uses_dynamic_schema_and_freezes_true_tools() -> None:
     assert adapter.requests[0].response_format == _decision_schema(tools)
 
 
+class _BatchAwareAdapter:
+    def __init__(self, required_names: set[str]) -> None:
+        self.required_names = required_names
+        self.requests = []
+
+    async def chat(self, request):
+        self.requests.append(request)
+        batch_names = request.response_format["required"]
+        content = json.dumps({
+            name: name in self.required_names
+            for name in batch_names
+        })
+        return SimpleNamespace(content=content)
+
+
+def test_planner_splits_tools_into_ordered_batches_of_five_and_unions_decisions() -> None:
+    tools = tuple(_tool(f"tool_{index}") for index in range(12))
+    adapter = _BatchAwareAdapter({"tool_1", "tool_6", "tool_11"})
+    planner = OllamaToolRequirementPlanner(adapter)
+
+    result = _run(planner.plan(user_text="do the task", recent_dialogue=(), tools=tools))
+
+    assert result.required_tools == frozenset({"tool_1", "tool_6", "tool_11"})
+    assert [request.response_format["required"] for request in adapter.requests] == [
+        ["tool_0", "tool_1", "tool_2", "tool_3", "tool_4"],
+        ["tool_5", "tool_6", "tool_7", "tool_8", "tool_9"],
+        ["tool_10", "tool_11"],
+    ]
+    payload_batches = [
+        [tool["name"] for tool in json.loads(request.messages[1]["content"])["available_tools"]]
+        for request in adapter.requests
+    ]
+    assert payload_batches == [
+        ["tool_0", "tool_1", "tool_2", "tool_3", "tool_4"],
+        ["tool_5", "tool_6", "tool_7", "tool_8", "tool_9"],
+        ["tool_10", "tool_11"],
+    ]
+
+
 @pytest.mark.parametrize(
     "content",
     [
