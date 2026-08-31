@@ -12,13 +12,13 @@ from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
 from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
 from .requirements import FrozenToolRequirements
 from .tool_results import ToolResultStore
-from .verification import FinalGroundingVerifier, FinalVerificationResult
+from .verification import FinalGroundingVerifier
 
 
 _LOG = logging.getLogger("uvicorn.error")
 _TOOL_ARGS_LOG_LIMIT = 800
 _MAX_NUMERIC_VERIFICATION_RETRIES = 2
-_MAX_COVERAGE_VERIFICATION_RETRIES = 4
+_MAX_COVERAGE_VERIFICATION_RETRIES = 2
 
 
 class AgentRuntimeError(RuntimeError):
@@ -258,7 +258,7 @@ class AgentLoop:
                                     coverage_verification_retries,
                                     _MAX_COVERAGE_VERIFICATION_RETRIES,
                                 )
-                                history.append({"role": "system", "content": _compact_verification_feedback(verification)})
+                                history.append({"role": "system", "content": verification.feedback_message()})
                                 round_number += 1
                                 continue
                             if not allow_semantic_review:
@@ -416,17 +416,6 @@ class AgentLoop:
             return content, None
         views = self.tool_result_store.model_views(content)
         return views.initial_content, views.compact_history_content
-
-
-def _compact_verification_feedback(verification: FinalVerificationResult) -> str:
-    lines = ["Revise the final answer using these verifier findings:"]
-    lines.extend(f"- {issue.code}: {issue.message}" for issue in verification.issues)
-    if any(issue.code == "evidence_coverage_insufficient" for issue in verification.issues):
-        lines.append(
-            "Use the relevant evidence already obtained as the main basis of the answer; do not replace it with generic advice."
-        )
-    lines.append("Fix only these findings. Do not invent facts.")
-    return "\n".join(lines)
 
 
 def _format_log_arguments(arguments: Mapping[str, Any], *, limit: int = _TOOL_ARGS_LOG_LIMIT) -> str:

@@ -3,7 +3,7 @@ from mai.agent.verification import _FINAL_REVIEW_SYSTEM as FINAL_REVIEW_PROMPT
 
 
 def test_tool_preflight_requires_current_time_for_relative_temporal_comparison() -> None:
-    assert "time-relative comparisons against the current moment" in TOOL_PREFLIGHT_PROMPT
+    assert "comparing dates or time-relative information against the current moment" in TOOL_PREFLIGHT_PROMPT
     assert "current-time tool" in TOOL_PREFLIGHT_PROMPT
 
 

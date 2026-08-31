@@ -92,11 +92,7 @@ def register_image_tools(
         name="image_analyze",
         description=(
             "Analyze a local image with the configured Ollama vision model. Use this for screenshots, "
-            "photos, charts, diagrams, or other image files whose visual content must be understood. "
-            "The path must be a real local path established by the conversation or a tool result; do not invent "
-            "placeholder paths. If the path is unknown, ambiguous, or previously produced FileNotFoundError, first "
-            "discover the actual file with an available filesystem search/list tool, then call image_analyze with "
-            "the discovered path. A failed call does not make a later call with corrected evidence invalid."
+            "photos, charts, diagrams, or other image files whose visual content must be understood."
         ),
         input_model=ImageAnalyzeInput,
         handler=analyzer.analyze,
