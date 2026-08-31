@@ -78,35 +78,18 @@
     }
   }
 
-  function installNewChatButton() {
-    if (document.getElementById('new-chat-btn')) return;
-    const header = document.querySelector('.header-right');
-    const logout = document.getElementById('logout-btn');
-    if (!header || !logout) return;
-
-    const button = document.createElement('button');
-    button.id = 'new-chat-btn';
-    button.type = 'button';
-    button.textContent = '새 채팅';
-    button.title = '최근 대화 문맥만 지우고 장기기억은 유지합니다.';
-    button.style.cssText = 'background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:20px;padding:6px 10px;cursor:pointer;white-space:nowrap';
-    button.addEventListener('mouseenter', () => {
-      button.style.borderColor = 'var(--accent)';
-      button.style.color = 'var(--text)';
-    });
-    button.addEventListener('mouseleave', () => {
-      button.style.borderColor = 'var(--border)';
-      button.style.color = 'var(--text-dim)';
-    });
+  function bindNewChatButton() {
+    const button = document.getElementById('new-chat-btn');
+    if (!button || button.dataset.bound === 'true') return;
+    button.dataset.bound = 'true';
     button.addEventListener('click', () => void startNewChat(button));
-    header.insertBefore(button, logout);
   }
 
   restoreRememberedUserId();
-  installNewChatButton();
+  bindNewChatButton();
   window.addEventListener('pageshow', () => {
     restoreRememberedUserId();
-    installNewChatButton();
+    bindNewChatButton();
   });
 
   window.fetch = async function(input, init = {}) {
