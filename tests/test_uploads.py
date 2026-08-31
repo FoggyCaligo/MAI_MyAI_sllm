@@ -28,6 +28,24 @@ def test_upload_file_writes_into_runtime_upload_root(tmp_path, monkeypatch):
     assert result["uploaded_by"] == "trial-a"
 
 
+def test_upload_file_overwrites_existing_file(tmp_path, monkeypatch):
+    principal = AccessPrincipal(user_id="trial-a", db_id="trial-db-a", role=AccessRole.TRIAL)
+    monkeypatch.setattr(server, "_runtime", SimpleNamespace(upload_root=tmp_path))
+    monkeypatch.setattr(server, "_auth_sessions", {"token": principal})
+    upload_dir = principal_upload_directory(tmp_path, principal)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    target = upload_dir / "sample.txt"
+    target.write_bytes(b"old")
+    upload = UploadFile(file=BytesIO(b"replacement"), filename="sample.txt")
+
+    result = asyncio.run(server.upload_file(upload, authorization="Bearer token"))
+
+    assert target.read_bytes() == b"replacement"
+    assert result["path"] == str(target.resolve())
+    assert result["bytes"] == len(b"replacement")
+    assert not list(upload_dir.glob(".sample.txt.*.uploading"))
+
+
 def test_trial_upload_directory_survives_login_id_change(tmp_path):
     first = AccessPrincipal(user_id="old-login", db_id="stable-db", role=AccessRole.TRIAL)
     renamed = AccessPrincipal(user_id="new-login", db_id="stable-db", role=AccessRole.TRIAL)

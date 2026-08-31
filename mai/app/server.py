@@ -339,16 +339,16 @@ async def upload_file(
     target = (upload_dir / filename).resolve()
     if target.parent != upload_dir:
         raise HTTPException(status_code=400, detail="uploaded filename resolved outside account upload directory")
-    if target.exists():
-        raise HTTPException(status_code=409, detail="a file with that name already exists in this account upload directory")
 
+    temporary = upload_dir / f".{filename}.{secrets.token_hex(8)}.uploading"
     try:
-        with target.open("xb") as handle:
+        with temporary.open("xb") as handle:
             while chunk := await file.read(1024 * 1024):
                 handle.write(chunk)
+        os.replace(temporary, target)
     except Exception:
-        if target.exists():
-            target.unlink()
+        if temporary.exists():
+            temporary.unlink()
         raise
     finally:
         await file.close()
