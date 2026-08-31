@@ -426,8 +426,8 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
     correction = main.requests[1].messages[-1]["content"]
     assert "evidence_scope_expansion" in correction
     assert "action_outcome_unverified" in correction
-    assert "Preserve every supported result" in correction
-    assert "truthful partial answer" in correction
+    assert "Fix only these findings" in correction
+    assert "Do not invent facts" in correction
 
 
 def test_claim_level_unsupported_inference_is_reported_with_claim_text() -> None:
@@ -536,11 +536,13 @@ def test_evidence_coverage_rejects_generic_answer_that_omits_available_results()
     assert "Do not invent unsupported facts" in feedback
 
 
-def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> None:
+def test_coverage_correction_gets_four_chances_then_stops_blocking_release() -> None:
     main = SequenceAdapter([
         "공식 사이트를 확인해 주세요.",
         "행사 캘린더를 확인해 주세요.",
-        "여전히 짧지만 세 번째 답변입니다.",
+        "세 번째 답변도 구체적 결과를 빠뜨렸습니다.",
+        "네 번째 답변도 구체적 결과를 빠뜨렸습니다.",
+        "다섯 번째 답변은 coverage retry budget 이후 반환됩니다.",
     ])
     reviewer = StructuredReviewerAdapter([
         {
@@ -565,7 +567,25 @@ def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> N
             "evidence_verdict": "supported",
             "alignment_verdict": "aligned",
             "coverage_verdict": "insufficient",
-            "coverage_reasons": ["This verdict is ignored because the coverage correction budget is exhausted."],
+            "coverage_reasons": ["Concrete supported result A remains omitted on the third retry."],
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "insufficient",
+            "coverage_reasons": ["Concrete supported result A remains omitted on the fourth retry."],
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "insufficient",
+            "coverage_reasons": ["This coverage verdict is ignored because the correction budget is exhausted."],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
@@ -576,8 +596,8 @@ def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> N
 
     result = run(runtime.run_user_message("근거에서 확인된 구체적인 행사 정보를 알려줘."))
 
-    assert result.content == "여전히 짧지만 세 번째 답변입니다."
-    assert result.model_rounds == 3
-    assert "evidence_coverage_insufficient" in main.requests[1].messages[-1]["content"]
-    assert "evidence_coverage_insufficient" in main.requests[2].messages[-1]["content"]
-    assert len(reviewer.requests) == 3
+    assert result.content == "다섯 번째 답변은 coverage retry budget 이후 반환됩니다."
+    assert result.model_rounds == 5
+    for request_index in range(1, 5):
+        assert "evidence_coverage_insufficient" in main.requests[request_index].messages[-1]["content"]
+    assert len(reviewer.requests) == 5
