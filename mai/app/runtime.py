@@ -14,7 +14,6 @@ from ollama import AsyncClient
 from ..agent.failure_recovery import FailureAnswerFinalizer
 from ..agent.loop import AgentRunFailure, ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
-from ..agent.tool_planner import OllamaToolRequirementPlanner
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
@@ -77,7 +76,7 @@ class MAIRunResult:
 
 
 class MAIRuntime:
-    """Long-lived local runtime with preflight-frozen tool requirements."""
+    """Long-lived local runtime where the model chooses native tool use directly."""
 
     def __init__(
         self,
@@ -209,22 +208,6 @@ class MAIRuntime:
             tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
             registry = self._registry_for(principal, working, tool_result_store)
 
-            recent_dialogue = [
-                dict(message)
-                for message in prior_messages
-                if message.get("role") in {"user", "assistant"}
-            ][-10:]
-            planner = OllamaToolRequirementPlanner(adapter)
-            requirements = await planner.plan(
-                user_text=prompt,
-                recent_dialogue=recent_dialogue,
-                tools=registry.definitions(),
-            )
-            _LOG.info(
-                "MAI tool preflight required=%s",
-                ",".join(sorted(requirements.required_tools)) if requirements.required_tools else "-",
-            )
-
             agent = AgentRuntime(
                 adapter,
                 registry,
@@ -238,7 +221,6 @@ class MAIRuntime:
             result = await agent.run_user_message(
                 prompt,
                 prior_messages=messages,
-                requirements=requirements,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
             )
