@@ -22,11 +22,13 @@ def test_image_tool_contract_requires_confirmed_path_and_allows_corrected_retry(
     assert "corrected evidence" in description
 
 
-def test_agent_failure_contract_distinguishes_execution_failure_from_task_impossibility():
-    assert "that specific execution failed" in AGENT_SYSTEM_PROMPT
-    assert "does not by itself prove that the user's task is impossible" in AGENT_SYSTEM_PROMPT
+def test_agent_failure_contract_keeps_recovery_paths_without_removed_explanation():
     assert "corrected arguments" in AGENT_SYSTEM_PROMPT
     assert "newly supplied evidence" in AGENT_SYSTEM_PROMPT
+    assert "another available tool" in AGENT_SYSTEM_PROMPT
+    assert "report unresolved failures" in AGENT_SYSTEM_PROMPT
+    assert "that specific execution failed" not in AGENT_SYSTEM_PROMPT
+    assert "task is impossible" not in AGENT_SYSTEM_PROMPT
 
 
 def test_preflight_contract_requires_prerequisite_discovery_tool():
