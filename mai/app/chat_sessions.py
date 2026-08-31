@@ -171,7 +171,7 @@ class ChatSessionStore:
             else:
                 rows = connection.execute(
                     f"""
-                    SELECT role, content, metadata_json
+                    SELECT role, content
                     FROM (
                         SELECT id, role, content, metadata_json
                         FROM {WEB_CHAT_TABLE}
