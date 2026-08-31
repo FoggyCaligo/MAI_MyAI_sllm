@@ -164,9 +164,20 @@ def install() -> None:
         html = html.replace(login_marker, login_html, 1)
         login_style = (
             '<style>#login-pw{flex:1;min-width:0;background:#121218;color:var(--text);border:1px solid var(--border);'
-            'border-radius:10px;padding:11px 12px;outline:none}#login-pw:focus{border-color:var(--accent)}</style>\n'
+            'border-radius:10px;padding:11px 12px;outline:none}#login-pw:focus{border-color:var(--accent)}'
+            '#new-chat-btn{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:20px;padding:6px 10px;cursor:pointer;white-space:nowrap}'
+            '#new-chat-btn:hover{border-color:var(--accent);color:var(--text)}</style>\n'
         )
         html = html.replace("</head>", login_style + "</head>", 1)
+
+        logout_marker = '<button id="logout-btn" type="button">로그아웃</button>'
+        if logout_marker not in html:
+            raise RuntimeError("logout button marker is missing from index.html")
+        new_chat_html = (
+            '<button id="new-chat-btn" type="button" title="최근 대화 문맥만 지우고 장기기억은 유지합니다.">새 채팅</button>'
+            + logout_marker
+        )
+        html = html.replace(logout_marker, new_chat_html, 1)
 
         chat_form_marker = '<form id="chat-form">'
         if chat_form_marker not in html:
