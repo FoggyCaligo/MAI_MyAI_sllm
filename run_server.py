@@ -12,6 +12,7 @@ from mai.app.server import app
 
 if __name__ == "__main__":
     load_dotenv()
+    os.environ.setdefault("SESSION_HISTORY_MESSAGES", "12")
     install_resumable_chat()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
