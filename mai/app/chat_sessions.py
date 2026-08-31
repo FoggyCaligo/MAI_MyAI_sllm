@@ -88,6 +88,8 @@ class ChatSessionStore:
                 """
             )
 
+            # An index created by the #134 schema may follow a known table rename.
+            # Remove it only when SQLite confirms that it belongs to our Web chat table.
             old_index = connection.execute(
                 "SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?",
                 ("idx_chat_messages_account_session",),
@@ -103,6 +105,7 @@ class ChatSessionStore:
             )
 
     def migrate_db_id(self, *, previous_id: str, db_id: str) -> int:
+        """Move legacy rows keyed by a previous login ID to the stable db_id."""
         if not previous_id or not db_id:
             raise ValueError("previous_id and db_id must be non-empty")
         if previous_id == db_id:
