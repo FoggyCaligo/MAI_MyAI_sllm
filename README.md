@@ -23,10 +23,6 @@ Web/API authentication
   ↓
 AccessPrincipal(user_id, db_id, role)
   ↓
-Model-based tool requirement preflight
-  ↓
-Frozen required tools
-  ↓
 Main Agent + Ollama native tool calls
   ↓
 Candidate Final
@@ -45,21 +41,19 @@ Final Response
 Background memory extraction / admission
 ```
 
-### Tool requirement preflight
+### Direct native-tool selection
 
-Main agent 실행 전에 같은 선택 모델을 `think=False`, `tools=()`로 사용해 **이번 요청을 완료하기 위해 반드시 실행 결과가 있어야 하는 native tool 집합**을 구조화된 output으로 결정한다.
+Production request path는 별도의 model-based tool requirement preflight를 호출하지 않는다. Main agent가 system prompt, 최근 대화, runtime context, 현재 등록된 native tool schema를 함께 보고 필요한 tool을 직접 선택한다.
 
-이 판단은 문자열 heuristic으로 하지 않는다. 사용자 요청, 최근 대화, 현재 등록된 tool schema를 모델이 보고 의미적으로 판단한다.
+`OllamaToolRequirementPlanner`와 `FrozenToolRequirements` 지원 코드는 구조적 실험 및 단위 테스트를 위해 남아 있지만 현재 production composition에는 연결하지 않는다. 추가 LLM 호출의 지연을 피하기 위한 의도적인 선택이다.
 
-예를 들어 현재 시점과 비교해야 하는 요청은 현재 시간이 이미 대화에 확립되어 있지 않다면 `current_time`을 required tool로 선택할 수 있다. Required tool 집합은 해당 run 동안 frozen 상태로 유지된다.
-
-Main agent가 required tool을 실행하지 않고 final을 시도하면 runtime이 final을 거부하고 아직 실행되지 않은 required tool만 노출하는 correction round를 준다.
+따라서 production에서는 required-tool gate가 final을 구조적으로 차단하지 않는다. 필요한 tool 사용은 main agent prompt와 tool schema에 의존하고, 생성된 candidate final의 근거성은 뒤의 `FinalGroundingVerifier`가 검토한다.
 
 ---
 
 ## 2. Final verification
 
-Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니다. Candidate final을 release하기 전에 user/tool evidence와 비교해 검증하는 별도 reviewer다.
+Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니다. Candidate final을 release하기 전에 user/tool evidence와 비교해 검증한다. Numeric grounding은 deterministic 검사이고, semantic review는 현재 chat에 선택된 동일 모델을 `think=False`, `tools=()`로 한 번 더 호출한다. Candidate가 거절되어 재작성되면 새 candidate마다 reviewer가 다시 호출될 수 있다.
 
 현재 검증 축은 다음과 같다.
 
@@ -75,7 +69,7 @@ Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판
 
 Coverage correction은 별도 budget으로 최대 2번이다. 두 번 이후에는 coverage 부족만으로 final을 계속 붙잡지 않는다. Grounding, action, alignment와는 별도 축이다.
 
-Verifier의 structured output이 깨지거나 timeout/failure가 발생하면 reviewer 자체의 실패를 별도 heuristic/fallback으로 의미 복원하지 않는다.
+Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 이를 log하고 **fail-open**한다. Reviewer 장애 때문에 전체 사용자 요청을 서비스 오류로 끝내기보다 candidate final을 반환하는 가용성 우선 정책이다. 실패한 reviewer 출력을 문자열 heuristic으로 복원하지 않는다.
 
 ---
 

@@ -141,15 +141,15 @@ Memory fact extraction은 해당 chat turn에서 실제 사용한 동일 model�
 
 ---
 
-## 6. Tool requirement preflight와 final verifier
+## 6. Direct tool selection과 final verifier
 
-각 user request는 main agent 전에 model-based tool requirement preflight를 거친다.
+현재 production request는 main agent 전에 model-based tool requirement preflight를 호출하지 않는다. Main agent가 현재 등록된 native tool schema와 system prompt를 보고 필요한 tool을 직접 선택한다.
 
-Preflight는 user request, 최근 대화, 현재 available tool schema를 보고 이번 요청에 반드시 필요한 native tool을 structured output으로 선택한다. 선택된 required tools는 해당 run 동안 frozen된다.
+`OllamaToolRequirementPlanner`와 frozen requirement 지원은 코드 및 단위 테스트에 남아 있지만 production composition에는 연결하지 않는다. 이는 요청마다 발생하는 추가 LLM 호출 지연을 피하기 위한 정책이다.
 
-Main agent가 required tool 없이 final을 시도하면 correction round가 발생한다.
+따라서 production에는 required-tool execution을 강제하는 별도 gate가 없다. Final answer는 release 전에 verifier를 거친다. Deterministic numeric grounding 뒤의 semantic reviewer는 현재 선택된 동일 chat model을 `think=False`, `tools=()`로 추가 1회 호출한다. Candidate가 거절되어 재작성되면 reviewer 호출도 다시 발생할 수 있다.
 
-Final answer는 release 전에 verifier를 거친다. 현재 주요 검증 축:
+현재 주요 검증 축:
 
 ```text
 numeric grounding
@@ -304,4 +304,4 @@ Legacy `TAILSCALE_SERVE=true`는 retired configuration이다. True로 남아 있
 python -m pytest -q
 ```
 
-Runtime, auth, persistent chat, tool preflight, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.
+Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.

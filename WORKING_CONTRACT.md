@@ -11,10 +11,6 @@
 ```text
 Authenticated Principal
   ↓
-Model-based Tool Requirement Preflight
-  ↓
-FrozenToolRequirements
-  ↓
 AgentRuntime / AgentLoop
   ↓ native tool calls
 ToolRegistry
@@ -32,23 +28,15 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 ---
 
-## 2. Tool requirement preflight
+## 2. Direct native-tool selection
 
-Main agent 실행 전에 `OllamaToolRequirementPlanner`가 같은 선택 모델을 사용해 required native tool 집합을 구조화된 output으로 결정한다.
+현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent가 system prompt, recent dialogue, authoritative runtime context, 등록된 native tool schema를 보고 필요한 tool을 직접 선택한다.
 
-Planner contract:
+이 선택은 preflight LLM 호출의 지연을 제거하기 위한 의도적인 production 정책이다.
 
-- `think=False`
-- `tools=()`
-- strict structured output
-- 결과는 exact registered tool name 목록
-- unknown tool을 선택하면 명시적 실패
-- optional detail만을 위해 tool을 강제하지 않음
-- 현재 시점과 비교가 필요한 요청은 현재 시간이 이미 확립된 경우가 아니면 available current-time tool을 요구할 수 있음
+`OllamaToolRequirementPlanner`, `FrozenToolRequirements`, missing-requirement correction support는 코드와 단위 테스트에 남아 있을 수 있지만, production `MAIRuntime.run_user_message()`는 planner를 호출하거나 frozen requirements를 전달하지 않는다.
 
-Planner가 만든 `FrozenToolRequirements`는 해당 run 동안 변하지 않는다.
-
-Agent가 required tool 실행 결과 없이 final을 시도하면 final을 거부한다. Correction round에서는 아직 missing인 required tool schema만 노출하고, required tool이 handler execution result를 만들 때까지 requirement를 해제하지 않는다.
+따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 main agent prompt와 schema가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
 
 ---
 
@@ -94,6 +82,8 @@ Guard는 semantic router가 아니다. Tool 실패 문자열을 보고 의미를
 ## 6. Final verification
 
 `FinalGroundingVerifier`는 candidate final을 release 전에 검증한다. Verifier는 tool을 호출하거나 답안을 재작성하지 않는다.
+
+Numeric grounding은 deterministic하다. Semantic review는 현재 chat에 선택된 동일 Ollama model을 `think=False`, `tools=()` 및 strict structured output으로 추가 호출한다. 정상적인 candidate 하나에는 semantic reviewer 호출 1회가 추가되며, candidate가 거절되어 main agent가 재작성하면 각 새 candidate에 reviewer 호출이 다시 발생할 수 있다.
 
 ### 6.1 Numeric grounding
 
@@ -156,11 +146,13 @@ Mutation tool invocation의 success는 그 tool contract가 성공했다는 evid
 
 Reviewer timeout, structured-output schema violation, reviewer exception은 명시적으로 log하고 semantic 내용을 문자열 fallback으로 복원하지 않는다.
 
+이 경우 reviewer 결과는 `uncertain`으로 취급하고 candidate를 **fail-open**한다. Reviewer 장애 때문에 전체 요청을 service error로 종료하지 않고 사용자에게 답을 반환하는 가용성 우선 정책이다. 이 fail-open은 deterministic numeric grounding 실패를 성공으로 바꾸는 문자열 fallback이 아니다.
+
 ---
 
 ## 7. Failure recovery finalization
 
-Main planner/agent 실행이 fatal exception으로 종료되면 production composition root는 `FailureAnswerFinalizer`를 한 번 호출할 수 있다.
+Main agent 실행이 fatal exception으로 종료되면 production composition root는 `FailureAnswerFinalizer`를 한 번 호출할 수 있다.
 
 Recovery contract:
 
