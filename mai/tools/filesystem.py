@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .artifacts import discard_temporary_artifact, move_temporary_artifact, register_temporary_artifact
+from .documents import document_read
 from .registry import ToolRegistry
 
 
@@ -36,7 +37,7 @@ class FileSearchInput(_StrictModel):
 
 class FileReadInput(_StrictModel):
     path: str
-    encoding: str = "utf-8"
+    encoding: str = "utf-8-sig"
     max_chars: int | None = Field(default=None, ge=1)
 
 
@@ -146,8 +147,28 @@ def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: s
     }
 
 
-def file_read(*, path: str, encoding: str = "utf-8", max_chars: int | None = None, cwd: str | Path | None = None) -> dict[str, Any]:
+def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None = None, cwd: str | Path | None = None) -> dict[str, Any]:
     target = _resolve(path, cwd)
+    if not target.exists():
+        raise FileNotFoundError(str(target))
+    if not target.is_file():
+        raise IsADirectoryError(str(target))
+
+    if target.suffix.lower() in {".pdf", ".docx", ".xlsx", ".csv", ".pptx"}:
+        result = document_read(
+            path=str(target),
+            max_chars=50000 if max_chars is None else max_chars,
+            encoding=encoding,
+        )
+        return {
+            "path": result["path"],
+            "content": result["text"],
+            "truncated": result["truncated"],
+            "encoding": encoding if result["extension"] == ".csv" else None,
+            "extension": result["extension"],
+            "details": result["details"],
+        }
+
     text = target.read_text(encoding=encoding)
     truncated = max_chars is not None and len(text) > max_chars
     if max_chars is not None:
@@ -219,7 +240,7 @@ def file_copy(*, source: str, destination: str, create_parents: bool = False, cw
 _READ_BINDINGS = (
     ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed. collection.complete=false means the returned items are only a partial collection.", FileListInput, file_list),
     ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root. collection.complete=false means more matches may exist beyond the returned results.", FileSearchInput, file_search),
-    ("file_read", "Read a UTF-8 or explicitly encoded local text file from any accessible path. Do not guess an unconfirmed file path. If the project structure is unknown, or a file_read path fails, discover the actual path with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
+    ("file_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
 )
 _WRITE_BINDINGS = (
     ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
