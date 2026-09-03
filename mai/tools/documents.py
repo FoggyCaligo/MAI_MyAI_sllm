@@ -1,4 +1,4 @@
-"""Structured document-reading tools for PDF, DOCX, XLSX, CSV, and PPTX files."""
+"""Structured document readers used internally by the unified file_read tool."""
 from __future__ import annotations
 
 import csv
@@ -100,6 +100,11 @@ def document_read(
     encoding: str = "utf-8-sig",
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
+    """Parse a supported structured document for internal callers.
+
+    This function remains import-compatible, but it is no longer registered as
+    a model-visible native tool. The agent-facing entrypoint is file_read.
+    """
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))
@@ -166,18 +171,9 @@ def register_document_tools(
     cwd: str | Path | None = None,
     timeout_seconds: float | None = 60,
 ) -> None:
-    def handler(**kwargs: Any) -> Any:
-        return document_read(cwd=cwd, **kwargs)
+    """Compatibility registration hook.
 
-    registry.add(
-        name="document_read",
-        description=(
-            "Read structured local document files. Supports PDF, DOCX, XLSX, CSV, and PPTX. "
-            "CSV defaults to UTF-8 with optional BOM; pass encoding explicitly for other encodings such as cp949. "
-            "Use this instead of file_read when structured rows/pages/slides are important."
-        ),
-        input_model=DocumentReadInput,
-        handler=handler,
-        timeout_seconds=timeout_seconds,
-        category="document",
-    )
+    Structured documents are intentionally exposed through file_read only, so
+    this hook no longer adds a separate document_read tool to the registry.
+    """
+    del registry, cwd, timeout_seconds
