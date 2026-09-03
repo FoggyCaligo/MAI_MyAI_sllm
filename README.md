@@ -153,14 +153,15 @@ MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. Tool routing
 | Memory | `memory_overview`, `memory_recall`, `memory_search` |
 | Time | `current_time` |
 | Calculation | `calculator` |
-| Files | `file_list`, `file_search`, `file_read`, mutation tools |
+| Files / Documents | `file_list`, `file_search`, `file_read`, mutation tools |
 | Code | `code_search`, `code_read`, `code_symbols` |
-| Document | `document_read` |
 | Image | `image_analyze` |
 | Web | `web_search`, `web_fetch` |
 | Market | `market_data` |
 | Terminal | `terminal_run` |
 | Tool result paging | `tool_result_read` |
+
+`file_read`는 일반 텍스트와 PDF, DOCX, XLSX, CSV, PPTX를 하나의 model-facing read interface로 처리한다. 구조화 문서 형식은 내부 문서 파서로 전달되며, CSV는 기본 UTF-8 BOM 호환 인코딩을 사용하고 필요하면 `cp949` 같은 인코딩을 명시할 수 있다. 모델이 `file_read`와 별도의 문서 읽기 도구 사이에서 route를 선택하게 하지 않는다.
 
 큰 tool result는 bounded page와 `result_id`로 축약될 수 있으며, 모델은 `tool_result_read`로 필요한 범위를 이어 읽는다.
 
@@ -232,8 +233,8 @@ Trial 사용 가능
   memory_*
   current_time / calculator
   file_list / file_search / file_read
+    └─ text / PDF / DOCX / XLSX / CSV / PPTX
   code_search / code_read / code_symbols
-  document_read
   image_analyze   # configured only
   web_search / web_fetch
   market_data
