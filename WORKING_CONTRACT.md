@@ -311,8 +311,8 @@ Trial은 PC-wide read/discovery는 가능하지만 arbitrary mutation은 불가�
 ```text
 Trial read
   file_list / file_search / file_read
+    └─ text / PDF / DOCX / XLSX / CSV / PPTX
   code_search / code_read / code_symbols
-  document_read
   image_analyze  # configured only
 
 Trial mutation
@@ -328,15 +328,22 @@ Trial upload ownership/path derivation은 `db_id` 기준이다. Resolved path bo
 
 ---
 
-## 16. Document / image / web / market / time
+## 16. File / image / web / market / time
 
-`document_read` 지원 형식:
+`file_read`는 model-facing local read entrypoint다.
 
 ```text
-PDF DOCX XLSX CSV PPTX
+plain text
+PDF
+DOCX
+XLSX
+CSV
+PPTX
 ```
 
-문서 read 실패를 generic `file_read` 성공으로 위장하지 않는다.
+일반 텍스트는 직접 읽고, 구조화 문서는 내부 parser가 처리한 뒤 동일한 `file_read` 결과 계약으로 반환한다. CSV는 기본 UTF-8 BOM 호환 인코딩을 사용하며 필요하면 `cp949` 같은 명시적 인코딩을 전달할 수 있다.
+
+모델에게 `file_read`와 별도의 `document_read` 사이에서 형식별 route를 고르게 하지 않는다. 문서 parser failure를 일반 텍스트 read 성공으로 위장하는 fallback도 두지 않는다.
 
 `image_analyze`는 `VISION_MODEL`이 설정된 경우에만 registry에 등록한다.
 
