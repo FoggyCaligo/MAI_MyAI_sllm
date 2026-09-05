@@ -28,6 +28,14 @@ def test_ollama_chat_timeout_fails_visibly() -> None:
         run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
 
 
+def test_model_config_reads_request_timeout_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OLLAMA_REQUEST_TIMEOUT_SECONDS", "240")
+
+    config = ModelConfig(model="test")
+
+    assert config.request_timeout_seconds == 240.0
+
+
 def test_model_config_rejects_non_positive_request_timeout() -> None:
     with pytest.raises(ValueError, match="request_timeout_seconds must be positive"):
         ModelConfig(model="test", request_timeout_seconds=0)
