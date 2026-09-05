@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from typing import Any, Mapping, Sequence
 
 
@@ -9,6 +10,10 @@ JsonObject = dict[str, Any]
 Message = dict[str, Any]
 ToolSchema = dict[str, Any]
 ThinkSetting = bool | str
+
+
+def _request_timeout_seconds_from_env() -> float:
+    return float(os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS", "120"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +24,7 @@ class ModelConfig:
     host: str = "http://127.0.0.1:11434"
     think: ThinkSetting = True
     options: Mapping[str, Any] = field(default_factory=dict)
-    request_timeout_seconds: float = 120.0
+    request_timeout_seconds: float = field(default_factory=_request_timeout_seconds_from_env)
 
     def __post_init__(self) -> None:
         if not self.model.strip():
