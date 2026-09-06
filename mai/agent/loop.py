@@ -9,7 +9,14 @@ from typing import Any, Callable, Mapping, Sequence
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
-from .guards import AgentGuard, ExecutionObservation, GuardConfig, content_fingerprint
+from .guards import (
+    AgentGuard,
+    AgentGuardError,
+    ExecutionObservation,
+    GuardConfig,
+    call_fingerprint,
+    content_fingerprint,
+)
 from .requirements import FrozenToolRequirements
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
@@ -284,7 +291,8 @@ class AgentLoop:
                 round_observations: list[ExecutionObservation] = []
                 round_notices: list[str] = []
                 for call in turn.tool_calls:
-                    call_fp = guard.before_tool_call(call.name, call.arguments)
+                    call_fp = call_fingerprint(call.name, call.arguments)
+                    guard_blocked = False
                     _LOG.info(
                         "MAI tool call round=%d name=%s args=%s",
                         round_number,
@@ -292,10 +300,22 @@ class AgentLoop:
                         _format_log_arguments(call.arguments),
                     )
                     started = time.perf_counter()
-                    execution = await self._execute_tool(
-                        call,
-                        available_tool_names=active_tool_names,
-                    )
+                    try:
+                        guard.before_tool_call(call.name, call.arguments)
+                    except AgentGuardError as exc:
+                        guard_blocked = True
+                        execution = self._guard_failure_execution(call, exc)
+                        round_notices.append(
+                            "Structural guard blocked one native tool call after repeated unchanged behavior. "
+                            "That blocked call is a real failed tool result. Other tool results from the same round remain valid. "
+                            "Use the success and failure results above, change the call or approach if more work is needed, "
+                            "or finish by reporting the remaining failure."
+                        )
+                    else:
+                        execution = await self._execute_tool(
+                            call,
+                            available_tool_names=active_tool_names,
+                        )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
                     if on_tool_execution is not None:
@@ -327,12 +347,26 @@ class AgentLoop:
                         ),
                         error_type=execution.error_type,
                     )
-                    notice = guard.after_tool_execution(observation)
-                    if notice is not None:
-                        round_notices.append(notice)
+                    if not guard_blocked:
+                        notice = guard.after_tool_execution(observation)
+                        if notice is not None:
+                            round_notices.append(notice)
                     round_observations.append(observation)
 
-                guard.after_tool_round(round_observations)
+                try:
+                    guard.after_tool_round(round_observations)
+                except AgentGuardError as exc:
+                    _LOG.warning(
+                        "MAI structural round guard reported round=%d error_type=%s message=%s",
+                        round_number,
+                        type(exc).__name__,
+                        str(exc),
+                    )
+                    round_notices.append(
+                        "Structural guard detected a repeated no-progress tool round. "
+                        "The completed success and failure tool results above remain authoritative. "
+                        "Do not repeat the same tool round unchanged; choose a different approach or provide the final answer."
+                    )
                 if requirement_correction_active:
                     missing_after_round = frozen_requirements.missing_from(requirement_observed_tools)
                     if missing_after_round:
@@ -407,6 +441,21 @@ class AgentLoop:
             ok=True,
             content=model_content,
             handler_started=True,
+            source_content_fingerprint=content_fingerprint(source_content),
+            compact_history_content=compact_content,
+        )
+
+    def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:
+        payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+        source_content = _serialize_tool_content(payload)
+        model_content, compact_content = self._model_contents(source_content)
+        return ToolExecution(
+            name=call.name,
+            arguments=dict(call.arguments),
+            ok=False,
+            content=model_content,
+            error_type=type(exc).__name__,
+            handler_started=False,
             source_content_fingerprint=content_fingerprint(source_content),
             compact_history_content=compact_content,
         )
