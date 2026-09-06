@@ -11,7 +11,6 @@ from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
 from .requirements import FrozenToolRequirements, ToolRequirementPlanner
-from .tool_planner import OllamaToolRequirementPlanner
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
@@ -45,15 +44,7 @@ class AgentRuntime:
             max_semantic_verification_retries=max_semantic_verification_retries,
             tool_result_store=tool_result_store,
         )
-        # Production MAI uses OllamaAdapter directly. On this experiment branch,
-        # that path gets one model-only preflight turn before the main agent loop.
-        # Tests and alternate adapters remain opt-in unless a planner is supplied.
-        if tool_requirement_planner is not None:
-            self.tool_requirement_planner = tool_requirement_planner
-        elif isinstance(adapter, OllamaAdapter):
-            self.tool_requirement_planner = OllamaToolRequirementPlanner(adapter)
-        else:
-            self.tool_requirement_planner = None
+        self.tool_requirement_planner = tool_requirement_planner
 
     async def run(
         self,
