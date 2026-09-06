@@ -57,33 +57,25 @@ def registry_with_echo(handler=None) -> ToolRegistry:
     return registry
 
 
-def test_repeated_identical_call_becomes_failed_tool_result_and_model_continues() -> None:
+def test_identical_successful_calls_have_no_fixed_count_cap() -> None:
     call = NativeToolCall(name="echo", arguments={"text": "same"})
     adapter = FakeAdapter([
-        assistant_turn((call,)),
-        assistant_turn((call,)),
-        assistant_turn((call,)),
+        *(assistant_turn((call,)) for _ in range(12)),
         assistant_turn(content="done"),
     ])
     executed = []
     runtime = AgentRuntime(
         adapter,
         registry_with_echo(lambda text: executed.append(text) or text),
-        guard_config=GuardConfig(max_identical_calls=2, max_no_progress_rounds=10),
+        guard_config=GuardConfig(max_no_progress_rounds=20),
     )
 
-    result = run(runtime.run_user_message("repeat"))
+    result = run(runtime.run_user_message("repeat as needed"))
 
     assert result.content == "done"
-    assert executed == ["same", "same"]
-    assert [execution.ok for execution in result.tool_executions] == [True, True, False]
-    assert result.tool_executions[-1].error_type == "RepeatedToolCallError"
-    final_request_tool_results = [
-        message
-        for message in adapter.requests[-1].messages
-        if message.get("role") == "tool"
-    ]
-    assert "RepeatedToolCallError" in final_request_tool_results[-1]["content"]
+    assert executed == ["same"] * 12
+    assert len(result.tool_executions) == 12
+    assert all(execution.ok for execution in result.tool_executions)
 
 
 def test_same_failure_is_executed_five_times_then_guard_failure_returns_to_model() -> None:
@@ -102,7 +94,6 @@ def test_same_failure_is_executed_five_times_then_guard_failure_returns_to_model
         adapter,
         registry_with_echo(broken),
         guard_config=GuardConfig(
-            max_identical_calls=10,
             warn_identical_failures=3,
             max_identical_failures=5,
             max_no_progress_rounds=10,
@@ -166,7 +157,6 @@ def test_changed_failure_outcome_breaks_identical_failure_streak() -> None:
         adapter,
         registry_with_echo(broken),
         guard_config=GuardConfig(
-            max_identical_calls=10,
             warn_identical_failures=2,
             max_identical_failures=2,
             max_no_progress_rounds=10,
@@ -190,7 +180,6 @@ def test_structural_no_progress_notice_is_returned_to_next_model_turn() -> None:
         adapter,
         registry_with_echo(),
         guard_config=GuardConfig(
-            max_identical_calls=10,
             warn_identical_failures=3,
             max_identical_failures=10,
             max_no_progress_rounds=2,
@@ -210,7 +199,7 @@ def test_structural_no_progress_notice_is_returned_to_next_model_turn() -> None:
     assert len(notices) == 1
 
 
-def test_guard_blocked_call_does_not_skip_other_calls_in_same_round() -> None:
+def test_guard_blocked_failed_call_does_not_skip_other_calls_in_same_round() -> None:
     repeated = NativeToolCall(name="echo", arguments={"text": "same"})
     other = NativeToolCall(name="echo", arguments={"text": "other"})
     adapter = FakeAdapter([
@@ -219,18 +208,29 @@ def test_guard_blocked_call_does_not_skip_other_calls_in_same_round() -> None:
         assistant_turn(content="done"),
     ])
     executed = []
+
+    def partly_broken(text: str):
+        executed.append(text)
+        if text == "same":
+            raise PermissionError("denied")
+        return text
+
     runtime = AgentRuntime(
         adapter,
-        registry_with_echo(lambda text: executed.append(text) or text),
-        guard_config=GuardConfig(max_identical_calls=1, max_no_progress_rounds=10),
+        registry_with_echo(partly_broken),
+        guard_config=GuardConfig(
+            warn_identical_failures=1,
+            max_identical_failures=1,
+            max_no_progress_rounds=10,
+        ),
     )
 
     result = run(runtime.run_user_message("use both"))
 
     assert result.content == "done"
     assert executed == ["same", "other"]
-    assert [execution.ok for execution in result.tool_executions] == [True, False, True]
-    assert result.tool_executions[1].error_type == "RepeatedToolCallError"
+    assert [execution.ok for execution in result.tool_executions] == [False, False, True]
+    assert result.tool_executions[1].error_type == "RepeatedToolFailureError"
     assert result.tool_executions[2].content == "other"
 
 
