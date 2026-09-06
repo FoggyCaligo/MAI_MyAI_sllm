@@ -56,11 +56,13 @@ class OllamaToolRequirementPlanner:
         if not user_text.strip():
             raise ValueError("user_text must be non-empty")
 
+        # Preflight decides only whether a tool is required. Argument schemas stay
+        # out of this extra model call; the main agent still receives the complete
+        # native schemas when it actually chooses and invokes tools.
         available_tools = [
             {
                 "name": definition.name,
                 "description": definition.description,
-                "parameters": definition.input_model.model_json_schema(),
             }
             for definition in tools
         ]
