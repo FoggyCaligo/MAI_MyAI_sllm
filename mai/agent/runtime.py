@@ -11,6 +11,7 @@ from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
 from .requirements import FrozenToolRequirements, ToolRequirementPlanner
+from .tool_planner import OllamaToolRequirementPlanner
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
@@ -44,7 +45,12 @@ class AgentRuntime:
             max_semantic_verification_retries=max_semantic_verification_retries,
             tool_result_store=tool_result_store,
         )
-        self.tool_requirement_planner = tool_requirement_planner
+        if tool_requirement_planner is not None:
+            self.tool_requirement_planner = tool_requirement_planner
+        elif isinstance(adapter, OllamaAdapter):
+            self.tool_requirement_planner = OllamaToolRequirementPlanner(adapter)
+        else:
+            self.tool_requirement_planner = None
 
     async def run(
         self,
@@ -89,6 +95,9 @@ class AgentRuntime:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
 
+        # Only the necessity judgment is model-driven. Once frozen, whether each
+        # required tool actually ran is checked structurally by AgentLoop against
+        # handler_started observations; FinalGroundingVerifier is not involved.
         effective_requirements = requirements
         if effective_requirements is None and self.tool_requirement_planner is not None:
             recent_dialogue = [
