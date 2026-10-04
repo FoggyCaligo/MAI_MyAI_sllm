@@ -23,7 +23,13 @@ Web/API authentication
   ↓
 AccessPrincipal(user_id, db_id, role)
   ↓
+LLM tool-requirement preflight (selected model, think=False)
+  ↓
+FrozenToolRequirements
+  ↓
 Main Agent + Ollama native tool calls
+  ↓
+Required-tool execution gate (handler_started)
   ↓
 Candidate Final
   ↓
@@ -41,13 +47,17 @@ Final Response
 Background memory extraction / admission
 ```
 
-### Direct native-tool selection
+### LLM preflight + structural enforcement
 
-Production request path는 별도의 model-based tool requirement preflight를 호출하지 않는다. Main agent가 system prompt, 최근 대화, runtime context, 현재 등록된 native tool schema를 함께 보고 필요한 tool을 직접 선택한다.
+현재 production은 main agent 실행 전에 선택된 동일 모델로 tool-requirement preflight를 한 번 호출한다. Preflight는 최근 user/assistant 대화와 등록된 tool의 이름·설명만 보고 `required_tools`를 strict structured output으로 반환한다. 인자 schema는 main agent에게만 제공되며, preflight는 tool을 실행하거나 답을 작성하지 않는다.
 
-`OllamaToolRequirementPlanner`와 `FrozenToolRequirements` 지원 코드는 구조적 실험 및 단위 테스트를 위해 남아 있지만 현재 production composition에는 연결하지 않는다. 추가 LLM 호출의 지연을 피하기 위한 의도적인 선택이다.
+`AgentRuntime`은 Ollama adapter에 `OllamaToolRequirementPlanner`를 기본 연결하고, 결과를 `FrozenToolRequirements`로 고정한다. 명시적인 requirements가 전달되면 preflight를 생략한다.
 
-따라서 production에서는 required-tool gate가 final을 구조적으로 차단하지 않는다. 필요한 tool 사용은 main agent prompt와 tool schema에 의존하고, 생성된 candidate final의 근거성은 뒤의 `FinalGroundingVerifier`가 검토한다.
+Main agent는 전체 native tool schema로 작업을 시작한다. Final을 시도할 때 `AgentLoop`는 고정된 필수 tool 집합과 실제 `handler_started` 관찰을 비교한다. 누락이 있으면 해당 tool schema만 노출하는 correction round로 돌아가고, 모두 실행된 뒤 전체 schema를 복원한다.
+
+이 gate의 기준은 **handler 실행 시작 여부**이며 성공 여부가 아니다. Handler가 시작된 뒤 실패한 호출도 실행 요건은 충족한다. Unknown tool, invalid arguments, guard 차단처럼 handler가 시작되지 않은 호출은 충족하지 않는다. 답변의 성공 주장과 근거는 뒤의 verifier가 별도로 검토한다.
+
+Preflight의 schema 위반이나 알 수 없는 tool 선택은 실제 오류로 드러낸다. 의미 판단은 LLM이 수행하고, 실행 여부 확인은 구조적으로 처리하며 문자열 heuristic으로 tool 필요성을 판정하지 않는다.
 
 ---
 
@@ -67,25 +77,23 @@ Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니�
 
 Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판정을 내리지 않는다. **현재 user/tool evidence 안에 이미 있는 구체적이고 사용자에게 중요한 정보를 candidate가 불필요하게 버린 경우**만 대상으로 한다.
 
-Coverage correction은 별도 budget으로 최대 2번이다. 두 번 이후에는 coverage 부족만으로 final을 계속 붙잡지 않는다. Grounding, action, alignment와는 별도 축이다.
+Coverage correction은 별도 budget으로 최대 2번이다. Semantic correction도 production에서 최대 2번이며, 한도 이후에는 해당 review를 생략할 수 있다. Numeric correction은 최대 2번이고, numeric retry budget이 소진되면 verifier를 더 호출하지 않고 candidate를 반환한다. 따라서 final 반환이 모든 검증 축의 통과를 보장하지는 않는다.
 
 Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 이를 log하고 **fail-open**한다. Reviewer 장애 때문에 전체 사용자 요청을 서비스 오류로 끝내기보다 candidate final을 반환하는 가용성 우선 정책이다. 실패한 reviewer 출력을 문자열 heuristic으로 복원하지 않는다.
 
 ---
 
-## 3. Failure recovery
+## 3. Failure handling / structural guards
 
-Main planner/agent 실행이 fatal exception으로 끝나더라도 확보된 tool evidence가 있다면 `FailureAnswerFinalizer`가 **tool을 추가 호출하지 않고** 사용자에게 보여줄 수 있는 마지막 답변을 한 번 생성한다.
+개별 tool의 validation error, unknown tool, handler exception, timeout은 `ok=false`, `error_type`을 포함한 실패 결과로 모델에 반환한다. 같은 model turn의 다른 tool call도 계속 처리하며, 성공과 실패 결과를 함께 다음 turn에 전달한다.
 
-Recovery final은 다음을 지켜야 한다.
+Guard가 차단한 개별 호출도 실패한 `ToolExecution`으로 반환한다. 동일 호출·동일 실패 결과가 3회 연속이면 경고하고, 5회 관찰한 뒤 다음 unchanged 호출을 차단한다. 호출이나 결과가 달라지면 구조적 진행으로 취급한다.
 
-- 실제 실패를 숨기지 않는다.
-- 성공하지 않은 작업을 성공했다고 주장하지 않는다.
-- 확보된 결과와 실패한 부분을 구분한다.
-- 확인된 사실, 실패, 미확인 상태를 구분한다.
-- 가능한 경우 유용한 partial answer를 반환한다.
+전체 model round 수, 성공 tool call 수, 동일 호출 자체에는 고정 횟수 상한이 없다. 동일한 tool-round 결과가 반복되어 no-progress guard가 걸리면 모델에 구조적 notice를 전달해 접근 변경 또는 실패 보고를 요청한다. 이 notice 자체가 run을 종료하지는 않으므로 전체 loop의 종료를 보장하는 hard ceiling은 아니다.
 
-Recovery finalization 자체도 실패하면 원래 exception을 다시 드러낸다.
+Main model/runtime의 실제 fatal failure는 별도 답변 생성으로 숨기지 않는다. Agent loop 내부 실패는 확보된 실행 내역을 가진 `AgentRunFailure`로 전달되고, Web/API는 실패 응답을 반환한다. Preflight 등 loop 밖 실패도 HTTP/job 실패 경로로 전달한다. `FailureAnswerFinalizer`는 제거됐다.
+
+Final semantic reviewer의 fail-open과 background memory 실패 로깅은 별도 정책이다. 개별 tool 실패를 최종 답변에서 성공으로 바꾸어 설명해서는 안 된다.
 
 ---
 
@@ -135,6 +143,8 @@ Graph neighborhood
 - `memory_search(node_id)`
 
 `memory_search`는 one-hop 확장이다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
+
+현재 production은 각 요청에서 빈 `WorkingGraph`로 시작하고 model이 memory tool을 호출해 기억을 가져온다. `auto_recall` 함수는 구현돼 있지만 요청 시작 경로에는 연결돼 있지 않다.
 
 ### Post-response memory write
 
@@ -210,7 +220,7 @@ db_id
 
 브라우저는 마지막 성공 로그인한 `user_id`만 localStorage에 기억한다. 비밀번호는 저장하지 않는다. 따라서 다른 기기 로그인으로 기존 세션이 끊겨도 원래 브라우저에는 ID가 남아 있어 비밀번호만 다시 입력하면 된다.
 
-대화 기록은 `db_id` 기준으로 `CHAT_DB_PATH`의 `web_chat_messages` 테이블에 저장한다. 전체 UI history와 모델 context는 분리되어 있으며, 모델에는 최근 `SESSION_HISTORY_MESSAGES`개만 전달할 수 있다.
+대화 기록은 `db_id` 기준으로 `CHAT_DB_PATH`의 `web_chat_messages` 테이블에 저장한다. 저장된 전체 대화와 조회 window는 분리되어 있다. 현재 `SESSION_HISTORY_MESSAGES`는 모델에 전달하는 최근 user/assistant message 수와 Web UI에서 복원하는 대화 window에 함께 적용된다. 기본 실행 `python run_server.py`와 `.env.example`은 12개(일반적인 교대 대화 약 6쌍)이며, 직접 server 경로를 사용할 때 환경 설정이 없으면 24개다. `새 채팅`은 실행 중 job을 취소하고 현재 persisted chat session을 지우며 장기기억은 유지한다.
 
 브라우저/폰이 닫혀도 서버 process가 살아 있는 동안 running chat job은 계속될 수 있고, 완료된 assistant answer는 persistent chat에 저장된다. 단, running job 자체는 외부 queue가 아니라 process memory에 있으므로 서버 process restart를 넘겨 이어 실행되지는 않는다.
 
@@ -245,7 +255,7 @@ Trial 미노출
   terminal_run
 ```
 
-Trial upload ownership 역시 `db_id` 기준이다.
+Trial upload ownership 역시 `db_id` 기준이다. Trial의 read/search 도구는 OS 계정이 접근할 수 있는 로컬 경로를 읽을 수 있으며, 자기 upload directory로 제한되는 것은 write/create다.
 
 ---
 
@@ -262,8 +272,13 @@ python -m pip install -e ".[dev]"
 기본 예시 모델:
 
 ```env
-MAIN_MODEL=gemma4:e4b
+MAIN_MODEL=ornith-1.5:9b
+OLLAMA_REQUEST_TIMEOUT_SECONDS=240
 ```
+
+`OLLAMA_REQUEST_TIMEOUT_SECONDS`는 선택 모델의 agent/preflight/fact-extraction 요청에 적용되는 기본 timeout이며, 미설정 시 120초다. Final semantic reviewer는 별도로 기본 15초 timeout을 사용한다.
+
+`MAI_CWD`가 설정돼 있으면 상대 로컬 경로의 기준으로 사용한다. 비어 있으면 process working directory를 사용하며, OS 사용자 home으로 자동 변경하지 않는다.
 
 실행:
 
@@ -305,4 +320,4 @@ MAI는 contract violation을 문자열 비교나 임시 fallback으로 성공처
 - identity collision
 - Tailscale Funnel failure
 
-실패했을 때는 실패로 드러내되, 이미 확보된 유용한 결과가 있다면 사용자에게 truthful partial answer로 전달하는 것을 우선한다.
+개별 tool 실패 이후 agent가 정상적으로 final을 생성할 수 있다면 확보된 결과와 실패를 구분한 truthful partial answer를 전달한다. 실제 fatal runtime 실패는 별도 finalizer로 대체하지 않고 오류로 전달한다. Final reviewer 장애와 retry budget 소진은 앞서 설명한 fail-open 예외 정책을 따른다.
