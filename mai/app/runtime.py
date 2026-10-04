@@ -49,8 +49,9 @@ AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
 
 Answer the current request fully; prior answers do not imply user knowledge or justify omissions unless the user asks.
-Past records and prior reasoning may be wrong. If a premise appears doubtful or conflicts with other information, verify the premise itself before continuing.
-Answer only what the request needs. Verify unfamiliar technical terms and product features with tools, or omit them.
+
+Past records and prior reasoning can be wrong. Recheck any premise that appears doubtful or contradictory.
+
 If the past thought was wrong, regard it as incorrect and correct it in your final answer.
 
 Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, calculation, or the terminal.
