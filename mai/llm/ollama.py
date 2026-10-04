@@ -7,6 +7,10 @@ Ollama's native chat protocol.
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import os
+import uuid
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -62,6 +66,13 @@ class OllamaAdapter:
                 dict(request.response_format)
                 if isinstance(request.response_format, Mapping)
                 else request.response_format
+            )
+
+        if os.getenv("MAI_DEBUG_MODEL_INPUT", "").lower() in {"1", "true", "yes"}:
+            logging.getLogger(__name__).info(
+                "MAI debug Ollama request id=%s payload=%s",
+                uuid.uuid4().hex,
+                json.dumps(payload, ensure_ascii=False, default=str),
             )
 
         try:
