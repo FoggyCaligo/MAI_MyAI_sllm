@@ -652,3 +652,12 @@ def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> N
     assert "evidence_coverage_insufficient" in main.requests[1].messages[-1]["content"]
     assert "evidence_coverage_insufficient" in main.requests[2].messages[-1]["content"]
     assert len(reviewer.requests) == 3
+
+
+def test_reviewer_has_no_default_deadline() -> None:
+    reviewer = SlowReviewerAdapter(delay_seconds=0.02)
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    assert verifier.reviewer_timeout_seconds is None
+    result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
+    assert result.ok
+    assert len(reviewer.requests) == 1

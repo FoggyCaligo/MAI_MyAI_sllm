@@ -190,9 +190,9 @@ class FinalGroundingVerifier:
         self,
         reviewer_adapter: OllamaAdapter | None = None,
         *,
-        reviewer_timeout_seconds: float = 15.0,
+        reviewer_timeout_seconds: float | None = None,
     ) -> None:
-        if reviewer_timeout_seconds <= 0:
+        if reviewer_timeout_seconds is not None and reviewer_timeout_seconds <= 0:
             raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
@@ -389,7 +389,7 @@ class FinalGroundingVerifier:
             response_format=_FinalReviewPayload.model_json_schema(),
         )
         _LOG.info(
-            "MAI final reviewer start timeout=%.1fs context_messages=%d tool_results=%d candidate_chars=%d",
+            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
             len(context_messages),
             len(tool_evidence),
