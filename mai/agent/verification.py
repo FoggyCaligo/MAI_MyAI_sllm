@@ -145,7 +145,6 @@ class FinalVerificationResult:
             return ""
         lines = [
             "The candidate final answer was rejected by final grounding verification.",
-            "The rejected draft was not shown to the user. Correct it and provide the full answer.",
             "Correct only the concrete defects below. Do not broaden the task or invent additional facts.",
             "Preserve every supported result that is still useful to the user.",
         ]
