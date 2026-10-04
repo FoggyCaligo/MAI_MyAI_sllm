@@ -195,14 +195,9 @@ class AgentLoop:
                         history.append({
                             "role": "system",
                             "content": (
-                                "Your previous assistant turn attempted to finish before all frozen required native "
-                                "tools produced an execution result. The missing required tools are: "
+                                "Before answering, call the required tools: "
                                 + ", ".join(missing_tools)
-                                + ". Continue the same task instead of finishing. During this correction round, only "
-                                "the still-missing required tool schemas are available. Call each missing required tool. "
-                                "If a prior call failed before its handler started because of invalid arguments or an "
-                                "unknown tool contract, correct the tool call and try again. These requirements remain "
-                                "frozen for this run."
+                                + "."
                             ),
                         })
                         round_number += 1
