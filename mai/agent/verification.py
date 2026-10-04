@@ -203,15 +203,19 @@ class FinalGroundingVerifier:
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
+        allow_numeric_review: bool = True,
+        allow_evidence_review: bool | None = None,
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
     ) -> FinalVerificationResult:
+        if allow_evidence_review is None:
+            allow_evidence_review = allow_semantic_review
         numeric_issue = self._numeric_issue(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
-        if numeric_issue is not None:
+        if allow_numeric_review and numeric_issue is not None:
             self._log_result(
                 numeric="failed",
                 evidence="skipped",
@@ -222,10 +226,10 @@ class FinalGroundingVerifier:
             )
             return FinalVerificationResult(ok=False, issues=(numeric_issue,))
 
-        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_coverage_review):
-            reason = () if self.reviewer_adapter is None else ("semantic and coverage review retry budgets exhausted",)
+        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
+            reason = () if self.reviewer_adapter is None else ("alignment, evidence and coverage review retry budgets exhausted",)
             self._log_result(
-                numeric="pass",
+                numeric="pass" if allow_numeric_review else "skipped",
                 evidence="skipped",
                 alignment="skipped",
                 coverage="skipped",
@@ -241,7 +245,7 @@ class FinalGroundingVerifier:
         )
         issues: list[VerificationIssue] = []
 
-        if allow_semantic_review:
+        if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
             other_claims = tuple(claim for claim in unsupported_claims if claim.defect != "scope_expansion")
@@ -278,6 +282,7 @@ class FinalGroundingVerifier:
                 )
                 issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
 
+        if allow_semantic_review:
             if review.alignment_verdict == "misaligned":
                 reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
                 issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
@@ -289,11 +294,11 @@ class FinalGroundingVerifier:
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
-            numeric="pass",
-            evidence=review.evidence_verdict if allow_semantic_review else "skipped",
+            numeric="pass" if allow_numeric_review else "skipped",
+            evidence=review.evidence_verdict if allow_evidence_review else "skipped",
             alignment=review.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
-            action=review.action_verdict if allow_semantic_review else "skipped",
+            action=review.action_verdict if allow_evidence_review else "skipped",
             reasons=review.reasons + review.coverage_reasons,
         )
         return FinalVerificationResult(ok=not issues, issues=tuple(issues))
