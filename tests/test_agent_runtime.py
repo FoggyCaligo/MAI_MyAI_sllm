@@ -194,9 +194,14 @@ def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() ->
     )
 
     assert result.content == "done after required tool"
+    assert "I can answer without it." in str(adapter.requests[1].messages)
+    assert "I can answer without it." not in str(result.messages)
+    assert any(message.get("role") == "tool" for message in result.messages)
     assert result.model_rounds == 3
     correction_message = adapter.requests[1].messages[-1]
     assert correction_message["role"] == "system"
+    assert "not shown to the user" in correction_message["content"]
+    assert "provide the complete answer" in correction_message["content"]
     assert "echo" in correction_message["content"]
     assert _request_tool_names(adapter.requests[1]) == ["echo"]
     assert set(_request_tool_names(adapter.requests[2])) == {"echo", "other"}
