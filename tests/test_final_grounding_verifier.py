@@ -106,6 +106,9 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert len(reviewer.requests) == 1
+    rejected = "케이씨텍은 72,000원에 팔았습니다."
+    assert any(message.get("content") == rejected for message in main.requests[1].messages)
+    assert all(message.get("content") != rejected for message in result.messages)
 
 
 def test_numeric_verification_retries_are_bounded() -> None:

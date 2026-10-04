@@ -139,6 +139,7 @@ class AgentLoop:
         coverage_verification_retries = 0
         empty_final_retries = 0
         pending_history_compactions: dict[int, str] = {}
+        rejected_final_indices: list[int] = []
 
         try:
             while True:
@@ -235,6 +236,7 @@ class AgentLoop:
                                 allow_coverage_review=allow_coverage_review,
                             )
                             if not verification.ok:
+                                rejected_final_indices.append(len(history) - 1)
                                 issue_codes = ",".join(issue.code for issue in verification.issues) or "unknown"
                                 numeric_failure = any(
                                     issue.code == "numeric_grounding_failed"
@@ -279,6 +281,8 @@ class AgentLoop:
                                     _MAX_COVERAGE_VERIFICATION_RETRIES,
                                 )
                     _LOG.info("MAI final accepted round=%d", round_number)
+                    for history_index in reversed(rejected_final_indices):
+                        del history[history_index]
                     return AgentRunResult(
                         content=turn.content,
                         thinking=turn.thinking,
