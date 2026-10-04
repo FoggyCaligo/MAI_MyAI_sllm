@@ -169,7 +169,7 @@ def test_required_tool_argument_failure_returns_model_to_correction_round() -> N
     assert result.tool_executions[1].ok is True
     correction_message = adapter.requests[2].messages[-1]
     assert correction_message["role"] == "system"
-    assert "missing required tools" in correction_message["content"]
+    assert correction_message["content"].startswith("Do not write a final answer. Call these missing required tools now: echo.")
     assert "echo" in correction_message["content"]
     assert _request_tool_names(adapter.requests[2]) == ["echo"]
     assert set(_request_tool_names(adapter.requests[3])) == {"echo", "other"}
