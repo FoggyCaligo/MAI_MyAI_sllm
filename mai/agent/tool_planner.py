@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any, Sequence
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -94,5 +96,12 @@ class OllamaToolRequirementPlanner:
         if unknown:
             raise ToolRequirementPlanningError(
                 "tool preflight selected unknown tools: " + ", ".join(sorted(unknown))
+            )
+        if os.getenv("MAI_DEBUG_MODEL_INPUT", "").lower() in {"1", "true", "yes"}:
+            logging.getLogger(__name__).info(
+                "MAI debug tool requirement plan user_request=%s required_tools=%s raw_response=%s",
+                json.dumps(user_text, ensure_ascii=False),
+                json.dumps(sorted(required), ensure_ascii=False),
+                json.dumps(turn.content, ensure_ascii=False),
             )
         return FrozenToolRequirements(required)
