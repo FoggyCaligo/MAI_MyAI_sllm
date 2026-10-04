@@ -94,7 +94,7 @@ def test_ollama_runtime_runs_one_preflight_and_freezes_required_tools() -> None:
         for message in correction_round.messages
         if message.get("role") == "system"
     ]
-    assert any("Before answering, call the required tools:" in message for message in correction_messages)
+    assert any("missing required tools" in message for message in correction_messages)
 
 
 def test_explicit_requirements_skip_preflight() -> None:
