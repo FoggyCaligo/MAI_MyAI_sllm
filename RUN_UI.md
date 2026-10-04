@@ -305,15 +305,3 @@ python -m pytest -q
 ```
 
 Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.
-
-## 14. 임시 모델 입력 진단
-
-역할 혼동이나 필수 툴 누락을 조사할 때만 `.env`에 다음을 추가하고 서버를 재시작한다.
-
-```env
-MAI_DEBUG_MODEL_INPUT=true
-```
-
-서버 로그의 `MAI debug Ollama request`는 호출별 ID와 실제 전송 payload를 기록한다. `messages`의 역할·본문·순서(거절 초안과 피드백 포함), tools, model, think, options, format을 확인할 수 있다. Planner가 사용되는 구성에서는 `MAI debug tool requirement plan`에 요청·필수 툴·원본 판정 응답도 기록된다. 현재 planner 응답 schema에는 판단 이유 필드가 없으므로 이유는 기록할 수 없다. 진단 때문에 schema나 모델 호출을 변경하지 않는다.
-
-기본값은 비활성이다. 전체 대화·기억·파일/툴 내용이 로그에 포함될 수 있으므로 공유 전 확인하고, 재현 후 옵션을 제거하거나 false로 바꾸고 서버를 재시작한다. 모델 입력량과 호출 횟수는 변하지 않는다.

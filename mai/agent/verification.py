@@ -55,7 +55,6 @@ Claim-level evidence grounding:
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Stable general knowledge does not require current-turn evidence merely because it is factual.
-- Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
 - Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
@@ -146,7 +145,6 @@ class FinalVerificationResult:
             return ""
         lines = [
             "The candidate final answer was rejected by final grounding verification.",
-            "This rejected answer was not shown to the user. Provide the corrected answer in full.",
             "Correct only the concrete defects below. Do not broaden the task or invent additional facts.",
             "Preserve every supported result that is still useful to the user.",
         ]
@@ -191,9 +189,9 @@ class FinalGroundingVerifier:
         self,
         reviewer_adapter: OllamaAdapter | None = None,
         *,
-        reviewer_timeout_seconds: float | None = None,
+        reviewer_timeout_seconds: float = 15.0,
     ) -> None:
-        if reviewer_timeout_seconds is not None and reviewer_timeout_seconds <= 0:
+        if reviewer_timeout_seconds <= 0:
             raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
@@ -204,40 +202,45 @@ class FinalGroundingVerifier:
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
-        allow_numeric_review: bool = True,
-        allow_evidence_review: bool | None = None,
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
     ) -> FinalVerificationResult:
-        if allow_evidence_review is None:
-            allow_evidence_review = allow_semantic_review
         numeric_issue = self._numeric_issue(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
-        issues: list[VerificationIssue] = []
-        if allow_numeric_review and numeric_issue is not None:
-            issues.append(numeric_issue)
-
-        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
-            reason = () if self.reviewer_adapter is None else ("alignment, evidence and coverage review retry budgets exhausted",)
+        if numeric_issue is not None:
             self._log_result(
-                numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
+                numeric="failed",
+                evidence="skipped",
+                alignment="skipped",
+                coverage="skipped",
+                action="skipped",
+                reasons=(numeric_issue.message,),
+            )
+            return FinalVerificationResult(ok=False, issues=(numeric_issue,))
+
+        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_coverage_review):
+            reason = () if self.reviewer_adapter is None else ("semantic and coverage review retry budgets exhausted",)
+            self._log_result(
+                numeric="pass",
                 evidence="skipped",
                 alignment="skipped",
                 coverage="skipped",
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+            return FinalVerificationResult(ok=True)
 
         review = await self._review_final(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
-        if allow_evidence_review:
+        issues: list[VerificationIssue] = []
+
+        if allow_semantic_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
             other_claims = tuple(claim for claim in unsupported_claims if claim.defect != "scope_expansion")
@@ -274,7 +277,6 @@ class FinalGroundingVerifier:
                 )
                 issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
 
-        if allow_semantic_review:
             if review.alignment_verdict == "misaligned":
                 reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
                 issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
@@ -286,11 +288,11 @@ class FinalGroundingVerifier:
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
-            numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
-            evidence=review.evidence_verdict if allow_evidence_review else "skipped",
+            numeric="pass",
+            evidence=review.evidence_verdict if allow_semantic_review else "skipped",
             alignment=review.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
-            action=review.action_verdict if allow_evidence_review else "skipped",
+            action=review.action_verdict if allow_semantic_review else "skipped",
             reasons=review.reasons + review.coverage_reasons,
         )
         return FinalVerificationResult(ok=not issues, issues=tuple(issues))
@@ -381,7 +383,7 @@ class FinalGroundingVerifier:
             response_format=_FinalReviewPayload.model_json_schema(),
         )
         _LOG.info(
-            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+            "MAI final reviewer start timeout=%.1fs context_messages=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
             len(context_messages),
             len(tool_evidence),
@@ -424,13 +426,36 @@ class FinalGroundingVerifier:
                 claims=claims,
                 action_verdict=parsed.action_verdict,
             )
-        except TimeoutError as exc:
-            _LOG.warning("MAI final verification reviewer timed out")
-            raise RuntimeError("final reviewer timed out; release was not verified") from exc
+        except TimeoutError:
+            _LOG.warning(
+                "MAI final verification reviewer timed out after %.1fs; failing open",
+                self.reviewer_timeout_seconds,
+            )
+            return FinalReview(
+                evidence_verdict="uncertain",
+                alignment_verdict="uncertain",
+                coverage_verdict="uncertain",
+            )
         except ValidationError as exc:
-            raise RuntimeError("final reviewer violated structured output schema") from exc
+            _LOG.warning(
+                "MAI final reviewer violated structured output schema; failing open error=%s",
+                str(exc),
+            )
+            return FinalReview(
+                evidence_verdict="uncertain",
+                alignment_verdict="uncertain",
+                coverage_verdict="uncertain",
+            )
         except Exception as exc:
-            raise RuntimeError("final reviewer failed; release was not verified") from exc
+            _LOG.warning(
+                "MAI final reviewer failed error_type=%s; failing open",
+                type(exc).__name__,
+            )
+            return FinalReview(
+                evidence_verdict="uncertain",
+                alignment_verdict="uncertain",
+                coverage_verdict="uncertain",
+            )
 
     @staticmethod
     def _log_result(

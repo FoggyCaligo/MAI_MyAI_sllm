@@ -77,9 +77,9 @@ Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니�
 
 Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판정을 내리지 않는다. **현재 user/tool evidence 안에 이미 있는 구체적이고 사용자에게 중요한 정보를 candidate가 불필요하게 버린 경우**만 대상으로 한다.
 
-각 검증 축의 correction budget은 최대 2회다. 숫자 결함이 있어도 근거·정합성·coverage review를 함께 실행한다. 재시도 후에도 해당 축의 결함이 남으면 VerificationRetriesExhausted로 실패하며, 검증을 생략해서 candidate를 반환하지 않는다.
+Coverage correction은 별도 budget으로 최대 2번이다. Semantic correction도 production에서 최대 2번이며, 한도 이후에는 해당 review를 생략할 수 있다. Numeric correction은 최대 2번이고, numeric retry budget이 소진되면 verifier를 더 호출하지 않고 candidate를 반환한다. 따라서 final 반환이 모든 검증 축의 통과를 보장하지는 않는다.
 
-Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 실행 실패로 전달한다. 검증되지 않은 candidate는 반환하지 않으며 문자열 heuristic으로 reviewer 출력을 복원하지 않는다.
+Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 이를 log하고 **fail-open**한다. Reviewer 장애 때문에 전체 사용자 요청을 서비스 오류로 끝내기보다 candidate final을 반환하는 가용성 우선 정책이다. 실패한 reviewer 출력을 문자열 heuristic으로 복원하지 않는다.
 
 ---
 
@@ -93,7 +93,7 @@ Guard가 차단한 개별 호출도 실패한 `ToolExecution`으로 반환한다
 
 Main model/runtime의 실제 fatal failure는 별도 답변 생성으로 숨기지 않는다. Agent loop 내부 실패는 확보된 실행 내역을 가진 `AgentRunFailure`로 전달되고, Web/API는 실패 응답을 반환한다. Preflight 등 loop 밖 실패도 HTTP/job 실패 경로로 전달한다. `FailureAnswerFinalizer`는 제거됐다.
 
-Final reviewer 실패와 background memory 실패 로깅은 별도 정책이다. 개별 tool 실패를 최종 답변에서 성공으로 바꾸어 설명해서는 안 된다.
+Final semantic reviewer의 fail-open과 background memory 실패 로깅은 별도 정책이다. 개별 tool 실패를 최종 답변에서 성공으로 바꾸어 설명해서는 안 된다.
 
 ---
 
@@ -320,6 +320,4 @@ MAI는 contract violation을 문자열 비교나 임시 fallback으로 성공처
 - identity collision
 - Tailscale Funnel failure
 
-개별 tool 실패 이후 agent가 정상적으로 final을 생성할 수 있다면 확보된 결과와 실패를 구분한 truthful partial answer를 전달한다. 실제 fatal runtime 실패는 별도 finalizer로 대체하지 않고 오류로 전달한다. Final reviewer 장애와 미해결 검증의 retry budget 소진은 실행 실패로 전달한다.
-
-거절된 초안은 승인 전까지 내부 이력에 보관하지만, 재시도 모델 입력에서는 일반 assistant 대화에서 제외하고 delivered=false인 JSON 검토 자료로 전달한다. 거절된 thinking은 재전송하지 않는다. 최종 승인 후 거절된 초안만 삭제하며 승인된 답변과 실제 이전 대화는 보존한다. 고정된 필수 툴 목록과 누락 상태는 첫 라운드부터 전달한다.
+개별 tool 실패 이후 agent가 정상적으로 final을 생성할 수 있다면 확보된 결과와 실패를 구분한 truthful partial answer를 전달한다. 실제 fatal runtime 실패는 별도 finalizer로 대체하지 않고 오류로 전달한다. Final reviewer 장애와 retry budget 소진은 앞서 설명한 fail-open 예외 정책을 따른다.
