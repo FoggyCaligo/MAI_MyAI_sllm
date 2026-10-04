@@ -24,7 +24,7 @@ from .verification import FinalGroundingVerifier
 
 _LOG = logging.getLogger("uvicorn.error")
 _TOOL_ARGS_LOG_LIMIT = 800
-_MAX_NUMERIC_VERIFICATION_RETRIES = 10
+_MAX_NUMERIC_VERIFICATION_RETRIES = 2
 _MAX_COVERAGE_VERIFICATION_RETRIES = 2
 _MAX_EVIDENCE_VERIFICATION_RETRIES = 2
 
@@ -199,8 +199,6 @@ class AgentLoop:
                         history.append({
                             "role": "system",
                             "content": (
-                                "This rejected answer was not shown to the user. After using the required tools, "
-                                "provide the complete answer; do not assume the user has seen this draft. "
                                 "Your previous assistant turn attempted to finish before all frozen required native "
                                 "tools produced an execution result. The missing required tools are: "
                                 + ", ".join(missing_tools)

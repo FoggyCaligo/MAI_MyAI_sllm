@@ -113,14 +113,14 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
 
 
 def test_numeric_verification_retries_are_bounded() -> None:
-    main = SequenceAdapter(["케이씨텍은 72,000원에 팔았습니다."] * 11)
+    main = SequenceAdapter(["케이씨텍은 72,000원에 팔았습니다."] * 3)
     verifier = FinalGroundingVerifier(reviewer_adapter=None)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
     result = run(runtime.run_user_message("케이씨텍은 70,000원에 팔았어."))
 
     assert result.content == "케이씨텍은 72,000원에 팔았습니다."
-    assert result.model_rounds == 11
+    assert result.model_rounds == 3
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "numeric_grounding_failed" in main.requests[2].messages[-1]["content"]
     assert all("72000" in request.messages[-1]["content"] for request in main.requests[1:])
@@ -150,7 +150,7 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
 
 
 def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
-    main = SequenceAdapter(["가격은 72,000원입니다."] * 12)
+    main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
     reviewer = ReviewerAdapter([
         ("supported", "misaligned", ("The requested comparison is missing.",)),
         ("supported", "aligned", ()),
@@ -159,9 +159,9 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
         main, ToolRegistry(),
         final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
     ).run_user_message("70,000원 상품을 비교해줘."))
-    assert result.model_rounds == 12
+    assert result.model_rounds == 4
     assert len(reviewer.requests) == 2
-    assert "task_alignment_failed" in main.requests[11].messages[-1]["content"]
+    assert "task_alignment_failed" in main.requests[3].messages[-1]["content"]
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
