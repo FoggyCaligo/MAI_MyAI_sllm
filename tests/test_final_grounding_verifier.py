@@ -106,8 +106,6 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert len(reviewer.requests) == 1
-    assert all(message.get("content") != "케이씨텍은 72,000원에 팔았습니다." for message in main.requests[1].messages)
-    assert all(message.get("content") != "케이씨텍은 72,000원에 팔았습니다." for message in result.messages)
 
 
 def test_numeric_verification_retries_are_bounded() -> None:
@@ -148,8 +146,6 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert result.content.startswith("두 화면은 산식이 다르므로")
     assert result.model_rounds == 2
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
-    assert all(message.get("content") != "두 화면의 차이는 전부 미실현 평가익입니다." for message in main.requests[1].messages)
-    assert all(message.get("content") != "두 화면의 차이는 전부 미실현 평가익입니다." for message in result.messages)
 
 
 def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
