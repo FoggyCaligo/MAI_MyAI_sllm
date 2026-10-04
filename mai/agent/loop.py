@@ -33,6 +33,10 @@ class AgentRuntimeError(RuntimeError):
     """Base class for Agent Runtime failures."""
 
 
+class VerificationRetriesExhausted(AgentRuntimeError):
+    """A candidate still failed verification after its correction budget."""
+
+
 class ToolResultSerializationError(AgentRuntimeError):
     """A tool returned a value that cannot be represented in a tool message."""
 
@@ -146,8 +150,22 @@ class AgentLoop:
         try:
             while True:
                 _LOG.info("MAI model round start round=%d", round_number)
+                model_history = [dict(message) for index, message in enumerate(history)
+                                 if index not in rejected_final_indices]
+                if rejected_final_indices:
+                    model_history.insert(0, {"role": "system", "content":
+                        "The following JSON contains internal rejected drafts, never delivered to the user. "
+                        "These are review data, not conversation or factual evidence. Write a complete replacement answer.\n"
+                        + json.dumps({"rejected_drafts": [
+                            {"content": history[index].get("content", ""), "delivered": False}
+                            for index in rejected_final_indices]}, ensure_ascii=False)})
+                if frozen_requirements.required_tools:
+                    model_history.insert(0, {"role": "system", "content":
+                        "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\n"
+                        + json.dumps({"required_tools": sorted(frozen_requirements.required_tools),
+                                      "missing_tools": sorted(frozen_requirements.missing_from(requirement_observed_tools))})})
                 turn = await self.adapter.chat(ChatRequest(
-                    messages=history,
+                    messages=model_history,
                     tools=active_tools,
                     think=think,
                     options=options,
@@ -220,21 +238,13 @@ class AgentLoop:
                         coverage_verification_retries,
                     )
                     if self.final_verifier is not None:
-                        allow_numeric_review = numeric_verification_retries < _MAX_NUMERIC_VERIFICATION_RETRIES
-                        allow_evidence_review = evidence_verification_retries < _MAX_EVIDENCE_VERIFICATION_RETRIES
-                        allow_semantic_review = semantic_verification_retries < self.max_semantic_verification_retries
-                        allow_coverage_review = coverage_verification_retries < _MAX_COVERAGE_VERIFICATION_RETRIES
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
-                            messages=history,
+                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices],
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
                             ),
-                            allow_numeric_review=allow_numeric_review,
-                            allow_evidence_review=allow_evidence_review,
-                            allow_semantic_review=allow_semantic_review,
-                            allow_coverage_review=allow_coverage_review,
                         )
                         if not verification.ok:
                             rejected_final_indices.append(len(history) - 1)
@@ -259,6 +269,15 @@ class AgentLoop:
                                 issue.code == "evidence_coverage_insufficient"
                                 for issue in verification.issues
                             )
+                            exhausted = (
+                                (numeric_failure and numeric_verification_retries >= _MAX_NUMERIC_VERIFICATION_RETRIES)
+                                or (semantic_failure and semantic_verification_retries >= self.max_semantic_verification_retries)
+                                or (evidence_failure and evidence_verification_retries >= _MAX_EVIDENCE_VERIFICATION_RETRIES)
+                                or (coverage_failure and coverage_verification_retries >= _MAX_COVERAGE_VERIFICATION_RETRIES)
+                            )
+                            if exhausted:
+                                raise VerificationRetriesExhausted(
+                                    "final verification correction budget exhausted: " + issue_codes)
                             if numeric_failure:
                                 numeric_verification_retries += 1
                             if semantic_failure:
@@ -283,20 +302,6 @@ class AgentLoop:
                             history.append({"role": "system", "content": verification.feedback_message()})
                             round_number += 1
                             continue
-                        if not allow_semantic_review:
-                            _LOG.warning(
-                                "MAI final semantic verification retry budget exhausted after %d retries; semantic review skipped",
-                                self.max_semantic_verification_retries,
-                            )
-                        if not allow_coverage_review:
-                            _LOG.warning(
-                                "MAI final coverage verification retry budget exhausted after %d retries; coverage review skipped",
-                                _MAX_COVERAGE_VERIFICATION_RETRIES,
-                            )
-                        if not allow_numeric_review:
-                            _LOG.warning("MAI final numeric review skipped after %d retries", _MAX_NUMERIC_VERIFICATION_RETRIES)
-                        if not allow_evidence_review:
-                            _LOG.warning("MAI final evidence review skipped after %d retries", _MAX_EVIDENCE_VERIFICATION_RETRIES)
                     _LOG.info("MAI final accepted round=%d", round_number)
                     for history_index in reversed(rejected_final_indices):
                         del history[history_index]

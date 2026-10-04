@@ -353,3 +353,25 @@ def test_runtime_rejects_empty_user_message() -> None:
     runtime = AgentRuntime(FakeAdapter([]), ToolRegistry())
     with pytest.raises(ValueError, match="non-empty"):
         run(runtime.run_user_message("   "))
+
+
+def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    draft = assistant_turn(content="unreleased draft")
+    draft.assistant_message["thinking"] = "private mistaken reasoning"
+    adapter = FakeAdapter([
+        draft,
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "evidence"}),)),
+        assistant_turn(content="approved answer"),
+    ])
+    result = run(AgentRuntime(adapter, registry).run_user_message(
+        "inspect", requirements=FrozenToolRequirements(frozenset({"echo"}))))
+    first = str(adapter.requests[0].messages)
+    assert '"missing_tools": ["echo"]' in first
+    retry = adapter.requests[1].messages
+    assert all(m.get("role") != "assistant" or m.get("content") != "unreleased draft" for m in retry)
+    assert "private mistaken reasoning" not in str(retry)
+    assert '"delivered": false' in str(retry)
+    assert "unreleased draft" not in str(result.messages)
+    assert any(m.get("content") == "approved answer" for m in result.messages)

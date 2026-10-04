@@ -55,6 +55,7 @@ Claim-level evidence grounding:
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Stable general knowledge does not require current-turn evidence merely because it is factual.
+- Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
 - Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
@@ -215,36 +216,27 @@ class FinalGroundingVerifier:
             messages=messages,
             tool_results=tool_results,
         )
+        issues: list[VerificationIssue] = []
         if allow_numeric_review and numeric_issue is not None:
-            self._log_result(
-                numeric="failed",
-                evidence="skipped",
-                alignment="skipped",
-                coverage="skipped",
-                action="skipped",
-                reasons=(numeric_issue.message,),
-            )
-            return FinalVerificationResult(ok=False, issues=(numeric_issue,))
+            issues.append(numeric_issue)
 
         if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
             reason = () if self.reviewer_adapter is None else ("alignment, evidence and coverage review retry budgets exhausted",)
             self._log_result(
-                numeric="pass" if allow_numeric_review else "skipped",
+                numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
                 evidence="skipped",
                 alignment="skipped",
                 coverage="skipped",
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=True)
+            return FinalVerificationResult(ok=not issues, issues=tuple(issues))
 
         review = await self._review_final(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
-        issues: list[VerificationIssue] = []
-
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
@@ -294,7 +286,7 @@ class FinalGroundingVerifier:
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
-            numeric="pass" if allow_numeric_review else "skipped",
+            numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
             evidence=review.evidence_verdict if allow_evidence_review else "skipped",
             alignment=review.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
@@ -432,36 +424,13 @@ class FinalGroundingVerifier:
                 claims=claims,
                 action_verdict=parsed.action_verdict,
             )
-        except TimeoutError:
-            _LOG.warning(
-                "MAI final verification reviewer timed out after %.1fs; failing open",
-                self.reviewer_timeout_seconds,
-            )
-            return FinalReview(
-                evidence_verdict="uncertain",
-                alignment_verdict="uncertain",
-                coverage_verdict="uncertain",
-            )
+        except TimeoutError as exc:
+            _LOG.warning("MAI final verification reviewer timed out")
+            raise RuntimeError("final reviewer timed out; release was not verified") from exc
         except ValidationError as exc:
-            _LOG.warning(
-                "MAI final reviewer violated structured output schema; failing open error=%s",
-                str(exc),
-            )
-            return FinalReview(
-                evidence_verdict="uncertain",
-                alignment_verdict="uncertain",
-                coverage_verdict="uncertain",
-            )
+            raise RuntimeError("final reviewer violated structured output schema") from exc
         except Exception as exc:
-            _LOG.warning(
-                "MAI final reviewer failed error_type=%s; failing open",
-                type(exc).__name__,
-            )
-            return FinalReview(
-                evidence_verdict="uncertain",
-                alignment_verdict="uncertain",
-                coverage_verdict="uncertain",
-            )
+            raise RuntimeError("final reviewer failed; release was not verified") from exc
 
     @staticmethod
     def _log_result(
