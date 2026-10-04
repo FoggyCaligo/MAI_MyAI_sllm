@@ -185,6 +185,7 @@ class AgentLoop:
 
                     missing = frozen_requirements.missing_from(requirement_observed_tools)
                     if missing:
+                        rejected_final_indices.append(len(history) - 1)
                         guard.after_requirement_rejection(missing)
                         missing_tools = sorted(missing)
                         requirement_correction_active = True
@@ -198,6 +199,8 @@ class AgentLoop:
                         history.append({
                             "role": "system",
                             "content": (
+                                "This rejected answer was not shown to the user. After using the required tools, "
+                                "provide the complete answer; do not assume the user has seen this draft. "
                                 "Your previous assistant turn attempted to finish before all frozen required native "
                                 "tools produced an execution result. The missing required tools are: "
                                 + ", ".join(missing_tools)
