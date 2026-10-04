@@ -265,6 +265,8 @@ class AgentLoop:
                                     coverage_verification_retries,
                                     _MAX_COVERAGE_VERIFICATION_RETRIES,
                                 )
+                                # Rejected finals were never delivered to the user.
+                                history.pop()
                                 history.append({"role": "system", "content": verification.feedback_message()})
                                 round_number += 1
                                 continue
