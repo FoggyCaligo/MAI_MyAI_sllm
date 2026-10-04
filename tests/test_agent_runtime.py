@@ -194,7 +194,7 @@ def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() ->
     )
 
     assert result.content == "done after required tool"
-    assert "I can answer without it." in str(adapter.requests[1].messages)
+    assert "I can answer without it." not in str(adapter.requests[1].messages)
     assert "I can answer without it." not in str(result.messages)
     assert any(message.get("role") == "tool" for message in result.messages)
     assert result.model_rounds == 3
@@ -373,5 +373,6 @@ def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
     assert all(m.get("role") != "assistant" or m.get("content") != "unreleased draft" for m in retry)
     assert "private mistaken reasoning" not in str(retry)
     assert '"delivered": false' in str(retry)
+    assert "unreleased draft" not in str(retry)
     assert "unreleased draft" not in str(result.messages)
     assert any(m.get("content") == "approved answer" for m in result.messages)

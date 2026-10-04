@@ -111,7 +111,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert len(reviewer.requests) == 2
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
-    assert rejected in str(main.requests[1].messages)
+    assert rejected not in str(main.requests[1].messages)
     assert all(message.get("content") != rejected for message in result.messages)
 
 

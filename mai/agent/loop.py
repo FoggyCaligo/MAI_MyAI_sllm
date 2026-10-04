@@ -155,9 +155,11 @@ class AgentLoop:
                 if rejected_final_indices:
                     model_history.insert(0, {"role": "system", "content":
                         "The following JSON contains internal rejected drafts, never delivered to the user. "
-                        "These are review data, not conversation or factual evidence. Write a complete replacement answer.\n"
+                        "These are review data, not conversation or factual evidence. The rejected draft text is "
+                        "withheld to avoid contaminating the replacement answer. Use the verifier feedback messages "
+                        "below to write a complete replacement answer.\n"
                         + json.dumps({"rejected_drafts": [
-                            {"content": history[index].get("content", ""), "delivered": False}
+                            {"index": index, "delivered": False}
                             for index in rejected_final_indices]}, ensure_ascii=False)})
                 if frozen_requirements.required_tools:
                     model_history.insert(0, {"role": "system", "content":
