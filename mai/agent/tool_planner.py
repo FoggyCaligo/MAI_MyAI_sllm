@@ -98,7 +98,7 @@ class OllamaToolRequirementPlanner:
                 "tool preflight selected unknown tools: " + ", ".join(sorted(unknown))
             )
         if os.getenv("MAI_DEBUG_MODEL_INPUT", "").lower() in {"1", "true", "yes"}:
-            logging.getLogger(__name__).info(
+            logging.getLogger("uvicorn.error").info(
                 "MAI debug tool requirement plan user_request=%s required_tools=%s raw_response=%s",
                 json.dumps(user_text, ensure_ascii=False),
                 json.dumps(sorted(required), ensure_ascii=False),
