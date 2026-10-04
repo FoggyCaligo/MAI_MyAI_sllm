@@ -105,6 +105,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.content == "케이씨텍은 70,000원에 팔았습니다."
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
+    assert "72000" in main.requests[1].messages[-1]["content"]
     assert len(reviewer.requests) == 1
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert any(message.get("content") == rejected for message in main.requests[1].messages)
@@ -112,20 +113,17 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
 
 
 def test_numeric_verification_retries_are_bounded() -> None:
-    main = SequenceAdapter([
-        "케이씨텍은 72,000원에 팔았습니다.",
-        "케이씨텍은 72,000원에 팔았습니다.",
-        "케이씨텍은 72,000원에 팔았습니다.",
-    ])
+    main = SequenceAdapter(["케이씨텍은 72,000원에 팔았습니다."] * 11)
     verifier = FinalGroundingVerifier(reviewer_adapter=None)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
     result = run(runtime.run_user_message("케이씨텍은 70,000원에 팔았어."))
 
     assert result.content == "케이씨텍은 72,000원에 팔았습니다."
-    assert result.model_rounds == 3
+    assert result.model_rounds == 11
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "numeric_grounding_failed" in main.requests[2].messages[-1]["content"]
+    assert all("72000" in request.messages[-1]["content"] for request in main.requests[1:])
 
 
 def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
@@ -149,6 +147,76 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert result.content.startswith("두 화면은 산식이 다르므로")
     assert result.model_rounds == 2
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
+
+
+def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
+    main = SequenceAdapter(["가격은 72,000원입니다."] * 12)
+    reviewer = ReviewerAdapter([
+        ("supported", "misaligned", ("The requested comparison is missing.",)),
+        ("supported", "aligned", ()),
+    ])
+    result = run(AgentRuntime(
+        main, ToolRegistry(),
+        final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
+    ).run_user_message("70,000원 상품을 비교해줘."))
+    assert result.model_rounds == 12
+    assert len(reviewer.requests) == 2
+    assert "task_alignment_failed" in main.requests[11].messages[-1]["content"]
+
+
+def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
+    main = SequenceAdapter(["검사 대상 답변입니다."] * 5)
+    reviewer = ReviewerAdapter([
+        ("unsupported", "aligned", ("Unsupported claim.",)),
+        ("unsupported", "aligned", ("Still unsupported.",)),
+        ("unsupported", "misaligned", ("Requested result missing.",)),
+        ("unsupported", "misaligned", ("Requested result still missing.",)),
+        ("unsupported", "misaligned", ("Both budgets exhausted.",)),
+    ])
+    result = run(AgentRuntime(
+        main, ToolRegistry(),
+        final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
+    ).run_user_message("결과를 알려줘."))
+    assert result.model_rounds == 5
+    assert len(reviewer.requests) == 5
+    assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
+    assert "task_alignment_failed" in main.requests[3].messages[-1]["content"]
+    assert "evidence_grounding_failed" not in main.requests[3].messages[-1]["content"]
+
+
+def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
+    reviewer = ReviewerAdapter([("unsupported", "misaligned", ("Unsupported claim.",))])
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="검증 대상 답변",
+        messages=({"role": "user", "content": "확인해줘"},),
+        tool_results=(),
+        allow_semantic_review=False,
+        allow_evidence_review=True,
+    ))
+    assert [issue.code for issue in result.issues] == ["evidence_grounding_failed"]
+
+
+def test_claim_grounding_failures_consume_evidence_budget() -> None:
+    main = SequenceAdapter(["근거 없는 설명입니다."] * 3)
+    review = {
+        "evidence_verdict": "unsupported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "근거 없는 설명",
+            "verdict": "unsupported",
+            "defect": "missing_evidence",
+            "reason": "No supporting observation.",
+        }],
+        "action_verdict": "not_applicable",
+    }
+    reviewer = StructuredReviewerAdapter([review] * 3)
+    result = run(AgentRuntime(
+        main, ToolRegistry(),
+        final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
+    ).run_user_message("설명해줘"))
+    assert result.model_rounds == 3
+    assert "claim_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
 def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
