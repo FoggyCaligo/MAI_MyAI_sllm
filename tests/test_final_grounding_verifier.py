@@ -4,6 +4,8 @@ import asyncio
 from copy import deepcopy
 import json
 import logging
+import pytest
+from mai.agent.loop import AgentRunFailure
 
 from mai.agent.runtime import AgentRuntime
 from mai.agent.verification import FinalGroundingVerifier
@@ -96,7 +98,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
         "케이씨텍은 72,000원에 팔았습니다.",
         "케이씨텍은 70,000원에 팔았습니다.",
     ])
-    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    reviewer = ReviewerAdapter([("supported", "aligned", ())] * 2)
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
@@ -106,9 +108,10 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 1
+    assert len(reviewer.requests) == 2
     rejected = "케이씨텍은 72,000원에 팔았습니다."
-    assert any(message.get("content") == rejected for message in main.requests[1].messages)
+    assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
+    assert rejected in str(main.requests[1].messages)
     assert all(message.get("content") != rejected for message in result.messages)
 
 
@@ -117,13 +120,9 @@ def test_numeric_verification_retries_are_bounded() -> None:
     verifier = FinalGroundingVerifier(reviewer_adapter=None)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
-    result = run(runtime.run_user_message("케이씨텍은 70,000원에 팔았어."))
+    with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
+        run(runtime.run_user_message("케이씨텍은 70,000원에 팔았어."))
 
-    assert result.content == "케이씨텍은 72,000원에 팔았습니다."
-    assert result.model_rounds == 3
-    assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
-    assert "numeric_grounding_failed" in main.requests[2].messages[-1]["content"]
-    assert all("72000" in request.messages[-1]["content"] for request in main.requests[1:])
 
 
 def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
@@ -154,14 +153,15 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
     reviewer = ReviewerAdapter([
         ("supported", "misaligned", ("The requested comparison is missing.",)),
         ("supported", "aligned", ()),
+        ("supported", "aligned", ()),
     ])
-    result = run(AgentRuntime(
-        main, ToolRegistry(),
-        final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
-    ).run_user_message("70,000원 상품을 비교해줘."))
-    assert result.model_rounds == 4
-    assert len(reviewer.requests) == 2
-    assert "task_alignment_failed" in main.requests[3].messages[-1]["content"]
+    with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
+        run(AgentRuntime(
+            main, ToolRegistry(),
+            final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
+        ).run_user_message("70,000원 상품을 비교해줘."))
+
+    assert len(reviewer.requests) == 3
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -173,15 +173,12 @@ def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
         ("unsupported", "misaligned", ("Requested result still missing.",)),
         ("unsupported", "misaligned", ("Both budgets exhausted.",)),
     ])
-    result = run(AgentRuntime(
-        main, ToolRegistry(),
-        final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
-    ).run_user_message("결과를 알려줘."))
-    assert result.model_rounds == 5
-    assert len(reviewer.requests) == 5
-    assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
-    assert "task_alignment_failed" in main.requests[3].messages[-1]["content"]
-    assert "evidence_grounding_failed" not in main.requests[3].messages[-1]["content"]
+    with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
+        run(AgentRuntime(
+            main, ToolRegistry(),
+            final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
+        ).run_user_message("결과를 알려줘."))
+
 
 
 def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
@@ -211,12 +208,12 @@ def test_claim_grounding_failures_consume_evidence_budget() -> None:
         "action_verdict": "not_applicable",
     }
     reviewer = StructuredReviewerAdapter([review] * 3)
-    result = run(AgentRuntime(
-        main, ToolRegistry(),
-        final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
-    ).run_user_message("설명해줘"))
-    assert result.model_rounds == 3
-    assert "claim_grounding_failed" in main.requests[1].messages[-1]["content"]
+    with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
+        run(AgentRuntime(
+            main, ToolRegistry(),
+            final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
+        ).run_user_message("설명해줘"))
+
 
 
 def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
@@ -258,18 +255,16 @@ def test_uncertain_review_does_not_block_release() -> None:
     assert result.model_rounds == 1
 
 
-def test_reviewer_parse_failure_fails_open() -> None:
+def test_reviewer_parse_failure_blocks_release() -> None:
     main = SequenceAdapter(["일반적인 설명입니다."])
     broken_reviewer = SequenceAdapter(["not-json"])
     verifier = FinalGroundingVerifier(reviewer_adapter=broken_reviewer)
 
-    result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("설명해줘"))
-
-    assert result.content == "일반적인 설명입니다."
-    assert result.model_rounds == 1
+    with pytest.raises(AgentRunFailure, match="structured output schema"):
+        run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("설명해줘"))
 
 
-def test_reviewer_timeout_fails_open_without_hanging(caplog) -> None:
+def test_reviewer_timeout_blocks_release_without_hanging(caplog) -> None:
     main = SequenceAdapter(["요청한 결과입니다."])
     reviewer = SlowReviewerAdapter(delay_seconds=0.05)
     verifier = FinalGroundingVerifier(
@@ -278,11 +273,9 @@ def test_reviewer_timeout_fails_open_without_hanging(caplog) -> None:
     )
     caplog.set_level(logging.WARNING, logger="uvicorn.error")
 
-    result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
+    with pytest.raises(AgentRunFailure, match="final reviewer"):
+        run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
 
-    assert result.content == "요청한 결과입니다."
-    assert result.model_rounds == 1
-    assert "reviewer timed out" in caplog.text
 
 
 def test_semantic_verification_retries_are_bounded() -> None:
@@ -607,7 +600,7 @@ def test_evidence_coverage_rejects_generic_answer_that_omits_available_results()
     assert "Do not invent unsupported facts" in feedback
 
 
-def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> None:
+def test_coverage_correction_exhaustion_blocks_release() -> None:
     main = SequenceAdapter([
         "공식 사이트를 확인해 주세요.",
         "행사 캘린더를 확인해 주세요.",
@@ -645,13 +638,9 @@ def test_coverage_correction_gets_two_chances_then_stops_blocking_release() -> N
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
-    result = run(runtime.run_user_message("근거에서 확인된 구체적인 행사 정보를 알려줘."))
+    with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
+        run(runtime.run_user_message("근거에서 확인된 구체적인 행사 정보를 알려줘."))
 
-    assert result.content == "여전히 짧지만 세 번째 답변입니다."
-    assert result.model_rounds == 3
-    assert "evidence_coverage_insufficient" in main.requests[1].messages[-1]["content"]
-    assert "evidence_coverage_insufficient" in main.requests[2].messages[-1]["content"]
-    assert len(reviewer.requests) == 3
 
 
 def test_reviewer_has_no_default_deadline() -> None:

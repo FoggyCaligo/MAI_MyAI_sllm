@@ -136,7 +136,7 @@ Coverage는 “더 많은 정보를 찾아올 수 있었는가”가 아니다.
 - optional background 생략
 - evidence 밖의 추정 미제공
 
-Coverage correction budget은 grounding/semantic budget과 별도이며 **최대 2회**다. Budget 소진 후에는 coverage 부족만으로 더 block하지 않는다.
+Coverage correction budget은 grounding/semantic budget과 별도이며 **최대 2회**다. Budget 소진 후에도 coverage 결함이 남으면 실행 실패로 종료한다.
 
 ### 6.5 Action outcome
 
@@ -146,7 +146,7 @@ Mutation tool invocation의 success는 그 tool contract가 성공했다는 evid
 
 Reviewer timeout, structured-output schema violation, reviewer exception은 명시적으로 log하고 semantic 내용을 문자열 fallback으로 복원하지 않는다.
 
-이 경우 reviewer 결과는 `uncertain`으로 취급하고 candidate를 **fail-open**한다. Reviewer 장애 때문에 전체 요청을 service error로 종료하지 않고 사용자에게 답을 반환하는 가용성 우선 정책이다. 이 fail-open은 deterministic numeric grounding 실패를 성공으로 바꾸는 문자열 fallback이 아니다.
+Reviewer 장애는 명시적인 실행 실패다. 검증되지 않은 candidate를 승인하거나 문자열 fallback으로 복원하지 않는다. Numeric·evidence·alignment·coverage 검증은 독립적으로 실행하며, correction budget 소진 후에도 결함이 남으면 실패로 종료한다.
 
 ---
 
@@ -377,3 +377,7 @@ Funnel CLI/config/status failure는 startup failure로 드러낸다.
 - 특정 주제/관계/identity를 문자열 rule로 판정
 
 허용되는 recovery는 **실패 사실을 유지한 채 이미 확보된 evidence로 truthful partial answer를 만드는 것**이다.
+
+### 재시도 입력과 거절 초안
+
+필수 툴의 frozen 목록과 missing 상태는 첫 모델 호출부터 구조화해 제공한다. 후속 요청은 기존 미해결 요청과 함께 LLM이 해석하며 문자열 규칙으로 분기하지 않는다. 거절된 초안은 승인 전까지 내부에 유지하되, 모델 입력에서는 일반 assistant 이력에서 제외하고 delivered=false인 검토 자료로 제공한다. 거절된 thinking은 전달하지 않는다. 승인 후에는 거절된 초안만 삭제하며 승인된 최종 답변은 남긴다.
