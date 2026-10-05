@@ -17,7 +17,6 @@ from .guards import (
     call_fingerprint,
     content_fingerprint,
 )
-from .requirements import FrozenToolRequirements
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
@@ -124,19 +123,13 @@ class AgentLoop:
         *,
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
-        requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        requirement_observed_tools: set[str] = set()
-        frozen_requirements = requirements or FrozenToolRequirements(frozenset())
-        all_tools = self.registry.native_schemas()
-        all_tool_names = frozenset(self.registry.names())
-        active_tools = all_tools
-        active_tool_names = all_tool_names
-        requirement_correction_active = False
+        active_tools = self.registry.native_schemas()
+        active_tool_names = frozenset(self.registry.names())
         guard = AgentGuard(self.guard_config)
         round_number = 1
         semantic_verification_retries = 0
@@ -161,11 +154,6 @@ class AgentLoop:
                         + json.dumps({"rejected_drafts": [
                             {"index": index, "delivered": False}
                             for index in rejected_final_indices]}, ensure_ascii=False)})
-                if frozen_requirements.required_tools:
-                    model_history.insert(0, {"role": "system", "content":
-                        "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\n"
-                        + json.dumps({"required_tools": sorted(frozen_requirements.required_tools),
-                                      "missing_tools": sorted(frozen_requirements.missing_from(requirement_observed_tools))})})
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -203,34 +191,6 @@ class AgentLoop:
                         round_number += 1
                         continue
 
-                    missing = frozen_requirements.missing_from(requirement_observed_tools)
-                    if missing:
-                        rejected_final_indices.append(len(history) - 1)
-                        guard.after_requirement_rejection(missing)
-                        missing_tools = sorted(missing)
-                        requirement_correction_active = True
-                        active_tools = self.registry.native_schemas(missing_tools)
-                        active_tool_names = frozenset(missing_tools)
-                        _LOG.warning(
-                            "MAI final rejected for missing required tools round=%d missing=%s",
-                            round_number,
-                            ",".join(missing_tools),
-                        )
-                        history.append({
-                            "role": "system",
-                            "content": (
-                                "Your previous assistant turn attempted to finish before all frozen required native "
-                                "tools produced an execution result. The missing required tools are: "
-                                + ", ".join(missing_tools)
-                                + ". Continue the same task instead of finishing. During this correction round, only "
-                                "the still-missing required tool schemas are available. Call each missing required tool. "
-                                "If a prior call failed before its handler started because of invalid arguments or an "
-                                "unknown tool contract, correct the tool call and try again. These requirements remain "
-                                "frozen for this run."
-                            ),
-                        })
-                        round_number += 1
-                        continue
                     _LOG.info(
                         "MAI final candidate round=%d chars=%d semantic_retries=%d numeric_retries=%d coverage_retries=%d",
                         round_number,
@@ -348,11 +308,6 @@ class AgentLoop:
                     executions.append(execution)
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
-                    if execution.handler_started:
-                        was_missing = execution.name in frozen_requirements.missing_from(requirement_observed_tools)
-                        requirement_observed_tools.add(execution.name)
-                        if was_missing:
-                            guard.note_requirement_progress()
                     _LOG.info(
                         "MAI tool result round=%d name=%s ok=%s handler_started=%s error_type=%s elapsed_ms=%d visible_chars=%d",
                         round_number,
@@ -395,16 +350,6 @@ class AgentLoop:
                         "The completed success and failure tool results above remain authoritative. "
                         "Do not repeat the same tool round unchanged; choose a different approach or provide the final answer."
                     )
-                if requirement_correction_active:
-                    missing_after_round = frozen_requirements.missing_from(requirement_observed_tools)
-                    if missing_after_round:
-                        missing_after_names = sorted(missing_after_round)
-                        active_tools = self.registry.native_schemas(missing_after_names)
-                        active_tool_names = frozenset(missing_after_names)
-                    else:
-                        requirement_correction_active = False
-                        active_tools = all_tools
-                        active_tool_names = all_tool_names
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})

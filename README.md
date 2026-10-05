@@ -23,13 +23,7 @@ Web/API authentication
   ↓
 AccessPrincipal(user_id, db_id, role)
   ↓
-LLM tool-requirement preflight (selected model, think=False)
-  ↓
-FrozenToolRequirements
-  ↓
 Main Agent + Ollama native tool calls
-  ↓
-Required-tool execution gate (handler_started)
   ↓
 Candidate Final
   ↓
@@ -47,17 +41,11 @@ Final Response
 Background memory extraction / admission
 ```
 
-### LLM preflight + structural enforcement
+### Native tool selection + evidence verification
 
-현재 production은 main agent 실행 전에 선택된 동일 모델로 tool-requirement preflight를 한 번 호출한다. Preflight는 최근 user/assistant 대화와 등록된 tool의 이름·설명만 보고 `required_tools`를 strict structured output으로 반환한다. 인자 schema는 main agent에게만 제공되며, preflight는 tool을 실행하거나 답을 작성하지 않는다.
+Main agent가 전체 native tool schema를 보고 필요한 tool을 직접 선택한다. 사전 tool 필요성 판정, frozen requirements, 필수 tool 실행 여부 gate는 제거했다. Verifier는 호출 횟수나 특정 tool 사용 여부가 아니라 답변의 각 material claim을 실제 user/tool evidence와 비교한다. 근거가 부족하면 main agent가 추가 근거를 얻거나 주장을 축소하고 한계를 명시한다.
 
-`AgentRuntime`은 Ollama adapter에 `OllamaToolRequirementPlanner`를 기본 연결하고, 결과를 `FrozenToolRequirements`로 고정한다. 명시적인 requirements가 전달되면 preflight를 생략한다.
-
-Main agent는 전체 native tool schema로 작업을 시작한다. Final을 시도할 때 `AgentLoop`는 고정된 필수 tool 집합과 실제 `handler_started` 관찰을 비교한다. 누락이 있으면 해당 tool schema만 노출하는 correction round로 돌아가고, 모두 실행된 뒤 전체 schema를 복원한다.
-
-이 gate의 기준은 **handler 실행 시작 여부**이며 성공 여부가 아니다. Handler가 시작된 뒤 실패한 호출도 실행 요건은 충족한다. Unknown tool, invalid arguments, guard 차단처럼 handler가 시작되지 않은 호출은 충족하지 않는다. 답변의 성공 주장과 근거는 뒤의 verifier가 별도로 검토한다.
-
-Preflight의 schema 위반이나 알 수 없는 tool 선택은 실제 오류로 드러낸다. 의미 판단은 LLM이 수행하고, 실행 여부 확인은 구조적으로 처리하며 문자열 heuristic으로 tool 필요성을 판정하지 않는다.
+Reviewer에는 현재 요청, 대화, 모든 tool 결과, candidate 전체를 전달한다. 과거 assistant 발화나 모델 지식은 사실 근거로 취급하지 않는다. 검증 실패와 correction budget 소진은 오류로 드러난다.
 
 ---
 
@@ -276,7 +264,7 @@ MAIN_MODEL=ornith-1.5:9b
 OLLAMA_REQUEST_TIMEOUT_SECONDS=240
 ```
 
-`OLLAMA_REQUEST_TIMEOUT_SECONDS`는 선택 모델의 agent/preflight/fact-extraction 요청에 적용되는 기본 timeout이며, 미설정 시 120초다. Final semantic reviewer는 별도로 기본 15초 timeout을 사용한다.
+`OLLAMA_REQUEST_TIMEOUT_SECONDS`는 Ollama 요청의 transport timeout을 설정한다. Final reviewer와 fact extractor에는 기본 15초 작업 제한이 없다. 명시적으로 timeout을 설정한 경우에만 작업 제한을 적용한다.
 
 `MAI_CWD`가 설정돼 있으면 상대 로컬 경로의 기준으로 사용한다. 비어 있으면 process working directory를 사용하며, OS 사용자 home으로 자동 변경하지 않는다.
 

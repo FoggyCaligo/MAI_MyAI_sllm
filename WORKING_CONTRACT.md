@@ -32,9 +32,9 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent가 system prompt, recent dialogue, authoritative runtime context, 등록된 native tool schema를 보고 필요한 tool을 직접 선택한다.
 
-이 선택은 preflight LLM 호출의 지연을 제거하기 위한 의도적인 production 정책이다.
+사전 판단과 실행 여부 gate를 제거하고 답변의 근거 검증에 책임을 둔다.
 
-`OllamaToolRequirementPlanner`, `FrozenToolRequirements`, missing-requirement correction support는 코드와 단위 테스트에 남아 있을 수 있지만, production `MAIRuntime.run_user_message()`는 planner를 호출하거나 frozen requirements를 전달하지 않는다.
+Planner, frozen requirements, missing-requirement correction support는 runtime API와 코드에서 제거했다. 모든 native schema는 correction round에서도 계속 사용 가능하다.
 
 따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 main agent prompt와 schema가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
 
