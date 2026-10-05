@@ -58,15 +58,14 @@ Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
-- Stable general knowledge does not require current-turn evidence merely because it is factual.
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
 - Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 
 Claim-to-evidence audit:
-- Audit material claims that depend on current, user-specific, or task-specific facts against identifiable user statements or indexed tool results, including claims made without any tool call.
-- Stable general knowledge may be used without current-turn evidence. Model recall alone does not establish current, user-specific, or task-specific facts; prior assistant assertions and a tool's name or invocation alone do not establish them either. Such claims without supporting evidence are unsupported with defect "missing_evidence".
+- Audit every material factual claim against identifiable user statements or indexed tool results, including claims made without any tool call.
+- Model knowledge, prior assistant assertions, and a tool's name or invocation alone do not establish a fact. A plausible claim without supporting evidence is unsupported with defect "missing_evidence".
 - For each unsupported claim, identify the exact assertion and the missing, contradictory, stale, or narrower evidence in its reason. Do not merely count tool calls or require a particular tool.
 - Tool availability creates no obligation to use it. A fully supported answer can pass without tools; an answer with many successful calls still fails if its claims exceed their results.
 - Prices, availability, current specifications, recommendations dependent on those facts, and time-relative conclusions need evidence at the relevant date and scope. Do not substitute recalled general knowledge for observed evidence.

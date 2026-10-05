@@ -10,3 +10,9 @@ def test_tool_preflight_requires_current_time_for_relative_temporal_comparison()
 def test_final_reviewer_checks_temporal_consistency() -> None:
     assert "temporal framing is consistent with the current date/time" in FINAL_REVIEW_PROMPT
     assert "dates or timestamps established by the supplied evidence" in FINAL_REVIEW_PROMPT
+
+
+def test_final_reviewer_does_not_exempt_stable_general_knowledge() -> None:
+    assert "Stable general knowledge" not in FINAL_REVIEW_PROMPT
+    assert "Audit every material factual claim" in FINAL_REVIEW_PROMPT
+    assert "Model knowledge" in FINAL_REVIEW_PROMPT
