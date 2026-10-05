@@ -261,7 +261,7 @@ python -m pip install -e ".[dev]"
 
 ```env
 MAIN_MODEL=ornith-1.5:9b
-OLLAMA_REQUEST_TIMEOUT_SECONDS=240
+OLLAMA_REQUEST_TIMEOUT_SECONDS=300
 ```
 
 `OLLAMA_REQUEST_TIMEOUT_SECONDS`는 Ollama 요청의 transport timeout을 설정한다. Final reviewer와 fact extractor에는 기본 15초 작업 제한이 없다. 명시적으로 timeout을 설정한 경우에만 작업 제한을 적용한다.
@@ -311,3 +311,5 @@ MAI는 contract violation을 문자열 비교나 임시 fallback으로 성공처
 개별 tool 실패 이후 agent가 정상적으로 final을 생성할 수 있다면 확보된 결과와 실패를 구분한 truthful partial answer를 전달한다. 실제 fatal runtime 실패는 별도 finalizer로 대체하지 않고 오류로 전달한다. Final reviewer 장애와 미해결 검증의 retry budget 소진은 실행 실패로 전달한다.
 
 거절된 초안은 승인 전까지 내부 이력에 보관하지만, 재시도 모델 입력에서는 일반 assistant 대화에서 제외하고 delivered=false인 JSON 검토 자료로 전달한다. 거절된 thinking은 재전송하지 않는다. 최종 승인 후 거절된 초안만 삭제하며 승인된 답변과 실제 이전 대화는 보존한다. 고정된 필수 툴 목록과 누락 상태는 첫 라운드부터 전달한다.
+
+Reviewer 호출의 일시적인 연결/timeout 오류, 429·5xx, 응답 protocol 및 JSON/schema 오류는 최초 호출 이후 최대 2회 재시도한다. 유효한 거절 판정은 재추첨하지 않고 본체 수정으로 보낸다. 설정 오류와 재시도 소진은 실제 오류로 종료한다. 각 검증 입력에는 `current_time` 툴과 동일한 OS 시계 구현으로 읽은 timezone-aware 현재 시각을 제공한다. 현재 시각은 자료의 최신성이나 사용자 timezone을 대신 증명하지 않는다. Ollama 요청 timeout 기본값 및 예시 설정은 300초이며, 기존 `.env`의 명시 값이 있으면 그 값이 우선한다.

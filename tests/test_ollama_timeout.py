@@ -39,3 +39,8 @@ def test_model_config_reads_request_timeout_from_env(monkeypatch: pytest.MonkeyP
 def test_model_config_rejects_non_positive_request_timeout() -> None:
     with pytest.raises(ValueError, match="request_timeout_seconds must be positive"):
         ModelConfig(model="test", request_timeout_seconds=0)
+
+
+def test_default_timeout_is_three_hundred_seconds(monkeypatch) -> None:
+    monkeypatch.delenv("OLLAMA_REQUEST_TIMEOUT_SECONDS", raising=False)
+    assert ModelConfig(model="test").request_timeout_seconds == 300.0

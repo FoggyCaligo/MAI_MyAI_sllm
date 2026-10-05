@@ -257,7 +257,7 @@ def test_uncertain_review_does_not_block_release() -> None:
 
 def test_reviewer_parse_failure_blocks_release() -> None:
     main = SequenceAdapter(["일반적인 설명입니다."])
-    broken_reviewer = SequenceAdapter(["not-json"])
+    broken_reviewer = SequenceAdapter(["not-json"] * 3)
     verifier = FinalGroundingVerifier(reviewer_adapter=broken_reviewer)
 
     with pytest.raises(AgentRunFailure, match="structured output schema"):
@@ -666,3 +666,53 @@ def test_reviewer_receives_all_evidence_and_unabridged_candidate() -> None:
     assert len(payload["tool_results_in_execution_order"]) == 12
     assert [item["index"] for item in payload["tool_results_in_execution_order"]] == list(range(12))
     assert [item["result"] for item in payload["tool_results_in_execution_order"]] == [item[3] for item in evidence]
+
+
+def test_reviewer_recovers_after_two_invalid_outputs() -> None:
+    valid = json.dumps({"evidence_verdict": "supported", "alignment_verdict": "aligned",
+        "coverage_verdict": "sufficient", "coverage_reasons": [], "reasons": [],
+        "claims": [], "action_verdict": "not_applicable"})
+    reviewer = SequenceAdapter(["not-json", "{}", valid])
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
+    assert result.ok
+    assert len(reviewer.requests) == 3
+
+
+@pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
+def test_reviewer_retries_only_transient_server_statuses(status, attempts) -> None:
+    from ollama import ResponseError
+    from mai.llm.ollama import OllamaRequestError
+
+    class FailingReviewer:
+        count = 0
+        async def chat(self, request):
+            self.count += 1
+            try:
+                raise ResponseError("server failure", status_code=status)
+            except ResponseError as exc:
+                raise OllamaRequestError("request failed") from exc
+
+    reviewer = FailingReviewer()
+    with pytest.raises(RuntimeError, match="release was not verified"):
+        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+            candidate="説明", messages=[], tool_results=()))
+    assert reviewer.count == attempts
+
+
+def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
+    import mai.agent.verification as module
+    clock = {"local_iso": "2031-02-03T04:05:06+09:00", "utc_iso": "2031-02-02T19:05:06+00:00"}
+    monkeypatch.setattr(module, "current_time", lambda: clock)
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="설명", messages=[], tool_results=()))
+    assert json.loads(reviewer.requests[0].messages[1]["content"])["authoritative_current_time"] == clock
+
+
+def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
+    reviewer = ReviewerAdapter([("unsupported", "aligned", ("Missing evidence",))])
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="확인했습니다", messages=[], tool_results=()))
+    assert not result.ok
+    assert len(reviewer.requests) == 1
