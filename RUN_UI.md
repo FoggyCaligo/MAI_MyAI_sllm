@@ -141,13 +141,13 @@ Memory fact extraction은 해당 chat turn에서 실제 사용한 동일 model�
 
 ---
 
-## 6. Direct tool selection과 final verifier
+## 6. Tool preflight와 final verifier
 
-현재 production request는 main agent 전에 model-based tool requirement preflight를 호출하지 않는다. Main agent가 현재 등록된 native tool schema와 system prompt를 보고 필요한 tool을 직접 선택한다.
+현재 production request는 main agent 전에 model-based tool requirement preflight를 호출한다. 선택된 동일 모델이 `think=False`와 strict structured output으로 필수 tool 집합을 판정한다.
 
-Planner와 frozen requirement 실행 gate는 제거했다. Verifier는 실제 근거와 답변 주장을 검증하고 main agent가 필요한 추가 tool을 직접 선택한다.
+판정된 tool은 frozen requirement가 되며, 해당 handler가 시작되기 전에 main agent가 final을 시도하면 누락 tool만 노출하는 correction round로 돌아간다.
 
-따라서 production에는 required-tool execution을 강제하는 별도 gate가 없다. Final answer는 release 전에 verifier를 거친다. Deterministic numeric grounding 뒤의 semantic reviewer는 현재 선택된 동일 chat model을 `think=False`, `tools=()`로 추가 1회 호출한다. Candidate가 거절되어 재작성되면 reviewer 호출도 다시 발생할 수 있다.
+Final answer는 required-tool gate를 충족한 뒤 verifier를 거친다. Deterministic numeric grounding 뒤의 semantic reviewer는 현재 선택된 동일 chat model을 `think=False`, `tools=()`로 추가 1회 호출한다. Candidate가 거절되어 재작성되면 reviewer 호출도 다시 발생할 수 있다.
 
 현재 주요 검증 축:
 

@@ -23,7 +23,13 @@ Web/API authentication
   ↓
 AccessPrincipal(user_id, db_id, role)
   ↓
+LLM tool-requirement preflight (selected model, think=False)
+  ↓
+FrozenToolRequirements
+  ↓
 Main Agent + Ollama native tool calls
+  ↓
+Required-tool execution gate (handler_started)
   ↓
 Candidate Final
   ↓
@@ -41,11 +47,13 @@ Final Response
 Background memory extraction / admission
 ```
 
-### Native tool selection + evidence verification
+### Tool preflight + required-tool execution gate
 
-Main agent가 전체 native tool schema를 보고 필요한 tool을 직접 선택한다. 사전 tool 필요성 판정, frozen requirements, 필수 tool 실행 여부 gate는 제거했다. Verifier는 호출 횟수나 특정 tool 사용 여부가 아니라 답변의 각 material claim을 실제 user/tool evidence와 비교한다. 근거가 부족하면 main agent가 추가 근거를 얻거나 주장을 축소하고 한계를 명시한다.
+Main agent 실행 전에 선택된 동일 모델을 `think=False`, `tools=()`로 한 번 호출해, 현재 요청을 완료하려면 어떤 native tool 결과가 반드시 필요한지 판정한다. 판정 결과는 `FrozenToolRequirements`로 고정되며 main agent가 final을 시도할 때까지 바뀌지 않는다.
 
-Reviewer에는 현재 요청, 대화, 모든 tool 결과, candidate 전체를 전달한다. 과거 assistant 발화나 모델 지식은 사실 근거로 취급하지 않는다. 검증 실패와 correction budget 소진은 오류로 드러난다.
+Main agent가 required tool을 실행하지 않고 final을 시도하면 해당 tool schema만 노출하는 correction round로 돌아간다. 등록된 handler가 실제로 시작되어야 실행 요건을 충족한다. Handler가 시작된 뒤 실패한 결과도 관측된 실행 결과로 인정하지만, unknown tool·invalid arguments·guard 차단은 충족하지 않는다.
+
+Preflight는 tool 사용 필요성을 판정하고 execution gate는 그 결과가 실제 실행됐는지 확인한다. Final verifier는 호출 여부 대신 답변의 각 material claim을 실제 user/tool evidence와 비교한다. 세 단계의 책임을 합치지 않는다.
 
 ---
 
