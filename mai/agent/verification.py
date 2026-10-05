@@ -20,10 +20,14 @@ import logging
 import re
 from typing import Any, Literal, Mapping, Sequence
 
+import httpx
+from ollama import ResponseError
+
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ..llm.models import ChatRequest
-from ..llm.ollama import OllamaAdapter
+from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
+from ..tools.time import current_time
 
 
 ToolVerificationResult = tuple[str, bool, str | None, str]
@@ -61,11 +65,16 @@ Claim-level evidence grounding:
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 
 Claim-to-evidence audit:
-- Audit every material factual claim against identifiable user statements or indexed tool results, including claims made without any tool call.
-- Model knowledge, prior assistant assertions, and a tool's name or invocation alone do not establish a fact. A plausible claim without supporting evidence is unsupported with defect "missing_evidence".
+- Audit material claims that depend on current, user-specific, or task-specific facts against identifiable user statements or indexed tool results, including claims made without any tool call.
+- Stable general knowledge may be used without current-turn evidence. Model recall alone does not establish current, user-specific, or task-specific facts; prior assistant assertions and a tool's name or invocation alone do not establish them either. Such claims without supporting evidence are unsupported with defect "missing_evidence".
 - For each unsupported claim, identify the exact assertion and the missing, contradictory, stale, or narrower evidence in its reason. Do not merely count tool calls or require a particular tool.
 - Tool availability creates no obligation to use it. A fully supported answer can pass without tools; an answer with many successful calls still fails if its claims exceed their results.
 - Prices, availability, current specifications, recommendations dependent on those facts, and time-relative conclusions need evidence at the relevant date and scope. Do not substitute recalled general knowledge for observed evidence.
+
+Temporal authority:
+- authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
+- Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
+- If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
 
 Evidence scope preservation:
 - A final claim must not be semantically broader than the evidence supporting it.
@@ -373,6 +382,7 @@ class FinalGroundingVerifier:
             )
         ]
         payload = {
+            "authoritative_current_time": current_time(),
             "current_user_request": current_user_request,
             "conversation_context": context_messages,
             "tool_results_in_execution_order": tool_evidence,
@@ -395,11 +405,7 @@ class FinalGroundingVerifier:
             len(candidate),
         )
         try:
-            turn = await asyncio.wait_for(
-                self.reviewer_adapter.chat(request),
-                timeout=self.reviewer_timeout_seconds,
-            )
-            parsed = _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+            parsed = await self._request_review(request)
             reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
             coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
             claims = tuple(
@@ -438,6 +444,35 @@ class FinalGroundingVerifier:
             raise RuntimeError("final reviewer violated structured output schema") from exc
         except Exception as exc:
             raise RuntimeError("final reviewer failed; release was not verified") from exc
+
+    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
+        # Infrastructure/output retries do not re-roll a valid rejection verdict.
+        for attempt in range(1, 4):
+            try:
+                turn = await asyncio.wait_for(
+                    self.reviewer_adapter.chat(request),
+                    timeout=self.reviewer_timeout_seconds,
+                )
+                return _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+            except Exception as exc:
+                retryable = isinstance(exc, (
+                    TimeoutError, OllamaChatTimeoutError, OllamaProtocolError,
+                    ValidationError, httpx.NetworkError, httpx.TimeoutException,
+                    httpx.RemoteProtocolError,
+                ))
+                if isinstance(exc, OllamaRequestError):
+                    cause = exc.__cause__
+                    retryable = isinstance(cause, ResponseError) and (
+                        cause.status_code == 429 or 500 <= cause.status_code <= 599
+                    )
+                _LOG.warning(
+                    "MAI final reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    attempt, type(exc).__name__, retryable,
+                )
+                if not retryable or attempt == 3:
+                    raise
+                await asyncio.sleep(0.25 * attempt)
+        raise AssertionError("unreachable reviewer retry state")
 
     @staticmethod
     def _log_result(

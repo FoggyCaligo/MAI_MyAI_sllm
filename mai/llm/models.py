@@ -13,7 +13,7 @@ ThinkSetting = bool | str
 
 
 def _request_timeout_seconds_from_env() -> float:
-    return float(os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS", "120"))
+    return float(os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS", "300"))
 
 
 @dataclass(frozen=True, slots=True)
