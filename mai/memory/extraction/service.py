@@ -52,8 +52,8 @@ class FactExtractor(Protocol):
 class OllamaFactExtractor:
     """Small judgment-only post-response extractor using an Ollama adapter."""
 
-    def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float = 15.0) -> None:
-        if timeout_seconds <= 0:
+    def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float | None = None) -> None:
+        if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.adapter = adapter
         self.timeout_seconds = timeout_seconds

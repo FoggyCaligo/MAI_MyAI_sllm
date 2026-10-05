@@ -650,3 +650,19 @@ def test_reviewer_has_no_default_deadline() -> None:
     result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
     assert result.ok
     assert len(reviewer.requests) == 1
+
+
+def test_reviewer_receives_all_evidence_and_unabridged_candidate() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    evidence = tuple(("file_read", True, None, "a" * 5000 + f" unique-{index}") for index in range(12))
+    candidate = "candidate " * 1000
+    request = "request " * 1000
+    run(verifier._review_final(candidate=candidate, messages=[{"role": "user", "content": request},
+        {"role": "assistant", "content": candidate}], tool_results=evidence))
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert payload["candidate_final"] == candidate
+    assert payload["current_user_request"] == request
+    assert len(payload["tool_results_in_execution_order"]) == 12
+    assert [item["index"] for item in payload["tool_results_in_execution_order"]] == list(range(12))
+    assert [item["result"] for item in payload["tool_results_in_execution_order"]] == [item[3] for item in evidence]

@@ -9,7 +9,6 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from mai.agent import AgentRunFailure, AgentRuntime, GuardConfig
-from mai.agent.requirements import FrozenToolRequirements
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry
 
@@ -111,127 +110,6 @@ def test_tool_failure_is_returned_as_visible_structured_tool_result() -> None:
     payload = json.loads(result.tool_executions[0].content)
     assert payload == {"ok": False, "error_type": "PermissionError", "message": "denied"}
     assert result.tool_executions[0].handler_started is True
-
-
-def test_required_tool_handler_failure_still_satisfies_preflight_obligation() -> None:
-    registry = ToolRegistry()
-
-    def terminal(command: str):
-        raise RuntimeError(f"command completed unsuccessfully: {command}")
-
-    registry.add(
-        name="terminal_run",
-        description="Test terminal.",
-        input_model=CommandInput,
-        handler=terminal,
-    )
-    adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="terminal_run", arguments={"command": "pytest"}),)),
-        assistant_turn(content="pytest ran and reported failures."),
-    ])
-    requirements = FrozenToolRequirements(frozenset({"terminal_run"}))
-
-    result = run(
-        AgentRuntime(adapter, registry).run_user_message(
-            "run pytest",
-            requirements=requirements,
-        )
-    )
-
-    assert result.content == "pytest ran and reported failures."
-    assert result.tool_executions[0].ok is False
-    assert result.tool_executions[0].handler_started is True
-
-
-def test_required_tool_argument_failure_returns_model_to_correction_round() -> None:
-    registry = ToolRegistry()
-    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
-    registry.add(name="other", description="Other tool.", input_model=EchoInput, handler=lambda text: text)
-    adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="echo", arguments={}),)),
-        assistant_turn(content="I am done."),
-        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "corrected"}),)),
-        assistant_turn(content="I used the required tool."),
-    ])
-    requirements = FrozenToolRequirements(frozenset({"echo"}))
-
-    result = run(
-        AgentRuntime(adapter, registry).run_user_message(
-            "use echo",
-            requirements=requirements,
-        )
-    )
-
-    assert result.content == "I used the required tool."
-    assert result.model_rounds == 4
-    assert result.tool_executions[0].error_type == "ToolArgumentsError"
-    assert result.tool_executions[0].handler_started is False
-    assert result.tool_executions[1].ok is True
-    correction_message = adapter.requests[2].messages[-1]
-    assert correction_message["role"] == "system"
-    assert "missing required tools" in correction_message["content"]
-    assert "echo" in correction_message["content"]
-    assert _request_tool_names(adapter.requests[2]) == ["echo"]
-    assert set(_request_tool_names(adapter.requests[3])) == {"echo", "other"}
-
-
-def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() -> None:
-    registry = ToolRegistry()
-    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
-    registry.add(name="other", description="Other tool.", input_model=EchoInput, handler=lambda text: text)
-    adapter = FakeAdapter([
-        assistant_turn(content="I can answer without it."),
-        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "required"}),)),
-        assistant_turn(content="done after required tool"),
-    ])
-    requirements = FrozenToolRequirements(frozenset({"echo"}))
-
-    result = run(
-        AgentRuntime(adapter, registry).run_user_message(
-            "do the task",
-            requirements=requirements,
-        )
-    )
-
-    assert result.content == "done after required tool"
-    assert "I can answer without it." not in str(adapter.requests[1].messages)
-    assert "I can answer without it." not in str(result.messages)
-    assert any(message.get("role") == "tool" for message in result.messages)
-    assert result.model_rounds == 3
-    correction_message = adapter.requests[1].messages[-1]
-    assert correction_message["role"] == "system"
-    assert "Your previous assistant turn attempted to finish" in correction_message["content"]
-    assert any(message.get("role") == "assistant" and message.get("content") == result.content for message in result.messages)
-    assert "echo" in correction_message["content"]
-    assert _request_tool_names(adapter.requests[1]) == ["echo"]
-    assert set(_request_tool_names(adapter.requests[2])) == {"echo", "other"}
-
-
-def test_repeated_final_omission_of_same_requirement_stops_as_no_progress() -> None:
-    registry = ToolRegistry()
-    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
-    registry.add(name="other", description="Other tool.", input_model=EchoInput, handler=lambda text: text)
-    adapter = FakeAdapter([
-        assistant_turn(content="skip once"),
-        assistant_turn(content="skip twice"),
-        assistant_turn(content="skip three times"),
-    ])
-    requirements = FrozenToolRequirements(frozenset({"echo"}))
-    runtime = AgentRuntime(
-        adapter,
-        registry,
-        guard_config=GuardConfig(max_no_progress_rounds=2),
-    )
-
-    with pytest.raises(AgentRunFailure) as exc_info:
-        run(runtime.run_user_message("use the required tool", requirements=requirements))
-
-    failure = exc_info.value
-    assert failure.error_type == "NoProgressError"
-    assert failure.context.model_rounds == 3
-    assert _request_tool_names(adapter.requests[0]) == ["echo", "other"]
-    assert _request_tool_names(adapter.requests[1]) == ["echo"]
-    assert _request_tool_names(adapter.requests[2]) == ["echo"]
 
 
 def test_model_can_continue_beyond_thirty_rounds_when_each_round_makes_progress() -> None:
@@ -365,10 +243,16 @@ def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "evidence"}),)),
         assistant_turn(content="approved answer"),
     ])
-    result = run(AgentRuntime(adapter, registry).run_user_message(
-        "inspect", requirements=FrozenToolRequirements(frozenset({"echo"}))))
-    first = str(adapter.requests[0].messages)
-    assert '"missing_tools": ["echo"]' in first
+    from mai.agent.verification import FinalVerificationResult, VerificationIssue
+
+    class Verifier:
+        async def verify(self, *, candidate, **kwargs):
+            if candidate == "unreleased draft":
+                return FinalVerificationResult(ok=False, issues=(VerificationIssue(
+                    code="claim_grounding_failed", message="The draft lacks supporting evidence."),))
+            return FinalVerificationResult(ok=True)
+
+    result = run(AgentRuntime(adapter, registry, final_verifier=Verifier()).run_user_message("inspect"))
     retry = adapter.requests[1].messages
     assert all(m.get("role") != "assistant" or m.get("content") != "unreleased draft" for m in retry)
     assert "private mistaken reasoning" not in str(retry)
@@ -376,3 +260,13 @@ def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
     assert "unreleased draft" not in str(retry)
     assert "unreleased draft" not in str(result.messages)
     assert any(m.get("content") == "approved answer" for m in result.messages)
+
+
+def test_answer_without_tool_calls_has_no_preflight_or_execution_gate() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    adapter = FakeAdapter([assistant_turn(content="The supplied context answers the request.")])
+    result = run(AgentRuntime(adapter, registry).run_user_message("Use the context."))
+    assert len(adapter.requests) == 1
+    assert _request_tool_names(adapter.requests[0]) == ["echo"]
+    assert result.tool_executions == ()

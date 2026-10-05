@@ -145,7 +145,7 @@ Memory fact extraction은 해당 chat turn에서 실제 사용한 동일 model�
 
 현재 production request는 main agent 전에 model-based tool requirement preflight를 호출하지 않는다. Main agent가 현재 등록된 native tool schema와 system prompt를 보고 필요한 tool을 직접 선택한다.
 
-`OllamaToolRequirementPlanner`와 frozen requirement 지원은 코드 및 단위 테스트에 남아 있지만 production composition에는 연결하지 않는다. 이는 요청마다 발생하는 추가 LLM 호출 지연을 피하기 위한 정책이다.
+Planner와 frozen requirement 실행 gate는 제거했다. Verifier는 실제 근거와 답변 주장을 검증하고 main agent가 필요한 추가 tool을 직접 선택한다.
 
 따라서 production에는 required-tool execution을 강제하는 별도 gate가 없다. Final answer는 release 전에 verifier를 거친다. Deterministic numeric grounding 뒤의 semantic reviewer는 현재 선택된 동일 chat model을 `think=False`, `tools=()`로 추가 1회 호출한다. Candidate가 거절되어 재작성되면 reviewer 호출도 다시 발생할 수 있다.
 
@@ -314,6 +314,6 @@ Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 
 MAI_DEBUG_MODEL_INPUT=true
 ```
 
-서버 로그의 `MAI debug Ollama request`는 호출별 ID와 실제 전송 payload를 기록한다. `messages`의 역할·본문·순서(거절 초안과 피드백 포함), tools, model, think, options, format을 확인할 수 있다. Planner가 사용되는 구성에서는 `MAI debug tool requirement plan`에 요청·필수 툴·원본 판정 응답도 기록된다. 현재 planner 응답 schema에는 판단 이유 필드가 없으므로 이유는 기록할 수 없다. 진단 때문에 schema나 모델 호출을 변경하지 않는다.
+서버 로그의 `MAI debug Ollama request`는 호출별 ID와 실제 전송 payload를 기록한다. `messages`의 역할·본문·순서(거절 초안과 피드백 포함), tools, model, think, options, format을 확인할 수 있다.
 
 기본값은 비활성이다. 전체 대화·기억·파일/툴 내용이 로그에 포함될 수 있으므로 공유 전 확인하고, 재현 후 옵션을 제거하거나 false로 바꾸고 서버를 재시작한다. 모델 입력량과 호출 횟수는 변하지 않는다.

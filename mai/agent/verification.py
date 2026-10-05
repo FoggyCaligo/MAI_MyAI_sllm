@@ -60,6 +60,13 @@ Claim-level evidence grounding:
 - Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 
+Claim-to-evidence audit:
+- Audit every material factual claim against identifiable user statements or indexed tool results, including claims made without any tool call.
+- Model knowledge, prior assistant assertions, and a tool's name or invocation alone do not establish a fact. A plausible claim without supporting evidence is unsupported with defect "missing_evidence".
+- For each unsupported claim, identify the exact assertion and the missing, contradictory, stale, or narrower evidence in its reason. Do not merely count tool calls or require a particular tool.
+- Tool availability creates no obligation to use it. A fully supported answer can pass without tools; an answer with many successful calls still fails if its claims exceed their results.
+- Prices, availability, current specifications, recommendations dependent on those facts, and time-relative conclusions need evidence at the relevant date and scope. Do not substitute recalled general knowledge for observed evidence.
+
 Evidence scope preservation:
 - A final claim must not be semantically broader than the evidence supporting it.
 - Distinguish local state from remote state, one file from all files, visible rows from a complete collection, one command's effect from a larger goal, and one source's observation from a universal conclusion.
@@ -342,34 +349,34 @@ class FinalGroundingVerifier:
             for message in messages
             if message.get("role") == "user" and isinstance(message.get("content"), str)
         ]
-        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
+        current_user_request = user_messages[-1] if user_messages else ""
 
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
-                "content": _clip_text(str(message.get("content") or ""), 1800),
+                "content": str(message.get("content") or ""),
             }
             for message in messages[:-1]
             if message.get("role") in {"user", "assistant"}
             and isinstance(message.get("content"), str)
-        ][-10:]
+        ]
         tool_evidence = [
             {
                 "index": index,
                 "tool": name,
                 "ok": ok,
                 "error_type": error_type,
-                "result": _clip_text(content, 3500),
+                "result": content,
             }
             for index, (name, ok, error_type, content) in enumerate(
-                tool_results[-10:], start=max(0, len(tool_results) - 10)
+                tool_results
             )
         ]
         payload = {
             "current_user_request": current_user_request,
             "conversation_context": context_messages,
             "tool_results_in_execution_order": tool_evidence,
-            "candidate_final": _clip_text(candidate, 6000),
+            "candidate_final": candidate,
         }
         request = ChatRequest(
             messages=(
@@ -460,16 +467,6 @@ def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str
         detail = claim.reason or fallback
         parts.append(f"{claim.claim}: {detail}")
     return "; ".join(parts) if parts else fallback
-
-
-def _clip_text(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    if limit < 80:
-        return text[:limit]
-    head = (limit * 2) // 3
-    tail = limit - head - 24
-    return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
 def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = False) -> set[str]:
