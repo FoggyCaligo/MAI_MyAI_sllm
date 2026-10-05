@@ -12,7 +12,7 @@ class AgentGuardError(RuntimeError):
 
 
 class RepeatedToolCallError(AgentGuardError):
-    """The same native tool call was requested too many times in one run."""
+    """Legacy error type retained for compatibility; fixed call-count caps are no longer enforced."""
 
 
 class RepeatedToolFailureError(AgentGuardError):
@@ -25,14 +25,12 @@ class NoProgressError(AgentGuardError):
 
 @dataclass(frozen=True, slots=True)
 class GuardConfig:
-    max_identical_calls: int = 10
     warn_identical_failures: int = 3
     max_identical_failures: int = 5
     max_no_progress_rounds: int = 5
 
     def __post_init__(self) -> None:
         for name, value in (
-            ("max_identical_calls", self.max_identical_calls),
             ("warn_identical_failures", self.warn_identical_failures),
             ("max_identical_failures", self.max_identical_failures),
             ("max_no_progress_rounds", self.max_no_progress_rounds),
@@ -59,17 +57,17 @@ class AgentGuard:
     exact frozen set of missing required tools.
 
     Recovery policy:
+    - there is no fixed per-run cap on model rounds or successful tool calls;
     - changed calls or changed outcomes are treated as structural progress;
     - an identical failure streak is surfaced to the model before it is stopped;
     - after the model has observed the configured number of identical failures,
-      only another unchanged call is blocked;
-    - repeated identical calls, repeated tool-round outcomes, and repeated final
-      attempts with the same missing requirements are structural no-progress stops.
+      only another unchanged failing call is blocked;
+    - repeated tool-round outcomes and repeated final attempts with the same
+      missing requirements are structural no-progress signals.
     """
 
     def __init__(self, config: GuardConfig | None = None) -> None:
         self.config = config or GuardConfig()
-        self._call_counts: dict[str, int] = {}
         self._failure_streak_key: tuple[str, str | None, str] | None = None
         self._failure_streak_count = 0
         self._previous_round_signature: str | None = None
@@ -87,13 +85,6 @@ class AgentGuard:
             raise RepeatedToolFailureError(
                 "same native tool call already produced the same failure outcome "
                 f"{self._failure_streak_count} consecutive times; refusing another unchanged execution"
-            )
-
-        count = self._call_counts.get(fingerprint, 0) + 1
-        self._call_counts[fingerprint] = count
-        if count > self.config.max_identical_calls:
-            raise RepeatedToolCallError(
-                f"native tool call repeated more than {self.config.max_identical_calls} times"
             )
         return fingerprint
 

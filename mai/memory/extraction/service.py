@@ -52,8 +52,8 @@ class FactExtractor(Protocol):
 class OllamaFactExtractor:
     """Small judgment-only post-response extractor using an Ollama adapter."""
 
-    def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float = 15.0) -> None:
-        if timeout_seconds <= 0:
+    def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float | None = None) -> None:
+        if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.adapter = adapter
         self.timeout_seconds = timeout_seconds
@@ -81,9 +81,12 @@ class OllamaFactExtractor:
         try:
             turn = await asyncio.wait_for(self.adapter.chat(request), timeout=self.timeout_seconds)
         except TimeoutError as exc:
-            raise FactExtractionError(
-                f"fact extractor timed out after {self.timeout_seconds:.1f}s"
-            ) from exc
+            detail = (
+                "fact extractor timed out"
+                if self.timeout_seconds is None
+                else f"fact extractor timed out after {self.timeout_seconds:.1f}s"
+            )
+            raise FactExtractionError(detail) from exc
         except Exception as exc:
             raise FactExtractionError(f"fact extractor model call failed: {type(exc).__name__}") from exc
 

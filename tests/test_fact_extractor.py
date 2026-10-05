@@ -90,3 +90,14 @@ def test_extractor_invalid_json_is_an_explicit_failure() -> None:
             final_answer="알겠어.",
             successful_tool_results=(),
         ))
+
+
+def test_fact_extractor_has_no_default_fifteen_second_deadline() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([json.dumps({"facts": []})]))
+
+    assert extractor.timeout_seconds is None
+    assert run(extractor.extract(
+        user_text="hello",
+        final_answer="hello",
+        successful_tool_results=(),
+    )) == ()

@@ -54,7 +54,8 @@
     .bubble code { background:#121218; padding:2px 5px; border-radius:5px; font-family:Consolas,monospace; font-size:.92em; }
     .bubble pre { background:#121218; border:1px solid var(--border); border-radius:8px; padding:11px; overflow:auto; margin:.7em 0; }
     .bubble pre code { background:none; padding:0; } .bubble a { color:#a99cff; }
-    .bubble table { border-collapse:collapse; width:100%; margin:.7em 0; font-size:13px; } .bubble th,.bubble td { border:1px solid var(--border); padding:6px 8px; text-align:left; }
+    .bubble .table-scroll { max-width:100%; overflow-x:auto; }
+  .bubble table { border-collapse:collapse; width:100%; margin:.7em 0; font-size:13px; } .bubble th,.bubble td { border:1px solid var(--border); padding:6px 8px; text-align:left; }
     .bubble th { background:var(--surface); }
 
     .loader { display:flex; align-items:center; gap:5px; min-height:18px; }
@@ -143,12 +144,40 @@
   function renderInline(value) {
     let text=escapeHtml(value); text=text.replace(/`([^`]+)`/g,'<code>$1</code>'); text=text.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>'); text=text.replace(/\*([^*]+)\*/g,'<em>$1</em>'); text=text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'); return text;
   }
+  function splitTableRow(line) {
+    const cells=[]; let cell='', ticks=0;
+    for(let i=0;i<line.length;i++){
+      const ch=line[i];
+      if(ch==='\\'&&line[i+1]==='|'){cell+='|';i++;continue;}
+      if(ch==='`'){
+        let count=1;while(line[i+count]===ch)count++;
+        ticks=ticks===count?0:ticks||count;cell+=ch.repeat(count);i+=count-1;continue;
+      }
+      if(ch==='|'&&!ticks){cells.push(cell.trim());cell='';}else cell+=ch;
+    }
+    cells.push(cell.trim());
+    if(line.trim().startsWith('|'))cells.shift();
+    if(line.trim().endsWith('|')&&cells[cells.length-1]==='')cells.pop();
+    return cells;
+  }
   function renderMarkdown(source) {
     const lines=String(source??'').replace(/\r\n/g,'\n').split('\n'), out=[]; let inCode=false, codeLines=[], listType=null, paragraph=[];
     const flush=()=>{if(paragraph.length){out.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`);paragraph=[];}}; const closeList=()=>{if(listType){out.push(`</${listType}>`);listType=null;}};
-    for(const line of lines){
+    for(let i=0;i<lines.length;i++){
+      const line=lines[i];
       if(line.startsWith('```')){flush();closeList();if(!inCode){inCode=true;codeLines=[];}else{out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);inCode=false;codeLines=[];}continue;}
-      if(inCode){codeLines.push(line);continue;} const heading=line.match(/^(#{1,4})\s+(.+)$/); if(heading){flush();closeList();const level=heading[1].length;out.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);continue;}
+      if(inCode){codeLines.push(line);continue;}
+      const header=splitTableRow(line), separator=i+1<lines.length?splitTableRow(lines[i+1]):[];
+      if(line.includes('|')&&header.length&&header.length===separator.length&&separator.every(cell=>/^:?-{3,}:?$/.test(cell))){
+        flush();closeList();
+        const align=separator.map(cell=>cell.startsWith(':')&&cell.endsWith(':')?'center':cell.endsWith(':')?'right':'left');
+        const row=(cells,tag)=>'<tr>'+header.map((_,column)=>`<${tag} style="text-align:${align[column]}">${renderInline(cells[column]??'')}</${tag}>`).join('')+'</tr>';
+        out.push('<div class="table-scroll"><table><thead>'+row(header,'th')+'</thead><tbody>');i++;
+        while(i+1<lines.length&&lines[i+1].trim()&&lines[i+1].includes('|')){
+          out.push(row(splitTableRow(lines[++i]),'td'));
+        }
+        out.push('</tbody></table></div>');continue;
+      } const heading=line.match(/^(#{1,4})\s+(.+)$/); if(heading){flush();closeList();const level=heading[1].length;out.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);continue;}
       const bullet=line.match(/^\s*[-*]\s+(.+)$/), ordered=line.match(/^\s*\d+\.\s+(.+)$/); if(bullet||ordered){flush();const wanted=bullet?'ul':'ol';if(listType!==wanted){closeList();listType=wanted;out.push(`<${wanted}>`);}out.push(`<li>${renderInline((bullet||ordered)[1])}</li>`);continue;}
       if(line.startsWith('> ')){flush();closeList();out.push(`<blockquote>${renderInline(line.slice(2))}</blockquote>`);continue;} if(!line.trim()){flush();closeList();continue;} paragraph.push(line);
     }

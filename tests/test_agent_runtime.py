@@ -194,9 +194,14 @@ def test_missing_required_tool_returns_model_to_tool_use_instead_of_failing() ->
     )
 
     assert result.content == "done after required tool"
+    assert "I can answer without it." in str(adapter.requests[1].messages)
+    assert "I can answer without it." not in str(result.messages)
+    assert any(message.get("role") == "tool" for message in result.messages)
     assert result.model_rounds == 3
     correction_message = adapter.requests[1].messages[-1]
     assert correction_message["role"] == "system"
+    assert "Your previous assistant turn attempted to finish" in correction_message["content"]
+    assert any(message.get("role") == "assistant" and message.get("content") == result.content for message in result.messages)
     assert "echo" in correction_message["content"]
     assert _request_tool_names(adapter.requests[1]) == ["echo"]
     assert set(_request_tool_names(adapter.requests[2])) == {"echo", "other"}
@@ -348,3 +353,25 @@ def test_runtime_rejects_empty_user_message() -> None:
     runtime = AgentRuntime(FakeAdapter([]), ToolRegistry())
     with pytest.raises(ValueError, match="non-empty"):
         run(runtime.run_user_message("   "))
+
+
+def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
+    draft = assistant_turn(content="unreleased draft")
+    draft.assistant_message["thinking"] = "private mistaken reasoning"
+    adapter = FakeAdapter([
+        draft,
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "evidence"}),)),
+        assistant_turn(content="approved answer"),
+    ])
+    result = run(AgentRuntime(adapter, registry).run_user_message(
+        "inspect", requirements=FrozenToolRequirements(frozenset({"echo"}))))
+    first = str(adapter.requests[0].messages)
+    assert '"missing_tools": ["echo"]' in first
+    retry = adapter.requests[1].messages
+    assert all(m.get("role") != "assistant" or m.get("content") != "unreleased draft" for m in retry)
+    assert "private mistaken reasoning" not in str(retry)
+    assert '"delivered": false' in str(retry)
+    assert "unreleased draft" not in str(result.messages)
+    assert any(m.get("content") == "approved answer" for m in result.messages)
