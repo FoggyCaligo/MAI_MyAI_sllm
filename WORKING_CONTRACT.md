@@ -28,15 +28,13 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 ---
 
-## 2. Direct native-tool selection
+## 2. Tool requirement preflight
 
-현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent가 system prompt, recent dialogue, authoritative runtime context, 등록된 native tool schema를 보고 필요한 tool을 직접 선택한다.
+현재 production composition은 main agent 전에 선택된 동일 모델로 tool-requirement planner를 호출한다. Planner는 recent dialogue와 등록된 native tool의 이름·설명을 보고 요청 완료에 필수인 tool을 strict structured output으로 선택한다.
 
-사전 판단과 실행 여부 gate를 제거하고 답변의 근거 검증에 책임을 둔다.
+판정은 `FrozenToolRequirements`로 고정한다. Main agent가 final을 시도할 때 required tool handler가 시작되지 않았다면 final을 거절하고 누락된 tool만 노출하는 correction round를 실행한다.
 
-Planner, frozen requirements, missing-requirement correction support는 runtime API와 코드에서 제거했다. 모든 native schema는 correction round에서도 계속 사용 가능하다.
-
-따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 main agent prompt와 schema가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
+Tool handler가 시작된 뒤 실패한 호출은 실제 실패 근거로 인정한다. Unknown tool, invalid arguments, guard 차단처럼 handler가 시작되지 않은 호출은 요건을 충족하지 않는다. 답변의 근거성은 execution gate와 별개로 release 전 verifier가 검토한다.
 
 ---
 
