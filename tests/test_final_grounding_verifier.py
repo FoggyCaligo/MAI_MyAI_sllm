@@ -184,7 +184,7 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 12
+    assert len(reviewer.requests) == 6
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -324,7 +324,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 6
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -831,5 +831,5 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
 
     assert result.content == "이제 근거에 맞는 답변입니다."
     assert result.model_rounds == 6
-    assert len(reviewer.requests) == 6
+    assert len(reviewer.requests) == 12
 
