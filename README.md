@@ -159,7 +159,7 @@ Fact extractor는 최소 요약 하나만 남기기보다, 이후 recall에 도�
 
 Fact node identity는 #199 이전 방식으로 유지한다. 같은 사용자에서 canonical Fact text가 완전히 같으면 기존 node를 재사용하고 `occurrence_count`를 올린다. Concept도 동일 canonical segment면 기존 node를 재사용한다. 반면 text가 다른 Fact를 LLM이 의미상 같다고 판단해 기존 node에 합치는 semantic identity merge는 사용하지 않는다.
 
-동일 relation edge가 다시 관찰되면 edge 자체도 새 중복 row를 만들지 않고 `occurrence_count`를 올린다. repository 내부에서는 이 count를 양수/음수로 조정할 수 있어 강화·약화가 가능하다.
+동일 `(from_node_id, to_node_id, relation)` edge가 다시 관찰되면 기존 edge를 그대로 재사용하고 중복 row를 만들지 않는다. Edge 자체에는 별도 `occurrence_count` 강화/약화 가중치를 두지 않는다.
 
 Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않고 raw evidence를 보존한다.
 
