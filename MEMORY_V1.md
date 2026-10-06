@@ -58,7 +58,9 @@ User Anchor ─asserted_fact→ Fact
 Utterance   ─derived_fact─→ Fact
 ```
 
-Fact is the primary production memory node type. The selected turn model is reused with `think=False` after the final response and is instructed to extract multiple self-contained durable details rather than an aggressively minimal summary. Raw Evidence remains the source record.
+Fact is the primary production memory node type. The selected turn model is reused with `think=False` after the final response and is instructed to extract multiple self-contained durable details rather than an aggressively minimal summary. There is no fixed extracted-Fact count cap in the parser/runtime contract. Raw Evidence remains the source record.
+
+Before creating a non-exact Fact node, MemoryRuntime generates bounded candidates from existing Concept links and asks a model-backed semantic identity resolver whether the new statement is the same durable proposition as one existing Fact. Only true semantic identity reuses the node; related, broader/narrower, corrected, changed, or conflicting state remains distinct. Reuse increments the Fact node's `occurrence_count` and still attaches/reinforces Concepts from the new wording.
 
 ### Concept Node
 
@@ -83,7 +85,7 @@ fact        -> concept   : mentions
 
 Each edge stores provenance such as `user_utterance`, `user_assertion`, `derived_from_utterance`, or `fact_index`.
 
-The database enforces one edge per `(from_node_id, to_node_id, relation)`.
+The database enforces one edge per `(from_node_id, to_node_id, relation)`. Re-observing the same typed relation increments the edge's `occurrence_count` instead of silently ignoring the duplicate row. The repository also supports explicit positive/negative occurrence-count adjustment (without reducing below one), so later correction/confidence logic can strengthen or weaken an existing relation without changing node identity.
 
 Relations involving Fact nodes are used only when Fact extraction is actually enabled.
 
