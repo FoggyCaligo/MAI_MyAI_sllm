@@ -1,14 +1,14 @@
-"""Concept-index entry + evidence graph recall."""
+"""Fact-first persistent memory recall."""
 from __future__ import annotations
 
 from ..graph.models import GraphNeighborhood
 from ..graph.repository import MemoryGraphRepository
-from ..index import ConceptIndex
-from ..segmenter import Segmenter
+from ..index import ConceptHit, ConceptIndex
 from ..working import WorkingGraph
 
 
 DEFAULT_ANCHOR_FACT_LIMIT = 8
+DEFAULT_FACT_TEXT_MATCH_LIMIT = 20
 
 
 class RecallService:
@@ -16,21 +16,23 @@ class RecallService:
         self,
         graph: MemoryGraphRepository,
         concept_index: ConceptIndex,
-        segmenter: Segmenter,
         *,
         concept_limit: int = 5,
         anchor_fact_limit: int = DEFAULT_ANCHOR_FACT_LIMIT,
+        fact_text_match_limit: int = DEFAULT_FACT_TEXT_MATCH_LIMIT,
         include_utterances: bool = False,
     ) -> None:
         if concept_limit < 1:
             raise ValueError("concept_limit must be >= 1")
         if anchor_fact_limit < 0:
             raise ValueError("anchor_fact_limit must be >= 0")
+        if fact_text_match_limit < 0:
+            raise ValueError("fact_text_match_limit must be >= 0")
         self.graph = graph
         self.concept_index = concept_index
-        self.segmenter = segmenter
         self.concept_limit = concept_limit
         self.anchor_fact_limit = anchor_fact_limit
+        self.fact_text_match_limit = fact_text_match_limit
         self.include_utterances = include_utterances
 
     def recall_query(self, *, user_id: str, query: str) -> WorkingGraph:
@@ -39,12 +41,20 @@ class RecallService:
         anchor = self.graph.get_user_anchor(user_id)
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
-        segments = tuple(self.segmenter.segment(query))
-        hits = self.concept_index.search(segments, limit=self.concept_limit)
+
+        chunks = tuple(dict.fromkeys(query.split()))
         recalled = WorkingGraph()
         self._merge_user_anchor_context(recalled, user_id=user_id)
+        recalled.merge(
+            self.graph.user_fact_text_matches(
+                user_id,
+                chunks,
+                limit=self.fact_text_match_limit,
+            ),
+            mark_expanded=False,
+        )
 
-        for hit in hits:
+        for hit in self._select_query_seeds(chunks):
             neighborhood = self.graph.one_hop(hit.node_id)
             if self.include_utterances:
                 recalled.merge(neighborhood)
@@ -93,12 +103,25 @@ class RecallService:
         working.merge_working(delta)
         return delta.snapshot()
 
-    def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
-        """Expose the user anchor with a bounded set of structured facts.
+    def _select_query_seeds(self, chunks: tuple[str, ...]) -> tuple[ConceptHit, ...]:
+        """Select at most one best ConceptIndex hit per intact whitespace chunk."""
+        candidates: dict[int, tuple[ConceptHit, int]] = {}
+        for chunk_order, chunk in enumerate(chunks):
+            chunk_hits = tuple(self.concept_index.search((chunk,), limit=1))
+            if not chunk_hits:
+                continue
+            hit = chunk_hits[0]
+            previous = candidates.get(hit.node_id)
+            if previous is None or hit.score > previous[0].score:
+                candidates[hit.node_id] = (hit, chunk_order)
 
-        The anchor's raw ``spoke`` edges are not traversed here. Query-specific
-        utterances are included only when ``include_utterances`` is enabled.
-        """
+        ranked = sorted(
+            candidates.values(),
+            key=lambda item: (-item[0].score, item[1], item[0].node_id),
+        )
+        return tuple(hit for hit, _chunk_order in ranked[: self.concept_limit])
+
+    def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
         working.merge(
             self.graph.user_anchor_fact_context(
                 user_id,
