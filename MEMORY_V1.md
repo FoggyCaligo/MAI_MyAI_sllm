@@ -154,7 +154,7 @@ When `SqliteFtsConceptIndex` opens an existing Memory v1 database, it non-destru
 
 ## 7. Model-visible memory recall
 
-The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer.
+The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer. Sentence_Breaker still defines Concept nodes during memory admission, but it is no longer used to split model-written recall queries; recall query parsing is deliberately whitespace-based so an intact chunk cannot turn into subword Concept seeds.
 
 Current model-visible memory entry points are:
 
@@ -165,9 +165,11 @@ memory_overview(limit)
 memory_recall(query)
   -> bounded user-anchor Fact context
        (asserted_fact only; raw spoke history is not dumped)
-  -> Sentence_Breaker query segments
-  -> Exact + FTS5 ConceptIndex
-  -> Concept seeds
+  -> split the model query only on whitespace
+  -> search each intact whitespace chunk independently
+  -> keep at most the best ConceptIndex hit per chunk
+  -> rank those candidates by ConceptIndex relevance
+  -> cap seeds by concept_limit before graph expansion
   -> graph neighborhoods
   -> by default project Utterance nodes/edges out of the recall payload
   -> preserve Fact paths to the user anchor
