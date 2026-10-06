@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from mai.memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
+    successful_non_recall_tool_evidence,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
@@ -49,6 +50,20 @@ def test_successful_non_recall_tool_results_excludes_recall_results() -> None:
     assert successful_non_recall_tool_results(executions) == (
         "new document evidence",
         "new web evidence",
+    )
+
+
+def test_successful_non_recall_tool_evidence_preserves_execution_index() -> None:
+    executions = (
+        Execution("memory_recall", True, "old persistent memory"),
+        Execution("document_read", True, "new document evidence"),
+        Execution("web_search", True, "new web evidence"),
+        Execution("calculator", False, "failed calculation"),
+    )
+
+    assert successful_non_recall_tool_evidence(executions) == (
+        (1, "document_read", "new document evidence"),
+        (2, "web_search", "new web evidence"),
     )
 
 
