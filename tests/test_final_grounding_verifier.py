@@ -47,16 +47,26 @@ class ReviewerAdapter:
         self.requests.append(deepcopy(request))
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        evidence_verdict, alignment_verdict, reasons = self.reviews.pop(0)
+        evidence_verdict, alignment_verdict, reasons = self.reviews[0]
+        schema_properties = request.response_format["properties"]
+        payload = json.loads(request.messages[1]["content"])
+        if "resolved_request" in schema_properties:
+            return turn(json.dumps({
+                "resolved_request": payload.get("current_user_request", ""),
+                "alignment_verdict": alignment_verdict,
+                "reasons": list(reasons) if alignment_verdict == "misaligned" else [],
+                "claims": [],
+            }, ensure_ascii=False))
+
+        self.reviews.pop(0)
         return turn(json.dumps({
             "evidence_verdict": evidence_verdict,
-            "alignment_verdict": alignment_verdict,
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
-            "reasons": list(reasons),
+            "reasons": list(reasons) if evidence_verdict == "unsupported" else [],
             "claims": [],
             "action_verdict": "not_applicable",
-        }))
+        }, ensure_ascii=False))
 
 
 class StructuredReviewerAdapter:
@@ -68,10 +78,69 @@ class StructuredReviewerAdapter:
         self.requests.append(deepcopy(request))
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        review = dict(self.reviews.pop(0))
-        review.setdefault("coverage_verdict", "sufficient")
-        review.setdefault("coverage_reasons", [])
-        return turn(json.dumps(review, ensure_ascii=False))
+        review = dict(self.reviews[0])
+        schema_properties = request.response_format["properties"]
+        payload = json.loads(request.messages[1]["content"])
+
+        if "resolved_request" in schema_properties:
+            return turn(json.dumps({
+                "resolved_request": payload.get("current_user_request", ""),
+                "alignment_verdict": review.get("alignment_verdict", "aligned"),
+                "reasons": (
+                    list(review.get("reasons", []))
+                    if review.get("alignment_verdict", "aligned") == "misaligned"
+                    else []
+                ),
+                "claims": [
+                    {
+                        "claim": claim["claim"],
+                        "temporal": bool(claim.get("temporal", False)),
+                    }
+                    for claim in review.get("claims", [])
+                ],
+            }, ensure_ascii=False))
+
+        self.reviews.pop(0)
+        evidence_sources = payload.get("evidence_sources", [])
+        available_support_ids = [
+            str(source["id"])
+            for source in evidence_sources
+            if source.get("id")
+        ]
+        supplied_claims = payload.get("claims", [])
+        source_reviews = list(review.get("claims", []))
+        claims = []
+        for index, supplied in enumerate(supplied_claims):
+            source_review = (
+                dict(source_reviews[index])
+                if index < len(source_reviews)
+                else {}
+            )
+            verdict = source_review.get("verdict", "supported")
+            claims.append({
+                "claim_id": supplied["claim_id"],
+                "verdict": verdict,
+                "defect": source_review.get("defect", "none"),
+                "reason": source_review.get("reason", ""),
+                "support_ids": list(source_review.get(
+                    "support_ids",
+                    available_support_ids[:1] if verdict == "supported" else [],
+                )),
+            })
+
+        return turn(json.dumps({
+            "evidence_verdict": review.get("evidence_verdict", "supported"),
+            "coverage_verdict": review.get("coverage_verdict", "sufficient"),
+            "coverage_reasons": list(review.get("coverage_reasons", [])),
+            "reasons": (
+                list(review.get("reasons", []))
+                if review.get("evidence_verdict", "supported") == "unsupported"
+                or review.get("action_verdict", "not_applicable") in {"unverified", "contradicted"}
+                else []
+            ),
+            "claims": claims,
+            "action_verdict": review.get("action_verdict", "not_applicable"),
+        }, ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -82,15 +151,24 @@ class SlowReviewerAdapter:
     async def chat(self, request):
         self.requests.append(deepcopy(request))
         await asyncio.sleep(self.delay_seconds)
+        schema_properties = request.response_format["properties"]
+        payload = json.loads(request.messages[1]["content"])
+        if "resolved_request" in schema_properties:
+            return turn(json.dumps({
+                "resolved_request": payload.get("current_user_request", ""),
+                "alignment_verdict": "aligned",
+                "reasons": [],
+                "claims": [],
+            }))
         return turn(json.dumps({
             "evidence_verdict": "supported",
-            "alignment_verdict": "aligned",
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
         }))
+
 
 
 def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None:
