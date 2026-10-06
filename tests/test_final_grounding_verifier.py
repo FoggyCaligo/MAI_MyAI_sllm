@@ -627,8 +627,9 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
     assert user_sources == [{
         "ref": "user:0:0",
         "kind": "user_assertion",
-        "content": "사용자는 은색 플레지르 만년필을 사용한다.",
+        "content": "내 만년필은 은색 플레지르야.",
         "source_excerpt": "내 만년필은 은색 플레지르야.",
+        "normalized_claim": "사용자는 은색 플레지르 만년필을 사용한다.",
     }]
 
 
