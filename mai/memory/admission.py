@@ -35,6 +35,21 @@ def successful_memory_recall_tools(executions: Iterable[ToolExecutionLike]) -> t
     )
 
 
+def successful_non_recall_tool_evidence(
+    executions: Iterable[ToolExecutionLike],
+) -> tuple[tuple[int, str, str], ...]:
+    """Return indexed successful non-memory-read tool evidence.
+
+    The execution index is preserved so final grounding evidence refs can be
+    carried into memory admission without reconstructing provenance later.
+    """
+    return tuple(
+        (index, execution.name, execution.context_content)
+        for index, execution in enumerate(executions)
+        if execution.ok and execution.name not in MEMORY_RECALL_TOOL_NAMES
+    )
+
+
 def successful_non_recall_tool_results(executions: Iterable[ToolExecutionLike]) -> tuple[str, ...]:
     """Return successful model-visible non-memory-read results for fact extraction.
 
