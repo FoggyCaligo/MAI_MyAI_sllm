@@ -60,8 +60,10 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         registry.add(
             name="memory_recall",
             description=(
-                "Search this user's persistent memory from a specific free-text query. Use it when the answer "
-                "depends on a particular remembered topic, preference, decision, person, project, or past event."
+                "Search this user's persistent memory from a specific free-text query. The default result is "
+                "compact Concept/Fact context and may omit raw Utterance nodes; use memory_search when exact "
+                "source wording or neighboring evidence is needed. Use recall when the answer depends on a "
+                "particular remembered topic, preference, decision, person, project, or past event."
             ),
             input_model=MemoryRecallInput,
             handler=memory_recall,
