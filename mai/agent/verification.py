@@ -177,7 +177,8 @@ class FinalReview:
     alignment_verdict: str
     coverage_verdict: str = "uncertain"
     coverage_reasons: tuple[str, ...] = ()
-    reasons: tuple[str, ...] = ()
+    evidence_reasons: tuple[str, ...] = ()
+    task_reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
 
@@ -260,24 +261,24 @@ class FinalGroundingVerifier:
                     ),
                 ))
             if review.evidence_verdict == "unsupported" and not unsupported_claims:
-                reason = "; ".join(review.reasons) or "The reviewer identified a material unsupported factual claim."
+                reason = "; ".join(review.evidence_reasons) or "The reviewer identified a material unsupported factual claim."
                 issues.append(VerificationIssue(code="evidence_grounding_failed", message=reason))
 
             if review.action_verdict == "unverified":
-                reason = "; ".join(review.reasons) or (
+                reason = "; ".join(review.task_reasons) or (
                     "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
                     "does not establish that outcome."
                 )
                 issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
             elif review.action_verdict == "contradicted":
-                reason = "; ".join(review.reasons) or (
+                reason = "; ".join(review.task_reasons) or (
                     "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
                 )
                 issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
 
         if allow_semantic_review:
             if review.alignment_verdict == "misaligned":
-                reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
+                reason = "; ".join(review.task_reasons) or "The candidate does not answer the user's actual request."
                 issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
 
         if allow_coverage_review and review.coverage_verdict == "insufficient":
@@ -292,7 +293,7 @@ class FinalGroundingVerifier:
             alignment=review.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
             action=review.action_verdict if allow_evidence_review else "skipped",
-            reasons=review.reasons + review.coverage_reasons,
+            reasons=review.evidence_reasons + review.task_reasons + review.coverage_reasons,
         )
         return FinalVerificationResult(ok=not issues, issues=tuple(issues))
 
@@ -466,7 +467,8 @@ class FinalGroundingVerifier:
             alignment_verdict=alignment_verdict,
             coverage_verdict=coverage_verdict,
             coverage_reasons=coverage_reasons,
-            reasons=grounding_reasons + task_reasons,
+            evidence_reasons=grounding_reasons,
+            task_reasons=task_reasons,
             claims=claims,
             action_verdict=action_verdict,
         )
