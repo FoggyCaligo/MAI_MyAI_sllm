@@ -120,7 +120,7 @@ def test_extractor_invalid_json_is_an_explicit_failure() -> None:
         run(extractor.extract(
             user_text="최근에 바뀐 게 있어.",
             previous_assistant_message=None,
-        final_answer="알겠어.",
+            final_answer="알겠어.",
             successful_tool_results=(),
         ))
 
