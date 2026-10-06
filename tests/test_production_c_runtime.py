@@ -40,7 +40,7 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
         evidence = memory.record_raw_user_evidence("alice", "고양이 이름은 모카")
@@ -77,7 +77,7 @@ def test_memory_recall_returns_only_current_call_while_working_graph_accumulates
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, include_utterances=True)
+    recall = RecallService(graph, index, include_utterances=True)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
         first_evidence = memory.record_raw_user_evidence("alice", "모카 고양이")
