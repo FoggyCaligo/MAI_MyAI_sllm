@@ -1023,7 +1023,10 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
     analysis_payload = json.loads(reviewer.requests[0].messages[1]["content"])
     evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
     assert "authoritative_current_time" not in analysis_payload
-    assert evidence_payload["authoritative_current_time"] == clock
+    assert evidence_payload["authoritative_current_time"] == {
+        "id": "runtime:current_time",
+        "value": clock,
+    }
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
