@@ -90,7 +90,7 @@ Claim-level evidence grounding:
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
 - Each supported claim must return one or more exact support_ids from evidence_sources that materially establish it.
 - Never invent a support ID. Context-only messages are not support sources.
-- Each user_assertion source contains both normalized content and its literal source_excerpt. Validate the normalized content against that excerpt itself. It is valid only if the excerpt alone directly entails the normalized factual proposition.
+- Each user_assertion source contains literal content/source_excerpt plus a normalized_claim candidate. For factual grounding, treat the literal excerpt as authoritative evidence. Validate normalized_claim separately against that excerpt itself; it is valid only if the excerpt alone directly entails the normalized factual proposition.
 - Return every valid user_assertion ref in validated_user_source_ids. Omit any user source whose normalized content is broader than, inferred from, or not directly established by its excerpt.
 - User approval, agreement, endorsement, acceptance, confirmation, evaluation, or reference to assistant content is not evidence for the underlying assistant claims and must not be validated as such.
 - Each tool-result source includes explicit ok and error_type. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. ok=false must never be treated as evidence that the requested operation itself succeeded.
@@ -680,8 +680,9 @@ class FinalGroundingVerifier:
             {
                 "ref": item.ref,
                 "kind": "user_assertion",
-                "content": item.normalized_claim,
+                "content": item.source_excerpt,
                 "source_excerpt": item.source_excerpt,
+                "normalized_claim": item.normalized_claim,
             }
             for item in analysis.user_evidence
         ]
