@@ -1,6 +1,6 @@
 # MAI Memory v1
 
-This document defines MAI's long-term memory schema and runtime contract without relying on any earlier MACHI/MK repository. The memory system is an evidence-preserving graph centered on user anchors, user-grounded facts, reusable concepts, typed edges, and immutable raw evidence. Utterance graph nodes are optional and disabled by default in production. Model-visible recall enters that graph through explicit native memory tools backed by a model-independent ConceptIndex.
+This document defines MAI's long-term memory schema and runtime contract without relying on any earlier MACHI/MK repository. The memory system is an evidence-preserving graph built from user anchors, original utterances, optional user-grounded facts, reusable concepts, typed edges, and provenance. Model-visible recall enters that graph through explicit native memory tools backed by a model-independent ConceptIndex.
 
 ## 1. Core idea
 
@@ -10,10 +10,8 @@ Sentence_Breaker defines reusable **Concept Node boundaries**, not the entire me
 User utterance
   -> immutable raw Evidence
   -> after final response:
-       model-backed broad Fact extraction
-       Fact Nodes
-       Concept Nodes linked from Facts
-       optional Utterance Node only when MEMORY_RECALL_INCLUDE_UTTERANCES=true
+       Fact Nodes (when a FactExtractor is configured)
+       Concept Nodes for those Facts
 ```
 
 Concept identity is exact segment identity:
@@ -24,9 +22,9 @@ one canonical Sentence_Breaker segment = one Concept Node
 
 Repeated appearances of the same segment reuse the same Concept Node. Recall indexing never merges graph identity.
 
-The full original sentence is always preserved as immutable raw Evidence. A first-class Utterance graph node is optional: production defaults to not creating one, while the same Utterance environment switch can enable both recording and recall exposure for comparison/debugging.
+The full original sentence is preserved as immutable raw Evidence rather than being duplicated into a new graph Utterance node. Production `memory_recall` exposes only Anchor + Fact nodes; Concept nodes remain internal retrieval coordinates.
 
-The production request path runs a model-backed `FactExtractor` during background post-response processing. Raw Utterance evidence is still preserved independently, and extraction failure does not silently fabricate Fact nodes.
+The production request path runs a model-backed `FactExtractor` during background post-response processing. Raw Evidence remains preserved independently, and extraction failure does not silently fabricate Fact nodes.
 
 ## 2. Permanent graph node types
 
@@ -40,35 +38,22 @@ user_anchor::<memory_user_id>
 
 The anchor is a permanent graph node but is never inserted into the ConceptIndex. It establishes whose memory a recalled subgraph belongs to.
 
-### Utterance Node
-
-An Utterance Node contains the original user sentence and an immutable `evidence_id`.
-
-```text
-User Anchor
-    └─spoke→ Utterance
-```
-
 ### Fact Node
 
-A Fact Node is a concise long-term fact derived from a user's utterance. It never replaces its source utterance.
+A Fact Node is a concise long-term fact derived from the user's raw evidence.
 
 ```text
 User Anchor ─asserted_fact→ Fact
-Utterance   ─derived_fact─→ Fact
 ```
 
-Fact is the primary production memory node type. The selected turn model is reused with `think=False` after the final response and is instructed to extract multiple self-contained durable details rather than an aggressively minimal summary. There is no fixed extracted-Fact count cap in the parser/runtime contract. Raw Evidence remains the source record.
-
-Fact identity follows the deterministic pre-#199 rule: within one user, the canonical Fact text itself defines the Fact identity key. Repeating the same canonical Fact text reuses that node and increments `occurrence_count`; a different Fact text creates a distinct Fact node. Concept identity separately remains exact canonical Sentence_Breaker segment identity. Production does not use model-based semantic identity merging between differently worded Fact nodes.
+Fact is an active production node type. The selected turn model is reused with `think=False` for background fact extraction after the final response; immutable raw Evidence remains the source record.
 
 ### Concept Node
 
 A Concept Node is an exact Sentence_Breaker segment. Concept Nodes are globally reusable and are the only graph nodes placed in the ConceptIndex.
 
 ```text
-Utterance ─mentions→ Concept
-Fact      ─mentions→ Concept
+Fact ─mentions→ Concept
 ```
 
 ## 3. Typed edges and provenance
@@ -76,24 +61,19 @@ Fact      ─mentions→ Concept
 Runtime-defined relation types are used instead of model-written relation prose:
 
 ```text
-user_anchor -> utterance : spoke
-user_anchor -> fact      : asserted_fact
-utterance   -> fact      : derived_fact
-utterance   -> concept   : mentions
-fact        -> concept   : mentions
+user_anchor -> fact    : asserted_fact
+fact        -> concept : mentions
 ```
 
 Each edge stores provenance such as `user_utterance`, `user_assertion`, `derived_from_utterance`, or `fact_index`.
 
-The database enforces one edge per `(from_node_id, to_node_id, relation)`. Re-observing the same typed relation reuses the existing edge and does not create a duplicate row. Edge identity is deterministic, but edges do not carry a separate occurrence/reinforcement weight.
+The database enforces one edge per `(from_node_id, to_node_id, relation)`.
 
 Relations involving Fact nodes are used only when Fact extraction is actually enabled.
 
 ## 4. Evidence
 
-Raw user input is stored in the immutable `evidence` table during post-response admission, before Fact/Utterance graph mutation. Recording raw evidence is not semantic graph mutation. By default, post-response admission creates Fact nodes directly under the user's anchor and links Concepts from those Facts. Utterance graph nodes are created only when the Utterance environment switch is enabled.
-
-The evidence table remains the durable raw record even when no Utterance node is created.
+Raw user input is stored in the immutable `evidence` table before the agent run. Recording raw evidence is not semantic graph mutation. The current production path does not create a graph Utterance node after the answer; durable interpreted memory is represented through Fact nodes while the original text remains in Evidence.
 
 ## 5. Production runtime ordering
 
@@ -101,15 +81,14 @@ The current production request path is **pure-agent C**. It has no Tool Requirem
 
 ```text
 User input
+  -> record immutable raw evidence
   -> create per-turn Working Graph
   -> expose role-appropriate native tools
   -> main Ollama-native agent loop
        memory tools are available like other native capabilities
        the model chooses whether and when to call them
   -> final response accepted
-  -> post-response memory extraction/admission
-       record immutable raw evidence
-       create Facts and optional Utterance graph nodes
+  -> post-response memory update
 ```
 
 Memory is therefore not injected into every turn automatically. If user history is needed, the model explicitly calls a model-visible memory tool.
@@ -135,13 +114,15 @@ memory.db
 `memory_concept_fts` is an SQLite FTS5 virtual table used only as a lexical fallback when exact lookup does not find a Concept. It does not perform embedding similarity and does not define graph identity.
 
 ```text
-Sentence_Breaker query segments
-        ↓
-Exact hash lookup
-        ↓ miss
-SQLite FTS5 lexical search
-        ↓
+Fact admission text
+        ↓ Sentence_Breaker
 Concept Node IDs
+
+model-written recall query
+        ↓ whitespace chunks only
+Exact hash / SQLite FTS5 lexical search
+        ↓
+internal Concept seed IDs
 ```
 
 The graph owns identity. The index only locates existing Concept Node IDs.
@@ -158,7 +139,7 @@ When `SqliteFtsConceptIndex` opens an existing Memory v1 database, it non-destru
 
 ## 7. Model-visible memory recall
 
-The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer.
+The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer. Sentence_Breaker still defines Concept nodes during memory admission, but model-written recall queries are never passed through Sentence_Breaker.
 
 Current model-visible memory entry points are:
 
@@ -168,13 +149,15 @@ memory_overview(limit)
 
 memory_recall(query)
   -> bounded user-anchor Fact context
-  -> split only on whitespace
-  -> direct bounded Fact canonical_text containment search for all intact chunks
-       (match relevance first, then recency, then occurrence as a tie-breaker)
-  -> per chunk: one best Exact/FTS5 ConceptIndex seed
-  -> global concept_limit before graph expansion
-  -> merge matched/linked Facts and Concepts
-  -> include Utterances only when the Utterance switch is enabled
+       (asserted_fact only; raw spoke history is not dumped)
+  -> split the model query only on whitespace
+  -> search each intact chunk independently in Exact + FTS5 ConceptIndex
+  -> keep at most the best ConceptIndex hit per chunk
+  -> rank candidates by ConceptIndex relevance and cap by concept_limit
+  -> Concept seeds remain internal
+  -> graph neighborhoods
+  -> project both Concept and Utterance nodes/edges out of the recall payload
+  -> preserve Fact paths to the user anchor
   -> merge into the per-turn Working Graph
   -> return only this recall call's payload
 
@@ -189,13 +172,13 @@ Shortest-path discovery treats topology as undirected, while returned edges pres
 
 The Working Graph is temporary per-turn state and is not persisted as another graph. It accumulates recalled nodes internally so later expansion can continue from prior results, but each model-visible memory tool returns only the payload produced by that call rather than re-sending the entire accumulated Working Graph.
 
-Production defaults to `MEMORY_RECALL_INCLUDE_UTTERANCES=false`. This single switch controls both new Utterance-node recording and Utterance exposure in `memory_recall`. Setting it to `true` restores both behaviors. Immutable raw Evidence is stored independently either way.
+Production `memory_recall` is unconditionally Fact-only at the model boundary. There is no Utterance recall toggle.
 
 ## 8. Deliberate memory expansion
 
 `memory_search(node_id)` expands one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes may also receive available shortest paths back to the current user's memory anchor.
 
-The user anchor is a deliberate exception to raw one-hop expansion: its unbounded `spoke` neighborhood is not exposed. Expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by recency first; occurrence count is only a late tie-breaker. Regular `memory_search` remains the deliberate evidence-expansion path and may expose Utterance nodes; `memory_recall` itself omits them by default.
+The user anchor is a deliberate exception to raw one-hop expansion: expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by occurrence count and then recency. Regular `memory_search` remains the deliberate graph-expansion path; `memory_recall` itself exposes only Anchor + Fact nodes.
 
 There is no arbitrary-depth hidden traversal; farther recall requires another explicit memory call.
 
@@ -204,24 +187,19 @@ There is no arbitrary-depth hidden traversal; farther recall requires another ex
 No interpreted graph memory is written during the native tool-use loop.
 
 ```text
-agent/tool loop
+raw user evidence saved
+  -> agent/tool loop
   -> final answer accepted
-  -> broad Fact extraction
-  -> raw user evidence saved
   -> MemoryRuntime.finish_turn()
-       create user-grounded Fact Nodes
-       connect user_anchor -> fact (asserted_fact)
-       create/reuse Sentence_Breaker Concepts from each Fact
-       connect fact -> concept (mentions)
-       if Utterance switch is enabled:
-         also create Utterance Node
-         connect user_anchor -> utterance (spoke)
-         connect utterance -> fact (derived_fact)
-         connect utterance -> concept (mentions)
+       if FactExtractor is configured:
+         create/reuse user-grounded Facts
+         connect user_anchor -> fact (asserted_fact)
+         create/reuse Sentence_Breaker Concepts for each Fact
+         connect fact -> concept (mentions)
        index only newly-created Concept Nodes
 ```
 
-Current production attempts model-backed Fact extraction in background post-processing. The extractor is intentionally recall-oriented and permissive about retaining concrete durable details. Distinct product/model identities, components, configurations, and states should remain separate extracted Facts; only exact duplicate output strings are removed within one extraction result. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and immutable raw evidence remains preserved rather than pretending semantic extraction succeeded.
+Current production attempts model-backed Fact extraction in background post-processing. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and the raw user Evidence remains preserved rather than pretending semantic extraction succeeded.
 
 Tool/search-derived world facts have a different source from user assertions and must not be silently stored as if the user had said them.
 

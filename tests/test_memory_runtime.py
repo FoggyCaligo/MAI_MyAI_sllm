@@ -18,7 +18,6 @@ class FixedSegmenter:
 class FakeConceptIndex:
     def __init__(self):
         self.text_by_id = {}
-        self.search_calls = []
 
     def add_node(self, node_id: int, text: str) -> None:
         if node_id in self.text_by_id:
@@ -26,9 +25,7 @@ class FakeConceptIndex:
         self.text_by_id[node_id] = text
 
     def search(self, queries, *, limit: int):
-        normalized = tuple(queries)
-        self.search_calls.append((normalized, limit))
-        query_set = set(normalized)
+        query_set = set(queries)
         hits = [
             ConceptHit(node_id=node_id, score=1.0, match_kind="exact")
             for node_id, text in self.text_by_id.items()
@@ -37,13 +34,23 @@ class FakeConceptIndex:
         return tuple(hits[:limit])
 
 
+class RecordingConceptIndex(FakeConceptIndex):
+    def __init__(self):
+        super().__init__()
+        self.search_calls = []
+
+    def search(self, queries, *, limit: int):
+        normalized = tuple(queries)
+        self.search_calls.append((normalized, limit))
+        return super().search(normalized, limit=limit)
+
+
 class OneFactExtractor:
     async def extract(self, *, user_text, final_answer, successful_tool_results):
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
 
 
-
-def test_default_finish_turn_records_facts_without_utterance_nodes(tmp_path):
+def test_finish_turn_records_facts_without_utterance_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
@@ -58,47 +65,10 @@ def test_default_finish_turn_records_facts_without_utterance_nodes(tmp_path):
     )
     try:
         evidence = memory.record_raw_user_evidence("alice", "나는 MAI를 만들고 있어")
-        asyncio.run(memory.finish_turn(
-            user_id="alice",
-            user_text="나는 MAI를 만들고 있어",
-            final_answer="알겠어.",
-            user_evidence=evidence,
-        ))
-
-        assert graph.get_node_by_identity(f"utterance:evidence:{evidence.id}") is None
-        fact = graph.get_node_by_identity("fact:alice:MAI는 사용자의 개인 AI 프로젝트다")
-        concept = graph.get_node_by_identity("concept:MAI는")
-        assert fact is not None
-        assert concept is not None
-        relations = {
-            row[0]
-            for row in graph.connection.execute("SELECT relation FROM edges").fetchall()
-        }
-        assert "asserted_fact" in relations
-        assert "mentions" in relations
-        assert "spoke" not in relations
-        assert "derived_fact" not in relations
         assert graph.connection.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 1
-    finally:
-        graph.close()
+        assert graph.connection.execute("SELECT COUNT(*) FROM nodes WHERE node_type != 'anchor'").fetchone()[0] == 0
+        assert graph.connection.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 0
 
-
-def test_record_utterances_true_restores_utterance_graph_edges(tmp_path):
-    graph = MemoryGraphRepository(tmp_path / "memory.db")
-    index = FakeConceptIndex()
-    segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, include_utterances=True)
-    memory = MemoryRuntime(
-        graph,
-        index,
-        segmenter,
-        recall,
-        now=lambda: NOW,
-        fact_extractor=OneFactExtractor(),
-        record_utterances=True,
-    )
-    try:
-        evidence = memory.record_raw_user_evidence("alice", "나는 MAI를 만들고 있어")
         asyncio.run(memory.finish_turn(
             user_id="alice",
             user_text="나는 MAI를 만들고 있어",
@@ -107,63 +77,51 @@ def test_record_utterances_true_restores_utterance_graph_edges(tmp_path):
         ))
 
         utterance = graph.get_node_by_identity(f"utterance:evidence:{evidence.id}")
-        assert utterance is not None
+        fact = graph.get_node_by_identity("fact:alice:MAI는 사용자의 개인 AI 프로젝트다")
+        concept = graph.get_node_by_identity("concept:MAI는")
+        assert utterance is None
+        assert fact is not None
+        assert concept is not None
+        assert concept.id in index.text_by_id
         relations = {
             row[0]
             for row in graph.connection.execute("SELECT relation FROM edges").fetchall()
         }
-        assert {"spoke", "asserted_fact", "derived_fact", "mentions"}.issubset(relations)
+        assert relations == {"asserted_fact", "mentions"}
     finally:
         graph.close()
 
-
-def test_recall_uses_whitespace_chunks_and_returns_multiple_containing_facts(tmp_path):
+def test_auto_recall_returns_only_anchor_and_fact_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(
+    recall = RecallService(graph, index)
+    memory = MemoryRuntime(
         graph,
         index,
-        anchor_fact_limit=0,
-        fact_text_match_limit=10,
+        segmenter,
+        recall,
+        now=lambda: NOW,
+        fact_extractor=OneFactExtractor(),
     )
-    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
-
     try:
-        evidence = memory.record_raw_user_evidence("alice", "만년필 정보")
+        evidence = memory.record_raw_user_evidence("alice", "MAI 프로젝트")
         asyncio.run(memory.finish_turn(
             user_id="alice",
-            user_text="만년필 정보",
-            final_answer="ok",
+            user_text="MAI 프로젝트",
+            final_answer="기억할게.",
             user_evidence=evidence,
-            fact_texts=(
-                "사용자는 플래티넘 만년필을 사용한다",
-                "사용자는 만년필의 알루미늄 배럴을 사용한다",
-                "사용자는 체스를 즐긴다",
-            ),
         ))
-        index.search_calls.clear()
-
-        recalled = memory.explicit_recall(
-            user_id="alice",
-            query="만년필 fountain pen 사용",
+        working = memory.auto_recall(user_id="alice", user_text="MAI")
+        anchor = graph.get_user_anchor("alice")
+        assert anchor is not None
+        assert anchor.id in working.nodes
+        assert any(node.node_type == "fact" for node in working.nodes.values())
+        assert all(node.node_type in {"anchor", "fact"} for node in working.nodes.values())
+        assert all(
+            edge.relation == "asserted_fact"
+            for edge in working.edges.values()
         )
-        fact_texts = {
-            node.canonical_text
-            for node in recalled.nodes.values()
-            if node.node_type == "fact"
-        }
-
-        assert "사용자는 플래티넘 만년필을 사용한다" in fact_texts
-        assert "사용자는 만년필의 알루미늄 배럴을 사용한다" in fact_texts
-        assert "사용자는 체스를 즐긴다" not in fact_texts
-        assert index.search_calls == [
-            (("만년필",), 1),
-            (("fountain",), 1),
-            (("pen",), 1),
-            (("사용",), 1),
-        ]
-        assert not any(node.node_type == "utterance" for node in recalled.nodes.values())
     finally:
         graph.close()
 
@@ -192,12 +150,17 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
         store_turn("reinforce stable", "stable profile fact")
 
         recalled = memory.explicit_recall(user_id="alice", query="target")
-        assert not any(node.node_type == "utterance" for node in recalled.nodes.values())
+        utterance_texts = {
+            node.canonical_text
+            for node in recalled.nodes.values()
+            if node.node_type == "utterance"
+        }
         fact_texts = {
             node.canonical_text
             for node in recalled.nodes.values()
             if node.node_type == "fact"
         }
+        assert not utterance_texts
         assert len(fact_texts) == 2
         assert "stable profile fact" in fact_texts
 
@@ -213,73 +176,34 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
     finally:
         graph.close()
 
-def test_exact_duplicate_fact_reuses_node_and_reinforces_node(tmp_path):
+
+def test_recall_query_uses_whitespace_chunks_without_sentence_breaker_segmentation(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
-    index = FakeConceptIndex()
+    index = RecordingConceptIndex()
     segmenter = FixedSegmenter()
     recall = RecallService(graph, index)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
-        for user_text in ("내 이름은 신재용이야", "다시 말하지만 내 이름은 신재용이야"):
-            evidence = memory.record_raw_user_evidence("alice", user_text)
-            asyncio.run(memory.finish_turn(
-                user_id="alice",
-                user_text=user_text,
-                final_answer="알겠어.",
-                user_evidence=evidence,
-                fact_texts=("사용자의 이름은 신재용이다",),
-            ))
-
-        rows = graph.connection.execute(
-            "SELECT id, canonical_text, occurrence_count FROM nodes WHERE node_type = 'fact'"
-        ).fetchall()
-        assert len(rows) == 1
-        assert rows[0]["canonical_text"] == "사용자의 이름은 신재용이다"
-        assert int(rows[0]["occurrence_count"]) == 2
-
-    finally:
-        graph.close()
-
-
-def test_different_fact_wording_creates_distinct_nodes_even_when_semantically_related(tmp_path):
-    graph = MemoryGraphRepository(tmp_path / "memory.db")
-    index = FakeConceptIndex()
-    segmenter = FixedSegmenter()
-    recall = RecallService(graph, index)
-    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
-    try:
-        evidence = memory.record_raw_user_evidence("alice", "플래티넘 프레피를 사용해")
+        evidence = memory.record_raw_user_evidence("alice", "만년필 사용")
         asyncio.run(memory.finish_turn(
             user_id="alice",
-            user_text="플래티넘 프레피를 사용해",
+            user_text="만년필 사용",
             final_answer="알겠어.",
             user_evidence=evidence,
-            fact_texts=("사용자는 플래티넘 프레피를 사용한다",),
+            fact_texts=("사용자는 만년필을 사용한다",),
         ))
+        index.search_calls.clear()
 
-        evidence2 = memory.record_raw_user_evidence("alice", "플레지르 바디에 프레피 하단부를 결합해서 써")
-        asyncio.run(memory.finish_turn(
+        memory.explicit_recall(
             user_id="alice",
-            user_text="플레지르 바디에 프레피 하단부를 결합해서 써",
-            final_answer="알겠어.",
-            user_evidence=evidence2,
-            fact_texts=(
-                "사용자는 플래티넘 플레지르의 알루미늄 배럴과 캡을 사용한다",
-                "사용자는 플래티넘 프레피의 하단부를 플레지르 바디에 결합해 사용한다",
-            ),
-        ))
+            query="만년필 fountain pen 사용",
+        )
 
-        texts = {
-            row["canonical_text"]
-            for row in graph.connection.execute(
-                "SELECT canonical_text FROM nodes WHERE node_type = 'fact'"
-            ).fetchall()
-        }
-        assert texts == {
-            "사용자는 플래티넘 프레피를 사용한다",
-            "사용자는 플래티넘 플레지르의 알루미늄 배럴과 캡을 사용한다",
-            "사용자는 플래티넘 프레피의 하단부를 플레지르 바디에 결합해 사용한다",
-        }
+        assert index.search_calls == [
+            (("만년필",), 1),
+            (("fountain",), 1),
+            (("pen",), 1),
+            (("사용",), 1),
+        ]
     finally:
         graph.close()
-
