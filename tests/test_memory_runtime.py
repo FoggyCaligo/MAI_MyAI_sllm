@@ -42,17 +42,6 @@ class OneFactExtractor:
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
 
 
-class FixedIdentityResolver:
-    def __init__(self, resolved_id=None):
-        self.resolved_id = resolved_id
-        self.calls = []
-
-    async def resolve(self, *, new_fact, candidates):
-        self.calls.append((new_fact, tuple(candidates)))
-        return self.resolved_id
-
-
-
 
 def test_default_finish_turn_records_facts_without_utterance_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
@@ -224,41 +213,29 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
     finally:
         graph.close()
 
-def test_semantic_equivalent_fact_reuses_node_and_reinforces_graph(tmp_path):
+def test_exact_duplicate_fact_reuses_node_and_reinforces_graph(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
     recall = RecallService(graph, index)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
-        first_evidence = memory.record_raw_user_evidence("alice", "내 이름은 신재용이야")
-        asyncio.run(memory.finish_turn(
-            user_id="alice",
-            user_text="내 이름은 신재용이야",
-            final_answer="알겠어.",
-            user_evidence=first_evidence,
-            fact_texts=("사용자의 이름은 신재용이다",),
-        ))
-        existing = graph.get_node_by_identity("fact:alice:사용자의 이름은 신재용이다")
-        assert existing is not None
+        for user_text in ("내 이름은 신재용이야", "다시 말하지만 내 이름은 신재용이야"):
+            evidence = memory.record_raw_user_evidence("alice", user_text)
+            asyncio.run(memory.finish_turn(
+                user_id="alice",
+                user_text=user_text,
+                final_answer="알겠어.",
+                user_evidence=evidence,
+                fact_texts=("사용자의 이름은 신재용이다",),
+            ))
 
-        resolver = FixedIdentityResolver(existing.id)
-        second_evidence = memory.record_raw_user_evidence("alice", "나는 신재용이라는 이름을 사용해")
-        asyncio.run(memory.finish_turn(
-            user_id="alice",
-            user_text="나는 신재용이라는 이름을 사용해",
-            final_answer="알겠어.",
-            user_evidence=second_evidence,
-            fact_texts=("내 이름은 신재용이다",),
-            fact_identity_resolver=resolver,
-        ))
-
-        fact_rows = graph.connection.execute(
+        rows = graph.connection.execute(
             "SELECT id, canonical_text, occurrence_count FROM nodes WHERE node_type = 'fact'"
         ).fetchall()
-        assert len(fact_rows) == 1
-        assert int(fact_rows[0]["id"]) == existing.id
-        assert int(fact_rows[0]["occurrence_count"]) == 2
+        assert len(rows) == 1
+        assert rows[0]["canonical_text"] == "사용자의 이름은 신재용이다"
+        assert int(rows[0]["occurrence_count"]) == 2
 
         anchor = graph.get_user_anchor("alice")
         assert anchor is not None
@@ -267,47 +244,53 @@ def test_semantic_equivalent_fact_reuses_node_and_reinforces_graph(tmp_path):
             SELECT occurrence_count FROM edges
             WHERE from_node_id = ? AND to_node_id = ? AND relation = 'asserted_fact'
             """,
-            (anchor.id, existing.id),
+            (anchor.id, int(rows[0]["id"])),
         ).fetchone()
         assert edge is not None
         assert int(edge["occurrence_count"]) == 2
-
-        assert graph.get_node_by_identity("concept:내") is not None
-        assert resolver.calls
     finally:
         graph.close()
 
 
-def test_non_equivalent_fact_creates_new_node(tmp_path):
+def test_different_fact_wording_creates_distinct_nodes_even_when_semantically_related(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
     recall = RecallService(graph, index)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
-        evidence = memory.record_raw_user_evidence("alice", "내 이름은 신재용이야")
+        evidence = memory.record_raw_user_evidence("alice", "플래티넘 프레피를 사용해")
         asyncio.run(memory.finish_turn(
             user_id="alice",
-            user_text="내 이름은 신재용이야",
-            final_answer="ok",
+            user_text="플래티넘 프레피를 사용해",
+            final_answer="알겠어.",
             user_evidence=evidence,
-            fact_texts=("사용자의 이름은 신재용이다",),
+            fact_texts=("사용자는 플래티넘 프레피를 사용한다",),
         ))
 
-        resolver = FixedIdentityResolver(None)
-        evidence2 = memory.record_raw_user_evidence("alice", "별명은 안개야")
+        evidence2 = memory.record_raw_user_evidence("alice", "플레지르 바디에 프레피 하단부를 결합해서 써")
         asyncio.run(memory.finish_turn(
             user_id="alice",
-            user_text="별명은 안개야",
-            final_answer="ok",
+            user_text="플레지르 바디에 프레피 하단부를 결합해서 써",
+            final_answer="알겠어.",
             user_evidence=evidence2,
-            fact_texts=("사용자의 별명은 안개다",),
-            fact_identity_resolver=resolver,
+            fact_texts=(
+                "사용자는 플래티넘 플레지르의 알루미늄 배럴과 캡을 사용한다",
+                "사용자는 플래티넘 프레피의 하단부를 플레지르 바디에 결합해 사용한다",
+            ),
         ))
 
-        assert graph.connection.execute(
-            "SELECT COUNT(*) FROM nodes WHERE node_type = 'fact'"
-        ).fetchone()[0] == 2
+        texts = {
+            row["canonical_text"]
+            for row in graph.connection.execute(
+                "SELECT canonical_text FROM nodes WHERE node_type = 'fact'"
+            ).fetchall()
+        }
+        assert texts == {
+            "사용자는 플래티넘 프레피를 사용한다",
+            "사용자는 플래티넘 플레지르의 알루미늄 배럴과 캡을 사용한다",
+            "사용자는 플래티넘 프레피의 하단부를 플레지르 바디에 결합해 사용한다",
+        }
     finally:
         graph.close()
 
