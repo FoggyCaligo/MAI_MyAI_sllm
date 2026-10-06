@@ -25,6 +25,15 @@ def turn(content: str) -> ModelTurn:
     )
 
 
+def composition(*facts):
+    return json.dumps({
+        "facts": [
+            {"fact": fact, "evidence_refs": list(refs)}
+            for fact, refs in facts
+        ]
+    }, ensure_ascii=False)
+
+
 def resolution(
     *,
     direct=(),
@@ -61,7 +70,7 @@ class FakeAdapter:
 def test_two_stage_extractor_preserves_direct_user_update() -> None:
     adapter = FakeAdapter([
         resolution(direct=("사용자는 최근 목표를 Y로 변경했다",)),
-        json.dumps({"facts": ["사용자는 최근 목표를 Y로 변경했다"]}, ensure_ascii=False),
+        composition(("사용자는 최근 목표를 Y로 변경했다", ("user:direct:0",))),
     ])
     extractor = OllamaFactExtractor(adapter)
 
@@ -97,9 +106,10 @@ def test_broad_approval_is_resolved_only_against_previous_assistant_topic_and_sc
             topic="현재 만년필 구성",
             scope="직전 assistant가 설명한 플레지르와 프레피 조합",
         ),
-        json.dumps({
-            "facts": ["사용자의 현재 만년필은 플레지르와 프레피를 조합한 것이다."]
-        }, ensure_ascii=False),
+        composition((
+            "사용자의 현재 만년필은 플레지르와 프레피를 조합한 것이다.",
+            ("assistant_approval:0",),
+        )),
     ])
     extractor = OllamaFactExtractor(adapter)
 
@@ -123,14 +133,16 @@ def test_broad_approval_is_resolved_only_against_previous_assistant_topic_and_sc
         "topic": "현재 만년필 구성",
         "scope": "직전 assistant가 설명한 플레지르와 프레피 조합",
     }
-    assert composer_payload["grounded_final_claims"] == []
+    assert [source["kind"] for source in composer_payload["allowed_fact_sources"]] == [
+        "approved_previous_assistant_fact"
+    ]
     assert composer_payload["assistant_final_answer"] == "Eyedropper에 대한 새로운 설명."
 
 
 def test_current_final_claim_can_be_admitted_only_through_verified_grounding_refs() -> None:
     adapter = FakeAdapter([
         resolution(),
-        json.dumps({"facts": ["제품 A의 출시일은 2026-10-10이다"]}, ensure_ascii=False),
+        composition(("제품 A의 출시일은 2026-10-10이다", ("grounded_final:0",))),
     ])
     extractor = OllamaFactExtractor(adapter)
 
@@ -155,21 +167,26 @@ def test_current_final_claim_can_be_admitted_only_through_verified_grounding_ref
 
     assert facts == ("제품 A의 출시일은 2026-10-10이다",)
     composer_payload = json.loads(adapter.requests[1].messages[1]["content"])
-    assert composer_payload["successful_non_recall_tool_evidence"] == [{
-        "ref": "tool:0:web_search",
-        "tool": "web_search",
-        "content": "제품 A 출시일: 2026-10-10",
-    }]
-    assert composer_payload["grounded_final_claims"] == [{
-        "claim": "제품 A는 2026-10-10에 출시됐다",
-        "evidence_refs": ["tool:0:web_search"],
-    }]
+    assert composer_payload["allowed_fact_sources"] == [
+        {
+            "ref": "tool:0:web_search",
+            "kind": "successful_non_recall_tool_result",
+            "tool": "web_search",
+            "content": "제품 A 출시일: 2026-10-10",
+        },
+        {
+            "ref": "grounded_final:0",
+            "kind": "grounded_final_claim",
+            "content": "제품 A는 2026-10-10에 출시됐다",
+            "grounding_evidence_refs": ["tool:0:web_search"],
+        },
+    ]
 
 
 def test_pure_recall_question_can_produce_no_new_facts() -> None:
     adapter = FakeAdapter([
         resolution(),
-        json.dumps({"facts": []}),
+        composition(),
     ])
     extractor = OllamaFactExtractor(adapter)
 
@@ -218,6 +235,38 @@ def test_evidence_resolver_invalid_json_is_an_explicit_failure() -> None:
         ))
 
 
+def test_fact_composer_cannot_use_current_final_without_an_allowed_source_ref() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([
+        resolution(),
+        composition(("Eyedropper는 고무 밸브를 사용한다", ("assistant_final_answer",))),
+    ]))
+
+    with pytest.raises(FactExtractionError, match="unknown evidence refs"):
+        run(extractor.extract(
+            user_text="eyedropper는 어떤 원리야?",
+            previous_assistant_message=None,
+            final_answer="Eyedropper는 고무 밸브를 사용한다.",
+            successful_tool_evidence=(),
+            grounded_final_claims=(),
+        ))
+
+
+def test_fact_composer_requires_at_least_one_evidence_ref_per_fact() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([
+        resolution(direct=("사용자는 목표를 Y로 바꿨다",)),
+        composition(("사용자는 목표를 Y로 바꿨다", ())),
+    ]))
+
+    with pytest.raises(FactExtractionError, match="without evidence refs"):
+        run(extractor.extract(
+            user_text="목표를 Y로 바꿨어.",
+            previous_assistant_message=None,
+            final_answer="알겠어.",
+            successful_tool_evidence=(),
+            grounded_final_claims=(),
+        ))
+
+
 def test_fact_composer_invalid_json_is_an_explicit_failure() -> None:
     extractor = OllamaFactExtractor(FakeAdapter([
         resolution(direct=("사용자는 최근에 바뀐 점이 있다",)),
@@ -237,7 +286,7 @@ def test_fact_composer_invalid_json_is_an_explicit_failure() -> None:
 def test_fact_extractor_has_no_default_fifteen_second_deadline() -> None:
     extractor = OllamaFactExtractor(FakeAdapter([
         resolution(),
-        json.dumps({"facts": []}),
+        composition(),
     ]))
 
     assert extractor.timeout_seconds is None
