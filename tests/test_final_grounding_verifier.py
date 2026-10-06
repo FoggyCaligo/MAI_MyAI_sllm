@@ -256,7 +256,7 @@ def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
 
 
 def test_claim_grounding_failures_consume_evidence_budget() -> None:
-    main = SequenceAdapter(["근거 없는 설명입니다."] * 3)
+    main = SequenceAdapter(["근거 없는 설명입니다."] * 6)
     review = {
         "evidence_verdict": "unsupported",
         "alignment_verdict": "aligned",
@@ -269,7 +269,7 @@ def test_claim_grounding_failures_consume_evidence_budget() -> None:
         }],
         "action_verdict": "not_applicable",
     }
-    reviewer = StructuredReviewerAdapter([review] * 3)
+    reviewer = StructuredReviewerAdapter([review] * 6)
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
         run(AgentRuntime(
             main, ToolRegistry(),
