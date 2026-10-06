@@ -52,7 +52,8 @@ Your response is constrained by the supplied structured-output schema. Populate 
 - resolved_request: the user's current request, with references resolved from conversational context only as needed;
 - alignment_verdict: "aligned", "misaligned", or "uncertain";
 - reasons: concrete task-alignment defects only;
-- claims: every material factual claim from the candidate that matters to the user's request.
+- claims: every material factual claim from the candidate that matters to the user's request;
+- user_facts: material factual statements directly asserted by user messages that are relevant to this request.
 
 Claim extraction:
 - Extract material factual assertions from the candidate without deciding whether they are supported.
@@ -62,6 +63,15 @@ Claim extraction:
   or a date/timestamp comparison. Do not decide temporal correctness in this stage.
 - Do not turn opinions, recommendations, formatting, or purely rhetorical language into factual claims unless they
   contain a material factual assertion.
+
+Direct user fact extraction:
+- Each supplied user message has an exact message_id. Extract only factual content directly asserted by that user message.
+- For every extracted user fact, return the exact source_message_id of the user message that directly asserts it.
+- Questions, requests, instructions, acknowledgements, approvals, agreements, confirmations, acceptances, and endorsements
+  are not factual sources for claims merely referenced from assistant context.
+- Never import or paraphrase an assistant claim into user_facts merely because a user refers to, accepts, or approves it.
+- A mixed user message may still contribute separate factual statements that it directly asserts.
+- Assistant messages may resolve the task reference, but can never be the source of a user_fact.
 
 Task alignment and partial-answer policy:
 - Identify the user's current request from the latest user message, resolving references from conversational context when needed.
@@ -149,6 +159,13 @@ class _CandidateClaimPayload(BaseModel):
     temporal: bool
 
 
+class _UserFactPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact: str
+    source_message_id: str
+
+
 class _CandidateAnalysisPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -156,6 +173,7 @@ class _CandidateAnalysisPayload(BaseModel):
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     reasons: list[str]
     claims: list[_CandidateClaimPayload]
+    user_facts: list[_UserFactPayload]
 
 
 class _EvidenceClaimPayload(BaseModel):
@@ -192,6 +210,13 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectUserFact:
+    evidence_id: str
+    fact: str
+    source_message_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class GroundedClaim:
     claim: str
     support_ids: tuple[str, ...]
@@ -202,6 +227,7 @@ class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
     grounded_claims: tuple[GroundedClaim, ...] = ()
+    direct_user_facts: tuple[DirectUserFact, ...] = ()
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -270,6 +296,7 @@ class FinalReview:
     alignment_reasons: tuple[str, ...] = ()
     evidence_reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
+    direct_user_facts: tuple[DirectUserFact, ...] = ()
     action_verdict: str = "not_applicable"
 
 
