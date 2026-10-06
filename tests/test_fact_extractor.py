@@ -4,11 +4,7 @@ import json
 import pytest
 
 from mai.llm.models import ModelTurn
-from mai.memory.extraction.service import (
-    FactExtractionError,
-    OllamaFactExtractor,
-    OllamaFactIdentityResolver,
-)
+from mai.memory.extraction.service import FactExtractionError, OllamaFactExtractor
 
 
 def run(coro):
@@ -144,26 +140,24 @@ def test_fact_extractor_does_not_truncate_large_fact_arrays() -> None:
     assert "Do not impose a fixed maximum number of facts" in adapter.requests[0].messages[0]["content"]
 
 
-def test_fact_identity_resolver_accepts_only_supplied_candidate_ids() -> None:
-    adapter = FakeAdapter([json.dumps({"equivalent_fact_id": 7})])
-    resolver = OllamaFactIdentityResolver(adapter)
+def test_fact_extractor_contract_keeps_distinct_product_models_separate() -> None:
+    adapter = FakeAdapter([
+        json.dumps({
+            "facts": [
+                "사용자는 플래티넘 플레지르의 알루미늄 배럴과 캡을 사용한다",
+                "사용자는 플래티넘 프레피의 하단부를 플레지르 바디에 결합해 사용한다",
+            ]
+        }, ensure_ascii=False),
+    ])
+    extractor = OllamaFactExtractor(adapter)
 
-    resolved = run(resolver.resolve(
-        new_fact="내 이름은 신재용이다",
-        candidates=((7, "사용자의 이름은 신재용이다"),),
+    facts = run(extractor.extract(
+        user_text="플레지르 바디와 캡에 프레피 하단부를 결합해서 쓰고 있어.",
+        final_answer="알겠어.",
+        successful_tool_results=(),
     ))
 
-    assert resolved == 7
-
-
-def test_fact_identity_resolver_rejects_unknown_candidate_id() -> None:
-    resolver = OllamaFactIdentityResolver(
-        FakeAdapter([json.dumps({"equivalent_fact_id": 99})])
-    )
-
-    with pytest.raises(FactExtractionError, match="unknown candidate ID"):
-        run(resolver.resolve(
-            new_fact="내 이름은 신재용이다",
-            candidates=((7, "사용자의 이름은 신재용이다"),),
-        ))
-
+    assert len(facts) == 2
+    prompt = adapter.requests[0].messages[0]["content"]
+    assert "Distinct product/model identities must remain distinct facts" in prompt
+    assert "Remove only exact duplicate fact strings" in prompt
