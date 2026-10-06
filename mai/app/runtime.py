@@ -45,6 +45,16 @@ from .uploads import principal_upload_directory
 _LOG = logging.getLogger("uvicorn.error")
 
 
+def _previous_assistant_message(messages: Sequence[Mapping[str, Any]]) -> str | None:
+    for message in reversed(messages):
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+    return None
+
+
 
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
@@ -207,6 +217,8 @@ class MAIRuntime:
             raise ValueError("prompt must be non-empty")
         await self._await_pending_memory_update(principal.memory_user_id)
 
+        previous_assistant_message = _previous_assistant_message(prior_messages)
+
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         fact_extractor = self._fact_extractor_for(selected_model)
@@ -246,6 +258,7 @@ class MAIRuntime:
         task = asyncio.create_task(
             self._postprocess_memory(
                 prompt=prompt,
+                previous_assistant_message=previous_assistant_message,
                 final_answer=answer,
                 principal=principal,
                 tool_executions=tool_executions,
@@ -275,6 +288,7 @@ class MAIRuntime:
         self,
         *,
         prompt: str,
+        previous_assistant_message: str | None,
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
@@ -288,6 +302,7 @@ class MAIRuntime:
         try:
             fact_texts = await self.memory.extract_facts(
                 user_text=prompt,
+                previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
                 successful_tool_results=extraction_tool_results,
                 fact_extractor=fact_extractor,
