@@ -53,6 +53,7 @@ class ReviewerAdapter:
             "alignment_verdict": alignment_verdict,
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
+            "coverage_evidence_ids": [],
             "reasons": list(reasons),
             "claims": [],
             "action_verdict": "not_applicable",
@@ -71,6 +72,7 @@ class StructuredReviewerAdapter:
         review = dict(self.reviews.pop(0))
         review.setdefault("coverage_verdict", "sufficient")
         review.setdefault("coverage_reasons", [])
+        review.setdefault("coverage_evidence_ids", [])
         return turn(json.dumps(review, ensure_ascii=False))
 
 
@@ -87,6 +89,7 @@ class SlowReviewerAdapter:
             "alignment_verdict": "aligned",
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
+            "coverage_evidence_ids": [],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
@@ -106,6 +109,9 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
 
     assert result.content == "케이씨텍은 70,000원에 팔았습니다."
     assert result.model_rounds == 2
+    assert main.requests[0].stage == "main"
+    assert main.requests[1].stage == "correction"
+    assert all(request.stage == "reviewer" for request in reviewer.requests)
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
     assert len(reviewer.requests) == 2
@@ -202,6 +208,7 @@ def test_claim_grounding_failures_consume_evidence_budget() -> None:
         "claims": [{
             "claim": "근거 없는 설명",
             "verdict": "unsupported",
+            "evidence_ids": [],
             "defect": "missing_evidence",
             "reason": "No supporting observation.",
         }],
@@ -380,12 +387,14 @@ def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
 
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["tool_results_in_execution_order"] == [{
-        "index": 0,
+    tool_items = [item for item in payload["factual_evidence"] if item["source"] == "tool"]
+    assert tool_items == [{
+        "evidence_id": "tool-result-0",
+        "source": "tool",
         "tool": "terminal_run",
         "ok": False,
         "error_type": "TerminalCommandError",
-        "result": "collected 138 items; 136 passed, 2 failed",
+        "content": "collected 138 items; 136 passed, 2 failed",
     }]
 
 
@@ -439,6 +448,7 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
         "alignment_verdict",
         "coverage_verdict",
         "coverage_reasons",
+        "coverage_evidence_ids",
         "reasons",
         "claims",
         "action_verdict",
@@ -446,7 +456,10 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert "claims" in schema["properties"]
     assert "coverage_verdict" in schema["properties"]
     assert "coverage_reasons" in schema["properties"]
+    assert "coverage_evidence_ids" in schema["properties"]
     assert "action_verdict" in schema["properties"]
+    claim_schema = schema["$defs"]["_ClaimReviewPayload"]
+    assert "evidence_ids" in claim_schema["required"]
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
@@ -462,6 +475,7 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
             "claims": [{
                 "claim": "GitHub 원격 브랜치 16개를 모두 삭제 완료했다",
                 "verdict": "unsupported",
+                "evidence_ids": [],
                 "defect": "scope_expansion",
                 "reason": "The evidence shows deletion of refs/remotes/origin entries, not GitHub server branches.",
             }],
@@ -474,6 +488,7 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
             "claims": [{
                 "claim": "로컬의 origin remote-tracking ref 16개는 삭제됐다",
                 "verdict": "supported",
+                "evidence_ids": ["user-message-0"],
                 "defect": "none",
                 "reason": "",
             }],
@@ -483,7 +498,13 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
-    result = run(runtime.run_user_message("main 제외하고 모든 브랜치를 origin에서 없애줘."))
+    result = run(runtime.run_user_message(
+        "main 제외하고 모든 브랜치를 origin에서 없애줘.",
+        prior_messages=({
+            "role": "user",
+            "content": "로컬의 origin remote-tracking ref 16개는 이미 삭제했어.",
+        },),
+    ))
 
     assert result.model_rounds == 2
     assert result.content.startswith("로컬의 origin remote-tracking ref")
@@ -502,6 +523,7 @@ def test_claim_level_unsupported_inference_is_reported_with_claim_text() -> None
         "claims": [{
             "claim": "주가 상승은 금리 인하 기대 때문입니다",
             "verdict": "unsupported",
+            "evidence_ids": ["tool-result-0"],
             "defect": "unsupported_inference",
             "reason": "Observed price and flow data do not establish this cause.",
         }],
@@ -549,6 +571,7 @@ def test_truthful_partial_answer_is_releaseable_after_failed_step() -> None:
         "claims": [{
             "claim": "문서 자체의 내용은 확인했다",
             "verdict": "supported",
+            "evidence_ids": ["tool-result-0"],
             "defect": "none",
             "reason": "",
         }],
@@ -576,6 +599,7 @@ def test_evidence_coverage_rejects_generic_answer_that_omits_available_results()
         "coverage_reasons": [
             "The tool evidence already contains a concrete upcoming VTuber event with its date and location, but the candidate only tells the user to check official sites."
         ],
+        "coverage_evidence_ids": ["tool-result-0"],
         "reasons": [],
         "claims": [],
         "action_verdict": "not_applicable",
@@ -612,6 +636,7 @@ def test_coverage_correction_exhaustion_blocks_release() -> None:
             "alignment_verdict": "aligned",
             "coverage_verdict": "insufficient",
             "coverage_reasons": ["Concrete supported result A was omitted."],
+            "coverage_evidence_ids": ["user-message-0"],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
@@ -621,6 +646,7 @@ def test_coverage_correction_exhaustion_blocks_release() -> None:
             "alignment_verdict": "aligned",
             "coverage_verdict": "insufficient",
             "coverage_reasons": ["Concrete supported result A is still omitted."],
+            "coverage_evidence_ids": ["user-message-0"],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
@@ -630,6 +656,7 @@ def test_coverage_correction_exhaustion_blocks_release() -> None:
             "alignment_verdict": "aligned",
             "coverage_verdict": "insufficient",
             "coverage_reasons": ["This verdict is ignored because the coverage correction budget is exhausted."],
+            "coverage_evidence_ids": ["user-message-0"],
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
@@ -639,7 +666,13 @@ def test_coverage_correction_exhaustion_blocks_release() -> None:
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
-        run(runtime.run_user_message("근거에서 확인된 구체적인 행사 정보를 알려줘."))
+        run(runtime.run_user_message(
+            "근거에서 확인된 구체적인 행사 정보를 알려줘.",
+            prior_messages=({
+                "role": "user",
+                "content": "Concrete supported result A는 10월 10일 서울 행사야.",
+            },),
+        ))
 
 
 
@@ -658,6 +691,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
         "alignment_verdict": "aligned",
         "coverage_verdict": "sufficient",
         "coverage_reasons": [],
+        "coverage_evidence_ids": [],
         "reasons": [],
         "claims": [],
         "action_verdict": "not_applicable",
@@ -717,7 +751,16 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
     ))
 
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["authoritative_current_time"] == clock
+    clock_items = [
+        item
+        for item in payload["factual_evidence"]
+        if item["evidence_id"] == "runtime-current-time"
+    ]
+    assert clock_items == [{
+        "evidence_id": "runtime-current-time",
+        "source": "runtime_clock",
+        "content": clock,
+    }]
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
@@ -740,6 +783,7 @@ def test_claim_level_unsupported_overrides_inconsistent_supported_overall_verdic
         "claims": [{
             "claim": "Pilot 검은색 잉크는 저점도 잉크다",
             "verdict": "unsupported",
+            "evidence_ids": ["user-message-0"],
             "defect": "unsupported_inference",
             "reason": "The evidence only establishes that the user uses Pilot black ink.",
         }],
@@ -767,6 +811,7 @@ def test_evidence_correction_feedback_blocks_paraphrase_and_allows_new_tool_evid
         "claims": [{
             "claim": "Pilot 검은색 잉크는 부식 위험이 없다",
             "verdict": "unsupported",
+            "evidence_ids": [],
             "defect": "missing_evidence",
             "reason": "No supplied evidence establishes corrosion properties.",
         }],
@@ -784,4 +829,91 @@ def test_evidence_correction_feedback_blocks_paraphrase_and_allows_new_tool_evid
     assert "Do not restate, paraphrase, or replace a blocked claim" in feedback
     assert "A correction round may call native tools" in feedback
     assert "If no new supporting evidence is obtained" in feedback
+    assert '"blocked_claims"' in feedback
+    assert '"allowed_resolutions"' in feedback
+    assert '"claim": "Pilot 검은색 잉크는 부식 위험이 없다"' in feedback
 
+
+def test_reviewer_separates_request_context_from_factual_evidence() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="제품명을 다시 확인해야 합니다.",
+        messages=(
+            {"role": "user", "content": "Pilot 30ml 블랙을 사용해."},
+            {"role": "assistant", "content": "그 잉크는 고점도라 막힙니다."},
+            {"role": "user", "content": "그럼 다시 답해줘."},
+        ),
+        tool_results=(),
+    ))
+
+    assert result.ok
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert payload["request_context"] == [
+        {"role": "user", "content": "Pilot 30ml 블랙을 사용해."},
+        {"role": "assistant", "content": "그 잉크는 고점도라 막힙니다."},
+    ]
+    assert all(item["source"] != "assistant" for item in payload["factual_evidence"])
+    assert {
+        item["evidence_id"]
+        for item in payload["factual_evidence"]
+        if item["source"] == "user"
+    } == {"user-message-0", "user-message-2"}
+    assert "conversation_context" not in payload
+    assert "tool_results_in_execution_order" not in payload
+
+
+@pytest.mark.parametrize("evidence_ids", [[], ["assistant-message-1"], ["missing-id"]])
+def test_supported_claim_requires_valid_factual_evidence_id(evidence_ids) -> None:
+    review = {
+        "evidence_verdict": "supported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "이전 assistant 설명은 사실이다",
+            "verdict": "supported",
+            "evidence_ids": evidence_ids,
+            "defect": "none",
+            "reason": "",
+        }],
+        "action_verdict": "not_applicable",
+    }
+    reviewer = StructuredReviewerAdapter([review, review, review])
+
+    with pytest.raises(RuntimeError, match="release was not verified"):
+        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+            candidate="이전 설명은 사실입니다.",
+            messages=(
+                {"role": "user", "content": "다시 답해줘."},
+                {"role": "assistant", "content": "이전 설명"},
+            ),
+            tool_results=(),
+        ))
+
+    assert len(reviewer.requests) == 3
+
+
+def test_assistant_context_cannot_create_coverage_obligation() -> None:
+    review = {
+        "evidence_verdict": "supported",
+        "alignment_verdict": "aligned",
+        "coverage_verdict": "insufficient",
+        "coverage_reasons": ["The prior assistant mentioned a detail that the candidate omitted."],
+        "coverage_evidence_ids": ["assistant-message-1"],
+        "reasons": [],
+        "claims": [],
+        "action_verdict": "not_applicable",
+    }
+    reviewer = StructuredReviewerAdapter([review, review, review])
+
+    with pytest.raises(RuntimeError, match="release was not verified"):
+        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+            candidate="현재 사용자 근거만 반영했습니다.",
+            messages=(
+                {"role": "user", "content": "답해줘."},
+                {"role": "assistant", "content": "근거 없는 이전 세부 정보"},
+            ),
+            tool_results=(),
+        ))
+
+    assert len(reviewer.requests) == 3

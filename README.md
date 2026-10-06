@@ -23,6 +23,10 @@ Web/API authentication
   ↓
 AccessPrincipal(user_id, db_id, role)
   ↓
+LLM tool-requirement preflight
+  ↓
+FrozenToolRequirements
+  ↓
 Main Agent + Ollama native tool calls
   ↓
 Candidate Final
@@ -41,19 +45,21 @@ Final Response
 Background memory extraction / admission
 ```
 
-### Direct native-tool selection
+### Tool preflight + native-tool selection
 
-Production request path는 별도의 model-based tool requirement preflight를 호출하지 않는다. Main agent가 system prompt, 최근 대화, runtime context, 현재 등록된 native tool schema를 함께 보고 필요한 tool을 직접 선택한다.
+Production request path는 main agent 전에 선택된 동일 모델을 `think=False`, `tools=()`로 호출해 필수 native tool을 판정한다. 판정 결과는 `FrozenToolRequirements`로 고정되며, 등록된 handler가 실제로 시작돼야 충족된다.
 
-`OllamaToolRequirementPlanner`와 `FrozenToolRequirements` 지원 코드는 구조적 실험 및 단위 테스트를 위해 남아 있지만 현재 production composition에는 연결하지 않는다. 추가 LLM 호출의 지연을 피하기 위한 의도적인 선택이다.
+Preflight 입력은 `request_context`와 `factual_evidence`를 분리한다. 이전 assistant 답변은 참조 해석용 context일 뿐 사실 근거가 아니다. 최종 답변에 필요한 material external fact가 factual evidence에 없다면 모델의 학습 지식을 근거로 간주하지 않고 적절한 정보 tool을 필수로 선택한다.
 
-따라서 production에서는 required-tool gate가 final을 구조적으로 차단하지 않는다. 필요한 tool 사용은 main agent prompt와 tool schema에 의존하고, 생성된 candidate final의 근거성은 뒤의 `FinalGroundingVerifier`가 검토한다.
+Main agent가 필수 tool 없이 final을 시도하면 아직 누락된 tool schema만 노출하는 correction round로 돌아간다. 그 밖의 추가 tool은 main agent가 전체 native schema를 보고 직접 선택한다.
 
 ---
 
 ## 2. Final verification
 
 Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니다. Candidate final을 release하기 전에 user/tool evidence와 비교해 검증한다. Numeric grounding은 deterministic 검사이고, semantic review는 현재 chat에 선택된 동일 모델을 `think=False`, `tools=()`로 한 번 더 호출한다. Candidate가 거절되어 재작성되면 새 candidate마다 reviewer가 다시 호출될 수 있다.
+
+Semantic reviewer 입력도 `request_context`와 ID가 부여된 `factual_evidence`로 분리한다. 이전 assistant 답변은 요청 해석과 alignment 판단에만 사용하며 claim grounding, coverage, action outcome의 근거가 될 수 없다. 각 supported claim은 실제 factual evidence의 `evidence_ids`를 반환해야 하고, coverage 부족 판정도 `coverage_evidence_ids`를 제시해야 한다. ID 누락·중복·미등록 참조는 reviewer protocol failure로 처리한다.
 
 현재 검증 축은 다음과 같다.
 
@@ -67,9 +73,11 @@ Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니�
 
 Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판정을 내리지 않는다. **현재 user/tool evidence 안에 이미 있는 구체적이고 사용자에게 중요한 정보를 candidate가 불필요하게 버린 경우**만 대상으로 한다.
 
-Coverage correction은 별도 budget으로 최대 2번이다. 두 번 이후에는 coverage 부족만으로 final을 계속 붙잡지 않는다. Grounding, action, alignment와는 별도 축이다.
+Candidate가 grounding에서 반려되면 correction round에는 blocked claim, defect, reason, 기존 evidence ID와 허용된 해결 방식이 구조화된 JSON으로 전달된다. 새 user/tool evidence를 확보하거나, 주장을 제거하거나, 미확인 상태를 명시해야 하며 같은 근거로 사실 설명만 바꿔 반복할 수 없다.
 
-Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 이를 log하고 **fail-open**한다. Reviewer 장애 때문에 전체 사용자 요청을 서비스 오류로 끝내기보다 candidate final을 반환하는 가용성 우선 정책이다. 실패한 reviewer 출력을 문자열 heuristic으로 복원하지 않는다.
+각 검증 축의 correction budget은 최대 2회다. Semantic reviewer의 structured output, evidence ID 계약, timeout 또는 provider 호출이 재시도 뒤에도 실패하면 검증되지 않은 candidate를 반환하지 않고 실행 실패로 전달한다.
+
+모든 Ollama 호출은 `preflight`, `main`, `correction`, `reviewer`, memory 단계 label과 함께 입력 메시지 수·문자 수·tool schema 크기·wall time을 기록한다. Ollama가 제공하면 prompt/eval token 수와 load/prompt-eval/eval/total duration도 함께 기록한다.
 
 ---
 

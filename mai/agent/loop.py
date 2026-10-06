@@ -146,6 +146,7 @@ class AgentLoop:
         empty_final_retries = 0
         pending_history_compactions: dict[int, str] = {}
         rejected_final_indices: list[int] = []
+        verification_correction_active = False
 
         try:
             while True:
@@ -169,6 +170,11 @@ class AgentLoop:
                     tools=active_tools,
                     think=think,
                     options=options,
+                    stage=(
+                        "correction"
+                        if verification_correction_active or requirement_correction_active or empty_final_retries
+                        else "main"
+                    ),
                 ))
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
@@ -240,7 +246,11 @@ class AgentLoop:
                     if self.final_verifier is not None:
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
-                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices],
+                            messages=[
+                                message
+                                for index, message in enumerate(history[:-1])
+                                if index not in rejected_final_indices
+                            ],
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
@@ -300,6 +310,7 @@ class AgentLoop:
                                 _MAX_EVIDENCE_VERIFICATION_RETRIES,
                             )
                             history.append({"role": "system", "content": verification.feedback_message()})
+                            verification_correction_active = True
                             round_number += 1
                             continue
                     _LOG.info("MAI final accepted round=%d", round_number)

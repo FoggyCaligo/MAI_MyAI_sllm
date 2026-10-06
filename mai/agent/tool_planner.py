@@ -28,13 +28,16 @@ You are MAI's tool-requirement preflight. Your only job is to decide which avail
 Your response is constrained by the supplied structured-output schema. Populate only the required_tools array with exact available tool names.
 
 Rules:
-- Judge the user's actual requested outcome, using recent dialogue only to resolve references.
+- Judge the user's actual requested outcome. Use request_context only to resolve references and understand task continuity.
+- request_context, including every prior assistant message, is not factual evidence and cannot satisfy a need for external facts.
+- factual_evidence is the only supplied evidence available before tool execution. The model's training knowledge is not evidence under the final release contract.
 - Select only exact names from the supplied available_tools list.
-- Require a tool when the requested answer or action depends on information or effects that are not already present in the supplied conversation and that tool is the available way to obtain them.
+- Require a tool when the requested answer or action depends on material factual information or effects that are not already established in factual_evidence and that tool is the available way to obtain them.
+- This includes stable product behavior, compatibility, specifications, causal explanations, or practical remedies when the answer must present them as facts. Do not exempt a claim merely because it may be familiar general knowledge.
 - Local-PC inspection or execution requests should require the relevant file/code/document/image/terminal tools instead of being replaced with a question to the user when the environment can resolve the task itself.
-- Stored-user-history questions should require the relevant memory tool when the needed fact is not already in the supplied conversation.
+- Stored-user-history questions should require the relevant memory tool when the needed fact is not already in factual_evidence.
 - Current web, market, time, or calculated facts should require the corresponding available tool when needed.
-- When a request depends on comparing dates or time-relative information against the current moment, require the available current-time tool unless the current moment is already established in the supplied conversation.
+- When a request depends on comparing dates or time-relative information against the current moment, require the available current-time tool unless the current moment is already established in factual_evidence.
 - Do not require tools merely because they could add optional detail.
 - Do not call tools, answer the user's task, invent arguments, or propose next steps.
 """.strip()
@@ -68,7 +71,29 @@ class OllamaToolRequirementPlanner:
         ]
         payload: dict[str, Any] = {
             "user_request": user_text,
-            "recent_dialogue": list(recent_dialogue),
+            "request_context": [
+                {
+                    "role": str(message.get("role") or ""),
+                    "content": str(message.get("content") or ""),
+                }
+                for message in recent_dialogue
+                if message.get("role") in {"user", "assistant"}
+                and isinstance(message.get("content"), str)
+            ],
+            "factual_evidence": [
+                {
+                    "evidence_id": f"prior-user-message-{index}",
+                    "source": "user",
+                    "content": str(message.get("content") or ""),
+                }
+                for index, message in enumerate(recent_dialogue)
+                if message.get("role") == "user"
+                and isinstance(message.get("content"), str)
+            ] + [{
+                "evidence_id": "current-user-message",
+                "source": "user",
+                "content": user_text,
+            }],
             "available_tools": available_tools,
         }
         turn = await self.adapter.chat(ChatRequest(
@@ -79,6 +104,7 @@ class OllamaToolRequirementPlanner:
             tools=(),
             think=False,
             response_format=_ToolRequirementPlan.model_json_schema(),
+            stage="preflight",
         ))
 
         try:

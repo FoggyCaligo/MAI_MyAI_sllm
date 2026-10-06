@@ -120,6 +120,7 @@ class OllamaFactIdentityResolver:
             ),
             tools=(),
             think=False,
+            stage="memory_identity",
         )
         try:
             turn = await asyncio.wait_for(self.adapter.chat(request), timeout=self.timeout_seconds)
@@ -181,6 +182,7 @@ class OllamaFactExtractor:
             ),
             tools=(),
             think=False,
+            stage="memory_extraction",
         )
         try:
             turn = await asyncio.wait_for(self.adapter.chat(request), timeout=self.timeout_seconds)

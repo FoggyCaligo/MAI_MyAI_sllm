@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+import json
 
 from pydantic import BaseModel, ConfigDict
 
@@ -84,6 +85,7 @@ def test_ollama_runtime_runs_one_preflight_and_freezes_required_tools() -> None:
     assert preflight.tools == ()
     assert preflight.think is False
     assert preflight.response_format is not None
+    assert preflight.stage == "preflight"
 
     first_agent_round = adapter.requests[1]
     assert len(first_agent_round.tools) == 1
@@ -110,3 +112,41 @@ def test_explicit_requirements_skip_preflight() -> None:
 
     assert result.content == "done"
     assert len(adapter.requests) == 1
+
+
+def test_preflight_separates_assistant_context_from_factual_evidence() -> None:
+    adapter = FakeOllamaAdapter([
+        final_turn('{"required_tools":[]}'),
+        final_turn("done"),
+    ])
+
+    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message(
+        "그 제품에 대해 다시 답해줘.",
+        prior_messages=(
+            {"role": "user", "content": "Pilot 30ml 블랙을 사용해."},
+            {"role": "assistant", "content": "그 잉크는 고점도입니다."},
+        ),
+    ))
+
+    assert result.content == "done"
+    preflight = adapter.requests[0]
+    payload = json.loads(preflight.messages[1]["content"])
+    assert payload["request_context"] == [
+        {"role": "user", "content": "Pilot 30ml 블랙을 사용해."},
+        {"role": "assistant", "content": "그 잉크는 고점도입니다."},
+    ]
+    assert payload["factual_evidence"] == [
+        {
+            "evidence_id": "prior-user-message-0",
+            "source": "user",
+            "content": "Pilot 30ml 블랙을 사용해.",
+        },
+        {
+            "evidence_id": "current-user-message",
+            "source": "user",
+            "content": "그 제품에 대해 다시 답해줘.",
+        },
+    ]
+    system_prompt = preflight.messages[0]["content"]
+    assert "prior assistant message" in system_prompt
+    assert "training knowledge is not evidence" in system_prompt
