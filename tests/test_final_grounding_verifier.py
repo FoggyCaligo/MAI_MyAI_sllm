@@ -77,10 +77,24 @@ class StructuredReviewerAdapter:
         review = dict(self.reviews[0])
         schema_properties = request.response_format["properties"]
         if "evidence_verdict" in schema_properties:
+            payload = json.loads(request.messages[1]["content"])
+            available_refs = [
+                str(source["ref"])
+                for source in payload.get("evidence_sources", [])
+                if source.get("ref")
+            ]
+            claims = []
+            for raw_claim in review.get("claims", []):
+                claim = dict(raw_claim)
+                claim.setdefault(
+                    "evidence_refs",
+                    available_refs[:1] if claim.get("verdict") == "supported" else [],
+                )
+                claims.append(claim)
             return turn(json.dumps({
                 "evidence_verdict": review.get("evidence_verdict", "supported"),
                 "reasons": list(review.get("reasons", [])),
-                "claims": list(review.get("claims", [])),
+                "claims": claims,
             }, ensure_ascii=False))
         self.reviews.pop(0)
         return turn(json.dumps({
@@ -489,6 +503,91 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     }
     assert grounding_schema["additionalProperties"] is False
     assert task_schema["additionalProperties"] is False
+
+
+def test_supported_claim_carries_verified_evidence_refs_into_result() -> None:
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "supported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "사용자는 Pilot 검은색 잉크를 사용한다",
+            "verdict": "supported",
+            "defect": "none",
+            "reason": "",
+            "evidence_refs": ["user:current"],
+        }],
+        "action_verdict": "not_applicable",
+    }])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="Pilot 검은색 잉크를 사용하고 있군요.",
+        messages=({"role": "user", "content": "나는 Pilot 검은색 잉크를 사용해."},),
+        tool_results=(),
+    ))
+
+    assert result.ok is True
+    assert len(result.grounded_claims) == 1
+    assert result.grounded_claims[0].claim == "사용자는 Pilot 검은색 잉크를 사용한다"
+    assert result.grounded_claims[0].evidence_refs == ("user:current",)
+
+
+def test_supported_claim_without_evidence_ref_is_rejected_structurally() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "evidence_verdict": "supported",
+            "reasons": [],
+            "claims": [{
+                "claim": "근거 없는 사실",
+                "verdict": "supported",
+                "defect": "none",
+                "reason": "",
+                "evidence_refs": [],
+            }],
+        }, ensure_ascii=False),
+        json.dumps({
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+            "reasons": [],
+            "action_verdict": "not_applicable",
+        }, ensure_ascii=False),
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="근거 없는 사실입니다.",
+        messages=({"role": "user", "content": "설명해줘."},),
+        tool_results=(),
+    ))
+
+    assert result.ok is False
+    assert result.issues[0].code == "claim_grounding_failed"
+
+
+def test_grounding_rejects_unknown_evidence_ref() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "evidence_verdict": "supported",
+            "reasons": [],
+            "claims": [{
+                "claim": "허구의 근거를 참조한 사실",
+                "verdict": "supported",
+                "defect": "none",
+                "reason": "",
+                "evidence_refs": ["tool:999:web_search"],
+            }],
+        }, ensure_ascii=False),
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    with pytest.raises(RuntimeError, match="unknown evidence refs"):
+        run(verifier.verify(
+            candidate="허구의 근거를 참조한 사실입니다.",
+            messages=({"role": "user", "content": "설명해줘."},),
+            tool_results=(),
+        ))
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
