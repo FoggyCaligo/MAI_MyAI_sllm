@@ -56,6 +56,7 @@ class ReviewerAdapter:
                 "alignment_verdict": alignment_verdict,
                 "reasons": list(reasons) if alignment_verdict == "misaligned" else [],
                 "claims": [],
+                "user_facts": [],
             }, ensure_ascii=False))
             if alignment_verdict == "misaligned":
                 self.reviews.pop(0)
@@ -102,6 +103,13 @@ class StructuredReviewerAdapter:
                     }
                     for claim in review.get("claims", [])
                 ],
+                "user_facts": list(review.get(
+                    "user_facts",
+                    ([{
+                        "fact": payload.get("current_user_request", ""),
+                        "source_message_id": "user:current",
+                    }] if payload.get("current_user_request") else []),
+                )),
             }, ensure_ascii=False))
             if alignment_verdict == "misaligned":
                 self.reviews.pop(0)
@@ -166,6 +174,7 @@ class SlowReviewerAdapter:
                 "alignment_verdict": "aligned",
                 "reasons": [],
                 "claims": [],
+                "user_facts": [],
             }))
         return turn(json.dumps({
             "evidence_verdict": "supported",
