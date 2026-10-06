@@ -60,6 +60,23 @@ def _previous_assistant_message(messages: Sequence[Mapping[str, Any]]) -> str | 
     return None
 
 
+def _memory_grounded_final_claims(
+    claims: Sequence[GroundedFinalClaimEvidence],
+    tool_evidence: Sequence[ToolFactEvidence],
+) -> tuple[GroundedFinalClaimEvidence, ...]:
+    admissible_refs = {
+        "user:current",
+        *(item.ref for item in tool_evidence),
+    }
+    return tuple(
+        GroundedFinalClaimEvidence(
+            claim=claim.claim,
+            evidence_refs=tuple(ref for ref in claim.evidence_refs if ref in admissible_refs),
+        )
+        for claim in claims
+        if any(ref in admissible_refs for ref in claim.evidence_refs)
+    )
+
 
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
@@ -323,20 +340,9 @@ class MAIRuntime:
             )
             for index, name, content in indexed_tool_evidence
         )
-        admissible_grounding_refs = {
-            "user:current",
-            *(item.ref for item in extraction_tool_evidence),
-        }
-        memory_grounded_final_claims = tuple(
-            GroundedFinalClaimEvidence(
-                claim=claim.claim,
-                evidence_refs=tuple(
-                    ref for ref in claim.evidence_refs
-                    if ref in admissible_grounding_refs
-                ),
-            )
-            for claim in grounded_final_claims
-            if any(ref in admissible_grounding_refs for ref in claim.evidence_refs)
+        memory_grounded_final_claims = _memory_grounded_final_claims(
+            grounded_final_claims,
+            extraction_tool_evidence,
         )
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
