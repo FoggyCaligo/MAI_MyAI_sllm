@@ -418,6 +418,7 @@ def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert payload["tool_results_in_execution_order"] == [{
+        "ref": "tool:0:terminal_run",
         "index": 0,
         "tool": "terminal_run",
         "ok": False,
