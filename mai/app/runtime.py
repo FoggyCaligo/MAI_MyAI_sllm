@@ -127,7 +127,6 @@ class MAIRuntime:
         self.recall = RecallService(
             self.graph,
             self.concept_index,
-            self.segmenter,
             include_utterances=self.memory_recall_include_utterances,
         )
         self.memory = MemoryRuntime(
