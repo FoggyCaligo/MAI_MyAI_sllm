@@ -617,7 +617,7 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
     ))
 
     assert result.ok is True
-    assert result.user_evidence[0].statement == "사용자는 은색 플레지르 만년필을 사용한다."
+    assert result.user_evidence[0].normalized_claim == "사용자는 은색 플레지르 만년필을 사용한다."
     evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
     user_sources = [
         source
