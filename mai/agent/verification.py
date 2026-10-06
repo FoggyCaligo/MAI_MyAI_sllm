@@ -98,7 +98,8 @@ Claim-level evidence grounding:
 - Prior assistant text is not factual evidence and is intentionally absent from evidence_sources.
 - User-message evidence supports only factual content directly asserted by the user in that message.
 - A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content is not factual evidence for the referenced assistant claims and must not be used to support them.
-- Each evidence source has an exact id. For every supported claim, support_ids must contain one or more exact source ids that materially establish the claim.
+- Each evidence source has an exact id. authoritative_current_time also has the exact id "runtime:current_time".
+- For every supported claim, support_ids must contain one or more exact supplied source ids that materially establish the claim.
 - Never invent a support id. Do not cite task context, the candidate answer, or the claim itself as evidence.
 - A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. A failed tool result must never be treated as evidence that the requested operation itself succeeded.
 - For claims marked temporal=true, check the claim's temporal framing against authoritative_current_time and any source dates/timestamps.
@@ -597,13 +598,11 @@ class FinalGroundingVerifier:
         evidence_sources: list[dict[str, object]] = [
             *user_evidence,
             *tool_evidence,
-            {
-                "id": "runtime:current_time",
-                "kind": "authoritative_current_time",
-                "content": clock,
-            },
         ]
-        allowed_support_ids = {str(source["id"]) for source in evidence_sources}
+        allowed_support_ids = {
+            *(str(source["id"]) for source in evidence_sources),
+            "runtime:current_time",
+        }
 
         analyzed_claims = tuple(
             AnalyzedClaim(
@@ -628,7 +627,10 @@ class FinalGroundingVerifier:
                 {"role": "system", "content": _EVIDENCE_REVIEW_SYSTEM},
                 {"role": "user", "content": json.dumps({
                     "resolved_current_request": analysis.resolved_request.strip() or current_user_request,
-                    "authoritative_current_time": clock,
+                    "authoritative_current_time": {
+                        "id": "runtime:current_time",
+                        "value": clock,
+                    },
                     "candidate_final": _clip_text(candidate, 6000),
                     "claims": claims_payload,
                     "evidence_sources": evidence_sources,
