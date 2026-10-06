@@ -44,7 +44,6 @@ class WorkingGraph:
                     "to_node_id": edge.to_node_id,
                     "relation": edge.relation,
                     "provenance": edge.provenance,
-                    "occurrence_count": edge.occurrence_count,
                     "created_at": edge.created_at,
                 }
                 for edge in self.edges.values()

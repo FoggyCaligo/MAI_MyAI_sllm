@@ -23,7 +23,7 @@ from ..memory.admission import (
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor, OllamaFactIdentityResolver
+from ..memory.extraction.service import OllamaFactExtractor
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -141,7 +141,6 @@ class MAIRuntime:
         )
         self._adapters: dict[str, OllamaAdapter] = {}
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
-        self._fact_identity_resolvers: dict[str, OllamaFactIdentityResolver] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
         self._background_tasks: set[asyncio.Task[None]] = set()
 
@@ -165,17 +164,6 @@ class MAIRuntime:
             extractor = OllamaFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
-
-    def _fact_identity_resolver_for(self, model: str) -> OllamaFactIdentityResolver:
-        clean_model = model.strip()
-        if not clean_model:
-            raise ValueError("model must be non-empty")
-        resolver = self._fact_identity_resolvers.get(clean_model)
-        if resolver is None:
-            adapter = OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False))
-            resolver = OllamaFactIdentityResolver(adapter)
-            self._fact_identity_resolvers[clean_model] = resolver
-        return resolver
 
     async def list_models(self) -> tuple[str, ...]:
         response = await self._ollama_client.list()
@@ -236,7 +224,6 @@ class MAIRuntime:
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         fact_extractor = self._fact_extractor_for(selected_model)
-        fact_identity_resolver = self._fact_identity_resolver_for(selected_model)
 
         working = WorkingGraph()
         tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
@@ -277,7 +264,6 @@ class MAIRuntime:
                 principal=principal,
                 tool_executions=tool_executions,
                 fact_extractor=fact_extractor,
-                fact_identity_resolver=fact_identity_resolver,
             )
         )
         self._background_tasks.add(task)
@@ -293,7 +279,6 @@ class MAIRuntime:
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
         fact_extractor: OllamaFactExtractor,
-        fact_identity_resolver: OllamaFactIdentityResolver,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
@@ -340,7 +325,6 @@ class MAIRuntime:
                 user_evidence=evidence,
                 successful_tool_results=extraction_tool_results,
                 fact_texts=fact_texts,
-                fact_identity_resolver=fact_identity_resolver,
             )
             _LOG.info(
                 "MAI memory admission stored source=user_utterance chars=%d tools=%s facts=%d extraction_tool_results=%d",
