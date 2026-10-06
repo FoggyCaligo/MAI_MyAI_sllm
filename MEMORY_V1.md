@@ -114,13 +114,15 @@ memory.db
 `memory_concept_fts` is an SQLite FTS5 virtual table used only as a lexical fallback when exact lookup does not find a Concept. It does not perform embedding similarity and does not define graph identity.
 
 ```text
-Sentence_Breaker query segments
-        ↓
-Exact hash lookup
-        ↓ miss
-SQLite FTS5 lexical search
-        ↓
+Fact admission text
+        ↓ Sentence_Breaker
 Concept Node IDs
+
+model-written recall query
+        ↓ whitespace chunks only
+Exact hash / SQLite FTS5 lexical search
+        ↓
+internal Concept seed IDs
 ```
 
 The graph owns identity. The index only locates existing Concept Node IDs.
@@ -137,7 +139,7 @@ When `SqliteFtsConceptIndex` opens an existing Memory v1 database, it non-destru
 
 ## 7. Model-visible memory recall
 
-The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer.
+The ConceptIndex is the graph entry point used by explicit memory tools. A Concept hit is not itself a final memory answer. Sentence_Breaker still defines Concept nodes during memory admission, but model-written recall queries are never passed through Sentence_Breaker.
 
 Current model-visible memory entry points are:
 
@@ -148,9 +150,11 @@ memory_overview(limit)
 memory_recall(query)
   -> bounded user-anchor Fact context
        (asserted_fact only; raw spoke history is not dumped)
-  -> Sentence_Breaker query segments
-  -> Exact + FTS5 ConceptIndex
-  -> Concept seeds used internally
+  -> split the model query only on whitespace
+  -> search each intact chunk independently in Exact + FTS5 ConceptIndex
+  -> keep at most the best ConceptIndex hit per chunk
+  -> rank candidates by ConceptIndex relevance and cap by concept_limit
+  -> Concept seeds remain internal
   -> graph neighborhoods
   -> project both Concept and Utterance nodes/edges out of the recall payload
   -> preserve Fact paths to the user anchor
