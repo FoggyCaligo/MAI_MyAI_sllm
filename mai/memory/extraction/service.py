@@ -23,6 +23,7 @@ Evidence rules:
 - The latest user message is primary evidence.
 - previous_assistant_message is the most recent assistant message that existed before the latest user message. If the user broadly agrees with or approves prior assistant content, that approval may ground facts from previous_assistant_message only when they are within the same conversational topic.
 - Broad agreement or approval must never be applied to assistant_final_answer, because that answer was generated after the user's message and therefore could not have been approved by it.
+- When broad approval applies, admit only the underlying facts from previous_assistant_message that fall within the approved topic. Explicit corrections or narrowing in the latest user message override the previous assistant content.
 - assistant_final_answer is context only. Do not treat its claims as independent evidence.
 - successful_tool_results contains only successful NON-RECALL tool results. You may use them as grounding evidence when they establish information relevant to the user's state, project, decision, files, records, or other durable context.
 - Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
