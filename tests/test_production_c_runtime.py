@@ -36,7 +36,7 @@ class FakeConceptIndex:
         )[:limit]
 
 
-def test_production_memory_registration_exposes_recall_and_overview_by_default(tmp_path):
+def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
@@ -49,6 +49,7 @@ def test_production_memory_registration_exposes_recall_and_overview_by_default(t
             user_text="고양이 이름은 모카",
             final_answer="알겠어.",
             user_evidence=evidence,
+            fact_texts=("사용자의 고양이 이름은 모카다",),
         ))
         working = WorkingGraph()
         registry = ToolRegistry()
@@ -59,7 +60,8 @@ def test_production_memory_registration_exposes_recall_and_overview_by_default(t
             name="memory_recall",
             arguments={"query": "모카"},
         )))
-        assert any(node["type"] == "utterance" and "모카" in node["text"] for node in recalled["nodes"])
+        assert not any(node["type"] == "utterance" for node in recalled["nodes"])
+        assert any(node["type"] == "fact" and "모카" in node["text"] for node in recalled["nodes"])
 
         overview = asyncio.run(registry.invoke(NativeToolCall(
             name="memory_overview",
@@ -67,5 +69,49 @@ def test_production_memory_registration_exposes_recall_and_overview_by_default(t
         )))
         assert overview["user_anchor"]["payload"]["user_id"] == "alice"
         assert any(item["type"] == "utterance" and "모카" in item["text"] for item in overview["memories"])
+    finally:
+        graph.close()
+
+
+def test_memory_recall_returns_only_current_call_while_working_graph_accumulates(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = FakeConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index, segmenter, include_utterances=True)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        first_evidence = memory.record_raw_user_evidence("alice", "모카 고양이")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="모카 고양이",
+            final_answer="알겠어.",
+            user_evidence=first_evidence,
+        ))
+        second_evidence = memory.record_raw_user_evidence("alice", "산책 공원")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="산책 공원",
+            final_answer="알겠어.",
+            user_evidence=second_evidence,
+        ))
+
+        working = WorkingGraph()
+        registry = ToolRegistry()
+        register_memory_tools(registry, memory, working, user_id="alice")
+
+        first = asyncio.run(registry.invoke(NativeToolCall(
+            name="memory_recall",
+            arguments={"query": "모카"},
+        )))
+        second = asyncio.run(registry.invoke(NativeToolCall(
+            name="memory_recall",
+            arguments={"query": "산책"},
+        )))
+
+        assert any(node["type"] == "utterance" and "모카" in node["text"] for node in first["nodes"])
+        assert any(node["type"] == "utterance" and "산책" in node["text"] for node in second["nodes"])
+        assert not any(node["type"] == "utterance" and "모카" in node["text"] for node in second["nodes"])
+        assert any(node.node_type == "utterance" and "모카" in node.canonical_text for node in working.nodes.values())
+        assert any(node.node_type == "utterance" and "산책" in node.canonical_text for node in working.nodes.values())
     finally:
         graph.close()
