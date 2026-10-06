@@ -42,16 +42,19 @@ class ReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
+        self.awaiting_evidence = False
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
+        schema_properties = request.response_format["properties"]
+        if "user_assertions" in schema_properties and self.awaiting_evidence:
+            self.reviews.pop(0)
+            self.awaiting_evidence = False
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         evidence_verdict, alignment_verdict, reasons = self.reviews[0]
-        schema_properties = request.response_format["properties"]
         if "user_assertions" in schema_properties:
-            if alignment_verdict == "misaligned":
-                self.reviews.pop(0)
+            self.awaiting_evidence = True
             return turn(json.dumps({
                 "alignment_verdict": alignment_verdict,
                 "reasons": list(reasons) if alignment_verdict == "misaligned" else [],
@@ -59,6 +62,7 @@ class ReviewerAdapter:
                 "user_assertions": [],
             }))
         self.reviews.pop(0)
+        self.awaiting_evidence = False
         return turn(json.dumps({
             "evidence_verdict": evidence_verdict,
             "coverage_verdict": "sufficient",
@@ -73,17 +77,20 @@ class StructuredReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
+        self.awaiting_evidence = False
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
+        schema_properties = request.response_format["properties"]
+        if "user_assertions" in schema_properties and self.awaiting_evidence:
+            self.reviews.pop(0)
+            self.awaiting_evidence = False
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         review = dict(self.reviews[0])
-        schema_properties = request.response_format["properties"]
         if "user_assertions" in schema_properties:
+            self.awaiting_evidence = True
             alignment = review.get("alignment_verdict", "aligned")
-            if alignment == "misaligned":
-                self.reviews.pop(0)
             return turn(json.dumps({
                 "alignment_verdict": alignment,
                 "reasons": list(review.get("reasons", [])) if alignment == "misaligned" else [],
@@ -98,6 +105,7 @@ class StructuredReviewerAdapter:
             }, ensure_ascii=False))
 
         self.reviews.pop(0)
+        self.awaiting_evidence = False
         payload = json.loads(request.messages[1]["content"])
         available_refs = [str(item["ref"]) for item in payload.get("evidence_sources", [])]
         claims = []
