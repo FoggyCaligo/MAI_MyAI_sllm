@@ -3,8 +3,7 @@ from __future__ import annotations
 
 from ..graph.models import GraphNeighborhood
 from ..graph.repository import MemoryGraphRepository
-from ..index import ConceptIndex
-from ..segmenter import Segmenter
+from ..index import ConceptHit, ConceptIndex
 from ..working import WorkingGraph
 
 
@@ -16,7 +15,6 @@ class RecallService:
         self,
         graph: MemoryGraphRepository,
         concept_index: ConceptIndex,
-        segmenter: Segmenter,
         *,
         concept_limit: int = 5,
         anchor_fact_limit: int = DEFAULT_ANCHOR_FACT_LIMIT,
@@ -28,7 +26,6 @@ class RecallService:
             raise ValueError("anchor_fact_limit must be >= 0")
         self.graph = graph
         self.concept_index = concept_index
-        self.segmenter = segmenter
         self.concept_limit = concept_limit
         self.anchor_fact_limit = anchor_fact_limit
         self.include_utterances = include_utterances
@@ -39,8 +36,7 @@ class RecallService:
         anchor = self.graph.get_user_anchor(user_id)
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
-        segments = tuple(self.segmenter.segment(query))
-        hits = self.concept_index.search(segments, limit=self.concept_limit)
+        hits = self._select_query_seeds(query)
         recalled = WorkingGraph()
         self._merge_user_anchor_context(recalled, user_id=user_id)
 
@@ -93,6 +89,31 @@ class RecallService:
         working.merge_working(delta)
         return delta.snapshot()
 
+    def _select_query_seeds(self, query: str) -> tuple[ConceptHit, ...]:
+        """Select bounded Concept seeds from whitespace-delimited query chunks.
+
+        Recall-query parsing is intentionally independent of Sentence_Breaker.
+        Each whitespace chunk contributes at most its single best ConceptIndex hit.
+        Candidates are then ranked by the index-provided relevance score and capped
+        by concept_limit before any graph neighborhood is expanded.
+        """
+        chunks = tuple(dict.fromkeys(query.split()))
+        candidates: dict[int, tuple[ConceptHit, int]] = {}
+
+        for chunk_order, chunk in enumerate(chunks):
+            chunk_hits = tuple(self.concept_index.search((chunk,), limit=1))
+            if not chunk_hits:
+                continue
+            hit = chunk_hits[0]
+            previous = candidates.get(hit.node_id)
+            if previous is None or hit.score > previous[0].score:
+                candidates[hit.node_id] = (hit, chunk_order)
+
+        ranked = sorted(
+            candidates.values(),
+            key=lambda item: (-item[0].score, item[1], item[0].node_id),
+        )
+        return tuple(hit for hit, _chunk_order in ranked[: self.concept_limit])
     def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
         """Expose the user anchor with a bounded set of structured facts.
 
