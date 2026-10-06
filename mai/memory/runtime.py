@@ -4,7 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Sequence
 
-from .extraction.service import FactExtractor, GroundedFinalClaimEvidence, ToolFactEvidence
+from .extraction.service import (
+    DirectUserFactEvidence,
+    FactExtractor,
+    GroundedFinalClaimEvidence,
+    ToolFactEvidence,
+)
 from .graph.models import Evidence, MemoryNode
 from .graph.repository import MemoryGraphRepository
 from .index import ConceptIndex
@@ -83,6 +88,7 @@ class MemoryRuntime:
         *,
         user_text: str,
         final_answer: str,
+        direct_user_facts: Sequence[DirectUserFactEvidence] = (),
         successful_tool_evidence: Sequence[ToolFactEvidence] = (),
         grounded_final_claims: Sequence[GroundedFinalClaimEvidence] = (),
         fact_extractor: FactExtractor | None = None,
@@ -93,6 +99,7 @@ class MemoryRuntime:
             return ()
         raw_facts = await extractor.extract(
             user_text=user_text,
+            direct_user_facts=direct_user_facts,
             successful_tool_evidence=successful_tool_evidence,
             grounded_final_claims=grounded_final_claims,
         )
@@ -111,6 +118,7 @@ class MemoryRuntime:
         user_text: str,
         final_answer: str,
         user_evidence: Evidence,
+        direct_user_facts: Sequence[DirectUserFactEvidence] = (),
         successful_tool_evidence: Sequence[ToolFactEvidence] = (),
         grounded_final_claims: Sequence[GroundedFinalClaimEvidence] = (),
         fact_texts: Sequence[str] | None = None,
@@ -122,6 +130,7 @@ class MemoryRuntime:
             await self.extract_facts(
                 user_text=user_text,
                 final_answer=final_answer,
+                direct_user_facts=direct_user_facts,
                 successful_tool_evidence=successful_tool_evidence,
                 grounded_final_claims=grounded_final_claims,
             )
