@@ -437,7 +437,6 @@ class FinalGroundingVerifier:
         allowed_evidence_refs = {str(item["ref"]) for item in evidence_sources}
         common_payload = {
             "current_user_request": current_user_request,
-            "current_user_evidence_ref": "current_user",
             "conversation_context": context_messages,
             "tool_results_in_execution_order": tool_evidence,
             "candidate_final": _clip_text(candidate, 6000),
@@ -490,9 +489,9 @@ class FinalGroundingVerifier:
                 defect = item.defect
                 reason = item.reason.strip()
                 if verdict == "supported" and not evidence_refs:
-                    verdict = "unsupported"
-                    defect = "missing_evidence"
-                    reason = reason or "A supported factual claim must cite at least one supplied evidence source."
+                    raise RuntimeError(
+                        "grounding reviewer returned a supported claim without evidence refs"
+                    )
                 parsed_claims.append(ClaimReview(
                     claim=claim_text,
                     verdict=verdict,
