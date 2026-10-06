@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Sequence
 
-from .extraction.service import FactExtractor
+from .extraction.service import FactExtractor, GroundedFinalClaimEvidence, ToolFactEvidence
 from .graph.models import Evidence, MemoryNode
 from .graph.repository import MemoryGraphRepository
 from .index import ConceptIndex
@@ -84,7 +84,8 @@ class MemoryRuntime:
         user_text: str,
         previous_assistant_message: str | None = None,
         final_answer: str,
-        successful_tool_results: Sequence[str] = (),
+        successful_tool_evidence: Sequence[ToolFactEvidence] = (),
+        grounded_final_claims: Sequence[GroundedFinalClaimEvidence] = (),
         fact_extractor: FactExtractor | None = None,
     ) -> tuple[str, ...]:
         """Extract facts before graph admission so recall-only turns can be filtered safely."""
@@ -95,7 +96,8 @@ class MemoryRuntime:
             user_text=user_text,
             previous_assistant_message=previous_assistant_message,
             final_answer=final_answer,
-            successful_tool_results=successful_tool_results,
+            successful_tool_evidence=successful_tool_evidence,
+            grounded_final_claims=grounded_final_claims,
         )
         facts: list[str] = []
         for fact_text in raw_facts:
@@ -113,7 +115,8 @@ class MemoryRuntime:
         previous_assistant_message: str | None = None,
         final_answer: str,
         user_evidence: Evidence,
-        successful_tool_results: Sequence[str] = (),
+        successful_tool_evidence: Sequence[ToolFactEvidence] = (),
+        grounded_final_claims: Sequence[GroundedFinalClaimEvidence] = (),
         fact_texts: Sequence[str] | None = None,
     ) -> None:
         now = self.now()
@@ -124,7 +127,8 @@ class MemoryRuntime:
                 user_text=user_text,
                 previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
-                successful_tool_results=successful_tool_results,
+                successful_tool_evidence=successful_tool_evidence,
+                grounded_final_claims=grounded_final_claims,
             )
             if fact_texts is None
             else tuple(fact_texts)
