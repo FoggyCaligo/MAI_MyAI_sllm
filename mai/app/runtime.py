@@ -323,6 +323,21 @@ class MAIRuntime:
             )
             for index, name, content in indexed_tool_evidence
         )
+        admissible_grounding_refs = {
+            "user:current",
+            *(item.ref for item in extraction_tool_evidence),
+        }
+        memory_grounded_final_claims = tuple(
+            GroundedFinalClaimEvidence(
+                claim=claim.claim,
+                evidence_refs=tuple(
+                    ref for ref in claim.evidence_refs
+                    if ref in admissible_grounding_refs
+                ),
+            )
+            for claim in grounded_final_claims
+            if any(ref in admissible_grounding_refs for ref in claim.evidence_refs)
+        )
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
         try:
@@ -331,7 +346,7 @@ class MAIRuntime:
                 previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
                 successful_tool_evidence=extraction_tool_evidence,
-                grounded_final_claims=grounded_final_claims,
+                grounded_final_claims=memory_grounded_final_claims,
                 fact_extractor=fact_extractor,
             )
             extraction_succeeded = True
@@ -366,7 +381,7 @@ class MAIRuntime:
                 final_answer=final_answer,
                 user_evidence=evidence,
                 successful_tool_evidence=extraction_tool_evidence,
-                grounded_final_claims=grounded_final_claims,
+                grounded_final_claims=memory_grounded_final_claims,
                 fact_texts=fact_texts,
             )
             _LOG.info(
