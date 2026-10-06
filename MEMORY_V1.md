@@ -170,6 +170,7 @@ memory_recall(query)
   -> bounded user-anchor Fact context
   -> split only on whitespace
   -> direct bounded Fact canonical_text containment search for all intact chunks
+       (match relevance first, then recency, then occurrence as a tie-breaker)
   -> per chunk: one best Exact/FTS5 ConceptIndex seed
   -> global concept_limit before graph expansion
   -> merge matched/linked Facts and Concepts
@@ -194,7 +195,7 @@ Production defaults to `MEMORY_RECALL_INCLUDE_UTTERANCES=false`. This single swi
 
 `memory_search(node_id)` expands one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes may also receive available shortest paths back to the current user's memory anchor.
 
-The user anchor is a deliberate exception to raw one-hop expansion: its unbounded `spoke` neighborhood is not exposed. Expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by occurrence count and then recency. Regular `memory_search` remains the deliberate evidence-expansion path and may expose Utterance nodes; `memory_recall` itself omits them by default.
+The user anchor is a deliberate exception to raw one-hop expansion: its unbounded `spoke` neighborhood is not exposed. Expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by recency first; occurrence count is only a late tie-breaker. Regular `memory_search` remains the deliberate evidence-expansion path and may expose Utterance nodes; `memory_recall` itself omits them by default.
 
 There is no arbitrary-depth hidden traversal; farther recall requires another explicit memory call.
 
