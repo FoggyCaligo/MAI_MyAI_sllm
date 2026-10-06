@@ -41,18 +41,20 @@ Rules:
 
 
 _FACT_COMPOSITION_SYSTEM = """
-Compose concise durable memory facts from the supplied approved evidence.
+Compose concise durable memory facts from allowed_fact_sources only.
 
-Allowed factual sources:
-- resolved_user_evidence.direct_user_facts;
-- resolved_user_evidence.corrections;
-- resolved_user_evidence.approved_previous_assistant_facts, limited by its approval topic and scope;
-- successful_non_recall_tool_evidence;
-- grounded_final_claims, which are claims from the current assistant final that the final grounding verifier already
-  accepted against explicit user/tool evidence refs.
+Each allowed_fact_source has a stable ref and already represents one of:
+- a direct fact from the latest user message;
+- an explicit user correction;
+- a fact from previous_assistant_message that the user approved within a resolved topic and scope;
+- a successful non-recall tool result;
+- a current-final claim already accepted by the final grounding verifier against explicit user/tool evidence refs.
 
-assistant_final_answer is context only. It may help interpret wording, but it is not an independent factual source.
-A fact derived from the current assistant answer is allowed only through grounded_final_claims.
+For every output fact, return evidence_refs containing one or more exact refs from allowed_fact_sources that materially
+support that fact. Never invent a ref. A fact without a valid supporting ref is not admissible.
+
+assistant_final_answer is context only. It may help interpret wording, but it has no evidence ref and cannot independently
+support any output fact.
 
 Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
 
@@ -83,10 +85,17 @@ class _EvidenceResolutionPayload(BaseModel):
     corrections: list[str]
 
 
+class _ComposedFactPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact: str
+    evidence_refs: list[str]
+
+
 class _FactExtractionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    facts: list[str]
+    facts: list[_ComposedFactPayload]
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,23 +159,45 @@ class OllamaFactExtractor:
             previous_assistant_message=previous_assistant_message,
         )
 
+        allowed_fact_sources: list[dict[str, object]] = []
+        for index, fact in enumerate(_clean_fact_strings(resolution.direct_user_facts)):
+            allowed_fact_sources.append({
+                "ref": f"user:direct:{index}",
+                "kind": "direct_user_fact",
+                "content": fact,
+            })
+        for index, fact in enumerate(_clean_fact_strings(resolution.corrections)):
+            allowed_fact_sources.append({
+                "ref": f"user:correction:{index}",
+                "kind": "user_correction",
+                "content": fact,
+            })
+        for index, fact in enumerate(_clean_fact_strings(resolution.approved_previous_assistant_facts)):
+            allowed_fact_sources.append({
+                "ref": f"assistant_approval:{index}",
+                "kind": "approved_previous_assistant_fact",
+                "content": fact,
+                "topic": resolution.approval.topic,
+                "scope": resolution.approval.scope,
+            })
+        for item in successful_tool_evidence:
+            allowed_fact_sources.append({
+                "ref": item.ref,
+                "kind": "successful_non_recall_tool_result",
+                "tool": item.tool,
+                "content": item.content,
+            })
+        for index, item in enumerate(grounded_final_claims):
+            allowed_fact_sources.append({
+                "ref": f"grounded_final:{index}",
+                "kind": "grounded_final_claim",
+                "content": item.claim,
+                "grounding_evidence_refs": list(item.evidence_refs),
+            })
+
         composition_payload = {
             "resolved_user_evidence": resolution.model_dump(),
-            "successful_non_recall_tool_evidence": [
-                {
-                    "ref": item.ref,
-                    "tool": item.tool,
-                    "content": item.content,
-                }
-                for item in successful_tool_evidence
-            ],
-            "grounded_final_claims": [
-                {
-                    "claim": item.claim,
-                    "evidence_refs": list(item.evidence_refs),
-                }
-                for item in grounded_final_claims
-            ],
+            "allowed_fact_sources": allowed_fact_sources,
             "assistant_final_answer": final_answer,
         }
         parsed = await self._request_structured(
@@ -175,7 +206,26 @@ class OllamaFactExtractor:
             payload_type=_FactExtractionPayload,
             stage="fact composer",
         )
-        return _clean_fact_strings(parsed.facts)
+        allowed_refs = {str(item["ref"]) for item in allowed_fact_sources}
+        facts: list[str] = []
+        seen: set[str] = set()
+        for item in parsed.facts:
+            fact = item.fact.strip()
+            if not fact:
+                raise FactExtractionError("fact composer returned an empty fact")
+            evidence_refs = tuple(dict.fromkeys(ref.strip() for ref in item.evidence_refs if ref.strip()))
+            if not evidence_refs:
+                raise FactExtractionError("fact composer returned a fact without evidence refs")
+            unknown_refs = tuple(ref for ref in evidence_refs if ref not in allowed_refs)
+            if unknown_refs:
+                raise FactExtractionError(
+                    "fact composer returned unknown evidence refs: " + ", ".join(unknown_refs)
+                )
+            if fact in seen:
+                continue
+            seen.add(fact)
+            facts.append(fact)
+        return tuple(facts)
 
     async def _resolve_user_evidence(
         self,
