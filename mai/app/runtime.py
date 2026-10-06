@@ -14,16 +14,21 @@ from ollama import AsyncClient
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
-from ..agent.verification import FinalGroundingVerifier
+from ..agent.verification import FinalGroundingVerifier, tool_evidence_ref
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
+    successful_non_recall_tool_evidence,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor
+from ..memory.extraction.service import (
+    GroundedFinalClaimEvidence,
+    OllamaFactExtractor,
+    ToolFactEvidence,
+)
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -45,15 +50,33 @@ from .uploads import principal_upload_directory
 _LOG = logging.getLogger("uvicorn.error")
 
 
-def _previous_assistant_message(messages: Sequence[Mapping[str, Any]]) -> str | None:
-    for message in reversed(messages):
-        if message.get("role") != "assistant":
-            continue
-        content = message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content
-    return None
+def _memory_grounded_final_claims(
+    claims: Sequence[GroundedFinalClaimEvidence],
+    tool_evidence: Sequence[ToolFactEvidence],
+) -> tuple[GroundedFinalClaimEvidence, ...]:
+    """Keep only current-turn provenance that memory is allowed to admit.
 
+    Persistent recall and older conversation context are intentionally excluded
+    so this turn does not recycle existing memory as new evidence.
+    """
+    admissible_support_ids = {
+        "user:current",
+        *(item.ref for item in tool_evidence),
+    }
+    filtered: list[GroundedFinalClaimEvidence] = []
+    for claim in claims:
+        support_ids = tuple(
+            support_id
+            for support_id in claim.support_ids
+            if support_id in admissible_support_ids
+        )
+        if not support_ids:
+            continue
+        filtered.append(GroundedFinalClaimEvidence(
+            claim=claim.claim,
+            support_ids=support_ids,
+        ))
+    return tuple(filtered)
 
 
 AGENT_SYSTEM_PROMPT = """
@@ -217,8 +240,6 @@ class MAIRuntime:
             raise ValueError("prompt must be non-empty")
         await self._await_pending_memory_update(principal.memory_user_id)
 
-        previous_assistant_message = _previous_assistant_message(prior_messages)
-
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         fact_extractor = self._fact_extractor_for(selected_model)
@@ -258,10 +279,20 @@ class MAIRuntime:
         task = asyncio.create_task(
             self._postprocess_memory(
                 prompt=prompt,
-                previous_assistant_message=previous_assistant_message,
                 final_answer=answer,
                 principal=principal,
                 tool_executions=tool_executions,
+                grounded_final_claims=tuple(
+                    GroundedFinalClaimEvidence(
+                        claim=claim.claim,
+                        support_ids=claim.support_ids,
+                    )
+                    for claim in (
+                        result.final_verification.grounded_claims
+                        if result.final_verification is not None
+                        else ()
+                    )
+                ),
                 fact_extractor=fact_extractor,
             )
         )
@@ -288,23 +319,36 @@ class MAIRuntime:
         self,
         *,
         prompt: str,
-        previous_assistant_message: str | None,
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
+        grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
         fact_extractor: OllamaFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
+        indexed_tool_evidence = successful_non_recall_tool_evidence(tool_executions)
         extraction_tool_results = successful_non_recall_tool_results(tool_executions)
+        extraction_tool_evidence = tuple(
+            ToolFactEvidence(
+                ref=tool_evidence_ref(index, name),
+                tool=name,
+                content=content,
+            )
+            for index, name, content in indexed_tool_evidence
+        )
+        memory_grounded_final_claims = _memory_grounded_final_claims(
+            grounded_final_claims,
+            extraction_tool_evidence,
+        )
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
         try:
             fact_texts = await self.memory.extract_facts(
                 user_text=prompt,
-                previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
-                successful_tool_results=extraction_tool_results,
+                successful_tool_evidence=extraction_tool_evidence,
+                grounded_final_claims=memory_grounded_final_claims,
                 fact_extractor=fact_extractor,
             )
             extraction_succeeded = True
@@ -338,7 +382,8 @@ class MAIRuntime:
                 user_text=prompt,
                 final_answer=final_answer,
                 user_evidence=evidence,
-                successful_tool_results=extraction_tool_results,
+                successful_tool_evidence=extraction_tool_evidence,
+                grounded_final_claims=memory_grounded_final_claims,
                 fact_texts=fact_texts,
             )
             _LOG.info(
