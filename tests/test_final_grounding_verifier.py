@@ -335,7 +335,7 @@ def test_reviewer_timeout_blocks_release_without_hanging(caplog) -> None:
     )
     caplog.set_level(logging.WARNING, logger="uvicorn.error")
 
-    with pytest.raises(AgentRunFailure, match="final reviewer"):
+    with pytest.raises(AgentRunFailure, match="candidate analyzer"):
         run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
 
 
