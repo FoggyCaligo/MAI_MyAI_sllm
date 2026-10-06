@@ -37,7 +37,6 @@ CREATE TABLE IF NOT EXISTS edges (
     to_node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     relation TEXT NOT NULL,
     provenance TEXT NOT NULL,
-    occurrence_count INTEGER NOT NULL DEFAULT 1 CHECK (occurrence_count >= 1),
     created_at TEXT NOT NULL,
     UNIQUE(from_node_id, to_node_id, relation)
 );
