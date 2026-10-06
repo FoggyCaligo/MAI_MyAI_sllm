@@ -758,6 +758,10 @@ class FinalGroundingVerifier:
                     retryable,
                 )
                 if not retryable or attempt == 3:
+                    if isinstance(exc, ValidationError):
+                        raise RuntimeError(
+                            f"final {reviewer_name} reviewer violated structured output schema"
+                        ) from exc
                     raise RuntimeError(
                         f"final {reviewer_name} reviewer failed; release was not verified"
                     ) from exc
