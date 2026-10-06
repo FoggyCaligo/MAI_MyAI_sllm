@@ -19,18 +19,6 @@ class MemoryGraphRepository:
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA_SQL)
-        self._migrate_schema()
-
-    def _migrate_schema(self) -> None:
-        edge_columns = {
-            str(row["name"])
-            for row in self.connection.execute("PRAGMA table_info(edges)").fetchall()
-        }
-        if "occurrence_count" not in edge_columns:
-            with self.connection:
-                self.connection.execute(
-                    "ALTER TABLE edges ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1"
-                )
 
     def close(self) -> None:
         self.connection.close()
@@ -186,12 +174,9 @@ class MemoryGraphRepository:
         timestamp = utc_iso(now)
         with self.connection:
             self.connection.execute(
-                """INSERT INTO edges(
-                       from_node_id, to_node_id, relation, provenance,
-                       occurrence_count, created_at
-                   ) VALUES (?, ?, ?, ?, 1, ?)
-                   ON CONFLICT(from_node_id, to_node_id, relation)
-                   DO UPDATE SET occurrence_count = edges.occurrence_count + 1""",
+                """INSERT OR IGNORE INTO edges(
+                       from_node_id, to_node_id, relation, provenance, created_at
+                   ) VALUES (?, ?, ?, ?, ?)""",
                 (from_node_id, to_node_id, relation.strip(), provenance.strip(), timestamp),
             )
         row = self.connection.execute(
@@ -201,20 +186,6 @@ class MemoryGraphRepository:
         if row is None:
             raise RuntimeError("typed edge insert did not produce an edge")
         return self.get_edge(int(row["id"]))
-
-    def adjust_edge_occurrence_count(self, edge_id: int, *, delta: int) -> MemoryEdge:
-        if delta == 0:
-            return self.get_edge(edge_id)
-        edge = self.get_edge(edge_id)
-        next_count = edge.occurrence_count + delta
-        if next_count < 1:
-            raise ValueError("edge occurrence_count cannot be reduced below 1")
-        with self.connection:
-            self.connection.execute(
-                "UPDATE edges SET occurrence_count = ? WHERE id = ?",
-                (next_count, edge.id),
-            )
-        return self.get_edge(edge.id)
 
     def get_node(self, node_id: int) -> MemoryNode:
         row = self.connection.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
@@ -250,7 +221,6 @@ class MemoryGraphRepository:
             to_node_id=int(row["to_node_id"]),
             relation=str(row["relation"]),
             provenance=str(row["provenance"]),
-            occurrence_count=int(row["occurrence_count"]),
             created_at=str(row["created_at"]),
         )
 
