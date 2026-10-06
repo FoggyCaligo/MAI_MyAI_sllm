@@ -40,31 +40,60 @@ _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
 
-_FINAL_REVIEW_SYSTEM = """
-You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
+_CANDIDATE_ANALYSIS_SYSTEM = """
+You are the first-stage judgment-only final-answer analyzer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
 
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+This stage does NOT judge whether factual claims are supported by evidence. It has three jobs:
+1. judge task alignment using the existing alignment policy below;
+2. extract the material factual claims from the candidate that matter to the user's request;
+3. extract factual assertions that the user directly stated and that are eligible to become factual evidence in the next stage.
 
-Your response is constrained by the supplied structured-output schema. Populate every required field:
-- evidence_verdict: "supported", "unsupported", or "uncertain"
-- alignment_verdict: "aligned", "misaligned", or "uncertain"
-- coverage_verdict: "sufficient", "insufficient", or "uncertain"
-- coverage_reasons: concrete material omissions from already supplied evidence only
-- reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
-- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+Task alignment and partial-answer policy:
+- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
+- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
+- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
+- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
+- Do reject a candidate that hides a material failure and presents an unverified result as completed.
+- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
+
+Material factual claim extraction:
+- Extract each material factual assertion from the candidate that matters to the user's request.
+- Preserve the candidate's actual semantic scope. Do not strengthen, normalize, merge, or reinterpret claims into broader statements.
+- Include factual statements about tool/action outcomes, source contents, causal explanations, identities, properties, dates, quantities, and current or historical state when they materially affect the answer.
+- Do not treat advice, preferences, questions, pure opinions, or explicit uncertainty statements as established factual claims unless they contain a material factual assertion.
+- Mark temporal=true when the truth or scope of the claim depends on current time, a relative time expression, or a source date/timestamp. This stage only identifies temporal claims; it does not decide temporal correctness.
+
+Eligible user factual evidence:
+- user_messages_for_evidence contains indexed user messages only.
+- Extract only factual propositions that the user directly asserts in their own words.
+- An approval, agreement, endorsement, acceptance, confirmation, or evaluation of assistant content is NOT factual evidence for the underlying assistant claims and must not be emitted as a user assertion.
+- A reference to prior assistant content does not copy that content into user evidence.
+- A correction or narrowing may be emitted only for the factual content the user explicitly states themselves.
+- Questions, requests, instructions, and requests to remember/search/check are not factual evidence.
+- For every emitted user assertion, source_excerpt must be an exact contiguous excerpt from the indexed user message that directly states that factual content. Do not use an excerpt that merely approves or refers to other content.
+
+Return only the supplied structured-output schema.
+""".strip()
+
+
+_EVIDENCE_REVIEW_SYSTEM = """
+You are the second-stage judgment-only final-answer evidence reviewer. You cannot call tools, choose tools, rewrite the answer, add requirements, or re-extract candidate claims.
+
+The first stage already supplied candidate_claims. Review those exact claims against evidence_sources. conversation_context and current_user_request are context for interpreting references and the task, but they are NOT factual evidence. Only evidence_sources may support a factual claim.
 
 Claim-level evidence grounding:
-- For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
+- For each supplied candidate claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
-- Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
-- Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
-- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
+- Each supported claim must return one or more exact support_ids from evidence_sources that materially establish it.
+- Never invent a support ID. Context-only messages are not support sources.
+- User approval, agreement, endorsement, acceptance, confirmation, or evaluation of assistant content is not an evidence source. Eligible user evidence has already been reduced to direct user assertions by the first stage.
+- Each tool-result source includes explicit ok and error_type. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. ok=false must never be treated as evidence that the requested operation itself succeeded.
 
 Temporal authority:
 - authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
+- Check each claim marked temporal against the current time and the dates or timestamps established by its supporting evidence.
 - Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
 - If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
 
@@ -77,7 +106,7 @@ Evidence scope preservation:
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
 Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
+- Judge coverage only from facts already present in evidence_sources. Do not imagine facts that additional research might discover.
 - Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
 - Prefer concrete supported results over replacing them with generic advice to check another source later.
 - Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
@@ -93,26 +122,44 @@ Action outcome verification:
 - Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
-Task alignment and partial-answer policy:
-- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
-- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
-- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
-- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
-- Do reject a candidate that hides a material failure and presents an unverified result as completed.
-- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
-
 Overall verdicts:
 - evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
 - evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
 - evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
+- reasons should name concrete blocking grounding/action defects. If no grounding/action axis is blocking, reasons should be empty.
+
+Return exactly one review for every supplied candidate claim, using its exact claim_id.
 """.strip()
 
 
-class _ClaimReviewPayload(BaseModel):
+class _CandidateClaimPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     claim: str
+    temporal: bool
+
+
+class _UserAssertionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_index: int
+    statement: str
+    source_excerpt: str
+
+
+class _CandidateAnalysisPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
+    reasons: list[str]
+    claims: list[_CandidateClaimPayload]
+    user_assertions: list[_UserAssertionPayload]
+
+
+class _ClaimEvidencePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str
     verdict: Literal["supported", "unsupported", "uncertain"]
     defect: Literal[
         "none",
@@ -122,19 +169,17 @@ class _ClaimReviewPayload(BaseModel):
         "missing_evidence",
     ]
     reason: str
+    support_ids: list[str]
 
 
-class _FinalReviewPayload(BaseModel):
-    """Strict provider-structured reviewer response."""
-
+class _EvidenceReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
-    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     reasons: list[str]
-    claims: list[_ClaimReviewPayload]
+    claims: list[_ClaimEvidencePayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
@@ -145,9 +190,32 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateClaim:
+    claim_id: str
+    claim: str
+    temporal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class UserEvidence:
+    ref: str
+    statement: str
+    message_index: int
+    source_excerpt: str
+
+
+@dataclass(frozen=True, slots=True)
+class GroundedClaim:
+    claim: str
+    support_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
+    grounded_claims: tuple[GroundedClaim, ...] = ()
+    user_evidence: tuple[UserEvidence, ...] = ()
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -191,17 +259,26 @@ class FinalVerificationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateAnalysis:
+    alignment_verdict: str
+    reasons: tuple[str, ...] = ()
+    claims: tuple[CandidateClaim, ...] = ()
+    user_evidence: tuple[UserEvidence, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimReview:
+    claim_id: str
     claim: str
     verdict: str
     defect: str = "none"
     reason: str = ""
+    support_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class FinalReview:
     evidence_verdict: str
-    alignment_verdict: str
     coverage_verdict: str = "uncertain"
     coverage_reasons: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
@@ -210,7 +287,7 @@ class FinalReview:
 
 
 class FinalGroundingVerifier:
-    """Combine numeric grounding with claim, coverage, action, and alignment review."""
+    """Run deterministic numeric review, then staged task/claim and evidence review."""
 
     def __init__(
         self,
@@ -236,32 +313,80 @@ class FinalGroundingVerifier:
     ) -> FinalVerificationResult:
         if allow_evidence_review is None:
             allow_evidence_review = allow_semantic_review
+
         numeric_issue = self._numeric_issue(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
-        issues: list[VerificationIssue] = []
         if allow_numeric_review and numeric_issue is not None:
-            issues.append(numeric_issue)
-
-        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
-            reason = () if self.reviewer_adapter is None else ("alignment, evidence and coverage review retry budgets exhausted",)
             self._log_result(
-                numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
+                numeric="failed",
+                evidence="skipped",
+                alignment="skipped",
+                coverage="skipped",
+                action="skipped",
+                reasons=(numeric_issue.message,),
+            )
+            return FinalVerificationResult(ok=False, issues=(numeric_issue,))
+
+        if self.reviewer_adapter is None or (
+            not allow_semantic_review and not allow_evidence_review and not allow_coverage_review
+        ):
+            reason = () if self.reviewer_adapter is None else (
+                "alignment, evidence and coverage review retry budgets exhausted",
+            )
+            self._log_result(
+                numeric="pass" if allow_numeric_review else "skipped",
                 evidence="skipped",
                 alignment="skipped",
                 coverage="skipped",
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+            return FinalVerificationResult(ok=True)
 
-        review = await self._review_final(
+        analysis = await self._analyze_candidate(
+            candidate=candidate,
+            messages=messages,
+        )
+
+        if allow_semantic_review and analysis.alignment_verdict == "misaligned":
+            reason = "; ".join(analysis.reasons) or "The candidate does not answer the user's actual request."
+            issue = VerificationIssue(code="task_alignment_failed", message=reason)
+            self._log_result(
+                numeric="pass" if allow_numeric_review else "skipped",
+                evidence="skipped",
+                alignment="misaligned",
+                coverage="skipped",
+                action="skipped",
+                reasons=analysis.reasons,
+            )
+            return FinalVerificationResult(
+                ok=False,
+                issues=(issue,),
+                user_evidence=analysis.user_evidence,
+            )
+
+        if not allow_evidence_review and not allow_coverage_review:
+            self._log_result(
+                numeric="pass" if allow_numeric_review else "skipped",
+                evidence="skipped",
+                alignment=analysis.alignment_verdict if allow_semantic_review else "skipped",
+                coverage="skipped",
+                action="skipped",
+                reasons=analysis.reasons,
+            )
+            return FinalVerificationResult(ok=True, user_evidence=analysis.user_evidence)
+
+        review = await self._review_evidence(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
+            analysis=analysis,
         )
+
+        issues: list[VerificationIssue] = []
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
@@ -299,26 +424,32 @@ class FinalGroundingVerifier:
                 )
                 issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
 
-        if allow_semantic_review:
-            if review.alignment_verdict == "misaligned":
-                reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
-                issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
-
         if allow_coverage_review and review.coverage_verdict == "insufficient":
             reason = "; ".join(review.coverage_reasons) or (
                 "The candidate omits material user-relevant facts already established by the supplied evidence."
             )
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
+        grounded_claims = tuple(
+            GroundedClaim(claim=claim.claim, support_ids=claim.support_ids)
+            for claim in review.claims
+            if claim.verdict == "supported" and claim.support_ids
+        )
+
         self._log_result(
-            numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
+            numeric="pass" if allow_numeric_review else "skipped",
             evidence=review.evidence_verdict if allow_evidence_review else "skipped",
-            alignment=review.alignment_verdict if allow_semantic_review else "skipped",
+            alignment=analysis.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
             action=review.action_verdict if allow_evidence_review else "skipped",
-            reasons=review.reasons + review.coverage_reasons,
+            reasons=analysis.reasons + review.reasons + review.coverage_reasons,
         )
-        return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+        return FinalVerificationResult(
+            ok=not issues,
+            issues=tuple(issues),
+            grounded_claims=grounded_claims,
+            user_evidence=analysis.user_evidence,
+        )
 
     def _numeric_issue(
         self,
@@ -355,117 +486,298 @@ class FinalGroundingVerifier:
             ),
         )
 
-    async def _review_final(
+    async def _analyze_candidate(
         self,
         *,
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult],
-    ) -> FinalReview:
-        user_messages = [
-            str(message.get("content"))
-            for message in messages
-            if message.get("role") == "user" and isinstance(message.get("content"), str)
-        ]
-        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
-
+    ) -> CandidateAnalysis:
+        current_user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+                and isinstance(messages[index].get("content"), str)
+            ),
+            None,
+        )
+        current_user_request = (
+            _clip_text(str(messages[current_user_index].get("content")), 4000)
+            if current_user_index is not None
+            else ""
+        )
+        context_source = messages[:current_user_index] if current_user_index is not None else messages[:-1]
+        recent_context = [
+            (index, message)
+            for index, message in enumerate(context_source)
+            if message.get("role") in {"user", "assistant"}
+            and isinstance(message.get("content"), str)
+        ][-10:]
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
                 "content": _clip_text(str(message.get("content") or ""), 1800),
             }
-            for message in messages[:-1]
+            for _, message in recent_context
+        ]
+        evidence_user_indices = [
+            index
+            for index, message in recent_context
+            if message.get("role") == "user"
+        ]
+        if current_user_index is not None:
+            evidence_user_indices.append(current_user_index)
+        user_messages_for_evidence = [
+            {
+                "message_index": index,
+                "content": _clip_text(str(messages[index].get("content") or ""), 1800),
+            }
+            for index in evidence_user_indices
+        ]
+
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _CANDIDATE_ANALYSIS_SYSTEM},
+                {"role": "user", "content": json.dumps({
+                    "current_user_request": current_user_request,
+                    "conversation_context": context_messages,
+                    "user_messages_for_evidence": user_messages_for_evidence,
+                    "candidate_final": _clip_text(candidate, 6000),
+                }, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+            response_format=_CandidateAnalysisPayload.model_json_schema(),
+        )
+        _LOG.info(
+            "MAI candidate analyzer start timeout=%s context_messages=%d candidate_chars=%d",
+            self.reviewer_timeout_seconds,
+            len(context_messages),
+            len(candidate),
+        )
+        parsed = await self._request_structured(
+            request,
+            _CandidateAnalysisPayload,
+            reviewer_name="candidate analyzer",
+        )
+
+        reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
+        alignment_verdict = parsed.alignment_verdict
+        if alignment_verdict == "misaligned" and not reasons:
+            alignment_verdict = "uncertain"
+
+        claims: list[CandidateClaim] = []
+        seen_claims: set[str] = set()
+        for item in parsed.claims:
+            claim = item.claim.strip()
+            if not claim or claim in seen_claims:
+                continue
+            seen_claims.add(claim)
+            claims.append(CandidateClaim(
+                claim_id=f"claim:{len(claims)}",
+                claim=claim,
+                temporal=item.temporal,
+            ))
+
+        user_message_content = {
+            item["message_index"]: str(item["content"])
+            for item in user_messages_for_evidence
+        }
+        user_evidence: list[UserEvidence] = []
+        seen_user_assertions: set[tuple[int, str]] = set()
+        for item in parsed.user_assertions:
+            statement = item.statement.strip()
+            source_excerpt = item.source_excerpt.strip()
+            source_content = user_message_content.get(item.message_index)
+            if source_content is None:
+                raise RuntimeError("candidate analyzer returned an unknown user message index")
+            if not statement or not source_excerpt:
+                raise RuntimeError("candidate analyzer returned an empty user evidence assertion")
+            if source_excerpt not in source_content:
+                raise RuntimeError(
+                    "candidate analyzer user evidence excerpt is not present in the cited user message"
+                )
+            key = (item.message_index, statement)
+            if key in seen_user_assertions:
+                continue
+            seen_user_assertions.add(key)
+            user_evidence.append(UserEvidence(
+                ref=f"user:{item.message_index}:{len(user_evidence)}",
+                statement=statement,
+                message_index=item.message_index,
+                source_excerpt=source_excerpt,
+            ))
+
+        return CandidateAnalysis(
+            alignment_verdict=alignment_verdict,
+            reasons=reasons,
+            claims=tuple(claims),
+            user_evidence=tuple(user_evidence),
+        )
+
+    async def _review_evidence(
+        self,
+        *,
+        candidate: str,
+        messages: Sequence[Mapping[str, Any]],
+        tool_results: Sequence[ToolVerificationResult],
+        analysis: CandidateAnalysis,
+    ) -> FinalReview:
+        current_user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+                and isinstance(messages[index].get("content"), str)
+            ),
+            None,
+        )
+        current_user_request = (
+            _clip_text(str(messages[current_user_index].get("content")), 4000)
+            if current_user_index is not None
+            else ""
+        )
+        context_source = messages[:current_user_index] if current_user_index is not None else messages[:-1]
+        context_messages = [
+            {
+                "role": str(message.get("role") or ""),
+                "content": _clip_text(str(message.get("content") or ""), 1800),
+            }
+            for message in context_source
             if message.get("role") in {"user", "assistant"}
             and isinstance(message.get("content"), str)
         ][-10:]
+
         tool_evidence = [
             {
+                "ref": tool_evidence_ref(index, name),
+                "kind": "tool_result",
                 "index": index,
                 "tool": name,
                 "ok": ok,
                 "error_type": error_type,
-                "result": _clip_text(content, 3500),
+                "content": _clip_text(content, 3500),
             }
             for index, (name, ok, error_type, content) in enumerate(
                 tool_results[-10:], start=max(0, len(tool_results) - 10)
             )
         ]
-        payload = {
-            "authoritative_current_time": current_time(),
-            "current_user_request": current_user_request,
-            "conversation_context": context_messages,
-            "tool_results_in_execution_order": tool_evidence,
-            "candidate_final": _clip_text(candidate, 6000),
-        }
+        clock = current_time()
+        evidence_sources = [
+            {
+                "ref": item.ref,
+                "kind": "user_assertion",
+                "content": item.statement,
+                "source_excerpt": item.source_excerpt,
+            }
+            for item in analysis.user_evidence
+        ]
+        evidence_sources.extend(tool_evidence)
+        evidence_sources.append({
+            "ref": "runtime:current_time",
+            "kind": "current_time",
+            "content": clock,
+        })
+        allowed_support_ids = {str(item["ref"]) for item in evidence_sources}
+
+        candidate_claims = [
+            {
+                "claim_id": claim.claim_id,
+                "claim": claim.claim,
+                "temporal": claim.temporal,
+            }
+            for claim in analysis.claims
+        ]
         request = ChatRequest(
             messages=(
-                {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "system", "content": _EVIDENCE_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps({
+                    "authoritative_current_time": clock,
+                    "current_user_request": current_user_request,
+                    "conversation_context": context_messages,
+                    "candidate_final": _clip_text(candidate, 6000),
+                    "candidate_claims": candidate_claims,
+                    "evidence_sources": evidence_sources,
+                }, ensure_ascii=False)},
             ),
             tools=(),
             think=False,
-            response_format=_FinalReviewPayload.model_json_schema(),
+            response_format=_EvidenceReviewPayload.model_json_schema(),
         )
         _LOG.info(
-            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+            "MAI evidence reviewer start timeout=%s context_messages=%d evidence_sources=%d claims=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
             len(context_messages),
-            len(tool_evidence),
+            len(evidence_sources),
+            len(candidate_claims),
             len(candidate),
         )
-        try:
-            parsed = await self._request_review(request)
-            reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
-            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
-            claims = tuple(
-                ClaimReview(
-                    claim=item.claim.strip(),
-                    verdict=item.verdict,
-                    defect=item.defect,
-                    reason=item.reason.strip(),
-                )
-                for item in parsed.claims
-                if item.claim.strip()
-            )
-            evidence_verdict = parsed.evidence_verdict
-            alignment_verdict = parsed.alignment_verdict
-            coverage_verdict = parsed.coverage_verdict
-            unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
-            if unsupported_claims:
-                evidence_verdict = "unsupported"
-            elif not reasons and evidence_verdict == "unsupported":
-                evidence_verdict = "uncertain"
-            if not reasons and alignment_verdict == "misaligned":
-                alignment_verdict = "uncertain"
-            if not coverage_reasons and coverage_verdict == "insufficient":
-                coverage_verdict = "uncertain"
-            return FinalReview(
-                evidence_verdict=evidence_verdict,
-                alignment_verdict=alignment_verdict,
-                coverage_verdict=coverage_verdict,
-                coverage_reasons=coverage_reasons,
-                reasons=reasons,
-                claims=claims,
-                action_verdict=parsed.action_verdict,
-            )
-        except TimeoutError as exc:
-            _LOG.warning("MAI final verification reviewer timed out")
-            raise RuntimeError("final reviewer timed out; release was not verified") from exc
-        except ValidationError as exc:
-            raise RuntimeError("final reviewer violated structured output schema") from exc
-        except Exception as exc:
-            raise RuntimeError("final reviewer failed; release was not verified") from exc
+        parsed = await self._request_structured(
+            request,
+            _EvidenceReviewPayload,
+            reviewer_name="evidence reviewer",
+        )
 
-    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
-        # Infrastructure and malformed-output retries do not re-roll a valid
-        # supported/unsupported reviewer verdict.
+        claim_by_id = {claim.claim_id: claim for claim in analysis.claims}
+        parsed_ids = [item.claim_id for item in parsed.claims]
+        expected_ids = list(claim_by_id)
+        if len(parsed_ids) != len(set(parsed_ids)):
+            raise RuntimeError("evidence reviewer returned duplicate claim ids")
+        if set(parsed_ids) != set(expected_ids):
+            raise RuntimeError("evidence reviewer did not return exactly one review per candidate claim")
+
+        claims: list[ClaimReview] = []
+        for item in parsed.claims:
+            candidate_claim = claim_by_id[item.claim_id]
+            support_ids = tuple(dict.fromkeys(ref.strip() for ref in item.support_ids if ref.strip()))
+            unknown_support_ids = tuple(ref for ref in support_ids if ref not in allowed_support_ids)
+            if unknown_support_ids:
+                raise RuntimeError(
+                    "evidence reviewer returned unknown support ids: " + ", ".join(unknown_support_ids)
+                )
+            if item.verdict == "supported" and not support_ids:
+                raise RuntimeError("evidence reviewer returned a supported claim without support ids")
+            claims.append(ClaimReview(
+                claim_id=item.claim_id,
+                claim=candidate_claim.claim,
+                verdict=item.verdict,
+                defect=item.defect,
+                reason=item.reason.strip(),
+                support_ids=support_ids,
+            ))
+
+        reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
+        coverage_reasons = tuple(
+            dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip())
+        )
+        evidence_verdict = parsed.evidence_verdict
+        coverage_verdict = parsed.coverage_verdict
+        unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
+        if unsupported_claims:
+            evidence_verdict = "unsupported"
+        elif evidence_verdict == "unsupported" and not reasons:
+            evidence_verdict = "uncertain"
+        if coverage_verdict == "insufficient" and not coverage_reasons:
+            coverage_verdict = "uncertain"
+
+        return FinalReview(
+            evidence_verdict=evidence_verdict,
+            coverage_verdict=coverage_verdict,
+            coverage_reasons=coverage_reasons,
+            reasons=reasons,
+            claims=tuple(claims),
+            action_verdict=parsed.action_verdict,
+        )
+
+    async def _request_structured(self, request: ChatRequest, payload_type, *, reviewer_name: str):
+        # Infrastructure and malformed-output retries do not re-roll a valid judgment.
         for attempt in range(1, 4):
             try:
                 turn = await asyncio.wait_for(
                     self.reviewer_adapter.chat(request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+                return payload_type.model_validate_json(turn.content, strict=True)
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
@@ -482,13 +794,16 @@ class FinalGroundingVerifier:
                         cause.status_code == 429 or 500 <= cause.status_code <= 599
                     )
                 _LOG.warning(
-                    "MAI final reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    "MAI %s request failed attempt=%d/3 error_type=%s retryable=%s",
+                    reviewer_name,
                     attempt,
                     type(exc).__name__,
                     retryable,
                 )
                 if not retryable or attempt == 3:
-                    raise
+                    raise RuntimeError(
+                        f"final {reviewer_name} failed; release was not verified"
+                    ) from exc
                 await asyncio.sleep(0.25 * attempt)
         raise AssertionError("unreachable reviewer retry state")
 
@@ -512,6 +827,10 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
+
+
+def tool_evidence_ref(index: int, tool_name: str) -> str:
+    return f"tool:{index}:{tool_name}"
 
 
 def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str:
