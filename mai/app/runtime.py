@@ -25,6 +25,7 @@ from ..memory.admission import (
     successful_tool_names,
 )
 from ..memory.extraction.service import (
+    DirectUserFactEvidence,
     GroundedFinalClaimEvidence,
     OllamaFactExtractor,
     ToolFactEvidence,
@@ -52,6 +53,7 @@ _LOG = logging.getLogger("uvicorn.error")
 
 def _memory_grounded_final_claims(
     claims: Sequence[GroundedFinalClaimEvidence],
+    direct_user_facts: Sequence[DirectUserFactEvidence],
     tool_evidence: Sequence[ToolFactEvidence],
 ) -> tuple[GroundedFinalClaimEvidence, ...]:
     """Keep only current-turn provenance that memory is allowed to admit.
@@ -60,7 +62,7 @@ def _memory_grounded_final_claims(
     so this turn does not recycle existing memory as new evidence.
     """
     admissible_support_ids = {
-        "user:current",
+        *(item.ref for item in direct_user_facts),
         *(item.ref for item in tool_evidence),
     }
     filtered: list[GroundedFinalClaimEvidence] = []
@@ -280,6 +282,18 @@ class MAIRuntime:
                 final_answer=answer,
                 principal=principal,
                 tool_executions=tool_executions,
+                direct_user_facts=tuple(
+                    DirectUserFactEvidence(
+                        ref=fact.evidence_id,
+                        content=fact.fact,
+                    )
+                    for fact in (
+                        result.final_verification.direct_user_facts
+                        if result.final_verification is not None
+                        else ()
+                    )
+                    if fact.source_message_id == "user:current"
+                ),
                 grounded_final_claims=tuple(
                     GroundedFinalClaimEvidence(
                         claim=claim.claim,
@@ -320,6 +334,7 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
+        direct_user_facts: Sequence[DirectUserFactEvidence],
         grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
         fact_extractor: OllamaFactExtractor,
     ) -> None:
@@ -337,6 +352,7 @@ class MAIRuntime:
         )
         memory_grounded_final_claims = _memory_grounded_final_claims(
             grounded_final_claims,
+            direct_user_facts,
             extraction_tool_evidence,
         )
         fact_texts: tuple[str, ...] = ()
@@ -345,6 +361,7 @@ class MAIRuntime:
             fact_texts = await self.memory.extract_facts(
                 user_text=prompt,
                 final_answer=final_answer,
+                direct_user_facts=direct_user_facts,
                 successful_tool_evidence=extraction_tool_evidence,
                 grounded_final_claims=memory_grounded_final_claims,
                 fact_extractor=fact_extractor,
@@ -380,6 +397,7 @@ class MAIRuntime:
                 user_text=prompt,
                 final_answer=final_answer,
                 user_evidence=evidence,
+                direct_user_facts=direct_user_facts,
                 successful_tool_evidence=extraction_tool_evidence,
                 grounded_final_claims=memory_grounded_final_claims,
                 fact_texts=fact_texts,
