@@ -65,12 +65,10 @@ def _memory_grounded_final_claims(
     }
     filtered: list[GroundedFinalClaimEvidence] = []
     for claim in claims:
-        support_ids = tuple(
-            support_id
-            for support_id in claim.support_ids
-            if support_id in admissible_support_ids
-        )
+        support_ids = tuple(dict.fromkeys(claim.support_ids))
         if not support_ids:
+            continue
+        if any(support_id not in admissible_support_ids for support_id in support_ids):
             continue
         filtered.append(GroundedFinalClaimEvidence(
             claim=claim.claim,
