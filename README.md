@@ -157,9 +157,9 @@ Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `m
 
 Fact extractor는 최소 요약 하나만 남기기보다, 이후 recall에 도움이 될 수 있는 사용자 상태·소유물·구성·변경·선호·이유·호환성 같은 세부사항을 여러 개의 self-contained Fact로 폭넓게 추출하도록 한다. 고정 Fact 개수 상한은 두지 않는다.
 
-새 Fact가 기존 Fact와 exact text가 같으면 기존 node의 `occurrence_count`를 올린다. text가 달라도 Concept 기반 후보를 좁힌 뒤 model-backed semantic identity resolver가 같은 durable proposition이라고 판정하면 새 node를 만들지 않고 기존 Fact를 강화한다. 단순 관련성·부분 겹침·수정/변경/충돌은 동일 Fact로 합치지 않는다.
+Fact node identity는 #199 이전 방식으로 유지한다. 같은 사용자에서 canonical Fact text가 완전히 같으면 기존 node를 재사용하고 `occurrence_count`를 올린다. Concept도 동일 canonical segment면 기존 node를 재사용한다. 반면 text가 다른 Fact를 LLM이 의미상 같다고 판단해 기존 node에 합치는 semantic identity merge는 사용하지 않는다.
 
-동일 relation edge가 다시 관찰되면 edge 자체도 새 중복 row를 만들지 않고 `occurrence_count`를 올린다. repository 내부에서는 이 count를 양수/음수로 조정할 수 있어 강화·약화가 가능하며, semantic Fact 재사용 뒤에도 새 Concept edge 추가/강화가 계속 진행된다.
+동일 relation edge가 다시 관찰되면 edge 자체도 새 중복 row를 만들지 않고 `occurrence_count`를 올린다. repository 내부에서는 이 count를 양수/음수로 조정할 수 있어 강화·약화가 가능하다.
 
 Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않고 raw evidence를 보존한다.
 
