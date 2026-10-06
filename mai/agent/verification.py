@@ -342,18 +342,27 @@ class FinalGroundingVerifier:
         allow_semantic_review: bool,
         allow_coverage_review: bool,
     ) -> FinalReview:
-        user_messages = [
-            str(message.get("content"))
-            for message in messages
-            if message.get("role") == "user" and isinstance(message.get("content"), str)
-        ]
-        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
+        current_user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+                and isinstance(messages[index].get("content"), str)
+            ),
+            None,
+        )
+        current_user_request = (
+            _clip_text(str(messages[current_user_index].get("content")), 4000)
+            if current_user_index is not None
+            else ""
+        )
+        context_source = messages[:current_user_index] if current_user_index is not None else messages[:-1]
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
                 "content": _clip_text(str(message.get("content") or ""), 1800),
             }
-            for message in messages[:-1]
+            for message in context_source
             if message.get("role") in {"user", "assistant"}
             and isinstance(message.get("content"), str)
         ][-10:]
@@ -369,8 +378,7 @@ class FinalGroundingVerifier:
                 tool_results[-10:], start=max(0, len(tool_results) - 10)
             )
         ]
-        payload = {
-            "authoritative_current_time": current_time(),
+        common_payload = {
             "current_user_request": current_user_request,
             "conversation_context": context_messages,
             "tool_results_in_execution_order": tool_evidence,
@@ -384,7 +392,10 @@ class FinalGroundingVerifier:
             grounding_request = ChatRequest(
                 messages=(
                     {"role": "system", "content": _GROUNDING_REVIEW_SYSTEM},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    {"role": "user", "content": json.dumps({
+                        "authoritative_current_time": current_time(),
+                        **common_payload,
+                    }, ensure_ascii=False)},
                 ),
                 tools=(),
                 think=False,
@@ -432,7 +443,7 @@ class FinalGroundingVerifier:
             task_request = ChatRequest(
                 messages=(
                     {"role": "system", "content": _TASK_REVIEW_SYSTEM},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    {"role": "user", "content": json.dumps(common_payload, ensure_ascii=False)},
                 ),
                 tools=(),
                 think=False,
