@@ -472,6 +472,7 @@ class FinalGroundingVerifier:
             ok=not issues,
             issues=tuple(issues),
             grounded_claims=grounded_claims,
+            direct_user_facts=review.direct_user_facts,
         )
 
     def _numeric_issue(
@@ -540,10 +541,15 @@ class FinalGroundingVerifier:
         ][-10:]
         context_messages = [
             {
+                "message_id": (
+                    f"user:context:{index}"
+                    if message.get("role") == "user"
+                    else f"assistant:context:{index}"
+                ),
                 "role": str(message.get("role") or ""),
                 "content": _clip_text(str(message.get("content") or ""), 1800),
             }
-            for _, message in recent_context
+            for index, message in recent_context
         ]
         return current_user_request, recent_context, context_messages
 
@@ -558,6 +564,7 @@ class FinalGroundingVerifier:
             messages=(
                 {"role": "system", "content": _CANDIDATE_ANALYSIS_SYSTEM},
                 {"role": "user", "content": json.dumps({
+                    "current_user_message_id": "user:current",
                     "current_user_request": current_user_request,
                     "conversation_context": context_messages,
                     "candidate_final": _clip_text(candidate, 6000),
@@ -590,22 +597,6 @@ class FinalGroundingVerifier:
         alignment_reasons: tuple[str, ...],
     ) -> FinalReview:
         current_user_request, recent_context, _ = self._dialogue_context(messages)
-        user_evidence = [
-            {
-                "id": f"user:context:{index}",
-                "kind": "user_message",
-                "content": _clip_text(str(message.get("content") or ""), 1800),
-            }
-            for index, message in recent_context
-            if message.get("role") == "user"
-        ]
-        if current_user_request:
-            user_evidence.append({
-                "id": "user:current",
-                "kind": "user_message",
-                "content": current_user_request,
-            })
-
         tool_evidence = [
             {
                 "id": tool_evidence_ref(index, name),
@@ -622,8 +613,47 @@ class FinalGroundingVerifier:
             )
         ]
         clock = current_time()
+        allowed_user_message_ids = {
+            f"user:context:{index}"
+            for index, message in recent_context
+            if message.get("role") == "user"
+        }
+        if current_user_request:
+            allowed_user_message_ids.add("user:current")
+
+        direct_user_facts: list[DirectUserFact] = []
+        seen_user_facts: set[tuple[str, str]] = set()
+        for item in analysis.user_facts:
+            fact = item.fact.strip()
+            source_message_id = item.source_message_id.strip()
+            if not fact:
+                raise RuntimeError("candidate analyzer returned an empty user fact")
+            if source_message_id not in allowed_user_message_ids:
+                raise RuntimeError(
+                    "candidate analyzer returned user fact with unknown source_message_id: "
+                    + source_message_id
+                )
+            dedupe_key = (source_message_id, fact)
+            if dedupe_key in seen_user_facts:
+                continue
+            seen_user_facts.add(dedupe_key)
+            direct_user_facts.append(DirectUserFact(
+                evidence_id=f"user_fact:{len(direct_user_facts)}",
+                fact=fact,
+                source_message_id=source_message_id,
+            ))
+
+        user_fact_evidence = [
+            {
+                "id": item.evidence_id,
+                "kind": "direct_user_fact",
+                "source_message_id": item.source_message_id,
+                "content": item.fact,
+            }
+            for item in direct_user_facts
+        ]
         evidence_sources: list[dict[str, object]] = [
-            *user_evidence,
+            *user_fact_evidence,
             *tool_evidence,
         ]
         allowed_support_ids = {
@@ -745,6 +775,7 @@ class FinalGroundingVerifier:
             alignment_reasons=alignment_reasons,
             evidence_reasons=evidence_reasons,
             claims=tuple(claims),
+            direct_user_facts=tuple(direct_user_facts),
             action_verdict=parsed.action_verdict,
         )
 
