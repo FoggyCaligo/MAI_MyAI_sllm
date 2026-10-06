@@ -33,7 +33,6 @@ class MemoryEdge:
     to_node_id: int
     relation: str
     provenance: str
-    occurrence_count: int
     created_at: str
 
 
