@@ -181,7 +181,6 @@ class ClaimReview:
     defect: str = "none"
     reason: str = ""
     evidence_refs: tuple[str, ...] = ()
-    evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
