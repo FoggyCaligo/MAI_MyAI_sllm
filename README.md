@@ -134,7 +134,11 @@ Graph neighborhood
 - `memory_recall(query)`
 - `memory_search(node_id)`
 
-`memory_search`는 one-hop 확장이다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
+Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다. 원문 Utterance는 query가 맞은 Concept neighborhood와 anchor path를 통해서만 들어온다.
+
+Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
+
+`memory_search`는 일반 node에 대해 one-hop 확장이다. User Anchor를 직접 확장할 때는 unbounded `spoke` traversal 대신 동일한 bounded Fact context를 반환한다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
 
 ### Post-response memory write
 
