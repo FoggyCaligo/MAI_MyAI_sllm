@@ -85,7 +85,7 @@ fact        -> concept   : mentions
 
 Each edge stores provenance such as `user_utterance`, `user_assertion`, `derived_from_utterance`, or `fact_index`.
 
-The database enforces one edge per `(from_node_id, to_node_id, relation)`. Re-observing the same typed relation increments the edge's `occurrence_count` instead of silently ignoring the duplicate row. The repository also supports explicit positive/negative occurrence-count adjustment (without reducing below one), so later correction/confidence logic can strengthen or weaken an existing relation without changing node identity.
+The database enforces one edge per `(from_node_id, to_node_id, relation)`. Re-observing the same typed relation reuses the existing edge and does not create a duplicate row. Edge identity is deterministic, but edges do not carry a separate occurrence/reinforcement weight.
 
 Relations involving Fact nodes are used only when Fact extraction is actually enabled.
 
