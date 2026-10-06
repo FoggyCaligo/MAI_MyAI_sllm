@@ -31,7 +31,13 @@ class MemoryOverviewInput(BaseModel):
 
 class MemorySearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    node_id: int = Field(gt=0, description="Working/permanent memory node to expand by exactly one graph hop")
+    node_id: int = Field(
+        gt=0,
+        description=(
+            "Working/permanent memory node to expand. Regular nodes use one graph hop; "
+            "the current user's anchor returns its bounded structured Fact context."
+        ),
+    )
 
 
 def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working: WorkingGraph, *, user_id: str, include_recall_entry: bool = True) -> None:
@@ -83,8 +89,9 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
     registry.add(
         name="memory_search",
         description=(
-            "Expand one persistent-memory node by exactly one graph hop, merge the typed edges and evidence "
-            "into the current Working Graph, and preserve the shortest available path to this user's anchor."
+            "Expand one persistent-memory node and merge the result into the current Working Graph. "
+            "Regular nodes expand by one graph hop; the current user's anchor returns only its bounded "
+            "structured Fact context. Preserve available paths back to this user's anchor."
         ),
         input_model=MemorySearchInput,
         handler=memory_search,
