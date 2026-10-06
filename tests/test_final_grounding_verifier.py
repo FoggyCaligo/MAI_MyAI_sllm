@@ -65,6 +65,7 @@ class ReviewerAdapter:
         self.awaiting_evidence = False
         return turn(json.dumps({
             "evidence_verdict": evidence_verdict,
+            "validated_user_source_ids": [],
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
             "reasons": list(reasons) if evidence_verdict == "unsupported" else [],
@@ -108,6 +109,11 @@ class StructuredReviewerAdapter:
         self.awaiting_evidence = False
         payload = json.loads(request.messages[1]["content"])
         available_refs = [str(item["ref"]) for item in payload.get("evidence_sources", [])]
+        user_refs = [
+            str(item["ref"])
+            for item in payload.get("evidence_sources", [])
+            if item.get("kind") == "user_assertion"
+        ]
         claims = []
         for index, item in enumerate(review.get("claims", [])):
             raw = dict(item)
@@ -123,6 +129,9 @@ class StructuredReviewerAdapter:
             })
         return turn(json.dumps({
             "evidence_verdict": review.get("evidence_verdict", "supported"),
+            "validated_user_source_ids": list(
+                review.get("validated_user_source_ids", user_refs)
+            ),
             "coverage_verdict": review.get("coverage_verdict", "sufficient"),
             "coverage_reasons": list(review.get("coverage_reasons", [])),
             "reasons": list(review.get("reasons", [])),
@@ -149,6 +158,7 @@ class SlowReviewerAdapter:
             }))
         return turn(json.dumps({
             "evidence_verdict": "supported",
+            "validated_user_source_ids": [],
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
             "reasons": [],
@@ -508,6 +518,7 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert evidence_schema["additionalProperties"] is False
     assert set(evidence_schema["required"]) == {
         "evidence_verdict",
+        "validated_user_source_ids",
         "coverage_verdict",
         "coverage_reasons",
         "reasons",
@@ -529,6 +540,7 @@ def test_user_approval_context_is_not_exposed_as_factual_evidence_source() -> No
         }, ensure_ascii=False),
         json.dumps({
             "evidence_verdict": "unsupported",
+            "validated_user_source_ids": [],
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
             "reasons": ["No eligible factual source establishes the prior assistant claim."],
@@ -577,10 +589,12 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
             "user_assertions": [{
                 "message_index": 0,
                 "source_excerpt": "내 만년필은 은색 플레지르야.",
+                "normalized_claim": "사용자는 은색 플레지르 만년필을 사용한다.",
             }],
         }, ensure_ascii=False),
         json.dumps({
             "evidence_verdict": "supported",
+            "validated_user_source_ids": ["user:0:0"],
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
             "reasons": [],
@@ -603,7 +617,7 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
     ))
 
     assert result.ok is True
-    assert result.user_evidence[0].statement == "내 만년필은 은색 플레지르야."
+    assert result.user_evidence[0].statement == "사용자는 은색 플레지르 만년필을 사용한다."
     evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
     user_sources = [
         source
@@ -613,7 +627,7 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
     assert user_sources == [{
         "ref": "user:0:0",
         "kind": "user_assertion",
-        "content": "내 만년필은 은색 플레지르야.",
+        "content": "사용자는 은색 플레지르 만년필을 사용한다.",
         "source_excerpt": "내 만년필은 은색 플레지르야.",
     }]
 
@@ -627,6 +641,7 @@ def test_candidate_analyzer_cannot_invent_user_evidence_excerpt() -> None:
             "user_assertions": [{
                 "message_index": 0,
                 "source_excerpt": "사용자는 은색 만년필을 쓴다",
+                "normalized_claim": "사용자는 은색 만년필을 쓴다",
             }],
         }, ensure_ascii=False),
     ])
@@ -851,6 +866,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
     })
     valid_evidence = json.dumps({
         "evidence_verdict": "supported",
+        "validated_user_source_ids": [],
         "coverage_verdict": "sufficient",
         "coverage_reasons": [],
         "reasons": [],
