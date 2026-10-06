@@ -202,6 +202,20 @@ class MemoryGraphRepository:
             raise RuntimeError("typed edge insert did not produce an edge")
         return self.get_edge(int(row["id"]))
 
+    def adjust_edge_occurrence_count(self, edge_id: int, *, delta: int) -> MemoryEdge:
+        if delta == 0:
+            return self.get_edge(edge_id)
+        edge = self.get_edge(edge_id)
+        next_count = edge.occurrence_count + delta
+        if next_count < 1:
+            raise ValueError("edge occurrence_count cannot be reduced below 1")
+        with self.connection:
+            self.connection.execute(
+                "UPDATE edges SET occurrence_count = ? WHERE id = ?",
+                (next_count, edge.id),
+            )
+        return self.get_edge(edge.id)
+
     def get_node(self, node_id: int) -> MemoryNode:
         row = self.connection.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if row is None:
