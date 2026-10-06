@@ -264,8 +264,22 @@ def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
 
 
 
-def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
-    reviewer = ReviewerAdapter([("unsupported", "misaligned", ("Unsupported claim.",))])
+def test_disabled_alignment_axis_still_checks_evidence() -> None:
+    analysis = json.dumps({
+        "resolved_request": "확인해줘",
+        "alignment_verdict": "misaligned",
+        "reasons": ["The requested result is missing."],
+        "claims": [],
+    }, ensure_ascii=False)
+    evidence = json.dumps({
+        "evidence_verdict": "unsupported",
+        "coverage_verdict": "sufficient",
+        "coverage_reasons": [],
+        "reasons": ["Unsupported claim."],
+        "claims": [],
+        "action_verdict": "not_applicable",
+    }, ensure_ascii=False)
+    reviewer = SequenceAdapter([analysis, evidence])
     result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
         candidate="검증 대상 답변",
         messages=({"role": "user", "content": "확인해줘"},),
@@ -274,6 +288,7 @@ def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
         allow_evidence_review=True,
     ))
     assert [issue.code for issue in result.issues] == ["evidence_grounding_failed"]
+    assert len(reviewer.requests) == 2
 
 
 def test_claim_grounding_failures_consume_evidence_budget() -> None:
