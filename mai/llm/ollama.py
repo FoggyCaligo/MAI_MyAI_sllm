@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import json
+import logging
+import time
 from typing import Any, Protocol
 
 from ollama import AsyncClient, ResponseError
 
 from .models import ChatRequest, ModelConfig, ModelTurn, NativeToolCall
+
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 class OllamaAdapterError(RuntimeError):
@@ -64,17 +70,71 @@ class OllamaAdapter:
                 else request.response_format
             )
 
+        started = time.perf_counter()
+        message_chars = sum(
+            len(str(message.get("content") or ""))
+            for message in payload["messages"]
+        )
+        tool_schema_chars = len(json.dumps(payload["tools"], ensure_ascii=False, default=str))
+        _LOG.info(
+            "MAI Ollama request start stage=%s model=%s messages=%d message_chars=%d tools=%d "
+            "tool_schema_chars=%d think=%s timeout_seconds=%g",
+            request.stage,
+            self.config.model,
+            len(payload["messages"]),
+            message_chars,
+            len(payload["tools"]),
+            tool_schema_chars,
+            str(think).lower(),
+            self.config.request_timeout_seconds,
+        )
         try:
             response = await asyncio.wait_for(
                 self._client.chat(**payload),
                 timeout=self.config.request_timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
+            _LOG.error(
+                "MAI Ollama request failed stage=%s model=%s error_type=timeout elapsed_ms=%d",
+                request.stage,
+                self.config.model,
+                int((time.perf_counter() - started) * 1000),
+            )
             raise OllamaChatTimeoutError(
                 f"Ollama chat request exceeded {self.config.request_timeout_seconds:g} seconds"
             ) from exc
         except ResponseError as exc:
+            _LOG.error(
+                "MAI Ollama request failed stage=%s model=%s error_type=%s elapsed_ms=%d",
+                request.stage,
+                self.config.model,
+                type(exc).__name__,
+                int((time.perf_counter() - started) * 1000),
+            )
             raise OllamaRequestError("Ollama chat request failed") from exc
+        except Exception as exc:
+            _LOG.error(
+                "MAI Ollama request failed stage=%s model=%s error_type=%s elapsed_ms=%d",
+                request.stage,
+                self.config.model,
+                type(exc).__name__,
+                int((time.perf_counter() - started) * 1000),
+            )
+            raise
+
+        _LOG.info(
+            "MAI Ollama request complete stage=%s model=%s elapsed_ms=%d prompt_tokens=%s "
+            "completion_tokens=%s load_ms=%s prompt_eval_ms=%s eval_ms=%s total_ms=%s",
+            request.stage,
+            self.config.model,
+            int((time.perf_counter() - started) * 1000),
+            _metric_value(response, "prompt_eval_count"),
+            _metric_value(response, "eval_count"),
+            _duration_ms(response, "load_duration"),
+            _duration_ms(response, "prompt_eval_duration"),
+            _duration_ms(response, "eval_duration"),
+            _duration_ms(response, "total_duration"),
+        )
 
         return _normalize_response(response)
 
@@ -156,3 +216,15 @@ def _read_field(value: Any, name: str) -> Any:
     if isinstance(value, Mapping):
         return value.get(name)
     return getattr(value, name, None)
+
+
+def _metric_value(response: Any, name: str) -> str:
+    value = _read_field(response, name)
+    return "-" if value is None else str(value)
+
+
+def _duration_ms(response: Any, name: str) -> str:
+    value = _read_field(response, name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "-"
+    return str(round(value / 1_000_000, 3))

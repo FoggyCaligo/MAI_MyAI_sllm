@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -132,3 +133,30 @@ def test_missing_message_fails_visibly() -> None:
 
     with pytest.raises(OllamaProtocolError):
         run(adapter.chat(ChatRequest(messages=[])))
+
+
+def test_adapter_logs_stage_sizes_and_ollama_timings(caplog) -> None:
+    client = FakeClient({
+        "message": {"role": "assistant", "content": "done"},
+        "prompt_eval_count": 120,
+        "eval_count": 30,
+        "load_duration": 2_000_000,
+        "prompt_eval_duration": 3_000_000,
+        "eval_duration": 4_000_000,
+        "total_duration": 9_000_000,
+    })
+    adapter = OllamaAdapter(ModelConfig(model="test", think=False), client=client)
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+
+    turn = run(adapter.chat(ChatRequest(
+        messages=[{"role": "user", "content": "hello"}],
+        stage="reviewer",
+    )))
+
+    assert turn.content == "done"
+    assert "MAI Ollama request start stage=reviewer model=test messages=1 message_chars=5" in caplog.text
+    assert "MAI Ollama request complete stage=reviewer model=test" in caplog.text
+    assert "prompt_tokens=120" in caplog.text
+    assert "completion_tokens=30" in caplog.text
+    assert "prompt_eval_ms=3.0" in caplog.text
+    assert "eval_ms=4.0" in caplog.text

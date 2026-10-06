@@ -43,28 +43,35 @@ _LOG = logging.getLogger("uvicorn.error")
 _FINAL_REVIEW_SYSTEM = """
 You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
 
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+Review the candidate against the supplied current user request, request context, and factual evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+
+The input separates two channels:
+- request_context contains prior user/assistant dialogue only for resolving references and judging task alignment. It is never factual evidence and never creates a coverage obligation.
+- factual_evidence contains the only source items that may ground factual claims, evidence coverage, and action outcomes. Every item has an evidence_id. Prior assistant text is deliberately absent from this channel.
 
 Your response is constrained by the supplied structured-output schema. Populate every required field:
 - evidence_verdict: "supported", "unsupported", or "uncertain"
 - alignment_verdict: "aligned", "misaligned", or "uncertain"
 - coverage_verdict: "sufficient", "insufficient", or "uncertain"
 - coverage_reasons: concrete material omissions from already supplied evidence only
+- coverage_evidence_ids: exact factual_evidence IDs that establish the omitted material information; required when coverage_verdict is "insufficient"
 - reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
+- claims: material factual claims from the candidate that matter to the user's request; every claim must include an evidence_ids array
 - action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
+- For a supported claim, evidence_ids must contain at least one exact ID from factual_evidence that directly supports it.
+- For an unsupported or uncertain claim, evidence_ids may identify relevant supplied evidence or be empty. Never invent an ID.
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
-- Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
+- Never use request_context, including prior assistant text, to ground a claim or coverage judgment. Current and prior user messages appear separately in factual_evidence when they are available as evidence.
 - Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 
 Temporal authority:
-- authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
+- authoritative_current_time appears as the `runtime-current-time` factual_evidence item. Use it as the current moment only when its evidence_id is cited, never use a training cutoff or guessed date.
 - Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
 - If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
 
@@ -77,12 +84,13 @@ Evidence scope preservation:
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
 Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
+- Judge coverage only from factual_evidence. Request context cannot create a coverage requirement. Do not imagine facts that additional research might discover.
 - Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
 - Prefer concrete supported results over replacing them with generic advice to check another source later.
 - Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
 - Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
 - coverage_reasons must identify the concrete already-observed information that the candidate should have used. If coverage is sufficient or uncertain, coverage_reasons should be empty.
+- coverage_evidence_ids must be non-empty when coverage is insufficient. Request-context messages have no evidence IDs and cannot create a coverage failure.
 
 Action outcome verification:
 - Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
@@ -114,6 +122,7 @@ class _ClaimReviewPayload(BaseModel):
 
     claim: str
     verdict: Literal["supported", "unsupported", "uncertain"]
+    evidence_ids: list[str]
     defect: Literal[
         "none",
         "scope_expansion",
@@ -133,6 +142,7 @@ class _FinalReviewPayload(BaseModel):
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
+    coverage_evidence_ids: list[str]
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
@@ -144,10 +154,23 @@ class VerificationIssue:
     message: str
 
 
+class ReviewerEvidenceReferenceError(RuntimeError):
+    """The reviewer cited missing evidence or omitted support references."""
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionClaim:
+    claim: str
+    defect: str
+    reason: str
+    evidence_ids: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
+    blocked_claims: tuple[CorrectionClaim, ...] = ()
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -159,6 +182,26 @@ class FinalVerificationResult:
             "Preserve every supported result that is still useful to the user.",
         ]
         lines.extend(f"- {issue.code}: {issue.message}" for issue in self.issues)
+        if self.blocked_claims:
+            lines.append(
+                "The following JSON is the structural correction contract for factual claims:\n"
+                + json.dumps({
+                    "blocked_claims": [
+                        {
+                            "claim": claim.claim,
+                            "defect": claim.defect,
+                            "reason": claim.reason,
+                            "evidence_ids": list(claim.evidence_ids),
+                        }
+                        for claim in self.blocked_claims
+                    ],
+                    "allowed_resolutions": [
+                        "obtain_new_user_or_tool_evidence",
+                        "remove_the_blocked_claim",
+                        "state_the_material_unknown_without_replacing_it_with_another_unsupported_claim",
+                    ],
+                }, ensure_ascii=False)
+            )
         if any(issue.code == "evidence_coverage_insufficient" for issue in self.issues):
             lines.append(
                 "For evidence coverage insufficiency, expand the answer using material user-relevant facts already "
@@ -194,6 +237,7 @@ class FinalVerificationResult:
 class ClaimReview:
     claim: str
     verdict: str
+    evidence_ids: tuple[str, ...] = ()
     defect: str = "none"
     reason: str = ""
 
@@ -204,6 +248,7 @@ class FinalReview:
     alignment_verdict: str
     coverage_verdict: str = "uncertain"
     coverage_reasons: tuple[str, ...] = ()
+    coverage_evidence_ids: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
@@ -308,6 +353,7 @@ class FinalGroundingVerifier:
             reason = "; ".join(review.coverage_reasons) or (
                 "The candidate omits material user-relevant facts already established by the supplied evidence."
             )
+            reason += " [evidence_ids=" + ",".join(review.coverage_evidence_ids) + "]"
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
@@ -318,7 +364,25 @@ class FinalGroundingVerifier:
             action=review.action_verdict if allow_evidence_review else "skipped",
             reasons=review.reasons + review.coverage_reasons,
         )
-        return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+        blocked_claims = (
+            tuple(
+                CorrectionClaim(
+                    claim=claim.claim,
+                    defect=claim.defect,
+                    reason=claim.reason,
+                    evidence_ids=claim.evidence_ids,
+                )
+                for claim in review.claims
+                if claim.verdict == "unsupported"
+            )
+            if allow_evidence_review
+            else ()
+        )
+        return FinalVerificationResult(
+            ok=not issues,
+            issues=tuple(issues),
+            blocked_claims=blocked_claims,
+        )
 
     def _numeric_issue(
         self,
@@ -362,39 +426,63 @@ class FinalGroundingVerifier:
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
-        user_messages = [
-            str(message.get("content"))
-            for message in messages
+        indexed_user_messages = [
+            (index, str(message.get("content")))
+            for index, message in enumerate(messages)
             if message.get("role") == "user" and isinstance(message.get("content"), str)
         ]
-        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
+        current_user_index = indexed_user_messages[-1][0] if indexed_user_messages else None
+        current_user_request = (
+            _clip_text(indexed_user_messages[-1][1], 4000)
+            if indexed_user_messages
+            else ""
+        )
 
-        context_messages = [
+        request_context = [
             {
                 "role": str(message.get("role") or ""),
                 "content": _clip_text(str(message.get("content") or ""), 1800),
             }
-            for message in messages[:-1]
-            if message.get("role") in {"user", "assistant"}
+            for index, message in enumerate(messages)
+            if index != current_user_index
+            and message.get("role") in {"user", "assistant"}
             and isinstance(message.get("content"), str)
         ][-10:]
+        clock_evidence = {
+            "evidence_id": "runtime-current-time",
+            "source": "runtime_clock",
+            "content": current_time(),
+        }
+        user_evidence = [
+            {
+                "evidence_id": f"user-message-{index}",
+                "source": "user",
+                "content": _clip_text(content, 3500),
+            }
+            for index, content in indexed_user_messages[-10:]
+        ]
         tool_evidence = [
             {
-                "index": index,
+                "evidence_id": f"tool-result-{index}",
+                "source": "tool",
                 "tool": name,
                 "ok": ok,
                 "error_type": error_type,
-                "result": _clip_text(content, 3500),
+                "content": _clip_text(content, 3500),
             }
             for index, (name, ok, error_type, content) in enumerate(
                 tool_results[-10:], start=max(0, len(tool_results) - 10)
             )
         ]
+        factual_evidence = [clock_evidence, *user_evidence, *tool_evidence]
+        allowed_evidence_ids = frozenset(
+            str(item["evidence_id"])
+            for item in factual_evidence
+        )
         payload = {
-            "authoritative_current_time": current_time(),
             "current_user_request": current_user_request,
-            "conversation_context": context_messages,
-            "tool_results_in_execution_order": tool_evidence,
+            "request_context": request_context,
+            "factual_evidence": factual_evidence,
             "candidate_final": _clip_text(candidate, 6000),
         }
         request = ChatRequest(
@@ -405,22 +493,37 @@ class FinalGroundingVerifier:
             tools=(),
             think=False,
             response_format=_FinalReviewPayload.model_json_schema(),
+            stage="reviewer",
         )
         _LOG.info(
-            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+            "MAI final reviewer start timeout=%s context_messages=%d evidence_items=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
-            len(context_messages),
+            len(request_context),
+            len(factual_evidence),
             len(tool_evidence),
             len(candidate),
         )
         try:
-            parsed = await self._request_review(request)
+            parsed = await self._request_review(
+                request,
+                allowed_evidence_ids=allowed_evidence_ids,
+            )
             reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
             coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
+            coverage_evidence_ids = tuple(dict.fromkeys(
+                evidence_id.strip()
+                for evidence_id in parsed.coverage_evidence_ids
+                if evidence_id.strip()
+            ))
             claims = tuple(
                 ClaimReview(
                     claim=item.claim.strip(),
                     verdict=item.verdict,
+                    evidence_ids=tuple(dict.fromkeys(
+                        evidence_id.strip()
+                        for evidence_id in item.evidence_ids
+                        if evidence_id.strip()
+                    )),
                     defect=item.defect,
                     reason=item.reason.strip(),
                 )
@@ -444,6 +547,7 @@ class FinalGroundingVerifier:
                 alignment_verdict=alignment_verdict,
                 coverage_verdict=coverage_verdict,
                 coverage_reasons=coverage_reasons,
+                coverage_evidence_ids=coverage_evidence_ids,
                 reasons=reasons,
                 claims=claims,
                 action_verdict=parsed.action_verdict,
@@ -456,7 +560,12 @@ class FinalGroundingVerifier:
         except Exception as exc:
             raise RuntimeError("final reviewer failed; release was not verified") from exc
 
-    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
+    async def _request_review(
+        self,
+        request: ChatRequest,
+        *,
+        allowed_evidence_ids: frozenset[str],
+    ) -> _FinalReviewPayload:
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
         for attempt in range(1, 4):
@@ -465,12 +574,18 @@ class FinalGroundingVerifier:
                     self.reviewer_adapter.chat(request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+                parsed = _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+                _validate_reviewer_evidence_references(
+                    parsed,
+                    allowed_evidence_ids=allowed_evidence_ids,
+                )
+                return parsed
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
                     OllamaChatTimeoutError,
                     OllamaProtocolError,
+                    ReviewerEvidenceReferenceError,
                     ValidationError,
                     httpx.NetworkError,
                     httpx.TimeoutException,
@@ -518,8 +633,55 @@ def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str
     parts: list[str] = []
     for claim in claims:
         detail = claim.reason or fallback
-        parts.append(f"{claim.claim}: {detail}")
+        references = ",".join(claim.evidence_ids) if claim.evidence_ids else "none"
+        parts.append(f"{claim.claim}: {detail} [evidence_ids={references}]")
     return "; ".join(parts) if parts else fallback
+
+
+def _validate_reviewer_evidence_references(
+    payload: _FinalReviewPayload,
+    *,
+    allowed_evidence_ids: frozenset[str],
+) -> None:
+    coverage_ids = tuple(dict.fromkeys(
+        evidence_id.strip()
+        for evidence_id in payload.coverage_evidence_ids
+        if evidence_id.strip()
+    ))
+    if len(coverage_ids) != len(payload.coverage_evidence_ids):
+        raise ReviewerEvidenceReferenceError(
+            "reviewer coverage_evidence_ids must be non-empty and unique"
+        )
+    unknown_coverage_ids = set(coverage_ids).difference(allowed_evidence_ids)
+    if unknown_coverage_ids:
+        raise ReviewerEvidenceReferenceError(
+            "reviewer cited unknown coverage evidence IDs: "
+            + ", ".join(sorted(unknown_coverage_ids))
+        )
+    if payload.coverage_verdict == "insufficient" and not coverage_ids:
+        raise ReviewerEvidenceReferenceError(
+            "reviewer marked coverage insufficient without an evidence ID"
+        )
+
+    for claim in payload.claims:
+        normalized = tuple(dict.fromkeys(
+            evidence_id.strip()
+            for evidence_id in claim.evidence_ids
+            if evidence_id.strip()
+        ))
+        if len(normalized) != len(claim.evidence_ids):
+            raise ReviewerEvidenceReferenceError(
+                "reviewer claim evidence_ids must be non-empty and unique"
+            )
+        unknown = set(normalized).difference(allowed_evidence_ids)
+        if unknown:
+            raise ReviewerEvidenceReferenceError(
+                "reviewer cited unknown evidence IDs: " + ", ".join(sorted(unknown))
+            )
+        if claim.verdict == "supported" and not normalized:
+            raise ReviewerEvidenceReferenceError(
+                "reviewer marked a claim supported without an evidence ID"
+            )
 
 
 def _clip_text(text: str, limit: int) -> str:

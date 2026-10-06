@@ -11,6 +11,10 @@
 ```text
 Authenticated Principal
   ↓
+Tool-requirement preflight
+  ↓
+FrozenToolRequirements
+  ↓
 AgentRuntime / AgentLoop
   ↓ native tool calls
 ToolRegistry
@@ -28,15 +32,15 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 ---
 
-## 2. Direct native-tool selection
+## 2. Tool-requirement preflight
 
-현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent가 system prompt, recent dialogue, authoritative runtime context, 등록된 native tool schema를 보고 필요한 tool을 직접 선택한다.
+현재 production composition은 main agent 전에 `OllamaToolRequirementPlanner`를 호출한다. 선택된 동일 모델이 `think=False`, `tools=()`로 현재 요청에 반드시 필요한 native tool을 판정하고 결과를 `FrozenToolRequirements`로 고정한다.
 
-이 선택은 preflight LLM 호출의 지연을 제거하기 위한 의도적인 production 정책이다.
+Preflight는 `request_context`와 `factual_evidence`를 별도로 받는다. 이전 assistant 답변은 참조 해석용 context이며 factual evidence가 아니다. 요청을 완료하는 데 필요한 material external fact가 factual evidence에 없으면 학습 지식을 근거로 간주하지 않고 해당 정보를 관측할 수 있는 tool을 요구한다.
 
-`OllamaToolRequirementPlanner`, `FrozenToolRequirements`, missing-requirement correction support는 코드와 단위 테스트에 남아 있을 수 있지만, production `MAIRuntime.run_user_message()`는 planner를 호출하거나 frozen requirements를 전달하지 않는다.
+Main agent가 frozen requirement를 충족하지 않고 final을 시도하면 아직 누락된 tool schema만 노출하는 correction round로 돌아간다. Tool handler가 실제로 시작돼야 requirement를 충족한다.
 
-따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 main agent prompt와 schema가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
+그 밖의 추가 tool 선택은 main agent가 전체 native schema를 보고 직접 수행한다. Tool 필요성이나 correction 의도를 문자열 heuristic으로 판정하지 않는다.
 
 ---
 
@@ -98,10 +102,21 @@ evidence_verdict
 alignment_verdict
 coverage_verdict
 coverage_reasons
+coverage_evidence_ids[]
 claims[]
+  └─ evidence_ids[]
 action_verdict
 reasons
 ```
+
+Reviewer 입력은 다음 두 channel로 분리한다.
+
+```text
+request_context   # 이전 user/assistant 대화, 참조 해석과 alignment 전용
+factual_evidence  # ID가 부여된 user message, tool result, runtime clock
+```
+
+이전 assistant 답변은 factual evidence에 들어가지 않으며 grounding, coverage, action outcome을 지지할 수 없다. `supported` claim은 하나 이상의 실제 `evidence_id`를 반환해야 하며 coverage 부족 판정도 `coverage_evidence_ids`로 생략된 근거를 지정해야 한다. 빈 ID, 중복 ID, 존재하지 않는 ID는 reviewer protocol failure다.
 
 Claim defect는 현재 다음 구조를 사용한다.
 
@@ -136,7 +151,7 @@ Coverage는 “더 많은 정보를 찾아올 수 있었는가”가 아니다.
 - optional background 생략
 - evidence 밖의 추정 미제공
 
-Coverage correction budget은 grounding/semantic budget과 별도이며 **최대 2회**다. Budget 소진 후에는 coverage 부족만으로 더 block하지 않는다.
+Coverage correction budget은 grounding/semantic budget과 별도이며 **최대 2회**다. 새 candidate도 계속 부족하면 검증 생략 없이 실행 실패로 전달한다.
 
 ### 6.5 Action outcome
 
@@ -144,9 +159,15 @@ Mutation tool invocation의 success는 그 tool contract가 성공했다는 evid
 
 ### 6.6 Reviewer failure
 
-Reviewer timeout, structured-output schema violation, reviewer exception은 명시적으로 log하고 semantic 내용을 문자열 fallback으로 복원하지 않는다.
+Reviewer timeout, structured-output schema violation, evidence ID 계약 위반, reviewer exception은 명시적으로 log하고 semantic 내용을 문자열 fallback으로 복원하지 않는다.
 
-이 경우 reviewer 결과는 `uncertain`으로 취급하고 candidate를 **fail-open**한다. Reviewer 장애 때문에 전체 요청을 service error로 종료하지 않고 사용자에게 답을 반환하는 가용성 우선 정책이다. 이 fail-open은 deterministic numeric grounding 실패를 성공으로 바꾸는 문자열 fallback이 아니다.
+일시적인 reviewer 인프라 오류와 malformed output은 최대 2회 재시도한다. 재시도 뒤에도 검증되지 않은 candidate는 반환하지 않고 실행 실패로 전달한다.
+
+Grounding 반려 뒤 main agent에는 blocked claim, defect, reason, 기존 evidence ID와 허용된 해결 방식이 구조화된 correction contract로 전달된다. 해결 방식은 새 user/tool evidence 확보, blocked claim 제거, 또는 미확인 상태의 명시다.
+
+### 6.7 Ollama execution telemetry
+
+모든 Ollama 호출은 stage(`preflight`, `main`, `correction`, `reviewer`, memory), 입력 메시지 수·문자 수, tool 수·schema 문자 수, think 설정, timeout과 wall time을 기록한다. Provider 응답에 값이 있으면 prompt/eval token 수와 load/prompt-eval/eval/total duration도 기록한다. Prompt 본문이나 비밀값은 timing log에 기록하지 않는다.
 
 ---
 
