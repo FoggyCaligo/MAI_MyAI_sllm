@@ -273,7 +273,7 @@ class FinalReview:
 
 
 class FinalGroundingVerifier:
-    """Combine numeric grounding with claim, coverage, action, and alignment review."""
+    """Run numeric checks, then candidate analysis, then evidence review."""
 
     def __init__(
         self,
@@ -299,32 +299,87 @@ class FinalGroundingVerifier:
     ) -> FinalVerificationResult:
         if allow_evidence_review is None:
             allow_evidence_review = allow_semantic_review
+
         numeric_issue = self._numeric_issue(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
-        issues: list[VerificationIssue] = []
         if allow_numeric_review and numeric_issue is not None:
-            issues.append(numeric_issue)
-
-        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
-            reason = () if self.reviewer_adapter is None else ("alignment, evidence and coverage review retry budgets exhausted",)
             self._log_result(
-                numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
+                numeric="failed",
+                evidence="skipped",
+                alignment="skipped",
+                coverage="skipped",
+                action="skipped",
+                reasons=(numeric_issue.message,),
+            )
+            return FinalVerificationResult(ok=False, issues=(numeric_issue,))
+
+        if self.reviewer_adapter is None or (
+            not allow_semantic_review
+            and not allow_evidence_review
+            and not allow_coverage_review
+        ):
+            reason = () if self.reviewer_adapter is None else (
+                "alignment, evidence and coverage review retry budgets exhausted",
+            )
+            self._log_result(
+                numeric="pass" if allow_numeric_review else "skipped",
                 evidence="skipped",
                 alignment="skipped",
                 coverage="skipped",
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+            return FinalVerificationResult(ok=True)
 
-        review = await self._review_final(
+        analysis = await self._analyze_candidate(
+            candidate=candidate,
+            messages=messages,
+        )
+        alignment_reasons = tuple(
+            dict.fromkeys(item.strip() for item in analysis.reasons if item.strip())
+        )
+        alignment_verdict = analysis.alignment_verdict
+        if not alignment_reasons and alignment_verdict == "misaligned":
+            alignment_verdict = "uncertain"
+
+        if allow_semantic_review and alignment_verdict == "misaligned":
+            reason = "; ".join(alignment_reasons) or "The candidate does not answer the user's actual request."
+            issue = VerificationIssue(code="task_alignment_failed", message=reason)
+            self._log_result(
+                numeric="pass" if allow_numeric_review else "skipped",
+                evidence="skipped",
+                alignment=alignment_verdict,
+                coverage="skipped",
+                action="skipped",
+                reasons=alignment_reasons,
+            )
+            return FinalVerificationResult(ok=False, issues=(issue,))
+
+        need_evidence_stage = allow_evidence_review or allow_coverage_review
+        if not need_evidence_stage:
+            self._log_result(
+                numeric="pass" if allow_numeric_review else "skipped",
+                evidence="skipped",
+                alignment=alignment_verdict if allow_semantic_review else "skipped",
+                coverage="skipped",
+                action="skipped",
+                reasons=alignment_reasons,
+            )
+            return FinalVerificationResult(ok=True)
+
+        review = await self._review_evidence(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
+            analysis=analysis,
+            alignment_verdict=alignment_verdict,
+            alignment_reasons=alignment_reasons,
         )
+
+        issues: list[VerificationIssue] = []
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
@@ -347,25 +402,22 @@ class FinalGroundingVerifier:
                     ),
                 ))
             if review.evidence_verdict == "unsupported" and not unsupported_claims:
-                reason = "; ".join(review.reasons) or "The reviewer identified a material unsupported factual claim."
+                reason = "; ".join(review.evidence_reasons) or (
+                    "The reviewer identified a material unsupported factual claim."
+                )
                 issues.append(VerificationIssue(code="evidence_grounding_failed", message=reason))
 
             if review.action_verdict == "unverified":
-                reason = "; ".join(review.reasons) or (
+                reason = "; ".join(review.evidence_reasons) or (
                     "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
                     "does not establish that outcome."
                 )
                 issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
             elif review.action_verdict == "contradicted":
-                reason = "; ".join(review.reasons) or (
+                reason = "; ".join(review.evidence_reasons) or (
                     "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
                 )
                 issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
-
-        if allow_semantic_review:
-            if review.alignment_verdict == "misaligned":
-                reason = "; ".join(review.reasons) or "The candidate does not answer the user's actual request."
-                issues.append(VerificationIssue(code="task_alignment_failed", message=reason))
 
         if allow_coverage_review and review.coverage_verdict == "insufficient":
             reason = "; ".join(review.coverage_reasons) or (
@@ -374,14 +426,25 @@ class FinalGroundingVerifier:
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
-            numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
+            numeric="pass" if allow_numeric_review else "skipped",
             evidence=review.evidence_verdict if allow_evidence_review else "skipped",
             alignment=review.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
             action=review.action_verdict if allow_evidence_review else "skipped",
-            reasons=review.reasons + review.coverage_reasons,
+            reasons=review.alignment_reasons + review.evidence_reasons + review.coverage_reasons,
         )
-        return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+
+        grounded_claims = tuple(
+            GroundedClaim(claim=claim.claim, support_ids=claim.support_ids)
+            for claim in review.claims
+            if claim.verdict == "supported" and claim.support_ids
+        ) if allow_evidence_review else ()
+
+        return FinalVerificationResult(
+            ok=not issues,
+            issues=tuple(issues),
+            grounded_claims=grounded_claims,
+        )
 
     def _numeric_issue(
         self,
@@ -418,117 +481,260 @@ class FinalGroundingVerifier:
             ),
         )
 
-    async def _review_final(
+    def _dialogue_context(
         self,
-        *,
-        candidate: str,
         messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult],
-    ) -> FinalReview:
-        user_messages = [
-            str(message.get("content"))
-            for message in messages
-            if message.get("role") == "user" and isinstance(message.get("content"), str)
-        ]
-        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
-
+    ) -> tuple[str, list[tuple[int, Mapping[str, Any]]], list[dict[str, str]]]:
+        current_user_index = next(
+            (
+                index
+                for index in range(len(messages) - 1, -1, -1)
+                if messages[index].get("role") == "user"
+                and isinstance(messages[index].get("content"), str)
+            ),
+            None,
+        )
+        current_user_request = (
+            _clip_text(str(messages[current_user_index].get("content")), 4000)
+            if current_user_index is not None
+            else ""
+        )
+        context_source = (
+            messages[:current_user_index]
+            if current_user_index is not None
+            else messages[:-1]
+        )
+        recent_context = [
+            (index, message)
+            for index, message in enumerate(context_source)
+            if message.get("role") in {"user", "assistant"}
+            and isinstance(message.get("content"), str)
+        ][-10:]
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
                 "content": _clip_text(str(message.get("content") or ""), 1800),
             }
-            for message in messages[:-1]
-            if message.get("role") in {"user", "assistant"}
-            and isinstance(message.get("content"), str)
-        ][-10:]
+            for _, message in recent_context
+        ]
+        return current_user_request, recent_context, context_messages
+
+    async def _analyze_candidate(
+        self,
+        *,
+        candidate: str,
+        messages: Sequence[Mapping[str, Any]],
+    ) -> _CandidateAnalysisPayload:
+        current_user_request, _, context_messages = self._dialogue_context(messages)
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _CANDIDATE_ANALYSIS_SYSTEM},
+                {"role": "user", "content": json.dumps({
+                    "current_user_request": current_user_request,
+                    "conversation_context": context_messages,
+                    "candidate_final": _clip_text(candidate, 6000),
+                }, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+            response_format=_CandidateAnalysisPayload.model_json_schema(),
+        )
+        _LOG.info(
+            "MAI candidate analyzer start timeout=%s context_messages=%d candidate_chars=%d",
+            self.reviewer_timeout_seconds,
+            len(context_messages),
+            len(candidate),
+        )
+        return await self._request_structured_review(
+            request,
+            _CandidateAnalysisPayload,
+            reviewer_name="candidate analyzer",
+        )
+
+    async def _review_evidence(
+        self,
+        *,
+        candidate: str,
+        messages: Sequence[Mapping[str, Any]],
+        tool_results: Sequence[ToolVerificationResult],
+        analysis: _CandidateAnalysisPayload,
+        alignment_verdict: str,
+        alignment_reasons: tuple[str, ...],
+    ) -> FinalReview:
+        current_user_request, recent_context, _ = self._dialogue_context(messages)
+        user_evidence = [
+            {
+                "id": f"user:context:{index}",
+                "kind": "user_message",
+                "content": _clip_text(str(message.get("content") or ""), 1800),
+            }
+            for index, message in recent_context
+            if message.get("role") == "user"
+        ]
+        if current_user_request:
+            user_evidence.append({
+                "id": "user:current",
+                "kind": "user_message",
+                "content": current_user_request,
+            })
+
         tool_evidence = [
             {
+                "id": tool_evidence_ref(index, name),
+                "kind": "tool_result",
                 "index": index,
                 "tool": name,
                 "ok": ok,
                 "error_type": error_type,
-                "result": _clip_text(content, 3500),
+                "content": _clip_text(content, 3500),
             }
             for index, (name, ok, error_type, content) in enumerate(
-                tool_results[-10:], start=max(0, len(tool_results) - 10)
+                tool_results[-10:],
+                start=max(0, len(tool_results) - 10),
             )
         ]
-        payload = {
-            "authoritative_current_time": current_time(),
-            "current_user_request": current_user_request,
-            "conversation_context": context_messages,
-            "tool_results_in_execution_order": tool_evidence,
-            "candidate_final": _clip_text(candidate, 6000),
-        }
+        clock = current_time()
+        evidence_sources: list[dict[str, object]] = [
+            *user_evidence,
+            *tool_evidence,
+            {
+                "id": "runtime:current_time",
+                "kind": "authoritative_current_time",
+                "content": clock,
+            },
+        ]
+        allowed_support_ids = {str(source["id"]) for source in evidence_sources}
+
+        analyzed_claims = tuple(
+            AnalyzedClaim(
+                claim_id=f"claim:{index}",
+                claim=item.claim.strip(),
+                temporal=item.temporal,
+            )
+            for index, item in enumerate(analysis.claims)
+            if item.claim.strip()
+        )
+        claims_payload = [
+            {
+                "claim_id": item.claim_id,
+                "claim": item.claim,
+                "temporal": item.temporal,
+            }
+            for item in analyzed_claims
+        ]
+
         request = ChatRequest(
             messages=(
-                {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "system", "content": _EVIDENCE_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps({
+                    "resolved_current_request": analysis.resolved_request.strip() or current_user_request,
+                    "authoritative_current_time": clock,
+                    "candidate_final": _clip_text(candidate, 6000),
+                    "claims": claims_payload,
+                    "evidence_sources": evidence_sources,
+                }, ensure_ascii=False)},
             ),
             tools=(),
             think=False,
-            response_format=_FinalReviewPayload.model_json_schema(),
+            response_format=_EvidenceReviewPayload.model_json_schema(),
         )
         _LOG.info(
-            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+            "MAI evidence reviewer start timeout=%s claims=%d evidence_sources=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
-            len(context_messages),
-            len(tool_evidence),
+            len(analyzed_claims),
+            len(evidence_sources),
             len(candidate),
         )
-        try:
-            parsed = await self._request_review(request)
-            reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
-            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
-            claims = tuple(
-                ClaimReview(
-                    claim=item.claim.strip(),
-                    verdict=item.verdict,
-                    defect=item.defect,
-                    reason=item.reason.strip(),
-                )
-                for item in parsed.claims
-                if item.claim.strip()
-            )
-            evidence_verdict = parsed.evidence_verdict
-            alignment_verdict = parsed.alignment_verdict
-            coverage_verdict = parsed.coverage_verdict
-            unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
-            if unsupported_claims:
-                evidence_verdict = "unsupported"
-            elif not reasons and evidence_verdict == "unsupported":
-                evidence_verdict = "uncertain"
-            if not reasons and alignment_verdict == "misaligned":
-                alignment_verdict = "uncertain"
-            if not coverage_reasons and coverage_verdict == "insufficient":
-                coverage_verdict = "uncertain"
-            return FinalReview(
-                evidence_verdict=evidence_verdict,
-                alignment_verdict=alignment_verdict,
-                coverage_verdict=coverage_verdict,
-                coverage_reasons=coverage_reasons,
-                reasons=reasons,
-                claims=claims,
-                action_verdict=parsed.action_verdict,
-            )
-        except TimeoutError as exc:
-            _LOG.warning("MAI final verification reviewer timed out")
-            raise RuntimeError("final reviewer timed out; release was not verified") from exc
-        except ValidationError as exc:
-            raise RuntimeError("final reviewer violated structured output schema") from exc
-        except Exception as exc:
-            raise RuntimeError("final reviewer failed; release was not verified") from exc
+        parsed = await self._request_structured_review(
+            request,
+            _EvidenceReviewPayload,
+            reviewer_name="evidence",
+        )
 
-    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
+        expected_claim_ids = tuple(item.claim_id for item in analyzed_claims)
+        returned_claim_ids = tuple(item.claim_id.strip() for item in parsed.claims)
+        if len(set(returned_claim_ids)) != len(returned_claim_ids):
+            raise RuntimeError("evidence reviewer returned duplicate claim ids")
+        if set(returned_claim_ids) != set(expected_claim_ids):
+            raise RuntimeError("evidence reviewer did not review exactly the supplied claim ids")
+
+        claim_by_id = {item.claim_id: item for item in analyzed_claims}
+        parsed_by_id = {item.claim_id.strip(): item for item in parsed.claims}
+        claims: list[ClaimReview] = []
+        for claim_id in expected_claim_ids:
+            source_claim = claim_by_id[claim_id]
+            item = parsed_by_id[claim_id]
+            support_ids = tuple(dict.fromkeys(
+                support_id.strip()
+                for support_id in item.support_ids
+                if support_id.strip()
+            ))
+            unknown_support_ids = tuple(
+                support_id for support_id in support_ids
+                if support_id not in allowed_support_ids
+            )
+            if unknown_support_ids:
+                raise RuntimeError(
+                    "evidence reviewer returned unknown support ids: "
+                    + ", ".join(unknown_support_ids)
+                )
+            if item.verdict == "supported" and not support_ids:
+                raise RuntimeError(
+                    f"evidence reviewer returned supported {claim_id} without support ids"
+                )
+            claims.append(ClaimReview(
+                claim_id=claim_id,
+                claim=source_claim.claim,
+                verdict=item.verdict,
+                defect=item.defect,
+                reason=item.reason.strip(),
+                support_ids=support_ids,
+            ))
+
+        evidence_reasons = tuple(
+            dict.fromkeys(item.strip() for item in parsed.reasons if item.strip())
+        )
+        coverage_reasons = tuple(
+            dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip())
+        )
+        evidence_verdict = parsed.evidence_verdict
+        unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
+        if unsupported_claims:
+            evidence_verdict = "unsupported"
+        elif not evidence_reasons and evidence_verdict == "unsupported":
+            evidence_verdict = "uncertain"
+
+        coverage_verdict = parsed.coverage_verdict
+        if not coverage_reasons and coverage_verdict == "insufficient":
+            coverage_verdict = "uncertain"
+
+        return FinalReview(
+            evidence_verdict=evidence_verdict,
+            alignment_verdict=alignment_verdict,
+            coverage_verdict=coverage_verdict,
+            coverage_reasons=coverage_reasons,
+            alignment_reasons=alignment_reasons,
+            evidence_reasons=evidence_reasons,
+            claims=tuple(claims),
+            action_verdict=parsed.action_verdict,
+        )
+
+    async def _request_structured_review(
+        self,
+        request: ChatRequest,
+        payload_type,
+        *,
+        reviewer_name: str,
+    ):
         # Infrastructure and malformed-output retries do not re-roll a valid
-        # supported/unsupported reviewer verdict.
+        # reviewer verdict.
         for attempt in range(1, 4):
             try:
                 turn = await asyncio.wait_for(
                     self.reviewer_adapter.chat(request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+                return payload_type.model_validate_json(turn.content, strict=True)
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
@@ -545,13 +751,16 @@ class FinalGroundingVerifier:
                         cause.status_code == 429 or 500 <= cause.status_code <= 599
                     )
                 _LOG.warning(
-                    "MAI final reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    "MAI %s reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    reviewer_name,
                     attempt,
                     type(exc).__name__,
                     retryable,
                 )
                 if not retryable or attempt == 3:
-                    raise
+                    raise RuntimeError(
+                        f"final {reviewer_name} reviewer failed; release was not verified"
+                    ) from exc
                 await asyncio.sleep(0.25 * attempt)
         raise AssertionError("unreachable reviewer retry state")
 
@@ -575,6 +784,11 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
+
+
+
+def tool_evidence_ref(index: int, tool_name: str) -> str:
+    return f"tool:{index}:{tool_name}"
 
 
 def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str:
