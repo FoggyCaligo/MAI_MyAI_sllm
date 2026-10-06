@@ -141,7 +141,7 @@ bounded Fact + Concept context
 - `memory_recall(query)`
 - `memory_search(node_id)`
 
-Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
+Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, **recency를 우선**하고 `occurrence_count`는 동률 보조로만 사용한다. Query Fact 포함검색도 match relevance → recency → occurrence_count 순으로 정렬한다.
 
 `memory_recall`은 공백 chunk 각각을 그대로 검색 단위로 사용한다. 각 chunk가 포함된 Fact 본문을 직접 찾고, 동시에 ConceptIndex에서 chunk당 최고 Concept seed 하나를 선택해 연결된 Fact context를 더한다. 따라서 `"만년필"`을 검색하면 하나의 Concept node만 보여주는 것이 아니라 본문에 `"만년필"`이 포함된 여러 Fact도 bounded result로 함께 들어온다.
 
