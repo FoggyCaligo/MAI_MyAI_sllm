@@ -46,7 +46,14 @@ class RecordingConceptIndex(FakeConceptIndex):
 
 
 class OneFactExtractor:
-    async def extract(self, *, user_text, final_answer, successful_tool_results):
+    async def extract(
+        self,
+        *,
+        user_text,
+        previous_assistant_message,
+        final_answer,
+        successful_tool_results,
+    ):
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
 
 
