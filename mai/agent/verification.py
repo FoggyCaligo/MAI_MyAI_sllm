@@ -202,6 +202,7 @@ class UserEvidence:
     statement: str
     message_index: int
     source_excerpt: str
+    is_current: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,6 +607,7 @@ class FinalGroundingVerifier:
                 statement=statement,
                 message_index=item.message_index,
                 source_excerpt=source_excerpt,
+                is_current=item.message_index == current_user_index,
             ))
 
         return CandidateAnalysis(
