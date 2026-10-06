@@ -114,6 +114,7 @@ class RecallService:
             key=lambda item: (-item[0].score, item[1], item[0].node_id),
         )
         return tuple(hit for hit, _chunk_order in ranked[: self.concept_limit])
+
     def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
         """Expose the user anchor with a bounded set of structured facts.
 
