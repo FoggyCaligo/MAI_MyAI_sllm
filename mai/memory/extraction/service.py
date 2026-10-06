@@ -9,6 +9,8 @@ import asyncio
 import json
 from typing import Protocol, Sequence
 
+from pydantic import BaseModel, ConfigDict, ValidationError
+
 from ...llm.models import ChatRequest
 from ...llm.ollama import OllamaAdapter
 
@@ -32,6 +34,13 @@ Admission rules:
 - Deduplicate semantically equivalent facts and keep each fact self-contained.
 """.strip()
 
+
+
+
+class _FactExtractionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    facts: list[str]
 
 class FactExtractionError(RuntimeError):
     """The post-response fact extractor could not produce a valid judgment."""
@@ -77,6 +86,7 @@ class OllamaFactExtractor:
             ),
             tools=(),
             think=False,
+            response_format=_FactExtractionPayload.model_json_schema(),
         )
         try:
             turn = await asyncio.wait_for(self.adapter.chat(request), timeout=self.timeout_seconds)
@@ -91,14 +101,10 @@ class OllamaFactExtractor:
             raise FactExtractionError(f"fact extractor model call failed: {type(exc).__name__}") from exc
 
         try:
-            data = json.loads(turn.content)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise FactExtractionError("fact extractor returned invalid JSON") from exc
-        if not isinstance(data, dict):
-            raise FactExtractionError("fact extractor response must be a JSON object")
-        raw_facts = data.get("facts")
-        if not isinstance(raw_facts, list):
-            raise FactExtractionError("fact extractor response must contain a facts array")
+            parsed = _FactExtractionPayload.model_validate_json(turn.content, strict=True)
+        except ValidationError as exc:
+            raise FactExtractionError("fact extractor violated structured output schema") from exc
+        raw_facts = parsed.facts
 
         facts: list[str] = []
         seen: set[str] = set()
