@@ -241,6 +241,35 @@ class MemoryGraphRepository:
             edges,
         )
 
+    def user_anchor_fact_context(self, user_id: str, *, limit: int) -> GraphNeighborhood:
+        """Return a bounded fact context for one user's anchor.
+
+        Raw utterances connected through ``spoke`` are intentionally excluded.
+        Repeated facts rank ahead of one-off facts, with recency as the tie-breaker,
+        so the anchor context stays bounded as the permanent graph grows.
+        """
+        if limit < 0:
+            raise ValueError("anchor fact context limit must be >= 0")
+        anchor = self.get_user_anchor(user_id)
+        if anchor is None:
+            raise KeyError(f"user anchor for '{user_id}' does not exist")
+        rows = self.connection.execute(
+            """
+            SELECT e.id AS edge_id, n.id AS node_id
+            FROM edges e
+            JOIN nodes n ON n.id = e.to_node_id
+            WHERE e.from_node_id = ?
+              AND e.relation = 'asserted_fact'
+              AND n.node_type = 'fact'
+            ORDER BY n.occurrence_count DESC, n.last_seen_at DESC, n.id DESC
+            LIMIT ?
+            """,
+            (anchor.id, limit),
+        ).fetchall()
+        nodes = (anchor,) + tuple(self.get_node(int(row["node_id"])) for row in rows)
+        edges = tuple(self.get_edge(int(row["edge_id"])) for row in rows)
+        return GraphNeighborhood(anchor.id, nodes, edges)
+
     def shortest_path_to_user_anchor(self, node_id: int, user_id: str) -> GraphNeighborhood | None:
         anchor = self.get_user_anchor(user_id)
         if anchor is None:
