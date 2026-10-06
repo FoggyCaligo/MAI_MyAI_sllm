@@ -70,7 +70,9 @@ Eligible user factual evidence:
 - A reference to prior assistant content does not copy that content into user evidence.
 - A correction or narrowing may be emitted only for the factual content the user explicitly states themselves.
 - Questions, requests, instructions, and requests to remember/search/check are not factual evidence.
-- For every emitted user assertion, source_excerpt must be an exact contiguous excerpt from the indexed user message that directly states that factual content. The excerpt itself becomes the factual source text. Do not use an excerpt that merely approves or refers to other content.
+- For every emitted user assertion, source_excerpt must be an exact contiguous excerpt from the indexed user message that directly states the factual content.
+- normalized_claim may rewrite that excerpt into a concise, self-contained factual proposition, but it must be directly entailed by source_excerpt alone. Do not add details from conversation_context, prior assistant messages, or the candidate.
+- Do not emit an assertion whose excerpt merely approves, agrees with, endorses, accepts, confirms, evaluates, or refers to other content.
 
 Return only the supplied structured-output schema.
 """.strip()
@@ -88,7 +90,9 @@ Claim-level evidence grounding:
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
 - Each supported claim must return one or more exact support_ids from evidence_sources that materially establish it.
 - Never invent a support ID. Context-only messages are not support sources.
-- User approval, agreement, endorsement, acceptance, confirmation, or evaluation of assistant content is not an evidence source. Eligible user evidence has already been reduced to direct user assertions by the first stage.
+- Each user_assertion source contains both normalized content and its literal source_excerpt. Validate the normalized content against that excerpt itself. It is valid only if the excerpt alone directly entails the normalized factual proposition.
+- Return every valid user_assertion ref in validated_user_source_ids. Omit any user source whose normalized content is broader than, inferred from, or not directly established by its excerpt.
+- User approval, agreement, endorsement, acceptance, confirmation, evaluation, or reference to assistant content is not evidence for the underlying assistant claims and must not be validated as such.
 - Each tool-result source includes explicit ok and error_type. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. ok=false must never be treated as evidence that the requested operation itself succeeded.
 
 Temporal authority:
@@ -144,6 +148,7 @@ class _UserAssertionPayload(BaseModel):
 
     message_index: int
     source_excerpt: str
+    normalized_claim: str
 
 
 class _CandidateAnalysisPayload(BaseModel):
@@ -175,6 +180,7 @@ class _EvidenceReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
+    validated_user_source_ids: list[str]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     reasons: list[str]
@@ -279,6 +285,7 @@ class ClaimReview:
 @dataclass(frozen=True, slots=True)
 class FinalReview:
     evidence_verdict: str
+    validated_user_source_ids: tuple[str, ...] = ()
     coverage_verdict: str = "uncertain"
     coverage_reasons: tuple[str, ...] = ()
     reasons: tuple[str, ...] = ()
@@ -365,7 +372,7 @@ class FinalGroundingVerifier:
             return FinalVerificationResult(
                 ok=False,
                 issues=(issue,),
-                user_evidence=analysis.user_evidence,
+                user_evidence=(),
             )
 
         if not allow_evidence_review and not allow_coverage_review:
@@ -377,7 +384,7 @@ class FinalGroundingVerifier:
                 action="skipped",
                 reasons=analysis.reasons,
             )
-            return FinalVerificationResult(ok=True, user_evidence=analysis.user_evidence)
+            return FinalVerificationResult(ok=True, user_evidence=())
 
         review = await self._review_evidence(
             candidate=candidate,
@@ -444,11 +451,16 @@ class FinalGroundingVerifier:
             action=review.action_verdict if allow_evidence_review else "skipped",
             reasons=analysis.reasons + review.reasons + review.coverage_reasons,
         )
+        validated_user_evidence = tuple(
+            item
+            for item in analysis.user_evidence
+            if item.ref in set(review.validated_user_source_ids)
+        )
         return FinalVerificationResult(
             ok=not issues,
             issues=tuple(issues),
             grounded_claims=grounded_claims,
-            user_evidence=analysis.user_evidence,
+            user_evidence=validated_user_evidence,
         )
 
     def _numeric_issue(
@@ -584,25 +596,26 @@ class FinalGroundingVerifier:
             for item in user_messages_for_evidence
         }
         user_evidence: list[UserEvidence] = []
-        seen_user_assertions: set[tuple[int, str]] = set()
+        seen_user_assertions: set[tuple[int, str, str]] = set()
         for item in parsed.user_assertions:
             source_excerpt = item.source_excerpt.strip()
+            normalized_claim = item.normalized_claim.strip()
             source_content = user_message_content.get(item.message_index)
             if source_content is None:
                 raise RuntimeError("candidate analyzer returned an unknown user message index")
-            if not source_excerpt:
+            if not source_excerpt or not normalized_claim:
                 raise RuntimeError("candidate analyzer returned an empty user evidence assertion")
             if source_excerpt not in source_content:
                 raise RuntimeError(
                     "candidate analyzer user evidence excerpt is not present in the cited user message"
                 )
-            key = (item.message_index, source_excerpt)
+            key = (item.message_index, source_excerpt, normalized_claim)
             if key in seen_user_assertions:
                 continue
             seen_user_assertions.add(key)
             user_evidence.append(UserEvidence(
                 ref=f"user:{item.message_index}:{len(user_evidence)}",
-                statement=source_excerpt,
+                statement=normalized_claim,
                 message_index=item.message_index,
                 source_excerpt=source_excerpt,
                 is_current=item.message_index == current_user_index,
@@ -718,6 +731,20 @@ class FinalGroundingVerifier:
             reviewer_name="evidence reviewer",
         )
 
+        user_source_ids = {item.ref for item in analysis.user_evidence}
+        validated_user_source_ids = tuple(
+            dict.fromkeys(ref.strip() for ref in parsed.validated_user_source_ids if ref.strip())
+        )
+        unknown_validated_user_ids = tuple(
+            ref for ref in validated_user_source_ids if ref not in user_source_ids
+        )
+        if unknown_validated_user_ids:
+            raise RuntimeError(
+                "evidence reviewer returned unknown validated user source ids: "
+                + ", ".join(unknown_validated_user_ids)
+            )
+        validated_user_source_id_set = set(validated_user_source_ids)
+
         claim_by_id = {claim.claim_id: claim for claim in analysis.claims}
         parsed_ids = [item.claim_id for item in parsed.claims]
         expected_ids = list(claim_by_id)
@@ -737,6 +764,16 @@ class FinalGroundingVerifier:
                 )
             if item.verdict == "supported" and not support_ids:
                 raise RuntimeError("evidence reviewer returned a supported claim without support ids")
+            invalid_user_support_ids = tuple(
+                ref
+                for ref in support_ids
+                if ref in user_source_ids and ref not in validated_user_source_id_set
+            )
+            if invalid_user_support_ids:
+                raise RuntimeError(
+                    "evidence reviewer used unvalidated user sources as claim support: "
+                    + ", ".join(invalid_user_support_ids)
+                )
             claims.append(ClaimReview(
                 claim_id=item.claim_id,
                 claim=candidate_claim.claim,
@@ -762,6 +799,7 @@ class FinalGroundingVerifier:
 
         return FinalReview(
             evidence_verdict=evidence_verdict,
+            validated_user_source_ids=validated_user_source_ids,
             coverage_verdict=coverage_verdict,
             coverage_reasons=coverage_reasons,
             reasons=reasons,
