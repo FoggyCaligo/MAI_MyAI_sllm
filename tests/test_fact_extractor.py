@@ -4,7 +4,11 @@ import json
 import pytest
 
 from mai.llm.models import ModelTurn
-from mai.memory.extraction.service import FactExtractionError, OllamaFactExtractor
+from mai.memory.extraction.service import (
+    FactExtractionError,
+    OllamaFactExtractor,
+    OllamaFactIdentityResolver,
+)
 
 
 def run(coro):
@@ -124,4 +128,42 @@ def test_fact_extractor_prompt_prefers_multiple_durable_details() -> None:
     system_prompt = adapter.requests[0].messages[0]["content"]
     assert "split them into multiple self-contained facts" in system_prompt
     assert "current possessions/configurations" in system_prompt
+
+def test_fact_extractor_does_not_truncate_large_fact_arrays() -> None:
+    expected = [f"fact-{index}" for index in range(64)]
+    adapter = FakeAdapter([json.dumps({"facts": expected})])
+    extractor = OllamaFactExtractor(adapter)
+
+    facts = run(extractor.extract(
+        user_text="many durable details",
+        final_answer="ok",
+        successful_tool_results=(),
+    ))
+
+    assert facts == tuple(expected)
+    assert "Do not impose a fixed maximum number of facts" in adapter.requests[0].messages[0]["content"]
+
+
+def test_fact_identity_resolver_accepts_only_supplied_candidate_ids() -> None:
+    adapter = FakeAdapter([json.dumps({"equivalent_fact_id": 7})])
+    resolver = OllamaFactIdentityResolver(adapter)
+
+    resolved = run(resolver.resolve(
+        new_fact="내 이름은 신재용이다",
+        candidates=((7, "사용자의 이름은 신재용이다"),),
+    ))
+
+    assert resolved == 7
+
+
+def test_fact_identity_resolver_rejects_unknown_candidate_id() -> None:
+    resolver = OllamaFactIdentityResolver(
+        FakeAdapter([json.dumps({"equivalent_fact_id": 99})])
+    )
+
+    with pytest.raises(FactExtractionError, match="unknown candidate ID"):
+        run(resolver.resolve(
+            new_fact="내 이름은 신재용이다",
+            candidates=((7, "사용자의 이름은 신재용이다"),),
+        ))
 
