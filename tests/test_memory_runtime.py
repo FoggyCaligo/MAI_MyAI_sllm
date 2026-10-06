@@ -72,8 +72,6 @@ class ScoredConceptIndex(FakeConceptIndex):
         return tuple(hits[:limit])
 
 
-
-
 def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
@@ -229,6 +227,7 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
         assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
     finally:
         graph.close()
+
 
 def test_recall_query_uses_whitespace_chunks_without_sentence_breaker_segmentation(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
