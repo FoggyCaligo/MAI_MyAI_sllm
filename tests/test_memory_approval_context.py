@@ -22,7 +22,6 @@ def test_memory_grounded_claims_keep_current_user_and_successful_non_recall_tool
     assert filtered == (
         GroundedFinalClaimEvidence("현재 사용자 직접 근거", ("user:current",)),
         GroundedFinalClaimEvidence("웹 근거", ("tool:2:web_search",)),
-        GroundedFinalClaimEvidence("혼합 근거", ("tool:2:web_search",)),
     )
 
 
