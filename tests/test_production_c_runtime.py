@@ -60,7 +60,7 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
             name="memory_recall",
             arguments={"query": "모카"},
         )))
-        assert not any(node["type"] == "utterance" for node in recalled["nodes"])
+        assert all(node["type"] in {"anchor", "fact"} for node in recalled["nodes"])
         assert any(node["type"] == "fact" and "모카" in node["text"] for node in recalled["nodes"])
 
         overview = asyncio.run(registry.invoke(NativeToolCall(
@@ -68,16 +68,18 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
             arguments={"limit": 5},
         )))
         assert overview["user_anchor"]["payload"]["user_id"] == "alice"
-        assert any(item["type"] == "utterance" and "모카" in item["text"] for item in overview["memories"])
+        assert any(item["type"] == "fact" and "모카" in item["text"] for item in overview["memories"])
+        assert not any(item["type"] == "utterance" for item in overview["memories"])
     finally:
         graph.close()
 
 
-def test_memory_recall_returns_only_current_call_while_working_graph_accumulates(tmp_path):
+
+def test_memory_recall_returns_fact_only_current_call_while_working_graph_accumulates(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, include_utterances=True)
+    recall = RecallService(graph, index, segmenter)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
         first_evidence = memory.record_raw_user_evidence("alice", "모카 고양이")
@@ -86,6 +88,7 @@ def test_memory_recall_returns_only_current_call_while_working_graph_accumulates
             user_text="모카 고양이",
             final_answer="알겠어.",
             user_evidence=first_evidence,
+            fact_texts=("사용자의 고양이 이름은 모카다",),
         ))
         second_evidence = memory.record_raw_user_evidence("alice", "산책 공원")
         asyncio.run(memory.finish_turn(
@@ -93,6 +96,7 @@ def test_memory_recall_returns_only_current_call_while_working_graph_accumulates
             user_text="산책 공원",
             final_answer="알겠어.",
             user_evidence=second_evidence,
+            fact_texts=("사용자는 공원 산책을 한다",),
         ))
 
         working = WorkingGraph()
@@ -105,13 +109,17 @@ def test_memory_recall_returns_only_current_call_while_working_graph_accumulates
         )))
         second = asyncio.run(registry.invoke(NativeToolCall(
             name="memory_recall",
-            arguments={"query": "산책"},
+            arguments={"query": "공원"},
         )))
 
-        assert any(node["type"] == "utterance" and "모카" in node["text"] for node in first["nodes"])
-        assert any(node["type"] == "utterance" and "산책" in node["text"] for node in second["nodes"])
-        assert not any(node["type"] == "utterance" and "모카" in node["text"] for node in second["nodes"])
-        assert any(node.node_type == "utterance" and "모카" in node.canonical_text for node in working.nodes.values())
-        assert any(node.node_type == "utterance" and "산책" in node.canonical_text for node in working.nodes.values())
+        assert all(node["type"] in {"anchor", "fact"} for node in first["nodes"])
+        assert all(node["type"] in {"anchor", "fact"} for node in second["nodes"])
+        assert any(node["type"] == "fact" and "모카" in node["text"] for node in first["nodes"])
+        assert any(node["type"] == "fact" and "공원" in node["text"] for node in second["nodes"])
+        assert not any(node["type"] == "fact" and "모카" in node["text"] for node in second["nodes"])
+        assert any(node.node_type == "fact" and "모카" in node.canonical_text for node in working.nodes.values())
+        assert any(node.node_type == "fact" and "공원" in node.canonical_text for node in working.nodes.values())
+        assert all(node.node_type in {"anchor", "fact"} for node in working.nodes.values())
     finally:
         graph.close()
+
