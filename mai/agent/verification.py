@@ -70,7 +70,7 @@ Eligible user factual evidence:
 - A reference to prior assistant content does not copy that content into user evidence.
 - A correction or narrowing may be emitted only for the factual content the user explicitly states themselves.
 - Questions, requests, instructions, and requests to remember/search/check are not factual evidence.
-- For every emitted user assertion, source_excerpt must be an exact contiguous excerpt from the indexed user message that directly states that factual content. Do not use an excerpt that merely approves or refers to other content.
+- For every emitted user assertion, statement and source_excerpt must be the same exact contiguous excerpt from the indexed user message that directly states that factual content. Do not paraphrase user evidence into a new source statement, and do not use an excerpt that merely approves or refers to other content.
 
 Return only the supplied structured-output schema.
 """.strip()
@@ -594,6 +594,10 @@ class FinalGroundingVerifier:
                 raise RuntimeError("candidate analyzer returned an unknown user message index")
             if not statement or not source_excerpt:
                 raise RuntimeError("candidate analyzer returned an empty user evidence assertion")
+            if statement != source_excerpt:
+                raise RuntimeError(
+                    "candidate analyzer user evidence statement must exactly match source_excerpt"
+                )
             if source_excerpt not in source_content:
                 raise RuntimeError(
                     "candidate analyzer user evidence excerpt is not present in the cited user message"
