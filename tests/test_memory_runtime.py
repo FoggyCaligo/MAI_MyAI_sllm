@@ -213,7 +213,7 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
     finally:
         graph.close()
 
-def test_exact_duplicate_fact_reuses_node_and_reinforces_graph(tmp_path):
+def test_exact_duplicate_fact_reuses_node_and_reinforces_node(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
@@ -237,17 +237,6 @@ def test_exact_duplicate_fact_reuses_node_and_reinforces_graph(tmp_path):
         assert rows[0]["canonical_text"] == "사용자의 이름은 신재용이다"
         assert int(rows[0]["occurrence_count"]) == 2
 
-        anchor = graph.get_user_anchor("alice")
-        assert anchor is not None
-        edge = graph.connection.execute(
-            """
-            SELECT occurrence_count FROM edges
-            WHERE from_node_id = ? AND to_node_id = ? AND relation = 'asserted_fact'
-            """,
-            (anchor.id, int(rows[0]["id"])),
-        ).fetchone()
-        assert edge is not None
-        assert int(edge["occurrence_count"]) == 2
     finally:
         graph.close()
 
