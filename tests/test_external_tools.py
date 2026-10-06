@@ -9,25 +9,36 @@ from mai.tools.web import WebFetchError
 
 
 class FakeDDGS:
+    pages: list[int] = []
+
     def __init__(self, timeout):
         assert timeout == 10
 
     def __enter__(self):
+        type(self).pages = []
         return self
 
     def __exit__(self, *_):
         return None
 
-    def text(self, query, *, max_results, region, safesearch):
+    def text(self, query, *, max_results, page, region, safesearch):
         assert query == "MAI project"
         assert max_results == 2
         assert region == "kr-ko"
         assert safesearch == "moderate"
+        type(self).pages.append(page)
         return [
-            {"title": "one", "href": "https://example.test/1", "body": "first"},
-            {"title": "two", "href": "https://example.test/2", "body": "second"},
+            {
+                "title": f"result {page}-1",
+                "href": f"https://example.test/{page}/1",
+                "body": "x" * 400,
+            },
+            {
+                "title": f"result {page}-2",
+                "href": f"https://example.test/{page}/2",
+                "body": f"snippet {page}-2",
+            },
         ]
-
 
 class FakeResponse:
     def __init__(self, payload, url):
@@ -59,12 +70,16 @@ class FakeHttpClient:
         return self.responses.pop(0)
 
 
-def test_web_search_returns_ranked_structured_results(monkeypatch):
+def test_web_search_merges_three_compact_ranked_pages(monkeypatch):
     monkeypatch.setattr(web_module, "DDGS", FakeDDGS)
-    result = web_module.web_search("MAI project", max_results=2)
+    result = web_module.web_search("MAI project", max_results=6)
+
     assert result["provider"] == "ddgs"
-    assert [item["rank"] for item in result["results"]] == [1, 2]
-    assert result["results"][0]["url"] == "https://example.test/1"
+    assert result["provider_pages"] == 3
+    assert FakeDDGS.pages == [1, 2, 3]
+    assert [item["rank"] for item in result["results"]] == [1, 2, 3, 4, 5, 6]
+    assert result["results"][0]["url"] == "https://example.test/1/1"
+    assert len(result["results"][0]["snippet"]) == web_module.WEB_SEARCH_SNIPPET_CHARS
 
 
 def test_web_fetch_refuses_loopback_destination():
