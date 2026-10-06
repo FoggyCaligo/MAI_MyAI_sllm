@@ -45,17 +45,6 @@ from .uploads import principal_upload_directory
 _LOG = logging.getLogger("uvicorn.error")
 
 
-def _read_bool_env(name: str, *, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().casefold()
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    raise ValueError(f"{name} must be either 'true' or 'false'")
-
 
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
@@ -120,15 +109,9 @@ class MAIRuntime:
         self.graph = MemoryGraphRepository(self.memory_db_path)
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
         self.concept_index = SqliteFtsConceptIndex(self.memory_db_path)
-        self.memory_recall_include_utterances = _read_bool_env(
-            "MEMORY_RECALL_INCLUDE_UTTERANCES",
-            default=False,
-        )
         self.recall = RecallService(
             self.graph,
             self.concept_index,
-            self.segmenter,
-            include_utterances=self.memory_recall_include_utterances,
         )
         self.memory = MemoryRuntime(
             self.graph,

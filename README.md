@@ -95,37 +95,37 @@ MAI memory의 기본 구조는 다음과 같다.
 
 ```text
 User Anchor
-   ├─spoke────────→ Utterance
    └─asserted_fact→ Fact
 
-Utterance ─derived_fact→ Fact
-Utterance ─mentions────→ Concept
-Fact      ─mentions────→ Concept
+Fact ─mentions→ Concept
+
+Raw user text is preserved separately in the immutable evidence table.
 ```
 
 핵심 node:
 
 - **User Anchor**: `db_id`마다 하나씩 존재하는 사용자 기준점
-- **Utterance**: 원문 사용자 evidence
 - **Fact**: 발화에서 파생된 durable fact
-- **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 개념
+- **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 내부 검색 개념
 
-원문 Utterance와 파생 Fact는 분리해 보존한다.
+원문 사용자 입력은 graph Utterance node로 복제하지 않고 immutable raw evidence로 보존한다.
 
 Retrieval은 embedding/vector space를 production identity로 사용하지 않는다.
 
 ```text
-query
+memory admission
   ↓ Sentence_Breaker
-canonical segments
+canonical Concept nodes
+
+memory_recall query
+  ↓ whitespace chunks only
+intact query chunks
   ↓
-exact hash lookup
-  ↓ miss
-SQLite FTS5 lexical retrieval
+Exact + SQLite FTS5 ConceptIndex
   ↓
-Concept Nodes
+internal Concept seeds
   ↓
-Graph neighborhood
+Fact neighborhoods
 ```
 
 현재 model-visible memory tool:
@@ -136,7 +136,9 @@ Graph neighborhood
 
 Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
 
-`memory_recall`은 기본적으로 원문 Utterance node를 model-visible 결과에서 제외하고 Concept + Fact 중심으로 반환한다. 원문 자체는 DB에 그대로 보존되며 `memory_overview`와 `memory_search`로 확인할 수 있다. 테스트를 위해 `.env`의 `MEMORY_RECALL_INCLUDE_UTTERANCES=true`로 기존 recall 노출을 다시 켤 수 있다.
+Recall query에는 Sentence_Breaker를 사용하지 않는다. 모델이 보낸 query를 공백 단위의 intact chunk로만 나누고, 각 chunk를 ConceptIndex에 독립적으로 조회한다. 각 chunk당 최고 hit 하나만 후보로 받고, 후보를 relevance 순으로 정렬한 뒤 기존 `concept_limit` 안에서 graph seed로 사용한다. Sentence_Breaker는 Fact를 Concept으로 기록하는 admission 단계에서는 계속 사용한다.
+
+`memory_recall`의 model-visible 결과는 **Anchor + Fact만** 반환한다. ConceptIndex/Concept node는 검색 진입점으로 내부에서만 사용하고, Concept 및 Utterance node는 recall payload에 노출하지 않는다. 원문 사용자 입력은 immutable `evidence` table에 그대로 보존된다.
 
 Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
 
@@ -146,7 +148,7 @@ Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `m
 
 최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다.
 
-Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않되 raw user turn을 보존하는 방향으로 admission한다.
+새 graph Utterance node는 기록하지 않는다. FactExtractor가 durable Fact를 만들면 Anchor→Fact와 Fact→Concept만 기록하며, 원문은 immutable raw evidence에만 남긴다. Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent graph write를 생략한다.
 
 ---
 
@@ -269,7 +271,6 @@ python -m pip install -e ".[dev]"
 
 ```env
 MAIN_MODEL=gemma4:e4b
-MEMORY_RECALL_INCLUDE_UTTERANCES=false
 ```
 
 실행:

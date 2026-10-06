@@ -34,16 +34,27 @@ class FakeConceptIndex:
         return tuple(hits[:limit])
 
 
+class RecordingConceptIndex(FakeConceptIndex):
+    def __init__(self):
+        super().__init__()
+        self.search_calls = []
+
+    def search(self, queries, *, limit: int):
+        normalized = tuple(queries)
+        self.search_calls.append((normalized, limit))
+        return super().search(normalized, limit=limit)
+
+
 class OneFactExtractor:
     async def extract(self, *, user_text, final_answer, successful_tool_results):
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
 
 
-def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
+def test_finish_turn_records_facts_without_utterance_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(
         graph,
         index,
@@ -67,9 +78,8 @@ def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
 
         utterance = graph.get_node_by_identity(f"utterance:evidence:{evidence.id}")
         fact = graph.get_node_by_identity("fact:alice:MAI는 사용자의 개인 AI 프로젝트다")
-        concept = graph.get_node_by_identity("concept:MAI를")
-        assert utterance is not None
-        assert utterance.canonical_text == "나는 MAI를 만들고 있어"
+        concept = graph.get_node_by_identity("concept:MAI는")
+        assert utterance is None
         assert fact is not None
         assert concept is not None
         assert concept.id in index.text_by_id
@@ -77,16 +87,15 @@ def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
             row[0]
             for row in graph.connection.execute("SELECT relation FROM edges").fetchall()
         }
-        assert {"spoke", "asserted_fact", "derived_fact", "mentions"}.issubset(relations)
+        assert relations == {"asserted_fact", "mentions"}
     finally:
         graph.close()
 
-
-def test_auto_recall_omits_utterances_by_default_but_keeps_fact_context(tmp_path):
+def test_auto_recall_returns_only_anchor_and_fact_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(
         graph,
         index,
@@ -107,40 +116,12 @@ def test_auto_recall_omits_utterances_by_default_but_keeps_fact_context(tmp_path
         anchor = graph.get_user_anchor("alice")
         assert anchor is not None
         assert anchor.id in working.nodes
-        concept = graph.get_node_by_identity("concept:MAI")
-        assert concept is not None
-        assert concept.id in working.nodes
         assert any(node.node_type == "fact" for node in working.nodes.values())
-        assert not any(node.node_type == "utterance" for node in working.nodes.values())
-        assert not any(edge.relation == "spoke" for edge in working.edges.values())
-    finally:
-        graph.close()
-
-
-def test_auto_recall_can_include_utterances_when_enabled(tmp_path):
-    graph = MemoryGraphRepository(tmp_path / "memory.db")
-    index = FakeConceptIndex()
-    segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, include_utterances=True)
-    memory = MemoryRuntime(
-        graph,
-        index,
-        segmenter,
-        recall,
-        now=lambda: NOW,
-        fact_extractor=OneFactExtractor(),
-    )
-    try:
-        evidence = memory.record_raw_user_evidence("alice", "MAI 프로젝트")
-        asyncio.run(memory.finish_turn(
-            user_id="alice",
-            user_text="MAI 프로젝트",
-            final_answer="기억할게.",
-            user_evidence=evidence,
-        ))
-        working = memory.auto_recall(user_id="alice", user_text="MAI")
-        assert any(node.node_type == "utterance" for node in working.nodes.values())
-        assert any(edge.relation == "spoke" for edge in working.edges.values())
+        assert all(node.node_type in {"anchor", "fact"} for node in working.nodes.values())
+        assert all(
+            edge.relation == "asserted_fact"
+            for edge in working.edges.values()
+        )
     finally:
         graph.close()
 
@@ -149,7 +130,7 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, anchor_fact_limit=2)
+    recall = RecallService(graph, index, anchor_fact_limit=2)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
 
     def store_turn(user_text: str, fact_text: str) -> None:
@@ -192,5 +173,37 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
         )
         assert not any(node["type"] == "utterance" for node in expanded["nodes"])
         assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
+    finally:
+        graph.close()
+
+
+def test_recall_query_uses_whitespace_chunks_without_sentence_breaker_segmentation(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = RecordingConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        evidence = memory.record_raw_user_evidence("alice", "만년필 사용")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="만년필 사용",
+            final_answer="알겠어.",
+            user_evidence=evidence,
+            fact_texts=("사용자는 만년필을 사용한다",),
+        ))
+        index.search_calls.clear()
+
+        memory.explicit_recall(
+            user_id="alice",
+            query="만년필 fountain pen 사용",
+        )
+
+        assert index.search_calls == [
+            (("만년필",), 1),
+            (("fountain",), 1),
+            (("pen",), 1),
+            (("사용",), 1),
+        ]
     finally:
         graph.close()
