@@ -49,7 +49,7 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         async def memory_recall(query: str) -> dict[str, object]:
             recalled = memory.explicit_recall(user_id=user_id, query=query)
             working.merge_working(recalled)
-            return working.snapshot()
+            return recalled.snapshot()
 
         registry.add(
             name="memory_recall",
