@@ -632,6 +632,91 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
     }]
 
 
+def test_normalized_user_source_must_be_validated_against_literal_excerpt() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [{
+                "claim": "사용자의 만년필은 은색 플레지르다",
+                "temporal": False,
+            }],
+            "user_assertions": [{
+                "message_index": 1,
+                "source_excerpt": "방금 설명한 내용은 전부 맞아.",
+                "normalized_claim": "사용자의 만년필은 은색 플레지르다",
+            }],
+        }, ensure_ascii=False),
+        json.dumps({
+            "evidence_verdict": "unsupported",
+            "validated_user_source_ids": [],
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+            "reasons": ["The approval excerpt does not itself establish the normalized claim."],
+            "claims": [{
+                "claim_id": "claim:0",
+                "verdict": "unsupported",
+                "defect": "missing_evidence",
+                "reason": "The cited user excerpt only approves prior assistant content.",
+                "support_ids": [],
+            }],
+            "action_verdict": "not_applicable",
+        }, ensure_ascii=False),
+    ])
+
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="사용자의 만년필은 은색 플레지르입니다.",
+        messages=(
+            {"role": "assistant", "content": "사용자의 만년필은 은색 플레지르다."},
+            {"role": "user", "content": "방금 설명한 내용은 전부 맞아."},
+        ),
+        tool_results=(),
+    ))
+
+    assert result.ok is False
+    assert result.user_evidence == ()
+
+
+def test_unvalidated_normalized_user_source_cannot_support_candidate_claim() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [{
+                "claim": "사용자의 만년필은 은색 플레지르다",
+                "temporal": False,
+            }],
+            "user_assertions": [{
+                "message_index": 0,
+                "source_excerpt": "내 펜은 은색이야.",
+                "normalized_claim": "사용자의 만년필은 은색 플레지르다",
+            }],
+        }, ensure_ascii=False),
+        json.dumps({
+            "evidence_verdict": "supported",
+            "validated_user_source_ids": [],
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+            "reasons": [],
+            "claims": [{
+                "claim_id": "claim:0",
+                "verdict": "supported",
+                "defect": "none",
+                "reason": "",
+                "support_ids": ["user:0:0"],
+            }],
+            "action_verdict": "not_applicable",
+        }, ensure_ascii=False),
+    ])
+
+    with pytest.raises(RuntimeError, match="unvalidated user sources"):
+        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+            candidate="사용자의 만년필은 은색 플레지르입니다.",
+            messages=({"role": "user", "content": "내 펜은 은색이야."},),
+            tool_results=(),
+        ))
+
+
 def test_candidate_analyzer_cannot_invent_user_evidence_excerpt() -> None:
     reviewer = SequenceAdapter([
         json.dumps({
