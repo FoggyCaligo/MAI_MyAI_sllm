@@ -4,7 +4,12 @@ import json
 import pytest
 
 from mai.llm.models import ModelTurn
-from mai.memory.extraction.service import FactExtractionError, OllamaFactExtractor
+from mai.memory.extraction.service import (
+    FactExtractionError,
+    GroundedFinalClaimEvidence,
+    OllamaFactExtractor,
+    ToolFactEvidence,
+)
 
 
 def run(coro):
@@ -20,6 +25,15 @@ def turn(content: str) -> ModelTurn:
     )
 
 
+def fact_payload(*items):
+    return json.dumps({
+        "facts": [
+            {"fact": fact, "evidence_refs": list(refs)}
+            for fact, refs in items
+        ]
+    }, ensure_ascii=False)
+
+
 class FakeAdapter:
     def __init__(self, contents):
         self.contents = list(contents)
@@ -32,85 +46,136 @@ class FakeAdapter:
         return turn(self.contents.pop(0))
 
 
-def test_extractor_preserves_new_fact_in_mixed_recall_style_message() -> None:
+def test_extractor_preserves_direct_current_user_fact() -> None:
     adapter = FakeAdapter([
-        json.dumps({"facts": ["사용자는 최근 목표를 Y로 변경했다"]}, ensure_ascii=False),
+        fact_payload(("사용자는 최근 목표를 Y로 변경했다", ("user:current",))),
     ])
     extractor = OllamaFactExtractor(adapter)
 
     facts = run(extractor.extract(
         user_text="이거 기억해? 최근에는 목표를 Y로 바꿨어.",
-        previous_assistant_message=None,
-        final_answer="응, 최근 변경도 반영할게.",
-        successful_tool_results=(),
+        successful_tool_evidence=(),
+        grounded_final_claims=(),
     ))
 
     assert facts == ("사용자는 최근 목표를 Y로 변경했다",)
-    request_payload = json.loads(adapter.requests[0].messages[1]["content"])
-    assert request_payload["latest_user_message"].startswith("이거 기억해?")
-    assert request_payload["successful_tool_results"] == []
+    payload = json.loads(adapter.requests[0].messages[1]["content"])
+    assert payload["allowed_fact_sources"] == [{
+        "ref": "user:current",
+        "kind": "current_user_message",
+        "content": "이거 기억해? 최근에는 목표를 Y로 바꿨어.",
+    }]
     assert adapter.requests[0].think is False
-    schema = adapter.requests[0].response_format
-    assert isinstance(schema, dict)
-    assert schema["type"] == "object"
-    assert schema["additionalProperties"] is False
-    assert schema["required"] == ["facts"]
-    assert schema["properties"]["facts"]["type"] == "array"
 
-def test_extractor_separates_previous_assistant_from_current_final() -> None:
-    adapter = FakeAdapter([
-        json.dumps({"facts": ["사용자는 직전 만년필 설명에 동의했다"]}, ensure_ascii=False),
-    ])
+
+def test_user_approval_has_no_previous_assistant_source_to_expand_into() -> None:
+    adapter = FakeAdapter([fact_payload()])
     extractor = OllamaFactExtractor(adapter)
 
     facts = run(extractor.extract(
-        user_text="네가 말한 내용들은 다 맞아. 이제 다른 질문에 답해줘.",
-        previous_assistant_message="사용자의 현재 만년필은 플레지르와 프레피를 조합한 것이다.",
-        final_answer="Eyedropper에 대한 새로운 설명.",
-        successful_tool_results=(),
-    ))
-
-    assert facts == ("사용자는 직전 만년필 설명에 동의했다",)
-    request = adapter.requests[0]
-    payload = json.loads(request.messages[1]["content"])
-    assert payload["previous_assistant_message"].startswith("사용자의 현재 만년필")
-    assert payload["assistant_final_answer"] == "Eyedropper에 대한 새로운 설명."
-    system_prompt = request.messages[0]["content"]
-    assert "previous_assistant_message only" in system_prompt
-    assert "must never be applied to assistant_final_answer" in system_prompt
-
-
-
-def test_extractor_can_return_no_facts_for_pure_recall_question() -> None:
-    adapter = FakeAdapter([json.dumps({"facts": []})])
-    extractor = OllamaFactExtractor(adapter)
-
-    facts = run(extractor.extract(
-        user_text="내가 예전에 말한 거 기억해?",
-        previous_assistant_message=None,
-        final_answer="기억을 확인했어.",
-        successful_tool_results=(),
+        user_text="네가 방금 말한 건 다 맞아. 그런데 eyedropper는 어떤 원리야?",
+        successful_tool_evidence=(),
+        grounded_final_claims=(),
     ))
 
     assert facts == ()
+    payload = json.loads(adapter.requests[0].messages[1]["content"])
+    assert payload["allowed_fact_sources"] == [{
+        "ref": "user:current",
+        "kind": "current_user_message",
+        "content": "네가 방금 말한 건 다 맞아. 그런데 eyedropper는 어떤 원리야?",
+    }]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "previous_assistant" not in serialized
+    assert "assistant_final" not in serialized
 
 
-def test_extractor_receives_non_recall_tool_evidence_and_deduplicates() -> None:
+def test_verified_current_final_claim_can_become_memory_fact() -> None:
     adapter = FakeAdapter([
-        json.dumps({"facts": ["계획 문서의 마감일은 9월 18일이다", "계획 문서의 마감일은 9월 18일이다"]}, ensure_ascii=False),
+        fact_payload(("제품 A의 출시일은 2026-10-10이다", ("grounded_final:0",))),
     ])
     extractor = OllamaFactExtractor(adapter)
 
     facts = run(extractor.extract(
-        user_text="내 계획 문서도 같이 확인해줘.",
-        previous_assistant_message=None,
-        final_answer="확인했어.",
-        successful_tool_results=("document_read: 마감일 9월 18일",),
+        user_text="제품 A 출시일을 찾아줘.",
+        successful_tool_evidence=(
+            ToolFactEvidence(
+                ref="tool:0:web_search",
+                tool="web_search",
+                content="제품 A 출시일: 2026-10-10",
+            ),
+        ),
+        grounded_final_claims=(
+            GroundedFinalClaimEvidence(
+                claim="제품 A는 2026-10-10에 출시된다",
+                support_ids=("tool:0:web_search",),
+            ),
+        ),
     ))
 
-    assert facts == ("계획 문서의 마감일은 9월 18일이다",)
+    assert facts == ("제품 A의 출시일은 2026-10-10이다",)
     payload = json.loads(adapter.requests[0].messages[1]["content"])
-    assert payload["successful_tool_results"] == ["document_read: 마감일 9월 18일"]
+    assert payload["allowed_fact_sources"][1]["ref"] == "tool:0:web_search"
+    assert payload["allowed_fact_sources"][2] == {
+        "ref": "grounded_final:0",
+        "kind": "grounded_final_claim",
+        "content": "제품 A는 2026-10-10에 출시된다",
+        "grounding_support_ids": ["tool:0:web_search"],
+    }
+
+
+def test_grounded_final_claim_cannot_reference_inadmissible_memory_source() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([]))
+
+    with pytest.raises(FactExtractionError, match="inadmissible memory evidence"):
+        run(extractor.extract(
+            user_text="다시 설명해줘.",
+            successful_tool_evidence=(),
+            grounded_final_claims=(
+                GroundedFinalClaimEvidence(
+                    claim="과거 대화에만 있던 사실",
+                    support_ids=("user:context:2",),
+                ),
+            ),
+        ))
+
+
+def test_fact_requires_allowed_evidence_ref() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([
+        fact_payload(("근거 없는 사실", ("assistant_final",))),
+    ]))
+
+    with pytest.raises(FactExtractionError, match="unknown evidence refs"):
+        run(extractor.extract(
+            user_text="설명해줘.",
+            successful_tool_evidence=(),
+            grounded_final_claims=(),
+        ))
+
+
+def test_fact_requires_at_least_one_evidence_ref() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([
+        fact_payload(("사용자는 목표를 바꿨다", ())),
+    ]))
+
+    with pytest.raises(FactExtractionError, match="without evidence refs"):
+        run(extractor.extract(
+            user_text="목표를 바꿨어.",
+            successful_tool_evidence=(),
+            grounded_final_claims=(),
+        ))
+
+
+def test_extractor_can_return_no_facts_for_pure_recall_question() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([fact_payload()]))
+
+    facts = run(extractor.extract(
+        user_text="내가 예전에 말한 거 기억해?",
+        successful_tool_evidence=(),
+        grounded_final_claims=(),
+    ))
+
+    assert facts == ()
 
 
 def test_extractor_invalid_json_is_an_explicit_failure() -> None:
@@ -119,19 +184,17 @@ def test_extractor_invalid_json_is_an_explicit_failure() -> None:
     with pytest.raises(FactExtractionError, match="structured output schema"):
         run(extractor.extract(
             user_text="최근에 바뀐 게 있어.",
-            previous_assistant_message=None,
-            final_answer="알겠어.",
-            successful_tool_results=(),
+            successful_tool_evidence=(),
+            grounded_final_claims=(),
         ))
 
 
 def test_fact_extractor_has_no_default_fifteen_second_deadline() -> None:
-    extractor = OllamaFactExtractor(FakeAdapter([json.dumps({"facts": []})]))
+    extractor = OllamaFactExtractor(FakeAdapter([fact_payload()]))
 
     assert extractor.timeout_seconds is None
     assert run(extractor.extract(
         user_text="hello",
-        previous_assistant_message=None,
-        final_answer="hello",
-        successful_tool_results=(),
+        successful_tool_evidence=(),
+        grounded_final_claims=(),
     )) == ()
