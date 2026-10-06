@@ -516,6 +516,131 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     }
 
 
+def test_user_approval_context_is_not_exposed_as_factual_evidence_source() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [{
+                "claim": "직전 assistant의 만년필 설명은 사실이다",
+                "temporal": False,
+            }],
+            "user_assertions": [],
+        }, ensure_ascii=False),
+        json.dumps({
+            "evidence_verdict": "unsupported",
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+            "reasons": ["No eligible factual source establishes the prior assistant claim."],
+            "claims": [{
+                "claim_id": "claim:0",
+                "verdict": "unsupported",
+                "defect": "missing_evidence",
+                "reason": "The user message only approves prior assistant content.",
+                "support_ids": [],
+            }],
+            "action_verdict": "not_applicable",
+        }, ensure_ascii=False),
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="직전 설명대로 사용자의 만년필 구성은 확정되어 있습니다.",
+        messages=(
+            {"role": "assistant", "content": "사용자의 만년필 구성에 대한 설명"},
+            {"role": "user", "content": "방금 설명한 내용은 전부 맞아."},
+        ),
+        tool_results=(),
+    ))
+
+    assert result.ok is False
+    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    assert evidence_payload["current_user_request"] == "방금 설명한 내용은 전부 맞아."
+    assert not any(
+        source["kind"] == "user_assertion"
+        for source in evidence_payload["evidence_sources"]
+    )
+    assert evidence_payload["conversation_context"] == [
+        {"role": "assistant", "content": "사용자의 만년필 구성에 대한 설명"},
+    ]
+
+
+def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [{
+                "claim": "사용자의 만년필은 은색 플레지르다",
+                "temporal": False,
+            }],
+            "user_assertions": [{
+                "message_index": 0,
+                "statement": "내 만년필은 은색 플레지르야.",
+                "source_excerpt": "내 만년필은 은색 플레지르야.",
+            }],
+        }, ensure_ascii=False),
+        json.dumps({
+            "evidence_verdict": "supported",
+            "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+            "reasons": [],
+            "claims": [{
+                "claim_id": "claim:0",
+                "verdict": "supported",
+                "defect": "none",
+                "reason": "",
+                "support_ids": ["user:0:0"],
+            }],
+            "action_verdict": "not_applicable",
+        }, ensure_ascii=False),
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="사용자의 만년필은 은색 플레지르입니다.",
+        messages=({"role": "user", "content": "내 만년필은 은색 플레지르야."},),
+        tool_results=(),
+    ))
+
+    assert result.ok is True
+    assert result.user_evidence[0].statement == "내 만년필은 은색 플레지르야."
+    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    user_sources = [
+        source
+        for source in evidence_payload["evidence_sources"]
+        if source["kind"] == "user_assertion"
+    ]
+    assert user_sources == [{
+        "ref": "user:0:0",
+        "kind": "user_assertion",
+        "content": "내 만년필은 은색 플레지르야.",
+        "source_excerpt": "내 만년필은 은색 플레지르야.",
+    }]
+
+
+def test_candidate_analyzer_cannot_paraphrase_user_text_into_a_new_source() -> None:
+    reviewer = SequenceAdapter([
+        json.dumps({
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [],
+            "user_assertions": [{
+                "message_index": 0,
+                "statement": "사용자는 은색 만년필을 쓴다",
+                "source_excerpt": "내 펜은 은색이야.",
+            }],
+        }, ensure_ascii=False),
+    ])
+
+    with pytest.raises(RuntimeError, match="must exactly match source_excerpt"):
+        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+            candidate="알겠어.",
+            messages=({"role": "user", "content": "내 펜은 은색이야."},),
+            tool_results=(),
+        ))
+
+
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
     main = SequenceAdapter([
         "GitHub 원격 브랜치 16개를 모두 삭제 완료했습니다.",
