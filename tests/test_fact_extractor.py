@@ -183,6 +183,26 @@ def test_current_final_claim_can_be_admitted_only_through_verified_grounding_ref
     ]
 
 
+def test_grounded_final_claim_rejects_inadmissible_underlying_source() -> None:
+    extractor = OllamaFactExtractor(FakeAdapter([
+        resolution(),
+    ]))
+
+    with pytest.raises(FactExtractionError, match="inadmissible memory evidence"):
+        run(extractor.extract(
+            user_text="전에 말한 내용을 다시 설명해줘.",
+            previous_assistant_message=None,
+            final_answer="과거 대화의 사실입니다.",
+            successful_tool_evidence=(),
+            grounded_final_claims=(
+                GroundedFinalClaimEvidence(
+                    claim="과거 대화의 사실",
+                    evidence_refs=("user:context:2",),
+                ),
+            ),
+        ))
+
+
 def test_pure_recall_question_can_produce_no_new_facts() -> None:
     adapter = FakeAdapter([
         resolution(),
