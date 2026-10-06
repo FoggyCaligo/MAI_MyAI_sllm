@@ -19,6 +19,18 @@ class MemoryGraphRepository:
         self.connection = sqlite3.connect(self.db_path)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA_SQL)
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        edge_columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(edges)").fetchall()
+        }
+        if "occurrence_count" not in edge_columns:
+            with self.connection:
+                self.connection.execute(
+                    "ALTER TABLE edges ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1"
+                )
 
     def close(self) -> None:
         self.connection.close()
@@ -174,9 +186,12 @@ class MemoryGraphRepository:
         timestamp = utc_iso(now)
         with self.connection:
             self.connection.execute(
-                """INSERT OR IGNORE INTO edges(
-                       from_node_id, to_node_id, relation, provenance, created_at
-                   ) VALUES (?, ?, ?, ?, ?)""",
+                """INSERT INTO edges(
+                       from_node_id, to_node_id, relation, provenance,
+                       occurrence_count, created_at
+                   ) VALUES (?, ?, ?, ?, 1, ?)
+                   ON CONFLICT(from_node_id, to_node_id, relation)
+                   DO UPDATE SET occurrence_count = edges.occurrence_count + 1""",
                 (from_node_id, to_node_id, relation.strip(), provenance.strip(), timestamp),
             )
         row = self.connection.execute(
@@ -221,6 +236,7 @@ class MemoryGraphRepository:
             to_node_id=int(row["to_node_id"]),
             relation=str(row["relation"]),
             provenance=str(row["provenance"]),
+            occurrence_count=int(row["occurrence_count"]),
             created_at=str(row["created_at"]),
         )
 
@@ -240,6 +256,61 @@ class MemoryGraphRepository:
             tuple(self.get_node(value) for value in sorted(node_ids)),
             edges,
         )
+
+    def reinforce_node(self, node_id: int, *, now: datetime) -> MemoryNode:
+        node = self.get_node(node_id)
+        timestamp = utc_iso(now)
+        with self.connection:
+            self.connection.execute(
+                "UPDATE nodes SET occurrence_count = occurrence_count + 1, last_seen_at = ? WHERE id = ?",
+                (timestamp, node.id),
+            )
+        return self.get_node(node.id)
+
+    def user_fact_candidates_for_concepts(
+        self,
+        user_id: str,
+        concept_node_ids: tuple[int, ...],
+        *,
+        limit: int,
+    ) -> tuple[MemoryNode, ...]:
+        """Return asserted user Facts linked to candidate Concepts.
+
+        This is candidate generation only. Semantic equivalence is decided by the
+        model-backed resolver, not by lexical/string rules.
+        """
+        if limit < 0:
+            raise ValueError("fact candidate limit must be >= 0")
+        anchor = self.get_user_anchor(user_id)
+        if anchor is None:
+            raise KeyError(f"user anchor for '{user_id}' does not exist")
+        unique_ids = tuple(dict.fromkeys(int(value) for value in concept_node_ids))
+        if not unique_ids or limit == 0:
+            return ()
+        placeholders = ",".join("?" for _ in unique_ids)
+        rows = self.connection.execute(
+            f"""
+            SELECT f.id AS fact_id,
+                   COUNT(DISTINCT e_concept.to_node_id) AS shared_concepts
+            FROM edges e_anchor
+            JOIN nodes f ON f.id = e_anchor.to_node_id
+            JOIN edges e_concept
+              ON e_concept.from_node_id = f.id
+             AND e_concept.relation = 'mentions'
+            WHERE e_anchor.from_node_id = ?
+              AND e_anchor.relation = 'asserted_fact'
+              AND f.node_type = 'fact'
+              AND e_concept.to_node_id IN ({placeholders})
+            GROUP BY f.id
+            ORDER BY shared_concepts DESC,
+                     f.occurrence_count DESC,
+                     f.last_seen_at DESC,
+                     f.id DESC
+            LIMIT ?
+            """,
+            (anchor.id, *unique_ids, limit),
+        ).fetchall()
+        return tuple(self.get_node(int(row["fact_id"])) for row in rows)
 
     def user_anchor_fact_context(self, user_id: str, *, limit: int) -> GraphNeighborhood:
         """Return a bounded fact context for one user's anchor.
