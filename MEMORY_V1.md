@@ -23,9 +23,9 @@ one canonical Sentence_Breaker segment = one Concept Node
 
 Repeated appearances of the same segment reuse the same Concept Node. Recall indexing never merges graph identity.
 
-The full original sentence remains a first-class Utterance Node so recall can show the model what the user actually said instead of forcing it to trust a rewritten relation description.
+The full original sentence remains a first-class Utterance Node so evidence is preserved. Production `memory_recall` omits Utterance nodes by default to keep retrieval compact; `memory_overview`, `memory_search`, or the recall environment switch can expose raw wording when needed.
 
-The current production runtime does **not** configure a model-backed `FactExtractor`. Therefore raw Utterance and Concept memory are active today, while Fact nodes remain part of the schema/extension contract rather than something every production turn currently creates.
+The production request path runs a model-backed `FactExtractor` during background post-response processing. Raw Utterance evidence is still preserved independently, and extraction failure does not silently fabricate Fact nodes.
 
 ## 2. Permanent graph node types
 
@@ -57,7 +57,7 @@ User Anchor ─asserted_fact→ Fact
 Utterance   ─derived_fact─→ Fact
 ```
 
-Fact is a supported permanent node type, but current production runs with `fact_extractor=None`, so Fact creation is not part of the active default write path.
+Fact is an active production node type. The selected turn model is reused with `think=False` for background fact extraction after the final response; raw Utterance evidence remains the source record.
 
 ### Concept Node
 
@@ -163,24 +163,35 @@ memory_overview(limit)
   -> broad memory view without a lexical query
 
 memory_recall(query)
+  -> bounded user-anchor Fact context
+       (asserted_fact only; raw spoke history is not dumped)
   -> Sentence_Breaker query segments
   -> Exact + FTS5 ConceptIndex
   -> Concept seeds
-  -> graph neighborhoods / available user-anchor paths
+  -> graph neighborhoods
+  -> by default project Utterance nodes/edges out of the recall payload
+  -> preserve Fact paths to the user anchor
   -> merge into the per-turn Working Graph
+  -> return only this recall call's payload
 
 memory_search(node_id)
-  -> exact one-hop expansion from a selected permanent node
+  -> one-hop expansion from a selected permanent node
+  -> user-anchor expansion uses the same bounded Fact context
   -> merge into the per-turn Working Graph
+  -> return only this expansion call's payload
 ```
 
 Shortest-path discovery treats topology as undirected, while returned edges preserve stored direction, relation, and provenance.
 
-The Working Graph is temporary per-turn state and is not persisted as another graph. It is populated only by explicit memory-tool execution in the production C runtime; there is no automatic recall pass before the main agent loop.
+The Working Graph is temporary per-turn state and is not persisted as another graph. It accumulates recalled nodes internally so later expansion can continue from prior results, but each model-visible memory tool returns only the payload produced by that call rather than re-sending the entire accumulated Working Graph.
+
+Production defaults to `MEMORY_RECALL_INCLUDE_UTTERANCES=false`. Setting it to `true` restores raw Utterance nodes in `memory_recall` for comparison testing without changing what is stored in the permanent graph.
 
 ## 8. Deliberate memory expansion
 
-`memory_search(node_id)` expands exactly one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes may also receive available shortest paths back to the current user's memory anchor.
+`memory_search(node_id)` expands one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes may also receive available shortest paths back to the current user's memory anchor.
+
+The user anchor is a deliberate exception to raw one-hop expansion: its unbounded `spoke` neighborhood is not exposed. Expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by occurrence count and then recency. Regular `memory_search` remains the deliberate evidence-expansion path and may expose Utterance nodes; `memory_recall` itself omits them by default.
 
 There is no arbitrary-depth hidden traversal; farther recall requires another explicit memory call.
 
@@ -203,7 +214,7 @@ raw user evidence saved
        index only newly-created Concept Nodes
 ```
 
-Current production uses `fact_extractor=None`; therefore the active default write path preserves raw Utterance evidence and Concept links without silently pretending semantic Fact extraction succeeded.
+Current production attempts model-backed Fact extraction in background post-processing. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and the raw user turn is still preserved rather than pretending semantic extraction succeeded.
 
 Tool/search-derived world facts have a different source from user assertions and must not be silently stored as if the user had said them.
 

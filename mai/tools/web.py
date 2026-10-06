@@ -6,6 +6,7 @@ public HTTP(S) destinations and validates every redirect target before access.
 from __future__ import annotations
 
 import ipaddress
+import math
 import socket
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -16,6 +17,12 @@ from ddgs import DDGS
 from pydantic import BaseModel, ConfigDict, Field
 
 from .registry import ToolRegistry
+
+
+WEB_SEARCH_PAGE_COUNT = 3
+WEB_SEARCH_DEFAULT_RESULTS = 15
+WEB_SEARCH_MAX_RESULTS = 15
+WEB_SEARCH_SNIPPET_CHARS = 240
 
 
 class WebSearchError(RuntimeError):
@@ -29,7 +36,12 @@ class WebFetchError(RuntimeError):
 class WebSearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, description="Web search query")
-    max_results: int = Field(default=5, ge=1, le=10, description="Maximum number of ranked web results to return")
+    max_results: int = Field(
+        default=WEB_SEARCH_DEFAULT_RESULTS,
+        ge=1,
+        le=WEB_SEARCH_MAX_RESULTS,
+        description="Maximum number of merged ranked results returned across three provider pages",
+    )
 
 
 class WebFetchInput(BaseModel):
@@ -38,25 +50,67 @@ class WebFetchInput(BaseModel):
     max_chars: int = Field(default=50000, ge=1, le=500000)
 
 
-def web_search(query: str, max_results: int = 5) -> dict[str, object]:
+def _compact_search_text(value: object, *, max_chars: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
+
+
+def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dict[str, object]:
     clean_query = query.strip()
     if not clean_query:
         raise ValueError("query must be non-empty")
+    if not 1 <= max_results <= WEB_SEARCH_MAX_RESULTS:
+        raise ValueError(f"max_results must be between 1 and {WEB_SEARCH_MAX_RESULTS}")
+
+    results_per_page = max(1, math.ceil(max_results / WEB_SEARCH_PAGE_COUNT))
+    merged: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+
     try:
         with DDGS(timeout=10) as ddgs:
-            raw_results = list(ddgs.text(clean_query, max_results=max_results, region="kr-ko", safesearch="moderate"))
+            for page in range(1, WEB_SEARCH_PAGE_COUNT + 1):
+                raw_results = list(ddgs.text(
+                    clean_query,
+                    max_results=results_per_page,
+                    page=page,
+                    region="kr-ko",
+                    safesearch="moderate",
+                ))
+                for raw in raw_results:
+                    url_value = raw.get("href") or raw.get("url")
+                    if not isinstance(url_value, str) or not url_value.strip():
+                        continue
+                    url = url_value.strip()
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    merged.append({
+                        "title": _compact_search_text(raw.get("title"), max_chars=200),
+                        "url": url,
+                        "snippet": _compact_search_text(
+                            raw.get("body"),
+                            max_chars=WEB_SEARCH_SNIPPET_CHARS,
+                        ),
+                    })
     except Exception as exc:
         raise WebSearchError(f"web search failed for query {clean_query!r}") from exc
 
-    results: list[dict[str, Any]] = []
-    for rank, raw in enumerate(raw_results, start=1):
-        results.append({
-            "rank": rank,
-            "title": raw.get("title"),
-            "url": raw.get("href") or raw.get("url"),
-            "snippet": raw.get("body"),
-        })
-    return {"query": clean_query, "provider": "ddgs", "results": results}
+    results = [
+        {"rank": rank, **item}
+        for rank, item in enumerate(merged[:max_results], start=1)
+    ]
+    return {
+        "query": clean_query,
+        "provider": "ddgs",
+        "provider_pages": WEB_SEARCH_PAGE_COUNT,
+        "results": results,
+    }
 
 
 def _validate_public_url(url: str) -> str:
@@ -139,7 +193,8 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
         description=(
             "Search the current public web. Use this for information that may have changed, recent news, "
             "external facts not present in memory or local files, or when the user explicitly asks to search "
-            "the web. Returns ranked titles, URLs, and snippets."
+            "the web. Queries three provider result pages in one call and returns one compact merged list "
+            "of ranked titles, URLs, and short snippets; use web_fetch for page contents."
         ),
         input_model=WebSearchInput,
         handler=web_search,

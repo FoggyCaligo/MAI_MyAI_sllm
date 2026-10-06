@@ -31,7 +31,13 @@ class MemoryOverviewInput(BaseModel):
 
 class MemorySearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    node_id: int = Field(gt=0, description="Working/permanent memory node to expand by exactly one graph hop")
+    node_id: int = Field(
+        gt=0,
+        description=(
+            "Working/permanent memory node to expand. Regular nodes use one graph hop; "
+            "the current user's anchor returns its bounded structured Fact context."
+        ),
+    )
 
 
 def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working: WorkingGraph, *, user_id: str, include_recall_entry: bool = True) -> None:
@@ -49,13 +55,15 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         async def memory_recall(query: str) -> dict[str, object]:
             recalled = memory.explicit_recall(user_id=user_id, query=query)
             working.merge_working(recalled)
-            return working.snapshot()
+            return recalled.snapshot()
 
         registry.add(
             name="memory_recall",
             description=(
-                "Search this user's persistent memory from a specific free-text query. Use it when the answer "
-                "depends on a particular remembered topic, preference, decision, person, project, or past event."
+                "Search this user's persistent memory from a specific free-text query. The default result is "
+                "compact Concept/Fact context and may omit raw Utterance nodes; use memory_search when exact "
+                "source wording or neighboring evidence is needed. Use recall when the answer depends on a "
+                "particular remembered topic, preference, decision, person, project, or past event."
             ),
             input_model=MemoryRecallInput,
             handler=memory_recall,
@@ -83,8 +91,9 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
     registry.add(
         name="memory_search",
         description=(
-            "Expand one persistent-memory node by exactly one graph hop, merge the typed edges and evidence "
-            "into the current Working Graph, and preserve the shortest available path to this user's anchor."
+            "Expand one persistent-memory node and merge the result into the current Working Graph. "
+            "Regular nodes expand by one graph hop; the current user's anchor returns only its bounded "
+            "structured Fact context. Preserve available paths back to this user's anchor."
         ),
         input_model=MemorySearchInput,
         handler=memory_search,

@@ -5,6 +5,7 @@ from mai.memory.graph.repository import MemoryGraphRepository
 from mai.memory.index import ConceptHit
 from mai.memory.recall.service import RecallService
 from mai.memory.runtime import MemoryRuntime
+from mai.memory.working import WorkingGraph
 
 NOW = datetime(2026, 8, 27, 15, 24, tzinfo=timezone.utc)
 
@@ -81,7 +82,7 @@ def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
         graph.close()
 
 
-def test_auto_recall_keeps_concept_connected_to_current_user_anchor(tmp_path):
+def test_auto_recall_omits_utterances_by_default_but_keeps_fact_context(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
@@ -109,7 +110,87 @@ def test_auto_recall_keeps_concept_connected_to_current_user_anchor(tmp_path):
         concept = graph.get_node_by_identity("concept:MAI")
         assert concept is not None
         assert concept.id in working.nodes
+        assert any(node.node_type == "fact" for node in working.nodes.values())
+        assert not any(node.node_type == "utterance" for node in working.nodes.values())
+        assert not any(edge.relation == "spoke" for edge in working.edges.values())
+    finally:
+        graph.close()
+
+
+def test_auto_recall_can_include_utterances_when_enabled(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = FakeConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index, segmenter, include_utterances=True)
+    memory = MemoryRuntime(
+        graph,
+        index,
+        segmenter,
+        recall,
+        now=lambda: NOW,
+        fact_extractor=OneFactExtractor(),
+    )
+    try:
+        evidence = memory.record_raw_user_evidence("alice", "MAI 프로젝트")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="MAI 프로젝트",
+            final_answer="기억할게.",
+            user_evidence=evidence,
+        ))
+        working = memory.auto_recall(user_id="alice", user_text="MAI")
         assert any(node.node_type == "utterance" for node in working.nodes.values())
         assert any(edge.relation == "spoke" for edge in working.edges.values())
+    finally:
+        graph.close()
+
+
+def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_utterances(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = FakeConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index, segmenter, anchor_fact_limit=2)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+
+    def store_turn(user_text: str, fact_text: str) -> None:
+        evidence = memory.record_raw_user_evidence("alice", user_text)
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text=user_text,
+            final_answer="ok",
+            user_evidence=evidence,
+            fact_texts=(fact_text,),
+        ))
+
+    try:
+        store_turn("target topic", "stable profile fact")
+        store_turn("unrelated first", "older one-off fact")
+        store_turn("unrelated second", "newer one-off fact")
+        store_turn("reinforce stable", "stable profile fact")
+
+        recalled = memory.explicit_recall(user_id="alice", query="target")
+        utterance_texts = {
+            node.canonical_text
+            for node in recalled.nodes.values()
+            if node.node_type == "utterance"
+        }
+        fact_texts = {
+            node.canonical_text
+            for node in recalled.nodes.values()
+            if node.node_type == "fact"
+        }
+        assert not utterance_texts
+        assert len(fact_texts) == 2
+        assert "stable profile fact" in fact_texts
+
+        anchor = graph.get_user_anchor("alice")
+        assert anchor is not None
+        expanded = memory.memory_search(
+            WorkingGraph(),
+            user_id="alice",
+            node_id=anchor.id,
+        )
+        assert not any(node["type"] == "utterance" for node in expanded["nodes"])
+        assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
     finally:
         graph.close()

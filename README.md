@@ -134,7 +134,13 @@ Graph neighborhood
 - `memory_recall(query)`
 - `memory_search(node_id)`
 
-`memory_search`는 one-hop 확장이다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
+Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
+
+`memory_recall`은 기본적으로 원문 Utterance node를 model-visible 결과에서 제외하고 Concept + Fact 중심으로 반환한다. 원문 자체는 DB에 그대로 보존되며 `memory_overview`와 `memory_search`로 확인할 수 있다. 테스트를 위해 `.env`의 `MEMORY_RECALL_INCLUDE_UTTERANCES=true`로 기존 recall 노출을 다시 켤 수 있다.
+
+Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
+
+`memory_search`는 일반 node에 대해 one-hop 확장이다. User Anchor를 직접 확장할 때는 unbounded `spoke` traversal 대신 동일한 bounded Fact context를 반환한다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
 
 ### Post-response memory write
 
@@ -163,7 +169,7 @@ MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. Tool routing
 
 `file_read`는 일반 텍스트와 PDF, DOCX, XLSX, CSV, PPTX를 하나의 model-facing read interface로 처리한다. 구조화 문서 형식은 내부 문서 파서로 전달되며, CSV는 기본 UTF-8 BOM 호환 인코딩을 사용하고 필요하면 `cp949` 같은 인코딩을 명시할 수 있다. 모델이 `file_read`와 별도의 문서 읽기 도구 사이에서 route를 선택하게 하지 않는다.
 
-큰 tool result는 bounded page와 `result_id`로 축약될 수 있으며, 모델은 `tool_result_read`로 필요한 범위를 이어 읽는다.
+큰 tool result는 bounded page와 `result_id`로 축약될 수 있으며, 모델은 `tool_result_read`로 필요한 범위를 이어 읽는다. 다만 `web_search`는 모델이 검색 결과 pagination을 따로 따라가지 않도록 provider의 3개 result page를 한 번에 조회해 최대 15개를 기본 반환하고, title/URL/짧은 snippet만 유지한다. 실제 페이지 본문은 `web_fetch`가 담당한다.
 
 Material arithmetic은 main model 암산보다 `calculator`를 사용하도록 system contract에 명시되어 있다.
 
@@ -263,6 +269,7 @@ python -m pip install -e ".[dev]"
 
 ```env
 MAIN_MODEL=gemma4:e4b
+MEMORY_RECALL_INCLUDE_UTTERANCES=false
 ```
 
 실행:
