@@ -1,11 +1,13 @@
 """Post-response fact extraction for durable user memory.
 
-The main agent loop must finish before facts are applied. The extractor may
-propose concise long-term facts, but graph relations remain typed runtime rules.
+The main agent loop must finish before facts are applied. Persistent facts may
+come only from explicit current-user evidence, successful non-recall tool
+results, or final-answer claims already grounded by the final verifier.
 """
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 from typing import Protocol, Sequence
 
@@ -16,34 +18,63 @@ from ...llm.ollama import OllamaAdapter
 
 
 _FACT_EXTRACTION_SYSTEM = """
-You extract durable, user-grounded facts from one completed conversation turn.
-Return exactly one JSON object: {"facts": [string, ...]}.
+Compose concise durable memory facts from allowed_fact_sources only.
+
+Each allowed_fact_source already represents one of:
+- the latest user message;
+- a successful non-recall tool result from this turn;
+- a current-final factual claim already accepted by the final verifier and tied to explicit user/tool support ids.
 
 Evidence rules:
-- The latest user message is primary evidence.
-- previous_assistant_message is the most recent assistant message that existed before the latest user message. If the user broadly agrees with or approves prior assistant content, that approval may ground facts from previous_assistant_message only when they are within the same conversational topic.
-- Broad agreement or approval must never be applied to assistant_final_answer, because that answer was generated after the user's message and therefore could not have been approved by it.
-- When broad approval applies, admit only the underlying facts from previous_assistant_message that fall within the approved topic. Explicit corrections or narrowing in the latest user message override the previous assistant content.
-- assistant_final_answer is context only. Do not treat its claims as independent evidence.
-- successful_tool_results contains only successful NON-RECALL tool results. You may use them as grounding evidence when they establish information relevant to the user's state, project, decision, files, records, or other durable context.
+- A user-message source supports only factual content directly asserted by the user in that message.
+- A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content is not factual evidence
+  for the referenced assistant claims. Do not reconstruct or import facts from an assistant message merely because the
+  user approved it.
+- Previous assistant messages and the raw current assistant final answer are intentionally absent from this extraction
+  payload and must not be reconstructed.
+- A grounded_final_claim is admissible because the final verifier already tied it to explicit allowed support ids.
 - Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
+- Every output fact must cite one or more exact evidence_refs from allowed_fact_sources that materially establish it.
+- Never invent an evidence ref. A fact without a valid supporting ref is not admissible.
 
 Admission rules:
-- Extract concise facts that would be useful to remember later: explicit user facts, changes, decisions, preferences, plans, corrections, durable project state, or tool-grounded facts tied to the user's context.
-- Do not extract questions, requests, instructions to the assistant, or the mere fact that the user asked for recall/search/checking.
-- A pure recall question such as "do you remember X?" should normally return an empty facts array.
-- A mixed message such as "do you remember X? recently it changed to Y" must extract the new Y information even if recall was also used during the turn.
-- Do not invent missing details or infer a stronger claim than the evidence supports.
+- Extract concise facts that would be useful to remember later: explicit user facts, changes, decisions, preferences,
+  plans, corrections, durable project state, or tool/verifier-grounded facts tied to the user's context.
+- Do not extract questions, requests, instructions to the assistant, bare approval/agreement, or the mere fact that the
+  user asked for recall/search/checking.
+- A pure recall question should normally return an empty facts array.
+- A mixed message such as "do you remember X? recently it changed to Y" must extract the new Y information even if
+  recall was also used during the turn.
+- Do not infer a stronger claim than the allowed evidence supports.
 - Deduplicate semantically equivalent facts and keep each fact self-contained.
 """.strip()
 
 
+class _ComposedFactPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fact: str
+    evidence_refs: list[str]
 
 
 class _FactExtractionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    facts: list[str]
+    facts: list[_ComposedFactPayload]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolFactEvidence:
+    ref: str
+    tool: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class GroundedFinalClaimEvidence:
+    claim: str
+    support_ids: tuple[str, ...]
+
 
 class FactExtractionError(RuntimeError):
     """The post-response fact extractor could not produce a valid judgment."""
@@ -54,16 +85,15 @@ class FactExtractor(Protocol):
         self,
         *,
         user_text: str,
-        previous_assistant_message: str | None,
-        final_answer: str,
-        successful_tool_results: Sequence[str],
+        successful_tool_evidence: Sequence[ToolFactEvidence],
+        grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
     ) -> Sequence[str]:
-        """Return long-term fact texts derived from the completed turn."""
+        """Return long-term fact texts derived from explicitly allowed evidence."""
         ...
 
 
 class OllamaFactExtractor:
-    """Small judgment-only post-response extractor using an Ollama adapter."""
+    """Judgment-only post-response extractor over a structurally bounded source set."""
 
     def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float | None = None) -> None:
         if timeout_seconds is not None and timeout_seconds <= 0:
@@ -75,20 +105,62 @@ class OllamaFactExtractor:
         self,
         *,
         user_text: str,
-        previous_assistant_message: str | None,
-        final_answer: str,
-        successful_tool_results: Sequence[str],
+        successful_tool_evidence: Sequence[ToolFactEvidence],
+        grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
     ) -> Sequence[str]:
-        payload = {
-            "latest_user_message": user_text,
-            "previous_assistant_message": previous_assistant_message,
-            "assistant_final_answer": final_answer,
-            "successful_tool_results": list(successful_tool_results),
-        }
+        allowed_fact_sources: list[dict[str, object]] = [{
+            "ref": "user:current",
+            "kind": "current_user_message",
+            "content": user_text,
+        }]
+        grounding_support_ids = {"user:current"}
+
+        for item in successful_tool_evidence:
+            ref = item.ref.strip()
+            if not ref:
+                raise FactExtractionError("tool fact evidence requires a non-empty ref")
+            grounding_support_ids.add(ref)
+            allowed_fact_sources.append({
+                "ref": ref,
+                "kind": "successful_non_recall_tool_result",
+                "tool": item.tool,
+                "content": item.content,
+            })
+
+        for index, item in enumerate(grounded_final_claims):
+            claim = item.claim.strip()
+            if not claim:
+                raise FactExtractionError("grounded final claim must be non-empty")
+            support_ids = tuple(dict.fromkeys(
+                support_id.strip()
+                for support_id in item.support_ids
+                if support_id.strip()
+            ))
+            if not support_ids:
+                raise FactExtractionError("grounded final claim requires support ids")
+            invalid_support_ids = tuple(
+                support_id
+                for support_id in support_ids
+                if support_id not in grounding_support_ids
+            )
+            if invalid_support_ids:
+                raise FactExtractionError(
+                    "grounded final claim references inadmissible memory evidence: "
+                    + ", ".join(invalid_support_ids)
+                )
+            allowed_fact_sources.append({
+                "ref": f"grounded_final:{index}",
+                "kind": "grounded_final_claim",
+                "content": claim,
+                "grounding_support_ids": list(support_ids),
+            })
+
         request = ChatRequest(
             messages=(
                 {"role": "system", "content": _FACT_EXTRACTION_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "user", "content": json.dumps({
+                    "allowed_fact_sources": allowed_fact_sources,
+                }, ensure_ascii=False)},
             ),
             tools=(),
             think=False,
@@ -110,16 +182,26 @@ class OllamaFactExtractor:
             parsed = _FactExtractionPayload.model_validate_json(turn.content, strict=True)
         except ValidationError as exc:
             raise FactExtractionError("fact extractor violated structured output schema") from exc
-        raw_facts = parsed.facts
 
+        allowed_refs = {str(source["ref"]) for source in allowed_fact_sources}
         facts: list[str] = []
         seen: set[str] = set()
-        for raw in raw_facts:
-            if not isinstance(raw, str):
-                raise FactExtractionError("fact extractor facts must be strings")
-            fact = raw.strip()
+        for item in parsed.facts:
+            fact = item.fact.strip()
             if not fact:
                 raise FactExtractionError("fact extractor returned an empty fact")
+            evidence_refs = tuple(dict.fromkeys(
+                ref.strip()
+                for ref in item.evidence_refs
+                if ref.strip()
+            ))
+            if not evidence_refs:
+                raise FactExtractionError("fact extractor returned a fact without evidence refs")
+            unknown_refs = tuple(ref for ref in evidence_refs if ref not in allowed_refs)
+            if unknown_refs:
+                raise FactExtractionError(
+                    "fact extractor returned unknown evidence refs: " + ", ".join(unknown_refs)
+                )
             if fact in seen:
                 continue
             seen.add(fact)
