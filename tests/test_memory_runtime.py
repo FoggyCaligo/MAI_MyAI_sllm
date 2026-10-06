@@ -113,3 +113,54 @@ def test_auto_recall_keeps_concept_connected_to_current_user_anchor(tmp_path):
         assert any(edge.relation == "spoke" for edge in working.edges.values())
     finally:
         graph.close()
+
+
+def test_recall_anchor_context_is_bounded_and_does_not_dump_unrelated_utterances(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = FakeConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index, segmenter, anchor_fact_limit=2)
+    memory = MemoryRuntime(
+        graph,
+        index,
+        segmenter,
+        recall,
+        now=lambda: NOW,
+    )
+
+    def store_turn(user_text: str, fact_text: str) -> None:
+        evidence = memory.record_raw_user_evidence("alice", user_text)
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text=user_text,
+            final_answer="ok",
+            user_evidence=evidence,
+            fact_texts=(fact_text,),
+        ))
+
+    try:
+        store_turn("target topic", "stable profile fact")
+        store_turn("unrelated first", "older one-off fact")
+        store_turn("unrelated second", "newer one-off fact")
+        store_turn("reinforce stable", "stable profile fact")
+
+        recalled = memory.explicit_recall(user_id="alice", query="target")
+        utterance_texts = {
+            node.canonical_text
+            for node in recalled.nodes.values()
+            if node.node_type == "utterance"
+        }
+        fact_texts = {
+            node.canonical_text
+            for node in recalled.nodes.values()
+            if node.node_type == "fact"
+        }
+
+        assert "target topic" in utterance_texts
+        assert "unrelated first" not in utterance_texts
+        assert "unrelated second" not in utterance_texts
+        assert len(fact_texts) == 2
+        assert "stable profile fact" in fact_texts
+    finally:
+        graph.close()
+
