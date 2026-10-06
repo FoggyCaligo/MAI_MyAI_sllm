@@ -53,6 +53,8 @@ Answer the current request fully; prior answers do not imply user knowledge or j
 
 Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, calculation, or the terminal.
 
+Pretrained knowledge may be used for reasoning, but must not be treated as a source of factual claims.
+
 Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use file_read for local file contents, including PDF, DOCX, XLSX, CSV, and PPTX documents. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
 Large tool results may be represented by a bounded page containing a result_id, range metadata, and content. When more of that exact result is required, use tool_result_read with the supplied result_id and an explicit offset/limit rather than assuming omitted content.
@@ -124,6 +126,7 @@ class MAIRuntime:
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
         self._background_tasks: set[asyncio.Task[None]] = set()
+        self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 
     def _adapter_for(self, model: str) -> OllamaAdapter:
         clean_model = model.strip()
@@ -202,6 +205,8 @@ class MAIRuntime:
     ) -> MAIRunResult:
         if not prompt.strip():
             raise ValueError("prompt must be non-empty")
+        await self._await_pending_memory_update(principal.memory_user_id)
+
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         fact_extractor = self._fact_extractor_for(selected_model)
@@ -248,9 +253,23 @@ class MAIRuntime:
             )
         )
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self._memory_tasks_by_user[principal.memory_user_id] = task
+        task.add_done_callback(
+            lambda completed, user_id=principal.memory_user_id: self._forget_memory_task(user_id, completed)
+        )
 
         return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools)
+
+    async def _await_pending_memory_update(self, user_id: str) -> None:
+        task = self._memory_tasks_by_user.get(user_id)
+        if task is None:
+            return
+        await asyncio.shield(task)
+
+    def _forget_memory_task(self, user_id: str, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if self._memory_tasks_by_user.get(user_id) is task:
+            self._memory_tasks_by_user.pop(user_id, None)
 
     async def _postprocess_memory(
         self,
@@ -325,6 +344,7 @@ class MAIRuntime:
         for task in tuple(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
+        self._memory_tasks_by_user.clear()
         self.segmenter.close()
         self.concept_index.close()
         self.graph.close()
