@@ -71,8 +71,12 @@ def test_same_pair_may_have_distinct_typed_relations_but_not_duplicates(tmp_path
         received = repo.add_typed_edge(anchor.id, utterance.id, "received", provenance="test", now=NOW)
 
         assert first.id == duplicate.id
+        assert duplicate.occurrence_count == 2
         assert received.id != first.id
         assert repo.connection.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 2
+
+        weakened = repo.adjust_edge_occurrence_count(duplicate.id, delta=-1)
+        assert weakened.occurrence_count == 1
 
 
 def test_working_graph_merges_typed_one_hop_without_mutating_permanent_graph(tmp_path):
@@ -118,4 +122,51 @@ def test_user_fact_text_matches_returns_multiple_containing_facts_ranked_and_bou
         assert "사용자는 만년필의 알루미늄 배럴을 사용한다" in texts
         assert "사용자는 체스를 즐긴다" not in texts
         assert all(edge.relation == "asserted_fact" for edge in matched.edges)
+
+def test_existing_database_migrates_edge_occurrence_count(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "memory.db"
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TABLE nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identity_key TEXT NOT NULL UNIQUE,
+            node_type TEXT NOT NULL,
+            canonical_text TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            occurrence_count INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        );
+        CREATE TABLE user_anchors (
+            user_id TEXT PRIMARY KEY,
+            node_id INTEGER NOT NULL UNIQUE
+        );
+        CREATE TABLE evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_node_id INTEGER NOT NULL,
+            to_node_id INTEGER NOT NULL,
+            relation TEXT NOT NULL,
+            provenance TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(from_node_id, to_node_id, relation)
+        );
+        """
+    )
+    connection.close()
+
+    with MemoryGraphRepository(db_path) as repo:
+        columns = {
+            row["name"]
+            for row in repo.connection.execute("PRAGMA table_info(edges)").fetchall()
+        }
+        assert "occurrence_count" in columns
 
