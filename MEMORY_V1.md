@@ -60,7 +60,7 @@ Utterance   ─derived_fact─→ Fact
 
 Fact is the primary production memory node type. The selected turn model is reused with `think=False` after the final response and is instructed to extract multiple self-contained durable details rather than an aggressively minimal summary. There is no fixed extracted-Fact count cap in the parser/runtime contract. Raw Evidence remains the source record.
 
-Before creating a non-exact Fact node, MemoryRuntime generates bounded candidates from existing Concept links and asks a model-backed semantic identity resolver whether the new statement is the same durable proposition as one existing Fact. Only true semantic identity reuses the node; related, broader/narrower, corrected, changed, or conflicting state remains distinct. Reuse increments the Fact node's `occurrence_count` and still attaches/reinforces Concepts from the new wording.
+Fact identity follows the deterministic pre-#199 rule: within one user, the canonical Fact text itself defines the Fact identity key. Repeating the same canonical Fact text reuses that node and increments `occurrence_count`; a different Fact text creates a distinct Fact node. Concept identity separately remains exact canonical Sentence_Breaker segment identity. Production does not use model-based semantic identity merging between differently worded Fact nodes.
 
 ### Concept Node
 
@@ -220,7 +220,7 @@ agent/tool loop
        index only newly-created Concept Nodes
 ```
 
-Current production attempts model-backed Fact extraction in background post-processing. The extractor is intentionally recall-oriented and permissive about retaining concrete durable details. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and immutable raw evidence remains preserved rather than pretending semantic extraction succeeded.
+Current production attempts model-backed Fact extraction in background post-processing. The extractor is intentionally recall-oriented and permissive about retaining concrete durable details. Distinct product/model identities, components, configurations, and states should remain separate extracted Facts; only exact duplicate output strings are removed within one extraction result. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and immutable raw evidence remains preserved rather than pretending semantic extraction succeeded.
 
 Tool/search-derived world facts have a different source from user assertions and must not be silently stored as if the user had said them.
 
