@@ -731,3 +731,57 @@ def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
 
     assert not result.ok
     assert len(reviewer.requests) == 1
+
+def test_claim_level_unsupported_overrides_inconsistent_supported_overall_verdict(caplog) -> None:
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "supported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "Pilot 검은색 잉크는 저점도 잉크다",
+            "verdict": "unsupported",
+            "defect": "unsupported_inference",
+            "reason": "The evidence only establishes that the user uses Pilot black ink.",
+        }],
+        "action_verdict": "not_applicable",
+    }])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+
+    result = run(verifier.verify(
+        candidate="Pilot 검은색 잉크는 저점도라서 EF에 잘 맞습니다.",
+        messages=({"role": "user", "content": "나는 Pilot 검은색 잉크를 사용해."},),
+        tool_results=(),
+    ))
+
+    assert result.ok is False
+    assert result.issues[0].code == "claim_grounding_failed"
+    assert "evidence=unsupported" in caplog.text
+
+
+def test_evidence_correction_feedback_blocks_paraphrase_and_allows_new_tool_evidence() -> None:
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "unsupported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "Pilot 검은색 잉크는 부식 위험이 없다",
+            "verdict": "unsupported",
+            "defect": "missing_evidence",
+            "reason": "No supplied evidence establishes corrosion properties.",
+        }],
+        "action_verdict": "not_applicable",
+    }])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="Pilot 검은색 잉크는 부식 위험이 없습니다.",
+        messages=({"role": "user", "content": "나는 Pilot 검은색 잉크를 사용해."},),
+        tool_results=(),
+    ))
+
+    feedback = result.feedback_message()
+    assert "Do not restate, paraphrase, or replace a blocked claim" in feedback
+    assert "A correction round may call native tools" in feedback
+    assert "If no new supporting evidence is obtained" in feedback
+

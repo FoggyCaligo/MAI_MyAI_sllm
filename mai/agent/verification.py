@@ -164,6 +164,23 @@ class FinalVerificationResult:
                 "For evidence coverage insufficiency, expand the answer using material user-relevant facts already "
                 "present in the supplied evidence. Do not invent unsupported facts or chase optional completeness."
             )
+        evidence_issue_codes = {
+            "evidence_grounding_failed",
+            "claim_grounding_failed",
+            "evidence_scope_expansion",
+            "action_outcome_unverified",
+            "action_outcome_contradicted",
+        }
+        if any(issue.code in evidence_issue_codes for issue in self.issues):
+            lines.extend([
+                "The factual claims identified by the evidence issues above are blocked from release in their current form.",
+                "Do not restate, paraphrase, or replace a blocked claim with another factual explanation unless new user "
+                "or tool evidence obtained after this rejection actually supports the replacement.",
+                "A correction round may call native tools. If the blocked information is materially needed to answer the "
+                "user, obtain evidence with an appropriate available tool before attempting another final answer.",
+                "If no new supporting evidence is obtained, remove the unsupported explanation and answer only from the "
+                "established evidence, explicitly stating any material point that remains unknown.",
+            ])
         lines.extend([
             "For any unsupported or unverified portion, either obtain genuinely needed evidence with an available tool, "
             "or narrow/remove that claim and state clearly what remains unverified or failed.",
@@ -413,9 +430,11 @@ class FinalGroundingVerifier:
             evidence_verdict = parsed.evidence_verdict
             alignment_verdict = parsed.alignment_verdict
             coverage_verdict = parsed.coverage_verdict
-            if not reasons and not any(claim.verdict == "unsupported" for claim in claims):
-                if evidence_verdict == "unsupported":
-                    evidence_verdict = "uncertain"
+            unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
+            if unsupported_claims:
+                evidence_verdict = "unsupported"
+            elif not reasons and evidence_verdict == "unsupported":
+                evidence_verdict = "uncertain"
             if not reasons and alignment_verdict == "misaligned":
                 alignment_verdict = "uncertain"
             if not coverage_reasons and coverage_verdict == "insufficient":
