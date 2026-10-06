@@ -40,72 +40,41 @@ _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
 
-_FINAL_REVIEW_SYSTEM = """
-You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
+_GROUNDING_REVIEW_SYSTEM = """
+Review only factual grounding for the candidate answer.
 
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+Use the current user request and observed tool results as factual evidence. Prior assistant messages are context, not factual evidence.
 
-Your response is constrained by the supplied structured-output schema. Populate every required field:
-- evidence_verdict: "supported", "unsupported", or "uncertain"
-- alignment_verdict: "aligned", "misaligned", or "uncertain"
-- coverage_verdict: "sufficient", "insufficient", or "uncertain"
-- coverage_reasons: concrete material omissions from already supplied evidence only
-- reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
-- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+For every material factual claim:
+- decide supported, unsupported, or uncertain;
+- distinguish scope_expansion, contradiction, unsupported_inference, missing_evidence, or none;
+- check temporal wording against authoritative_current_time and source timestamps;
+- do not accept a broader claim than the evidence establishes.
 
-Claim-level evidence grounding:
-- For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
-- A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
-- Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
-- Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
-- Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
-- Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
-- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
+Overall evidence_verdict is unsupported if any material claim is concretely unsupported. Use uncertain only when the supplied evidence does not let you decide confidently.
+Do not judge task alignment, coverage, or action completion in this review.
+""".strip()
 
-Temporal authority:
-- authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
-- Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
-- If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
 
-Evidence scope preservation:
-- A final claim must not be semantically broader than the evidence supporting it.
-- Distinguish local state from remote state, one file from all files, visible rows from a complete collection, one command's effect from a larger goal, and one source's observation from a universal conclusion.
-- When evidence covers only part of a set or state, exhaustive, exclusive, global, superlative, or broader-scope conclusions require evidence that the broader scope was actually observed.
-- If the evidence supports a narrower statement but the candidate asserts a broader one, mark that claim unsupported with defect "scope_expansion".
-- Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
-- Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
+_TASK_REVIEW_SYSTEM = """
+Review only task alignment, evidence coverage, and action outcome for the candidate answer.
 
-Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
-- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
-- Prefer concrete supported results over replacing them with generic advice to check another source later.
-- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
-- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
-- coverage_reasons must identify the concrete already-observed information that the candidate should have used. If coverage is sufficient or uncertain, coverage_reasons should be empty.
+Alignment:
+- decide whether the answer fulfills the current user request;
+- truthful partial answers remain aligned when limitations are stated;
+- reject substituted tasks, evasions, or hidden material failures.
 
-Action outcome verification:
-- Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
-- If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
-- A successful action/tool invocation is evidence that the tool contract reported success. It is not automatically evidence for a broader requested end state.
-- Use "verified" only when the candidate claims completion and the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
-- Use "unverified" when an action was attempted or reported successful but the candidate claims completion beyond what resulting-state evidence establishes.
-- Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
-- Do not demand extra verification for a task that did not request or claim an external state change.
+Coverage:
+- use only information already present in current user messages and observed tool results;
+- mark insufficient only when material supported information relevant to the request was omitted;
+- do not demand optional detail or additional research.
 
-Task alignment and partial-answer policy:
-- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
-- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
-- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
-- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
-- Do reject a candidate that hides a material failure and presents an unverified result as completed.
-- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
+Action outcome:
+- decide whether a requested external state change is not_applicable, verified, unverified, or contradicted;
+- tool success alone does not prove a broader requested end state;
+- verified requires evidence establishing the claimed resulting state.
 
-Overall verdicts:
-- evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
-- evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
-- evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
+Do not perform factual claim grounding in this review.
 """.strip()
 
 
@@ -124,17 +93,21 @@ class _ClaimReviewPayload(BaseModel):
     reason: str
 
 
-class _FinalReviewPayload(BaseModel):
-    """Strict provider-structured reviewer response."""
-
+class _GroundingReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
+    reasons: list[str]
+    claims: list[_ClaimReviewPayload]
+
+
+class _TaskReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     reasons: list[str]
-    claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
