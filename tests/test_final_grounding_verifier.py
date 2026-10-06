@@ -785,3 +785,29 @@ def test_evidence_correction_feedback_blocks_paraphrase_and_allows_new_tool_evid
     assert "A correction round may call native tools" in feedback
     assert "If no new supporting evidence is obtained" in feedback
 
+def test_evidence_verification_allows_five_corrections_before_exhaustion() -> None:
+    main = SequenceAdapter([
+        "근거 없는 답변 1",
+        "근거 없는 답변 2",
+        "근거 없는 답변 3",
+        "근거 없는 답변 4",
+        "근거 없는 답변 5",
+        "이제 근거에 맞는 답변입니다.",
+    ])
+    reviewer = ReviewerAdapter([
+        ("unsupported", "aligned", ("Missing evidence.",)),
+        ("unsupported", "aligned", ("Still missing evidence.",)),
+        ("unsupported", "aligned", ("Still missing evidence.",)),
+        ("unsupported", "aligned", ("Still missing evidence.",)),
+        ("unsupported", "aligned", ("Still missing evidence.",)),
+        ("supported", "aligned", ()),
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
+
+    result = run(runtime.run_user_message("근거에 맞게 답해줘."))
+
+    assert result.content == "이제 근거에 맞는 답변입니다."
+    assert result.model_rounds == 6
+    assert len(reviewer.requests) == 6
+
