@@ -807,6 +807,14 @@ class FinalGroundingVerifier:
                     retryable,
                 )
                 if not retryable or attempt == 3:
+                    if isinstance(exc, ValidationError):
+                        raise RuntimeError(
+                            f"final {reviewer_name} violated structured output schema"
+                        ) from exc
+                    if isinstance(exc, (TimeoutError, OllamaChatTimeoutError)):
+                        raise RuntimeError(
+                            f"final {reviewer_name} timed out; release was not verified"
+                        ) from exc
                     raise RuntimeError(
                         f"final {reviewer_name} failed; release was not verified"
                     ) from exc
