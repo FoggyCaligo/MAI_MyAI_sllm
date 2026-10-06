@@ -39,6 +39,41 @@ class OneFactExtractor:
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
 
 
+class RecordingConceptIndex(FakeConceptIndex):
+    def __init__(self):
+        super().__init__()
+        self.search_calls = []
+
+    def search(self, queries, *, limit: int):
+        normalized = tuple(queries)
+        self.search_calls.append((normalized, limit))
+        return super().search(normalized, limit=limit)
+
+
+class ScoredConceptIndex(FakeConceptIndex):
+    def __init__(self, scores):
+        super().__init__()
+        self.scores = dict(scores)
+
+    def search(self, queries, *, limit: int):
+        query_values = tuple(queries)
+        if len(query_values) != 1:
+            raise AssertionError("recall must query one whitespace chunk at a time")
+        query = query_values[0]
+        hits = [
+            ConceptHit(
+                node_id=node_id,
+                score=float(self.scores.get(text, 0.0)),
+                match_kind="test",
+            )
+            for node_id, text in self.text_by_id.items()
+            if text == query
+        ]
+        return tuple(hits[:limit])
+
+
+
+
 def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
@@ -194,3 +229,70 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
         assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
     finally:
         graph.close()
+
+def test_recall_query_uses_whitespace_chunks_without_sentence_breaker_segmentation(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = RecordingConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        evidence = memory.record_raw_user_evidence("alice", "만년필 사용")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="만년필 사용",
+            final_answer="알겠어.",
+            user_evidence=evidence,
+        ))
+        index.search_calls.clear()
+
+        memory.explicit_recall(
+            user_id="alice",
+            query="만년필 fountain pen 사용",
+        )
+
+        assert index.search_calls == [
+            (("만년필",), 1),
+            (("fountain",), 1),
+            (("pen",), 1),
+            (("사용",), 1),
+        ]
+    finally:
+        graph.close()
+
+
+def test_recall_query_ranks_chunk_seeds_by_index_score_before_expansion(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = ScoredConceptIndex({
+        "alpha": 0.2,
+        "beta": 0.9,
+        "gamma": 0.7,
+    })
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index, concept_limit=2)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        evidence = memory.record_raw_user_evidence("alice", "alpha beta gamma")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="alpha beta gamma",
+            final_answer="ok",
+            user_evidence=evidence,
+        ))
+
+        recalled = memory.explicit_recall(
+            user_id="alice",
+            query="alpha beta gamma",
+        )
+        concept_texts = {
+            node.canonical_text
+            for node in recalled.nodes.values()
+            if node.node_type == "concept"
+        }
+
+        assert "beta" in concept_texts
+        assert "gamma" in concept_texts
+        assert "alpha" not in concept_texts
+    finally:
+        graph.close()
+
