@@ -19,7 +19,7 @@ from .guards import (
 )
 from .requirements import FrozenToolRequirements
 from .tool_results import ToolResultStore
-from .verification import FinalGroundingVerifier
+from .verification import FinalGroundingVerifier, FinalVerificationResult
 
 
 _LOG = logging.getLogger("uvicorn.error")
@@ -96,6 +96,7 @@ class AgentRunResult:
     tool_executions: tuple[ToolExecution, ...]
     model_rounds: int
     final_turn: ModelTurn
+    final_verification: FinalVerificationResult | None = None
 
 
 class AgentLoop:
@@ -312,6 +313,7 @@ class AgentLoop:
                         tool_executions=tuple(executions),
                         model_rounds=round_number,
                         final_turn=turn,
+                        final_verification=verification if self.final_verifier is not None else None,
                     )
 
                 round_observations: list[ExecutionObservation] = []
