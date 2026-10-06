@@ -20,7 +20,6 @@ class RecallService:
         *,
         concept_limit: int = 5,
         anchor_fact_limit: int = DEFAULT_ANCHOR_FACT_LIMIT,
-        include_utterances: bool = False,
     ) -> None:
         if concept_limit < 1:
             raise ValueError("concept_limit must be >= 1")
@@ -31,7 +30,6 @@ class RecallService:
         self.segmenter = segmenter
         self.concept_limit = concept_limit
         self.anchor_fact_limit = anchor_fact_limit
-        self.include_utterances = include_utterances
 
     def recall_query(self, *, user_id: str, query: str) -> WorkingGraph:
         if not query.strip():
@@ -45,23 +43,19 @@ class RecallService:
         self._merge_user_anchor_context(recalled, user_id=user_id)
 
         for hit in hits:
+            # Concept nodes are internal retrieval coordinates only. The model
+            # receives the Facts reached through them, not the Concept/Utterance
+            # carrier nodes themselves.
             neighborhood = self.graph.one_hop(hit.node_id)
-            if self.include_utterances:
-                recalled.merge(neighborhood)
-                path = self.graph.shortest_path_to_user_anchor(hit.node_id, user_id)
-                if path is not None:
-                    recalled.merge(path, mark_expanded=False)
-                continue
-
-            compact = self._without_utterances(neighborhood)
-            recalled.merge(compact)
+            compact = self._facts_only(neighborhood)
+            recalled.merge(compact, mark_expanded=False)
             for node in compact.nodes:
                 if node.node_type != "fact":
                     continue
                 path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
                 if path is not None:
                     recalled.merge(
-                        self._without_utterances(path),
+                        self._facts_only(path),
                         mark_expanded=False,
                     )
         return recalled
@@ -108,8 +102,12 @@ class RecallService:
         )
 
     @staticmethod
-    def _without_utterances(neighborhood: GraphNeighborhood) -> GraphNeighborhood:
-        nodes = tuple(node for node in neighborhood.nodes if node.node_type != "utterance")
+    def _facts_only(neighborhood: GraphNeighborhood) -> GraphNeighborhood:
+        nodes = tuple(
+            node
+            for node in neighborhood.nodes
+            if node.node_type in {"anchor", "fact"}
+        )
         node_ids = {node.id for node in nodes}
         edges = tuple(
             edge
