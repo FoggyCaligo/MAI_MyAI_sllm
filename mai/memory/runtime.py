@@ -82,6 +82,7 @@ class MemoryRuntime:
         self,
         *,
         user_text: str,
+        previous_assistant_message: str | None = None,
         final_answer: str,
         successful_tool_results: Sequence[str] = (),
         fact_extractor: FactExtractor | None = None,
@@ -92,6 +93,7 @@ class MemoryRuntime:
             return ()
         raw_facts = await extractor.extract(
             user_text=user_text,
+            previous_assistant_message=previous_assistant_message,
             final_answer=final_answer,
             successful_tool_results=successful_tool_results,
         )
@@ -108,6 +110,7 @@ class MemoryRuntime:
         *,
         user_id: str,
         user_text: str,
+        previous_assistant_message: str | None = None,
         final_answer: str,
         user_evidence: Evidence,
         successful_tool_results: Sequence[str] = (),
@@ -119,6 +122,7 @@ class MemoryRuntime:
         facts = (
             await self.extract_facts(
                 user_text=user_text,
+                previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
                 successful_tool_results=successful_tool_results,
             )
