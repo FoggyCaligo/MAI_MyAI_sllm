@@ -503,6 +503,8 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
         "action_verdict",
     }
     assert grounding_schema["additionalProperties"] is False
+    claim_schema = grounding_schema["$defs"]["_ClaimReviewPayload"]
+    assert "evidence_refs" in claim_schema["required"]
     assert task_schema["additionalProperties"] is False
 
 
@@ -534,7 +536,7 @@ def test_supported_claim_carries_verified_evidence_refs_into_result() -> None:
     assert result.grounded_claims[0].evidence_refs == ("user:current",)
 
 
-def test_supported_claim_without_evidence_ref_is_rejected_structurally() -> None:
+def test_supported_claim_without_evidence_ref_is_explicit_contract_failure() -> None:
     reviewer = SequenceAdapter([
         json.dumps({
             "evidence_verdict": "supported",
@@ -547,24 +549,15 @@ def test_supported_claim_without_evidence_ref_is_rejected_structurally() -> None
                 "evidence_refs": [],
             }],
         }, ensure_ascii=False),
-        json.dumps({
-            "alignment_verdict": "aligned",
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
-            "reasons": [],
-            "action_verdict": "not_applicable",
-        }, ensure_ascii=False),
     ])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
 
-    result = run(verifier.verify(
-        candidate="근거 없는 사실입니다.",
-        messages=({"role": "user", "content": "설명해줘."},),
-        tool_results=(),
-    ))
-
-    assert result.ok is False
-    assert result.issues[0].code == "claim_grounding_failed"
+    with pytest.raises(RuntimeError, match="supported claim without evidence refs"):
+        run(verifier.verify(
+            candidate="근거 없는 사실입니다.",
+            messages=({"role": "user", "content": "설명해줘."},),
+            tool_results=(),
+        ))
 
 
 def test_grounding_rejects_unknown_evidence_ref() -> None:
