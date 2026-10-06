@@ -1,4 +1,6 @@
-from mai.app.runtime import _previous_assistant_message
+from mai.agent.verification import GroundedClaim
+from mai.app.runtime import _memory_grounded_final_claims, _previous_assistant_message
+from mai.memory.extraction.service import GroundedFinalClaimEvidence
 
 
 def test_previous_assistant_context_uses_latest_existing_assistant_turn() -> None:
@@ -19,3 +21,22 @@ def test_previous_assistant_context_ignores_non_assistant_messages() -> None:
     )
 
     assert _previous_assistant_message(messages) is None
+
+
+def test_memory_grounded_claim_requires_all_support_ids_to_be_admissible() -> None:
+    claims = (
+        GroundedClaim("웹으로 확인된 사실", ("tool:2:web_search",)),
+        GroundedClaim("과거 user context와 웹을 함께 요구하는 사실", ("user:1:0", "tool:2:web_search")),
+        GroundedClaim("현재 user 직접 주장", ("user:7:0",)),
+        GroundedClaim("현재시각에만 의존하는 사실", ("runtime:current_time",)),
+    )
+
+    filtered = _memory_grounded_final_claims(
+        claims,
+        admissible_support_ids={"tool:2:web_search", "user:7:0"},
+    )
+
+    assert filtered == (
+        GroundedFinalClaimEvidence("웹으로 확인된 사실", ("tool:2:web_search",)),
+        GroundedFinalClaimEvidence("현재 user 직접 주장", ("user:7:0",)),
+    )

@@ -14,16 +14,22 @@ from ollama import AsyncClient
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
-from ..agent.verification import FinalGroundingVerifier
+from ..agent.verification import FinalGroundingVerifier, FinalVerificationResult, tool_evidence_ref
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
+    successful_non_recall_tool_evidence,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor
+from ..memory.extraction.service import (
+    GroundedFinalClaimEvidence,
+    OllamaFactExtractor,
+    ToolFactEvidence,
+    UserFactEvidence,
+)
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -54,6 +60,24 @@ def _previous_assistant_message(messages: Sequence[Mapping[str, Any]]) -> str | 
             return content
     return None
 
+
+
+def _memory_grounded_final_claims(
+    claims,
+    *,
+    admissible_support_ids: set[str],
+) -> tuple[GroundedFinalClaimEvidence, ...]:
+    """Keep only final claims whose complete verifier support is memory-admissible."""
+    grounded: list[GroundedFinalClaimEvidence] = []
+    for claim in claims:
+        support_ids = tuple(claim.support_ids)
+        if not support_ids or any(ref not in admissible_support_ids for ref in support_ids):
+            continue
+        grounded.append(GroundedFinalClaimEvidence(
+            claim=claim.claim,
+            support_ids=support_ids,
+        ))
+    return tuple(grounded)
 
 
 AGENT_SYSTEM_PROMPT = """
@@ -262,6 +286,7 @@ class MAIRuntime:
                 final_answer=answer,
                 principal=principal,
                 tool_executions=tool_executions,
+                final_verification=result.final_verification,
                 fact_extractor=fact_extractor,
             )
         )
@@ -292,11 +317,46 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
+        final_verification: FinalVerificationResult | None,
         fact_extractor: OllamaFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
+        indexed_tool_evidence = successful_non_recall_tool_evidence(tool_executions)
         extraction_tool_results = successful_non_recall_tool_results(tool_executions)
+        extraction_tool_evidence = tuple(
+            ToolFactEvidence(
+                ref=tool_evidence_ref(index, name),
+                tool=name,
+                content=content,
+            )
+            for index, name, content in indexed_tool_evidence
+        )
+        current_user_evidence = tuple(
+            UserFactEvidence(
+                ref=item.ref,
+                content=item.statement,
+                source_excerpt=item.source_excerpt,
+            )
+            for item in (
+                final_verification.user_evidence
+                if final_verification is not None
+                else ()
+            )
+            if item.is_current
+        )
+        admissible_support_ids = {
+            *(item.ref for item in current_user_evidence),
+            *(item.ref for item in extraction_tool_evidence),
+        }
+        memory_grounded_claims = _memory_grounded_final_claims(
+            (
+                final_verification.grounded_claims
+                if final_verification is not None
+                else ()
+            ),
+            admissible_support_ids=admissible_support_ids,
+        )
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
         try:
@@ -304,7 +364,9 @@ class MAIRuntime:
                 user_text=prompt,
                 previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
-                successful_tool_results=extraction_tool_results,
+                user_fact_evidence=current_user_evidence,
+                successful_tool_evidence=extraction_tool_evidence,
+                grounded_final_claims=memory_grounded_claims,
                 fact_extractor=fact_extractor,
             )
             extraction_succeeded = True
@@ -338,7 +400,9 @@ class MAIRuntime:
                 user_text=prompt,
                 final_answer=final_answer,
                 user_evidence=evidence,
-                successful_tool_results=extraction_tool_results,
+                user_fact_evidence=current_user_evidence,
+                successful_tool_evidence=extraction_tool_evidence,
+                grounded_final_claims=memory_grounded_claims,
                 fact_texts=fact_texts,
             )
             _LOG.info(
