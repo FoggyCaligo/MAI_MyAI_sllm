@@ -34,6 +34,17 @@ class FakeConceptIndex:
         return tuple(hits[:limit])
 
 
+class RecordingConceptIndex(FakeConceptIndex):
+    def __init__(self):
+        super().__init__()
+        self.search_calls = []
+
+    def search(self, queries, *, limit: int):
+        normalized = tuple(queries)
+        self.search_calls.append((normalized, limit))
+        return super().search(normalized, limit=limit)
+
+
 class OneFactExtractor:
     async def extract(self, *, user_text, final_answer, successful_tool_results):
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
@@ -43,7 +54,7 @@ def test_finish_turn_records_facts_without_utterance_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(
         graph,
         index,
@@ -84,7 +95,7 @@ def test_auto_recall_returns_only_anchor_and_fact_nodes(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(
         graph,
         index,
@@ -119,7 +130,7 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, anchor_fact_limit=2)
+    recall = RecallService(graph, index, anchor_fact_limit=2)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
 
     def store_turn(user_text: str, fact_text: str) -> None:
@@ -162,5 +173,37 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
         )
         assert not any(node["type"] == "utterance" for node in expanded["nodes"])
         assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
+    finally:
+        graph.close()
+
+
+def test_recall_query_uses_whitespace_chunks_without_sentence_breaker_segmentation(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = RecordingConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        evidence = memory.record_raw_user_evidence("alice", "만년필 사용")
+        asyncio.run(memory.finish_turn(
+            user_id="alice",
+            user_text="만년필 사용",
+            final_answer="알겠어.",
+            user_evidence=evidence,
+            fact_texts=("사용자는 만년필을 사용한다",),
+        ))
+        index.search_calls.clear()
+
+        memory.explicit_recall(
+            user_id="alice",
+            query="만년필 fountain pen 사용",
+        )
+
+        assert index.search_calls == [
+            (("만년필",), 1),
+            (("fountain",), 1),
+            (("pen",), 1),
+            (("사용",), 1),
+        ]
     finally:
         graph.close()
