@@ -21,17 +21,16 @@ _FACT_EXTRACTION_SYSTEM = """
 Compose concise durable memory facts from allowed_fact_sources only.
 
 Each allowed_fact_source already represents one of:
-- the latest user message;
+- a factual statement directly asserted by the current user and normalized by the verifier's first stage;
 - a successful non-recall tool result from this turn;
 - a current-final factual claim already accepted by the final verifier and tied to explicit user/tool support ids.
 
 Evidence rules:
-- A user-message source supports only factual content directly asserted by the user in that message.
-- A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content is not factual evidence
-  for the referenced assistant claims. Do not reconstruct or import facts from an assistant message merely because the
-  user approved it.
-- Previous assistant messages and the raw current assistant final answer are intentionally absent from this extraction
-  payload and must not be reconstructed.
+- direct_user_fact sources contain only factual content directly asserted by the current user.
+- A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content is not a direct_user_fact
+  and cannot ground facts about the referenced assistant content.
+- Previous assistant messages, raw user-message text, and the raw current assistant final answer are intentionally absent
+  from allowed_fact_sources and must not be reconstructed as factual evidence.
 - A grounded_final_claim is admissible because the final verifier already tied it to explicit allowed support ids.
 - Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
 - Every output fact must cite one or more exact evidence_refs from allowed_fact_sources that materially establish it.
@@ -64,6 +63,12 @@ class _FactExtractionPayload(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
+class DirectUserFactEvidence:
+    ref: str
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
 class ToolFactEvidence:
     ref: str
     tool: str
@@ -85,6 +90,7 @@ class FactExtractor(Protocol):
         self,
         *,
         user_text: str,
+        direct_user_facts: Sequence[DirectUserFactEvidence],
         successful_tool_evidence: Sequence[ToolFactEvidence],
         grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
     ) -> Sequence[str]:
@@ -105,15 +111,26 @@ class OllamaFactExtractor:
         self,
         *,
         user_text: str,
+        direct_user_facts: Sequence[DirectUserFactEvidence],
         successful_tool_evidence: Sequence[ToolFactEvidence],
         grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
     ) -> Sequence[str]:
-        allowed_fact_sources: list[dict[str, object]] = [{
-            "ref": "user:current",
-            "kind": "current_user_message",
-            "content": user_text,
-        }]
-        grounding_support_ids = {"user:current"}
+        allowed_fact_sources: list[dict[str, object]] = []
+        grounding_support_ids: set[str] = set()
+
+        for item in direct_user_facts:
+            ref = item.ref.strip()
+            content = item.content.strip()
+            if not ref:
+                raise FactExtractionError("direct user fact requires a non-empty ref")
+            if not content:
+                raise FactExtractionError("direct user fact requires non-empty content")
+            grounding_support_ids.add(ref)
+            allowed_fact_sources.append({
+                "ref": ref,
+                "kind": "direct_user_fact",
+                "content": content,
+            })
 
         for item in successful_tool_evidence:
             ref = item.ref.strip()
@@ -159,6 +176,7 @@ class OllamaFactExtractor:
             messages=(
                 {"role": "system", "content": _FACT_EXTRACTION_SYSTEM},
                 {"role": "user", "content": json.dumps({
+                    "current_user_request_context": user_text,
                     "allowed_fact_sources": allowed_fact_sources,
                 }, ensure_ascii=False)},
             ),
