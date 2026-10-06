@@ -191,9 +191,16 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class GroundedClaim:
+    claim: str
+    support_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
+    grounded_claims: tuple[GroundedClaim, ...] = ()
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -237,11 +244,20 @@ class FinalVerificationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalyzedClaim:
+    claim_id: str
+    claim: str
+    temporal: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimReview:
+    claim_id: str
     claim: str
     verdict: str
     defect: str = "none"
     reason: str = ""
+    support_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,7 +266,8 @@ class FinalReview:
     alignment_verdict: str
     coverage_verdict: str = "uncertain"
     coverage_reasons: tuple[str, ...] = ()
-    reasons: tuple[str, ...] = ()
+    alignment_reasons: tuple[str, ...] = ()
+    evidence_reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
 
