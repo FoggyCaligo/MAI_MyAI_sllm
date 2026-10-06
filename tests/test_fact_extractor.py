@@ -49,6 +49,12 @@ def test_extractor_preserves_new_fact_in_mixed_recall_style_message() -> None:
     assert request_payload["latest_user_message"].startswith("이거 기억해?")
     assert request_payload["successful_tool_results"] == []
     assert adapter.requests[0].think is False
+    schema = adapter.requests[0].response_format
+    assert isinstance(schema, dict)
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert schema["required"] == ["facts"]
+    assert schema["properties"]["facts"]["type"] == "array"
 
 
 def test_extractor_can_return_no_facts_for_pure_recall_question() -> None:
@@ -84,7 +90,7 @@ def test_extractor_receives_non_recall_tool_evidence_and_deduplicates() -> None:
 def test_extractor_invalid_json_is_an_explicit_failure() -> None:
     extractor = OllamaFactExtractor(FakeAdapter(["not-json"]))
 
-    with pytest.raises(FactExtractionError, match="invalid JSON"):
+    with pytest.raises(FactExtractionError, match="structured output schema"):
         run(extractor.extract(
             user_text="최근에 바뀐 게 있어.",
             final_answer="알겠어.",
