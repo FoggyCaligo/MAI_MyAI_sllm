@@ -70,7 +70,7 @@ Eligible user factual evidence:
 - A reference to prior assistant content does not copy that content into user evidence.
 - A correction or narrowing may be emitted only for the factual content the user explicitly states themselves.
 - Questions, requests, instructions, and requests to remember/search/check are not factual evidence.
-- For every emitted user assertion, statement and source_excerpt must be the same exact contiguous excerpt from the indexed user message that directly states that factual content. Do not paraphrase user evidence into a new source statement, and do not use an excerpt that merely approves or refers to other content.
+- For every emitted user assertion, source_excerpt must be an exact contiguous excerpt from the indexed user message that directly states that factual content. The excerpt itself becomes the factual source text. Do not use an excerpt that merely approves or refers to other content.
 
 Return only the supplied structured-output schema.
 """.strip()
@@ -143,7 +143,6 @@ class _UserAssertionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message_index: int
-    statement: str
     source_excerpt: str
 
 
@@ -587,28 +586,23 @@ class FinalGroundingVerifier:
         user_evidence: list[UserEvidence] = []
         seen_user_assertions: set[tuple[int, str]] = set()
         for item in parsed.user_assertions:
-            statement = item.statement.strip()
             source_excerpt = item.source_excerpt.strip()
             source_content = user_message_content.get(item.message_index)
             if source_content is None:
                 raise RuntimeError("candidate analyzer returned an unknown user message index")
-            if not statement or not source_excerpt:
+            if not source_excerpt:
                 raise RuntimeError("candidate analyzer returned an empty user evidence assertion")
-            if statement != source_excerpt:
-                raise RuntimeError(
-                    "candidate analyzer user evidence statement must exactly match source_excerpt"
-                )
             if source_excerpt not in source_content:
                 raise RuntimeError(
                     "candidate analyzer user evidence excerpt is not present in the cited user message"
                 )
-            key = (item.message_index, statement)
+            key = (item.message_index, source_excerpt)
             if key in seen_user_assertions:
                 continue
             seen_user_assertions.add(key)
             user_evidence.append(UserEvidence(
                 ref=f"user:{item.message_index}:{len(user_evidence)}",
-                statement=statement,
+                statement=source_excerpt,
                 message_index=item.message_index,
                 source_excerpt=source_excerpt,
                 is_current=item.message_index == current_user_index,

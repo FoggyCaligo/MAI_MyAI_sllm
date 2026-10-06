@@ -576,7 +576,6 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
             }],
             "user_assertions": [{
                 "message_index": 0,
-                "statement": "내 만년필은 은색 플레지르야.",
                 "source_excerpt": "내 만년필은 은색 플레지르야.",
             }],
         }, ensure_ascii=False),
@@ -619,7 +618,7 @@ def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None
     }]
 
 
-def test_candidate_analyzer_cannot_paraphrase_user_text_into_a_new_source() -> None:
+def test_candidate_analyzer_cannot_invent_user_evidence_excerpt() -> None:
     reviewer = SequenceAdapter([
         json.dumps({
             "alignment_verdict": "aligned",
@@ -627,13 +626,12 @@ def test_candidate_analyzer_cannot_paraphrase_user_text_into_a_new_source() -> N
             "claims": [],
             "user_assertions": [{
                 "message_index": 0,
-                "statement": "사용자는 은색 만년필을 쓴다",
-                "source_excerpt": "내 펜은 은색이야.",
+                "source_excerpt": "사용자는 은색 만년필을 쓴다",
             }],
         }, ensure_ascii=False),
     ])
 
-    with pytest.raises(RuntimeError, match="must exactly match source_excerpt"):
+    with pytest.raises(RuntimeError, match="excerpt is not present"):
         run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
             candidate="알겠어.",
             messages=({"role": "user", "content": "내 펜은 은색이야."},),
