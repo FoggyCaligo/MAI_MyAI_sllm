@@ -133,6 +133,10 @@ class OllamaFactExtractor:
             content = item.content.strip()
             if not ref or not content:
                 raise FactExtractionError("direct user evidence requires non-empty ref and content")
+            if content != item.source_excerpt.strip():
+                raise FactExtractionError(
+                    "direct user evidence content must exactly match its source excerpt"
+                )
             if ref in base_source_refs:
                 raise FactExtractionError(f"duplicate fact evidence ref: {ref}")
             base_source_refs.add(ref)
