@@ -180,7 +180,11 @@ class OllamaFactExtractor:
                 "topic": resolution.approval.topic,
                 "scope": resolution.approval.scope,
             })
+        grounding_source_refs = {"user:current"}
         for item in successful_tool_evidence:
+            if not item.ref.strip():
+                raise FactExtractionError("tool fact evidence requires a non-empty ref")
+            grounding_source_refs.add(item.ref)
             allowed_fact_sources.append({
                 "ref": item.ref,
                 "kind": "successful_non_recall_tool_result",
@@ -188,11 +192,22 @@ class OllamaFactExtractor:
                 "content": item.content,
             })
         for index, item in enumerate(grounded_final_claims):
+            if not item.claim.strip():
+                raise FactExtractionError("grounded final claim must be non-empty")
+            evidence_refs = tuple(dict.fromkeys(ref.strip() for ref in item.evidence_refs if ref.strip()))
+            if not evidence_refs:
+                raise FactExtractionError("grounded final claim requires evidence refs")
+            unknown_refs = tuple(ref for ref in evidence_refs if ref not in grounding_source_refs)
+            if unknown_refs:
+                raise FactExtractionError(
+                    "grounded final claim references inadmissible memory evidence: "
+                    + ", ".join(unknown_refs)
+                )
             allowed_fact_sources.append({
                 "ref": f"grounded_final:{index}",
                 "kind": "grounded_final_claim",
                 "content": item.claim,
-                "grounding_evidence_refs": list(item.evidence_refs),
+                "grounding_evidence_refs": list(evidence_refs),
             })
 
         composition_payload = {
