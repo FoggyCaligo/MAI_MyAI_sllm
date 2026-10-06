@@ -66,6 +66,8 @@ Your capabilities are defined by the native tools supplied with this request. Do
 
 Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use file_read for local file contents, including PDF, DOCX, XLSX, CSV, and PPTX documents. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
+Persistent memory admission runs automatically after an accepted final response. The absence of a model-visible memory-write tool does not mean new user-grounded facts cannot be stored. Do not claim that persistent memory cannot be updated merely because only memory read/search tools are exposed. Do not promise that a specific fact was stored until a later recall or database/tool check verifies it.
+
 Large tool results may be represented by a bounded page containing a result_id, range metadata, and content. When more of that exact result is required, use tool_result_read with the supplied result_id and an explicit offset/limit rather than assuming omitted content.
 
 Preserve factual values exactly as they appear in user messages and tool results unless the user explicitly asks to transform them. Do not silently replace, round, reinterpret, or normalize a supplied number into a different value. Distinguish source facts from derived calculations: for example, a profitable sale does not imply that a separately stated target price was reached.
@@ -127,7 +129,6 @@ class MAIRuntime:
         self.recall = RecallService(
             self.graph,
             self.concept_index,
-            self.segmenter,
             include_utterances=self.memory_recall_include_utterances,
         )
         self.memory = MemoryRuntime(
@@ -136,6 +137,7 @@ class MAIRuntime:
             self.segmenter,
             self.recall,
             now=lambda: datetime.now(timezone.utc),
+            record_utterances=self.memory_recall_include_utterances,
         )
         self._adapters: dict[str, OllamaAdapter] = {}
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
