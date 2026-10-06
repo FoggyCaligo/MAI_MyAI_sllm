@@ -1,5 +1,8 @@
 from mai.agent.tool_planner import _SYSTEM_PROMPT as TOOL_PREFLIGHT_PROMPT
-from mai.agent.verification import _FINAL_REVIEW_SYSTEM as FINAL_REVIEW_PROMPT
+from mai.agent.verification import (
+    _CANDIDATE_ANALYSIS_SYSTEM as CANDIDATE_ANALYSIS_PROMPT,
+    _EVIDENCE_REVIEW_SYSTEM as EVIDENCE_REVIEW_PROMPT,
+)
 
 
 def test_tool_preflight_requires_current_time_for_relative_temporal_comparison() -> None:
@@ -7,11 +10,16 @@ def test_tool_preflight_requires_current_time_for_relative_temporal_comparison()
     assert "current-time tool" in TOOL_PREFLIGHT_PROMPT
 
 
-def test_final_reviewer_checks_temporal_consistency() -> None:
-    assert "temporal framing is consistent with the current date/time" in FINAL_REVIEW_PROMPT
-    assert "dates or timestamps established by the supplied evidence" in FINAL_REVIEW_PROMPT
+def test_candidate_analyzer_identifies_temporal_claims_without_judging_support() -> None:
+    assert "Mark temporal=true" in CANDIDATE_ANALYSIS_PROMPT
+    assert "Do not decide temporal correctness" in CANDIDATE_ANALYSIS_PROMPT
 
 
-def test_final_reviewer_does_not_exempt_stable_general_knowledge() -> None:
-    assert "Stable general knowledge" not in FINAL_REVIEW_PROMPT
-    assert "authoritative_current_time" in FINAL_REVIEW_PROMPT
+def test_evidence_reviewer_checks_temporal_consistency() -> None:
+    assert "authoritative_current_time" in EVIDENCE_REVIEW_PROMPT
+    assert "source dates/timestamps" in EVIDENCE_REVIEW_PROMPT
+    assert "Historical source timestamps retain their original meaning" in EVIDENCE_REVIEW_PROMPT
+
+
+def test_evidence_reviewer_does_not_exempt_stable_general_knowledge() -> None:
+    assert "Stable general knowledge" not in EVIDENCE_REVIEW_PROMPT
