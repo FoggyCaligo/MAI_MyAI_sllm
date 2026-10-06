@@ -14,7 +14,7 @@ from ollama import AsyncClient
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
-from ..agent.verification import FinalGroundingVerifier, tool_evidence_ref
+from ..agent.verification import FinalGroundingVerifier, FinalVerificationResult, tool_evidence_ref
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.admission import (
@@ -317,7 +317,7 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
-        final_verification,
+        final_verification: FinalVerificationResult | None,
         fact_extractor: OllamaFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
