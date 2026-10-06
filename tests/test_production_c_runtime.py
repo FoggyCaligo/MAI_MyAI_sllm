@@ -36,11 +36,11 @@ class FakeConceptIndex:
         )[:limit]
 
 
-def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_path):
+def test_production_memory_registration_exposes_fact_first_recall_and_overview(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
     try:
         evidence = memory.record_raw_user_evidence("alice", "고양이 이름은 모카")
@@ -68,17 +68,25 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
             arguments={"limit": 5},
         )))
         assert overview["user_anchor"]["payload"]["user_id"] == "alice"
-        assert any(item["type"] == "utterance" and "모카" in item["text"] for item in overview["memories"])
+        assert any(item["type"] == "fact" and "모카" in item["text"] for item in overview["memories"])
+        assert not any(item["type"] == "utterance" for item in overview["memories"])
     finally:
         graph.close()
 
 
-def test_memory_recall_returns_only_current_call_while_working_graph_accumulates(tmp_path):
+def test_utterance_enabled_recall_returns_only_current_call_while_working_accumulates(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, include_utterances=True)
-    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    recall = RecallService(graph, index, include_utterances=True)
+    memory = MemoryRuntime(
+        graph,
+        index,
+        segmenter,
+        recall,
+        now=lambda: NOW,
+        record_utterances=True,
+    )
     try:
         first_evidence = memory.record_raw_user_evidence("alice", "모카 고양이")
         asyncio.run(memory.finish_turn(

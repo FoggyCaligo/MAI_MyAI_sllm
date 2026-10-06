@@ -14,13 +14,24 @@ from .working import WorkingGraph
 
 
 class MemoryRuntime:
-    def __init__(self, graph: MemoryGraphRepository, concept_index: ConceptIndex, segmenter: Segmenter, recall: RecallService, *, now: Callable[[], datetime], fact_extractor: FactExtractor | None = None) -> None:
+    def __init__(
+        self,
+        graph: MemoryGraphRepository,
+        concept_index: ConceptIndex,
+        segmenter: Segmenter,
+        recall: RecallService,
+        *,
+        now: Callable[[], datetime],
+        fact_extractor: FactExtractor | None = None,
+        record_utterances: bool = False,
+    ) -> None:
         self.graph = graph
         self.concept_index = concept_index
         self.segmenter = segmenter
         self.recall = recall
         self.now = now
         self.fact_extractor = fact_extractor
+        self.record_utterances = record_utterances
 
     def ensure_user(self, user_id: str) -> MemoryNode:
         return self.graph.ensure_user_anchor(user_id, now=self.now())
@@ -115,9 +126,16 @@ class MemoryRuntime:
     ) -> None:
         now = self.now()
         anchor = self.graph.ensure_user_anchor(user_id, now=now)
-        utterance = self.graph.create_utterance_node(user_id=user_id, evidence=user_evidence, now=now)
-        self.graph.add_typed_edge(anchor.id, utterance.id, "spoke", provenance="user_utterance", now=now)
-        self._link_concepts(carrier=utterance, text=user_text, relation="mentions", provenance="user_utterance")
+        utterance = None
+        if self.record_utterances:
+            utterance = self.graph.create_utterance_node(user_id=user_id, evidence=user_evidence, now=now)
+            self.graph.add_typed_edge(anchor.id, utterance.id, "spoke", provenance="user_utterance", now=now)
+            self._link_concepts(
+                carrier=utterance,
+                text=user_text,
+                relation="mentions",
+                provenance="user_utterance",
+            )
 
         facts = (
             await self.extract_facts(
@@ -134,7 +152,14 @@ class MemoryRuntime:
                 raise ValueError("fact extractor returned an empty fact")
             fact, _ = self.graph.get_or_create_fact(user_id=user_id, text=clean_fact, now=self.now())
             self.graph.add_typed_edge(anchor.id, fact.id, "asserted_fact", provenance="user_assertion", now=self.now())
-            self.graph.add_typed_edge(utterance.id, fact.id, "derived_fact", provenance="derived_from_utterance", now=self.now())
+            if utterance is not None:
+                self.graph.add_typed_edge(
+                    utterance.id,
+                    fact.id,
+                    "derived_fact",
+                    provenance="derived_from_utterance",
+                    now=self.now(),
+                )
             self._link_concepts(carrier=fact, text=clean_fact, relation="mentions", provenance="fact_index")
 
     def _link_concepts(self, *, carrier: MemoryNode, text: str, relation: str, provenance: str) -> None:

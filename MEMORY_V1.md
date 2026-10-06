@@ -1,6 +1,6 @@
 # MAI Memory v1
 
-This document defines MAI's long-term memory schema and runtime contract without relying on any earlier MACHI/MK repository. The memory system is an evidence-preserving graph built from user anchors, original utterances, optional user-grounded facts, reusable concepts, typed edges, and provenance. Model-visible recall enters that graph through explicit native memory tools backed by a model-independent ConceptIndex.
+This document defines MAI's long-term memory schema and runtime contract without relying on any earlier MACHI/MK repository. The memory system is an evidence-preserving graph centered on user anchors, user-grounded facts, reusable concepts, typed edges, and immutable raw evidence. Utterance graph nodes are optional and disabled by default in production. Model-visible recall enters that graph through explicit native memory tools backed by a model-independent ConceptIndex.
 
 ## 1. Core idea
 
@@ -10,9 +10,10 @@ Sentence_Breaker defines reusable **Concept Node boundaries**, not the entire me
 User utterance
   -> immutable raw Evidence
   -> after final response:
-       Utterance Node (original sentence)
-       Concept Nodes (Sentence_Breaker segments)
-       optional Fact Nodes (when a FactExtractor is configured)
+       model-backed broad Fact extraction
+       Fact Nodes
+       Concept Nodes linked from Facts
+       optional Utterance Node only when MEMORY_RECALL_INCLUDE_UTTERANCES=true
 ```
 
 Concept identity is exact segment identity:
@@ -23,7 +24,7 @@ one canonical Sentence_Breaker segment = one Concept Node
 
 Repeated appearances of the same segment reuse the same Concept Node. Recall indexing never merges graph identity.
 
-The full original sentence remains a first-class Utterance Node so evidence is preserved. Production `memory_recall` omits Utterance nodes by default to keep retrieval compact; `memory_overview`, `memory_search`, or the recall environment switch can expose raw wording when needed.
+The full original sentence is always preserved as immutable raw Evidence. A first-class Utterance graph node is optional: production defaults to not creating one, while the same Utterance environment switch can enable both recording and recall exposure for comparison/debugging.
 
 The production request path runs a model-backed `FactExtractor` during background post-response processing. Raw Utterance evidence is still preserved independently, and extraction failure does not silently fabricate Fact nodes.
 
@@ -57,7 +58,7 @@ User Anchor ─asserted_fact→ Fact
 Utterance   ─derived_fact─→ Fact
 ```
 
-Fact is an active production node type. The selected turn model is reused with `think=False` for background fact extraction after the final response; raw Utterance evidence remains the source record.
+Fact is the primary production memory node type. The selected turn model is reused with `think=False` after the final response and is instructed to extract multiple self-contained durable details rather than an aggressively minimal summary. Raw Evidence remains the source record.
 
 ### Concept Node
 
@@ -88,9 +89,9 @@ Relations involving Fact nodes are used only when Fact extraction is actually en
 
 ## 4. Evidence
 
-Raw user input is stored in the immutable `evidence` table before the agent run. Recording raw evidence is not semantic graph mutation. After the final answer, an Utterance Node is created for that evidence and connected to the user's memory anchor and its Concept nodes.
+Raw user input is stored in the immutable `evidence` table during post-response admission, before Fact/Utterance graph mutation. Recording raw evidence is not semantic graph mutation. By default, post-response admission creates Fact nodes directly under the user's anchor and links Concepts from those Facts. Utterance graph nodes are created only when the Utterance environment switch is enabled.
 
-This lets the system answer not only "what is remembered?" but also "what did the user actually say that produced this memory?"
+The evidence table remains the durable raw record even when no Utterance node is created.
 
 ## 5. Production runtime ordering
 
@@ -98,14 +99,15 @@ The current production request path is **pure-agent C**. It has no Tool Requirem
 
 ```text
 User input
-  -> record immutable raw evidence
   -> create per-turn Working Graph
   -> expose role-appropriate native tools
   -> main Ollama-native agent loop
        memory tools are available like other native capabilities
        the model chooses whether and when to call them
   -> final response accepted
-  -> post-response memory update
+  -> post-response memory extraction/admission
+       record immutable raw evidence
+       create Facts and optional Utterance graph nodes
 ```
 
 Memory is therefore not injected into every turn automatically. If user history is needed, the model explicitly calls a model-visible memory tool.
@@ -164,13 +166,12 @@ memory_overview(limit)
 
 memory_recall(query)
   -> bounded user-anchor Fact context
-       (asserted_fact only; raw spoke history is not dumped)
-  -> Sentence_Breaker query segments
-  -> Exact + FTS5 ConceptIndex
-  -> Concept seeds
-  -> graph neighborhoods
-  -> by default project Utterance nodes/edges out of the recall payload
-  -> preserve Fact paths to the user anchor
+  -> split only on whitespace
+  -> direct bounded Fact canonical_text containment search for all intact chunks
+  -> per chunk: one best Exact/FTS5 ConceptIndex seed
+  -> global concept_limit before graph expansion
+  -> merge matched/linked Facts and Concepts
+  -> include Utterances only when the Utterance switch is enabled
   -> merge into the per-turn Working Graph
   -> return only this recall call's payload
 
@@ -185,7 +186,7 @@ Shortest-path discovery treats topology as undirected, while returned edges pres
 
 The Working Graph is temporary per-turn state and is not persisted as another graph. It accumulates recalled nodes internally so later expansion can continue from prior results, but each model-visible memory tool returns only the payload produced by that call rather than re-sending the entire accumulated Working Graph.
 
-Production defaults to `MEMORY_RECALL_INCLUDE_UTTERANCES=false`. Setting it to `true` restores raw Utterance nodes in `memory_recall` for comparison testing without changing what is stored in the permanent graph.
+Production defaults to `MEMORY_RECALL_INCLUDE_UTTERANCES=false`. This single switch controls both new Utterance-node recording and Utterance exposure in `memory_recall`. Setting it to `true` restores both behaviors. Immutable raw Evidence is stored independently either way.
 
 ## 8. Deliberate memory expansion
 
@@ -200,21 +201,24 @@ There is no arbitrary-depth hidden traversal; farther recall requires another ex
 No interpreted graph memory is written during the native tool-use loop.
 
 ```text
-raw user evidence saved
-  -> agent/tool loop
+agent/tool loop
   -> final answer accepted
+  -> broad Fact extraction
+  -> raw user evidence saved
   -> MemoryRuntime.finish_turn()
-       create Utterance Node
-       connect user_anchor -> utterance (spoke)
-       create/reuse Sentence_Breaker Concepts
-       connect utterance -> concept (mentions)
-       if FactExtractor is configured:
-         create user-grounded Facts
-         connect anchor/utterance/fact provenance
+       create user-grounded Fact Nodes
+       connect user_anchor -> fact (asserted_fact)
+       create/reuse Sentence_Breaker Concepts from each Fact
+       connect fact -> concept (mentions)
+       if Utterance switch is enabled:
+         also create Utterance Node
+         connect user_anchor -> utterance (spoke)
+         connect utterance -> fact (derived_fact)
+         connect utterance -> concept (mentions)
        index only newly-created Concept Nodes
 ```
 
-Current production attempts model-backed Fact extraction in background post-processing. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and the raw user turn is still preserved rather than pretending semantic extraction succeeded.
+Current production attempts model-backed Fact extraction in background post-processing. The extractor is intentionally recall-oriented and permissive about retaining concrete durable details. If extraction succeeds, user-grounded Fact nodes are admitted with provenance; if extraction fails, the failure is logged and immutable raw evidence remains preserved rather than pretending semantic extraction succeeded.
 
 Tool/search-derived world facts have a different source from user assertions and must not be silently stored as if the user had said them.
 

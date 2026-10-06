@@ -87,3 +87,35 @@ def test_working_graph_merges_typed_one_hop_without_mutating_permanent_graph(tmp
         assert working.expanded_node_ids == {a.id}
         assert next(iter(working.edges.values())).relation == "mentions"
         assert repo.connection.execute("SELECT COUNT(*) FROM edges").fetchone()[0] == 1
+
+def test_user_fact_text_matches_returns_multiple_containing_facts_ranked_and_bounded(tmp_path):
+    with MemoryGraphRepository(tmp_path / "memory.db") as repo:
+        anchor = repo.ensure_user_anchor("alice", now=NOW)
+        facts = []
+        for text in (
+            "사용자는 플래티넘 만년필을 사용한다",
+            "사용자는 만년필의 알루미늄 배럴을 사용한다",
+            "사용자는 체스를 즐긴다",
+        ):
+            fact, _ = repo.get_or_create_fact(user_id="alice", text=text, now=NOW)
+            repo.add_typed_edge(
+                anchor.id,
+                fact.id,
+                "asserted_fact",
+                provenance="user_assertion",
+                now=NOW,
+            )
+            facts.append(fact)
+
+        matched = repo.user_fact_text_matches(
+            "alice",
+            ("만년필", "사용"),
+            limit=10,
+        )
+        texts = [node.canonical_text for node in matched.nodes if node.node_type == "fact"]
+
+        assert "사용자는 플래티넘 만년필을 사용한다" in texts
+        assert "사용자는 만년필의 알루미늄 배럴을 사용한다" in texts
+        assert "사용자는 체스를 즐긴다" not in texts
+        assert all(edge.relation == "asserted_fact" for edge in matched.edges)
+

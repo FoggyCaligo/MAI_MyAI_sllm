@@ -91,41 +91,40 @@ Recovery finalization 자체도 실패하면 원래 exception을 다시 드러�
 
 ## 4. Graph Long-term Memory
 
-MAI memory의 기본 구조는 다음과 같다.
+MAI memory의 기본 production 구조는 Fact-first다.
 
 ```text
-User Anchor
-   ├─spoke────────→ Utterance
-   └─asserted_fact→ Fact
+User Anchor ─asserted_fact→ Fact ─mentions→ Concept
+```
 
-Utterance ─derived_fact→ Fact
-Utterance ─mentions────→ Concept
-Fact      ─mentions────→ Concept
+`.env`의 `MEMORY_RECALL_INCLUDE_UTTERANCES=true`일 때만 새 Utterance graph node도 함께 기록한다.
+
+```text
+User Anchor ─spoke──────→ Utterance
+Utterance   ─derived_fact→ Fact
+Utterance   ─mentions────→ Concept
 ```
 
 핵심 node:
 
 - **User Anchor**: `db_id`마다 하나씩 존재하는 사용자 기준점
-- **Utterance**: 원문 사용자 evidence
-- **Fact**: 발화에서 파생된 durable fact
+- **Fact**: 사용자 발화에서 폭넓게 추출한 durable fact
 - **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 개념
+- **Utterance**: 옵션. 토글이 켜진 경우에만 원문 발화 graph node를 생성
 
-원문 Utterance와 파생 Fact는 분리해 보존한다.
+원문 자체는 Utterance node 사용 여부와 별개로 immutable `evidence` table에 보존한다.
 
-Retrieval은 embedding/vector space를 production identity로 사용하지 않는다.
+Retrieval은 embedding/vector space를 production identity로 사용하지 않는다. 저장 시에는 Sentence_Breaker로 Concept을 만들지만, recall query는 다시 Sentence_Breaker로 분해하지 않는다.
 
 ```text
-query
-  ↓ Sentence_Breaker
-canonical segments
+model recall query
+  ↓ whitespace chunks
+intact query chunks
+  ├─ Fact canonical_text 포함검색
+  └─ ConceptIndex exact/FTS5 검색
+       └─ chunk당 최고 Concept seed 1개
   ↓
-exact hash lookup
-  ↓ miss
-SQLite FTS5 lexical retrieval
-  ↓
-Concept Nodes
-  ↓
-Graph neighborhood
+bounded Fact + Concept context
 ```
 
 현재 model-visible memory tool:
@@ -136,7 +135,9 @@ Graph neighborhood
 
 Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
 
-`memory_recall`은 기본적으로 원문 Utterance node를 model-visible 결과에서 제외하고 Concept + Fact 중심으로 반환한다. 원문 자체는 DB에 그대로 보존되며 `memory_overview`와 `memory_search`로 확인할 수 있다. 테스트를 위해 `.env`의 `MEMORY_RECALL_INCLUDE_UTTERANCES=true`로 기존 recall 노출을 다시 켤 수 있다.
+`memory_recall`은 공백 chunk 각각을 그대로 검색 단위로 사용한다. 각 chunk가 포함된 Fact 본문을 직접 찾고, 동시에 ConceptIndex에서 chunk당 최고 Concept seed 하나를 선택해 연결된 Fact context를 더한다. 따라서 `"만년필"`을 검색하면 하나의 Concept node만 보여주는 것이 아니라 본문에 `"만년필"`이 포함된 여러 Fact도 bounded result로 함께 들어온다.
+
+`MEMORY_RECALL_INCLUDE_UTTERANCES=false`가 기본이며 이 경우 **새 Utterance graph node를 만들지 않고 recall에도 Utterance를 넣지 않는다.** `true`로 바꾸면 두 동작을 함께 활성화한다. raw user evidence는 토글과 무관하게 별도 evidence table에 보존한다.
 
 Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
 
@@ -144,9 +145,11 @@ Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `m
 
 ### Post-response memory write
 
-최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다.
+최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다. 모델에게 별도 `memory_write` tool이 노출되지 않아도 이 background admission이 자동으로 실행된다.
 
-Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않되 raw user turn을 보존하는 방향으로 admission한다.
+Fact extractor는 최소 요약 하나만 남기기보다, 이후 recall에 도움이 될 수 있는 사용자 상태·소유물·구성·변경·선호·이유·호환성 같은 세부사항을 여러 개의 self-contained Fact로 폭넓게 추출하도록 한다.
+
+Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않고 raw evidence를 보존한다.
 
 ---
 

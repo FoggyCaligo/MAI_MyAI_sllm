@@ -24,7 +24,10 @@ Evidence rules:
 - Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
 
 Admission rules:
-- Extract concise facts that would be useful to remember later: explicit user facts, changes, decisions, preferences, plans, corrections, durable project state, or tool-grounded facts tied to the user's context.
+- Prefer recall coverage over aggressive filtering. Extract all user-grounded details that are plausibly useful in a later conversation, not only a minimal summary.
+- Extract explicit user facts, current possessions/configurations, changes, decisions, preferences, plans, corrections, reasons for changes, durable project state, and tool-grounded facts tied to the user's context.
+- When one message contains several durable details, split them into multiple self-contained facts so later retrieval can match any important detail independently.
+- Preserve specific model names, component relationships, materials, compatibility details, chosen settings, and other concrete attributes when the user states them.
 - Do not extract questions, requests, instructions to the assistant, or the mere fact that the user asked for recall/search/checking.
 - A pure recall question such as "do you remember X?" should normally return an empty facts array.
 - A mixed message such as "do you remember X? recently it changed to Y" must extract the new Y information even if recall was also used during the turn.
