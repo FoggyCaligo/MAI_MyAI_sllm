@@ -255,8 +255,8 @@ class MemoryGraphRepository:
         """Return a bounded fact context for one user's anchor.
 
         Raw utterances connected through ``spoke`` are intentionally excluded.
-        Repeated facts rank ahead of one-off facts, with recency as the tie-breaker,
-        so the anchor context stays bounded as the permanent graph grows.
+        Recent facts rank first. Occurrence count is only a late tie-breaker so
+        frequently repeated older facts do not crowd out newer user state.
         """
         if limit < 0:
             raise ValueError("anchor fact context limit must be >= 0")
@@ -271,7 +271,7 @@ class MemoryGraphRepository:
             WHERE e.from_node_id = ?
               AND e.relation = 'asserted_fact'
               AND n.node_type = 'fact'
-            ORDER BY n.occurrence_count DESC, n.last_seen_at DESC, n.id DESC
+            ORDER BY n.last_seen_at DESC, n.occurrence_count DESC, n.id DESC
             LIMIT ?
             """,
             (anchor.id, limit),
@@ -290,7 +290,8 @@ class MemoryGraphRepository:
         """Return bounded asserted Facts whose text contains query chunks.
 
         Matching is literal containment over intact query chunks. Facts matching
-        more chunks rank first, followed by occurrence count and recency.
+        more chunks rank first, followed by recency. Occurrence count is only a
+        later tie-breaker.
         """
         if limit < 0:
             raise ValueError("fact text match limit must be >= 0")
@@ -325,7 +326,7 @@ class MemoryGraphRepository:
               AND e.relation = 'asserted_fact'
               AND n.node_type = 'fact'
               AND ({where_terms})
-            ORDER BY match_count DESC, n.occurrence_count DESC, n.last_seen_at DESC, n.id DESC
+            ORDER BY match_count DESC, n.last_seen_at DESC, n.occurrence_count DESC, n.id DESC
             LIMIT ?
             """,
             params,
