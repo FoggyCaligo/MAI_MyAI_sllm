@@ -136,6 +136,8 @@ Graph neighborhood
 
 Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
 
+Recall query는 저장 단계의 Sentence_Breaker로 다시 쪼개지 않는다. 모델이 보낸 query를 공백 단위 chunk로만 나누고, 각 chunk는 그대로 ConceptIndex에서 검색한다. 각 chunk당 최고 hit 하나만 후보가 되며, 후보들은 index relevance 점수 순으로 정렬된 뒤 `concept_limit` 안에서만 graph seed로 확장된다.
+
 `memory_recall`은 기본적으로 원문 Utterance node를 model-visible 결과에서 제외하고 Concept + Fact 중심으로 반환한다. 원문 자체는 DB에 그대로 보존되며 `memory_overview`와 `memory_search`로 확인할 수 있다. 테스트를 위해 `.env`의 `MEMORY_RECALL_INCLUDE_UTTERANCES=true`로 기존 recall 노출을 다시 켤 수 있다.
 
 Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
