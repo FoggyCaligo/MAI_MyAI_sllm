@@ -51,12 +51,15 @@ class ReviewerAdapter:
         schema_properties = request.response_format["properties"]
         payload = json.loads(request.messages[1]["content"])
         if "resolved_request" in schema_properties:
-            return turn(json.dumps({
+            response = turn(json.dumps({
                 "resolved_request": payload.get("current_user_request", ""),
                 "alignment_verdict": alignment_verdict,
                 "reasons": list(reasons) if alignment_verdict == "misaligned" else [],
                 "claims": [],
             }, ensure_ascii=False))
+            if alignment_verdict == "misaligned":
+                self.reviews.pop(0)
+            return response
 
         self.reviews.pop(0)
         return turn(json.dumps({
@@ -83,12 +86,13 @@ class StructuredReviewerAdapter:
         payload = json.loads(request.messages[1]["content"])
 
         if "resolved_request" in schema_properties:
-            return turn(json.dumps({
+            alignment_verdict = review.get("alignment_verdict", "aligned")
+            response = turn(json.dumps({
                 "resolved_request": payload.get("current_user_request", ""),
-                "alignment_verdict": review.get("alignment_verdict", "aligned"),
+                "alignment_verdict": alignment_verdict,
                 "reasons": (
                     list(review.get("reasons", []))
-                    if review.get("alignment_verdict", "aligned") == "misaligned"
+                    if alignment_verdict == "misaligned"
                     else []
                 ),
                 "claims": [
@@ -99,6 +103,9 @@ class StructuredReviewerAdapter:
                     for claim in review.get("claims", [])
                 ],
             }, ensure_ascii=False))
+            if alignment_verdict == "misaligned":
+                self.reviews.pop(0)
+            return response
 
         self.reviews.pop(0)
         evidence_sources = payload.get("evidence_sources", [])
