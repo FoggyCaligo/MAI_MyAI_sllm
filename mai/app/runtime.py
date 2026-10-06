@@ -14,16 +14,21 @@ from ollama import AsyncClient
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
-from ..agent.verification import FinalGroundingVerifier
+from ..agent.verification import FinalGroundingVerifier, tool_evidence_ref
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
+    successful_non_recall_tool_evidence,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor
+from ..memory.extraction.service import (
+    GroundedFinalClaimEvidence,
+    OllamaFactExtractor,
+    ToolFactEvidence,
+)
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -262,6 +267,17 @@ class MAIRuntime:
                 final_answer=answer,
                 principal=principal,
                 tool_executions=tool_executions,
+                grounded_final_claims=tuple(
+                    GroundedFinalClaimEvidence(
+                        claim=claim.claim,
+                        evidence_refs=claim.evidence_refs,
+                    )
+                    for claim in (
+                        result.final_verification.grounded_claims
+                        if result.final_verification is not None
+                        else ()
+                    )
+                ),
                 fact_extractor=fact_extractor,
             )
         )
@@ -292,11 +308,21 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
+        grounded_final_claims: Sequence[GroundedFinalClaimEvidence],
         fact_extractor: OllamaFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
+        indexed_tool_evidence = successful_non_recall_tool_evidence(tool_executions)
         extraction_tool_results = successful_non_recall_tool_results(tool_executions)
+        extraction_tool_evidence = tuple(
+            ToolFactEvidence(
+                ref=tool_evidence_ref(index, name),
+                tool=name,
+                content=content,
+            )
+            for index, name, content in indexed_tool_evidence
+        )
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
         try:
@@ -304,7 +330,8 @@ class MAIRuntime:
                 user_text=prompt,
                 previous_assistant_message=previous_assistant_message,
                 final_answer=final_answer,
-                successful_tool_results=extraction_tool_results,
+                successful_tool_evidence=extraction_tool_evidence,
+                grounded_final_claims=grounded_final_claims,
                 fact_extractor=fact_extractor,
             )
             extraction_succeeded = True
@@ -338,7 +365,8 @@ class MAIRuntime:
                 user_text=prompt,
                 final_answer=final_answer,
                 user_evidence=evidence,
-                successful_tool_results=extraction_tool_results,
+                successful_tool_evidence=extraction_tool_evidence,
+                grounded_final_claims=grounded_final_claims,
                 fact_texts=fact_texts,
             )
             _LOG.info(
