@@ -43,13 +43,16 @@ _LOG = logging.getLogger("uvicorn.error")
 _GROUNDING_REVIEW_SYSTEM = """
 Review only factual grounding for the candidate answer.
 
-Use the current user request and observed tool results as factual evidence. Prior assistant messages are context, not factual evidence.
+Use only the supplied evidence_sources as factual evidence. Each source has a stable ref. Prior assistant messages are context, not factual evidence.
 
 For every material factual claim:
 - decide supported, unsupported, or uncertain;
 - distinguish scope_expansion, contradiction, unsupported_inference, missing_evidence, or none;
 - check temporal wording against authoritative_current_time and source timestamps;
-- do not accept a broader claim than the evidence establishes.
+- do not accept a broader claim than the evidence establishes;
+- return evidence_refs containing the exact refs of every evidence source that materially supports a supported claim;
+- never invent an evidence ref and never cite conversation context as evidence;
+- a supported claim must have at least one valid evidence_ref.
 
 Overall evidence_verdict is unsupported if any material claim is concretely unsupported. Use uncertain only when the supplied evidence does not let you decide confidently.
 Do not judge task alignment, coverage, or action completion in this review.
@@ -91,6 +94,7 @@ class _ClaimReviewPayload(BaseModel):
         "missing_evidence",
     ]
     reason: str
+    evidence_refs: list[str]
 
 
 class _GroundingReviewPayload(BaseModel):
@@ -118,9 +122,16 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class GroundedClaim:
+    claim: str
+    evidence_refs: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
+    grounded_claims: tuple[GroundedClaim, ...] = ()
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -169,6 +180,7 @@ class ClaimReview:
     verdict: str
     defect: str = "none"
     reason: str = ""
+    evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,7 +307,16 @@ class FinalGroundingVerifier:
             action=review.action_verdict if allow_evidence_review else "skipped",
             reasons=review.evidence_reasons + review.task_reasons + review.coverage_reasons,
         )
-        return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+        grounded_claims = tuple(
+            GroundedClaim(claim=claim.claim, evidence_refs=claim.evidence_refs)
+            for claim in review.claims
+            if claim.verdict == "supported" and claim.evidence_refs
+        ) if allow_evidence_review else ()
+        return FinalVerificationResult(
+            ok=not issues,
+            issues=tuple(issues),
+            grounded_claims=grounded_claims,
+        )
 
     def _numeric_issue(
         self,
@@ -357,17 +378,37 @@ class FinalGroundingVerifier:
             else ""
         )
         context_source = messages[:current_user_index] if current_user_index is not None else messages[:-1]
+        recent_context = [
+            (index, message)
+            for index, message in enumerate(context_source)
+            if message.get("role") in {"user", "assistant"}
+            and isinstance(message.get("content"), str)
+        ][-10:]
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
                 "content": _clip_text(str(message.get("content") or ""), 1800),
             }
-            for message in context_source
-            if message.get("role") in {"user", "assistant"}
-            and isinstance(message.get("content"), str)
-        ][-10:]
+            for _, message in recent_context
+        ]
+        user_evidence = [
+            {
+                "ref": f"user:context:{index}",
+                "kind": "user_message",
+                "content": _clip_text(str(message.get("content") or ""), 1800),
+            }
+            for index, message in recent_context
+            if message.get("role") == "user"
+        ]
+        if current_user_index is not None:
+            user_evidence.append({
+                "ref": "user:current",
+                "kind": "user_message",
+                "content": current_user_request,
+            })
         tool_evidence = [
             {
+                "ref": tool_evidence_ref(index, name),
                 "index": index,
                 "tool": name,
                 "ok": ok,
@@ -378,6 +419,18 @@ class FinalGroundingVerifier:
                 tool_results[-10:], start=max(0, len(tool_results) - 10)
             )
         ]
+        evidence_sources = user_evidence + [
+            {
+                "ref": item["ref"],
+                "kind": "tool_result",
+                "tool": item["tool"],
+                "ok": item["ok"],
+                "error_type": item["error_type"],
+                "content": item["result"],
+            }
+            for item in tool_evidence
+        ]
+        allowed_evidence_refs = {str(item["ref"]) for item in evidence_sources}
         common_payload = {
             "current_user_request": current_user_request,
             "conversation_context": context_messages,
@@ -394,6 +447,7 @@ class FinalGroundingVerifier:
                     {"role": "system", "content": _GROUNDING_REVIEW_SYSTEM},
                     {"role": "user", "content": json.dumps({
                         "authoritative_current_time": current_time(),
+                        "evidence_sources": evidence_sources,
                         **common_payload,
                     }, ensure_ascii=False)},
                 ),
@@ -416,16 +470,32 @@ class FinalGroundingVerifier:
             grounding_reasons = tuple(
                 dict.fromkeys(item.strip() for item in parsed_grounding.reasons if item.strip())
             )
-            claims = tuple(
-                ClaimReview(
-                    claim=item.claim.strip(),
-                    verdict=item.verdict,
-                    defect=item.defect,
-                    reason=item.reason.strip(),
-                )
-                for item in parsed_grounding.claims
-                if item.claim.strip()
-            )
+            parsed_claims: list[ClaimReview] = []
+            for item in parsed_grounding.claims:
+                claim_text = item.claim.strip()
+                if not claim_text:
+                    continue
+                evidence_refs = tuple(dict.fromkeys(ref.strip() for ref in item.evidence_refs if ref.strip()))
+                unknown_refs = tuple(ref for ref in evidence_refs if ref not in allowed_evidence_refs)
+                if unknown_refs:
+                    raise RuntimeError(
+                        "grounding reviewer returned unknown evidence refs: " + ", ".join(unknown_refs)
+                    )
+                verdict = item.verdict
+                defect = item.defect
+                reason = item.reason.strip()
+                if verdict == "supported" and not evidence_refs:
+                    verdict = "unsupported"
+                    defect = "missing_evidence"
+                    reason = reason or "A supported factual claim must cite at least one supplied evidence source."
+                parsed_claims.append(ClaimReview(
+                    claim=claim_text,
+                    verdict=verdict,
+                    defect=defect,
+                    reason=reason,
+                    evidence_refs=evidence_refs,
+                ))
+            claims = tuple(parsed_claims)
             evidence_verdict = parsed_grounding.evidence_verdict
             unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
             if unsupported_claims:
@@ -541,6 +611,10 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
+
+
+def tool_evidence_ref(index: int, tool_name: str) -> str:
+    return f"tool:{index}:{tool_name}"
 
 
 def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str:
