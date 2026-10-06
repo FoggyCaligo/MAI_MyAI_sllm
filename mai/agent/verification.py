@@ -204,7 +204,7 @@ class CandidateClaim:
 @dataclass(frozen=True, slots=True)
 class UserEvidence:
     ref: str
-    statement: str
+    normalized_claim: str
     message_index: int
     source_excerpt: str
     is_current: bool = False
@@ -615,7 +615,7 @@ class FinalGroundingVerifier:
             seen_user_assertions.add(key)
             user_evidence.append(UserEvidence(
                 ref=f"user:{item.message_index}:{len(user_evidence)}",
-                statement=normalized_claim,
+                normalized_claim=normalized_claim,
                 message_index=item.message_index,
                 source_excerpt=source_excerpt,
                 is_current=item.message_index == current_user_index,
@@ -680,7 +680,7 @@ class FinalGroundingVerifier:
             {
                 "ref": item.ref,
                 "kind": "user_assertion",
-                "content": item.statement,
+                "content": item.normalized_claim,
                 "source_excerpt": item.source_excerpt,
             }
             for item in analysis.user_evidence
