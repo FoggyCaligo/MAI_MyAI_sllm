@@ -60,10 +60,11 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         registry.add(
             name="memory_recall",
             description=(
-                "Search this user's persistent memory from a specific free-text query. The default result is "
-                "compact Concept/Fact context and may omit raw Utterance nodes; use memory_search when exact "
-                "source wording or neighboring evidence is needed. Use recall when the answer depends on a "
-                "particular remembered topic, preference, decision, person, project, or past event."
+                "Search this user's persistent memory from a specific free-text query. Whitespace-delimited "
+                "query chunks are searched as intact units; recall does not split them again with Sentence_Breaker. "
+                "Each chunk contributes at most one best Concept seed before the global seed budget is applied. "
+                "The default result is compact Concept/Fact context and may omit raw Utterance nodes; use "
+                "memory_search when exact source wording or neighboring evidence is needed."
             ),
             input_model=MemoryRecallInput,
             handler=memory_recall,
