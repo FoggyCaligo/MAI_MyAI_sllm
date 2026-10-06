@@ -1,21 +1,37 @@
-from mai.app.runtime import _previous_assistant_message
+from mai.app.runtime import _memory_grounded_final_claims
+from mai.memory.extraction.service import GroundedFinalClaimEvidence, ToolFactEvidence
 
 
-def test_previous_assistant_context_uses_latest_existing_assistant_turn() -> None:
-    messages = (
-        {"role": "assistant", "content": "현재 만년필 구성에 대한 설명"},
-        {"role": "user", "content": "eyedropper가 뭐야?"},
-        {"role": "user", "content": "네가 말한 내용들은 다 맞아. 방금 질문에 답해줘."},
+def test_memory_grounded_claims_keep_current_user_and_successful_non_recall_tools() -> None:
+    claims = (
+        GroundedFinalClaimEvidence("현재 사용자 직접 근거", ("user:current",)),
+        GroundedFinalClaimEvidence("웹 근거", ("tool:2:web_search",)),
+        GroundedFinalClaimEvidence("과거 사용자 문맥 근거", ("user:context:4",)),
+        GroundedFinalClaimEvidence("리콜 근거", ("tool:1:memory_recall",)),
+        GroundedFinalClaimEvidence(
+            "혼합 근거",
+            ("tool:1:memory_recall", "tool:2:web_search"),
+        ),
+    )
+    tool_evidence = (
+        ToolFactEvidence("tool:2:web_search", "web_search", "fresh web result"),
     )
 
-    assert _previous_assistant_message(messages) == "현재 만년필 구성에 대한 설명"
+    filtered = _memory_grounded_final_claims(claims, tool_evidence)
 
-
-def test_previous_assistant_context_ignores_non_assistant_messages() -> None:
-    messages = (
-        {"role": "system", "content": "system"},
-        {"role": "tool", "content": "tool result"},
-        {"role": "user", "content": "hello"},
+    assert filtered == (
+        GroundedFinalClaimEvidence("현재 사용자 직접 근거", ("user:current",)),
+        GroundedFinalClaimEvidence("웹 근거", ("tool:2:web_search",)),
+        GroundedFinalClaimEvidence("혼합 근거", ("tool:2:web_search",)),
     )
 
-    assert _previous_assistant_message(messages) is None
+
+def test_user_approval_is_not_promoted_into_memory_without_direct_or_tool_support() -> None:
+    claims = (
+        GroundedFinalClaimEvidence(
+            "직전 assistant가 말한 사실",
+            ("user:context:7",),
+        ),
+    )
+
+    assert _memory_grounded_final_claims(claims, ()) == ()
