@@ -1,35 +1,29 @@
-"""Concept-index entry + evidence graph recall."""
+"""Fact-only persistent memory recall."""
 from __future__ import annotations
 
-from ..graph.models import GraphNeighborhood
 from ..graph.repository import MemoryGraphRepository
-from ..index import ConceptIndex
-from ..segmenter import Segmenter
 from ..working import WorkingGraph
 
 
 DEFAULT_ANCHOR_FACT_LIMIT = 8
+DEFAULT_FACT_TEXT_MATCH_LIMIT = 20
 
 
 class RecallService:
     def __init__(
         self,
         graph: MemoryGraphRepository,
-        concept_index: ConceptIndex,
-        segmenter: Segmenter,
         *,
-        concept_limit: int = 5,
         anchor_fact_limit: int = DEFAULT_ANCHOR_FACT_LIMIT,
+        fact_text_match_limit: int = DEFAULT_FACT_TEXT_MATCH_LIMIT,
     ) -> None:
-        if concept_limit < 1:
-            raise ValueError("concept_limit must be >= 1")
         if anchor_fact_limit < 0:
             raise ValueError("anchor_fact_limit must be >= 0")
+        if fact_text_match_limit < 0:
+            raise ValueError("fact_text_match_limit must be >= 0")
         self.graph = graph
-        self.concept_index = concept_index
-        self.segmenter = segmenter
-        self.concept_limit = concept_limit
         self.anchor_fact_limit = anchor_fact_limit
+        self.fact_text_match_limit = fact_text_match_limit
 
     def recall_query(self, *, user_id: str, query: str) -> WorkingGraph:
         if not query.strip():
@@ -37,27 +31,18 @@ class RecallService:
         anchor = self.graph.get_user_anchor(user_id)
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
-        segments = tuple(self.segmenter.segment(query))
-        hits = self.concept_index.search(segments, limit=self.concept_limit)
+
+        chunks = tuple(dict.fromkeys(query.split()))
         recalled = WorkingGraph()
         self._merge_user_anchor_context(recalled, user_id=user_id)
-
-        for hit in hits:
-            # Concept nodes are internal retrieval coordinates only. The model
-            # receives the Facts reached through them, not the Concept/Utterance
-            # carrier nodes themselves.
-            neighborhood = self.graph.one_hop(hit.node_id)
-            compact = self._facts_only(neighborhood)
-            recalled.merge(compact, mark_expanded=False)
-            for node in compact.nodes:
-                if node.node_type != "fact":
-                    continue
-                path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
-                if path is not None:
-                    recalled.merge(
-                        self._facts_only(path),
-                        mark_expanded=False,
-                    )
+        recalled.merge(
+            self.graph.user_fact_text_matches(
+                user_id,
+                chunks,
+                limit=self.fact_text_match_limit,
+            ),
+            mark_expanded=False,
+        )
         return recalled
 
     def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
@@ -88,11 +73,6 @@ class RecallService:
         return delta.snapshot()
 
     def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
-        """Expose the user anchor with a bounded set of structured facts.
-
-        The anchor's raw ``spoke`` edges are not traversed here. Query-specific
-        utterances are included only when ``include_utterances`` is enabled.
-        """
         working.merge(
             self.graph.user_anchor_fact_context(
                 user_id,
@@ -100,18 +80,3 @@ class RecallService:
             ),
             mark_expanded=False,
         )
-
-    @staticmethod
-    def _facts_only(neighborhood: GraphNeighborhood) -> GraphNeighborhood:
-        nodes = tuple(
-            node
-            for node in neighborhood.nodes
-            if node.node_type in {"anchor", "fact"}
-        )
-        node_ids = {node.id for node in nodes}
-        edges = tuple(
-            edge
-            for edge in neighborhood.edges
-            if edge.from_node_id in node_ids and edge.to_node_id in node_ids
-        )
-        return GraphNeighborhood(neighborhood.center_node_id, nodes, edges)
