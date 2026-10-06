@@ -105,9 +105,9 @@ Claim-level evidence grounding:
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
-- Prior assistant text is not factual evidence and is intentionally absent from evidence_sources.
-- User-message evidence supports only factual content directly asserted by the user in that message.
-- A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content is not factual evidence for the referenced assistant claims and must not be used to support them.
+- Prior assistant text and raw user-message text are not factual evidence and are intentionally absent from evidence_sources.
+- direct_user_fact sources were extracted by stage one only from factual content directly asserted by a user message.
+- A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content must never become a direct_user_fact and therefore cannot support the referenced assistant claims.
 - Each evidence source has an exact id. authoritative_current_time also has the exact id "runtime:current_time".
 - For every supported claim, support_ids must contain one or more exact supplied source ids that materially establish the claim.
 - Never invent a support id. Do not cite task context, the candidate answer, or the claim itself as evidence.
@@ -128,7 +128,7 @@ Evidence scope preservation:
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
 Evidence coverage:
-- Judge coverage only from facts already present in the supplied user-message evidence and tool evidence. Do not imagine facts that additional research might discover.
+- Judge coverage only from facts already present in the supplied direct-user-fact evidence and tool evidence. Do not imagine facts that additional research might discover.
 - Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
 - Prefer concrete supported results over replacing them with generic advice to check another source later.
 - Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
