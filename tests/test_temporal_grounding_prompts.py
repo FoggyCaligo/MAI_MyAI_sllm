@@ -1,5 +1,5 @@
 from mai.agent.tool_planner import _SYSTEM_PROMPT as TOOL_PREFLIGHT_PROMPT
-from mai.agent.verification import _FINAL_REVIEW_SYSTEM as FINAL_REVIEW_PROMPT
+from mai.agent.verification import _GROUNDING_REVIEW_SYSTEM as GROUNDING_REVIEW_PROMPT
 
 
 def test_tool_preflight_requires_current_time_for_relative_temporal_comparison() -> None:
@@ -7,11 +7,11 @@ def test_tool_preflight_requires_current_time_for_relative_temporal_comparison()
     assert "current-time tool" in TOOL_PREFLIGHT_PROMPT
 
 
-def test_final_reviewer_checks_temporal_consistency() -> None:
-    assert "temporal framing is consistent with the current date/time" in FINAL_REVIEW_PROMPT
-    assert "dates or timestamps established by the supplied evidence" in FINAL_REVIEW_PROMPT
+def test_grounding_reviewer_checks_temporal_consistency() -> None:
+    assert "temporal wording" in GROUNDING_REVIEW_PROMPT
+    assert "authoritative_current_time" in GROUNDING_REVIEW_PROMPT
+    assert "source timestamps" in GROUNDING_REVIEW_PROMPT
 
 
-def test_final_reviewer_does_not_exempt_stable_general_knowledge() -> None:
-    assert "Stable general knowledge" not in FINAL_REVIEW_PROMPT
-    assert "authoritative_current_time" in FINAL_REVIEW_PROMPT
+def test_grounding_reviewer_does_not_exempt_stable_general_knowledge() -> None:
+    assert "Stable general knowledge" not in GROUNDING_REVIEW_PROMPT
