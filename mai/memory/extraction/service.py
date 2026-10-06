@@ -25,8 +25,9 @@ previous_assistant_message, and assistant_final_answer are context only. They
 have no source IDs and cannot independently support an output fact.
 
 Source contract:
-- direct_user_assertion sources contain factual propositions the user directly
-  asserted in their own words, already filtered by final verification.
+- direct_user_assertion sources contain a normalized factual proposition plus
+  the literal user source_excerpt that grounds it. Final verification already
+  validated that the excerpt itself directly entails the normalized content.
 - An approval, agreement, endorsement, acceptance, confirmation, or evaluation
   of assistant content is not a factual source for the underlying assistant
   claims.
@@ -131,11 +132,10 @@ class OllamaFactExtractor:
         for item in user_evidence:
             ref = item.ref.strip()
             content = item.content.strip()
-            if not ref or not content:
-                raise FactExtractionError("direct user evidence requires non-empty ref and content")
-            if content != item.source_excerpt.strip():
+            source_excerpt = item.source_excerpt.strip()
+            if not ref or not content or not source_excerpt:
                 raise FactExtractionError(
-                    "direct user evidence content must exactly match its source excerpt"
+                    "direct user evidence requires non-empty ref, content, and source excerpt"
                 )
             if ref in base_source_refs:
                 raise FactExtractionError(f"duplicate fact evidence ref: {ref}")
@@ -144,7 +144,7 @@ class OllamaFactExtractor:
                 "ref": ref,
                 "kind": "direct_user_assertion",
                 "content": content,
-                "source_excerpt": item.source_excerpt,
+                "source_excerpt": source_excerpt,
             })
 
         for item in successful_tool_evidence:
