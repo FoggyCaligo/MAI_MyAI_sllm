@@ -234,6 +234,9 @@ class FinalGroundingVerifier:
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
+            allow_evidence_review=allow_evidence_review,
+            allow_semantic_review=allow_semantic_review,
+            allow_coverage_review=allow_coverage_review,
         )
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
@@ -334,6 +337,9 @@ class FinalGroundingVerifier:
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
+        allow_evidence_review: bool,
+        allow_semantic_review: bool,
+        allow_coverage_review: bool,
     ) -> FinalReview:
         user_messages = [
             str(message.get("content"))
@@ -341,7 +347,6 @@ class FinalGroundingVerifier:
             if message.get("role") == "user" and isinstance(message.get("content"), str)
         ]
         current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
-
         context_messages = [
             {
                 "role": str(message.get("role") or ""),
@@ -370,26 +375,35 @@ class FinalGroundingVerifier:
             "tool_results_in_execution_order": tool_evidence,
             "candidate_final": _clip_text(candidate, 6000),
         }
-        request = ChatRequest(
-            messages=(
-                {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ),
-            tools=(),
-            think=False,
-            response_format=_FinalReviewPayload.model_json_schema(),
-        )
-        _LOG.info(
-            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
-            self.reviewer_timeout_seconds,
-            len(context_messages),
-            len(tool_evidence),
-            len(candidate),
-        )
-        try:
-            parsed = await self._request_review(request)
-            reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
-            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
+
+        evidence_verdict = "uncertain"
+        grounding_reasons: tuple[str, ...] = ()
+        claims: tuple[ClaimReview, ...] = ()
+        if allow_evidence_review:
+            grounding_request = ChatRequest(
+                messages=(
+                    {"role": "system", "content": _GROUNDING_REVIEW_SYSTEM},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ),
+                tools=(),
+                think=False,
+                response_format=_GroundingReviewPayload.model_json_schema(),
+            )
+            _LOG.info(
+                "MAI grounding reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+                self.reviewer_timeout_seconds,
+                len(context_messages),
+                len(tool_evidence),
+                len(candidate),
+            )
+            parsed_grounding = await self._request_structured_review(
+                grounding_request,
+                _GroundingReviewPayload,
+                reviewer_name="grounding",
+            )
+            grounding_reasons = tuple(
+                dict.fromkeys(item.strip() for item in parsed_grounding.reasons if item.strip())
+            )
             claims = tuple(
                 ClaimReview(
                     claim=item.claim.strip(),
@@ -397,48 +411,74 @@ class FinalGroundingVerifier:
                     defect=item.defect,
                     reason=item.reason.strip(),
                 )
-                for item in parsed.claims
+                for item in parsed_grounding.claims
                 if item.claim.strip()
             )
-            evidence_verdict = parsed.evidence_verdict
-            alignment_verdict = parsed.alignment_verdict
-            coverage_verdict = parsed.coverage_verdict
+            evidence_verdict = parsed_grounding.evidence_verdict
             unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
             if unsupported_claims:
                 evidence_verdict = "unsupported"
-            elif not reasons and evidence_verdict == "unsupported":
+            elif not grounding_reasons and evidence_verdict == "unsupported":
                 evidence_verdict = "uncertain"
-            if not reasons and alignment_verdict == "misaligned":
+
+        alignment_verdict = "uncertain"
+        coverage_verdict = "uncertain"
+        coverage_reasons: tuple[str, ...] = ()
+        task_reasons: tuple[str, ...] = ()
+        action_verdict = "not_applicable"
+        task_review_needed = allow_semantic_review or allow_coverage_review or allow_evidence_review
+        if task_review_needed:
+            task_request = ChatRequest(
+                messages=(
+                    {"role": "system", "content": _TASK_REVIEW_SYSTEM},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ),
+                tools=(),
+                think=False,
+                response_format=_TaskReviewPayload.model_json_schema(),
+            )
+            _LOG.info(
+                "MAI task reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+                self.reviewer_timeout_seconds,
+                len(context_messages),
+                len(tool_evidence),
+                len(candidate),
+            )
+            parsed_task = await self._request_structured_review(
+                task_request,
+                _TaskReviewPayload,
+                reviewer_name="task",
+            )
+            task_reasons = tuple(dict.fromkeys(item.strip() for item in parsed_task.reasons if item.strip()))
+            coverage_reasons = tuple(
+                dict.fromkeys(item.strip() for item in parsed_task.coverage_reasons if item.strip())
+            )
+            alignment_verdict = parsed_task.alignment_verdict
+            coverage_verdict = parsed_task.coverage_verdict
+            action_verdict = parsed_task.action_verdict
+            if not task_reasons and alignment_verdict == "misaligned":
                 alignment_verdict = "uncertain"
             if not coverage_reasons and coverage_verdict == "insufficient":
                 coverage_verdict = "uncertain"
-            return FinalReview(
-                evidence_verdict=evidence_verdict,
-                alignment_verdict=alignment_verdict,
-                coverage_verdict=coverage_verdict,
-                coverage_reasons=coverage_reasons,
-                reasons=reasons,
-                claims=claims,
-                action_verdict=parsed.action_verdict,
-            )
-        except TimeoutError as exc:
-            _LOG.warning("MAI final verification reviewer timed out")
-            raise RuntimeError("final reviewer timed out; release was not verified") from exc
-        except ValidationError as exc:
-            raise RuntimeError("final reviewer violated structured output schema") from exc
-        except Exception as exc:
-            raise RuntimeError("final reviewer failed; release was not verified") from exc
 
-    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
-        # Infrastructure and malformed-output retries do not re-roll a valid
-        # supported/unsupported reviewer verdict.
+        return FinalReview(
+            evidence_verdict=evidence_verdict,
+            alignment_verdict=alignment_verdict,
+            coverage_verdict=coverage_verdict,
+            coverage_reasons=coverage_reasons,
+            reasons=grounding_reasons + task_reasons,
+            claims=claims,
+            action_verdict=action_verdict,
+        )
+
+    async def _request_structured_review(self, request: ChatRequest, payload_type, *, reviewer_name: str):
         for attempt in range(1, 4):
             try:
                 turn = await asyncio.wait_for(
                     self.reviewer_adapter.chat(request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+                return payload_type.model_validate_json(turn.content, strict=True)
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
@@ -455,13 +495,16 @@ class FinalGroundingVerifier:
                         cause.status_code == 429 or 500 <= cause.status_code <= 599
                     )
                 _LOG.warning(
-                    "MAI final reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    "MAI %s reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    reviewer_name,
                     attempt,
                     type(exc).__name__,
                     retryable,
                 )
                 if not retryable or attempt == 3:
-                    raise
+                    raise RuntimeError(
+                        f"final {reviewer_name} reviewer failed; release was not verified"
+                    ) from exc
                 await asyncio.sleep(0.25 * attempt)
         raise AssertionError("unreachable reviewer retry state")
 
