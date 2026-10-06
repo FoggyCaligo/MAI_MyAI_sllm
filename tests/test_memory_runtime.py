@@ -5,6 +5,7 @@ from mai.memory.graph.repository import MemoryGraphRepository
 from mai.memory.index import ConceptHit
 from mai.memory.recall.service import RecallService
 from mai.memory.runtime import MemoryRuntime
+from mai.memory.working import WorkingGraph
 
 NOW = datetime(2026, 8, 27, 15, 24, tzinfo=timezone.utc)
 
@@ -161,6 +162,16 @@ def test_recall_anchor_context_is_bounded_and_does_not_dump_unrelated_utterances
         assert "unrelated second" not in utterance_texts
         assert len(fact_texts) == 2
         assert "stable profile fact" in fact_texts
+
+        anchor = graph.get_user_anchor("alice")
+        assert anchor is not None
+        expanded = memory.memory_search(
+            WorkingGraph(),
+            user_id="alice",
+            node_id=anchor.id,
+        )
+        assert not any(node["type"] == "utterance" for node in expanded["nodes"])
+        assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
     finally:
         graph.close()
 
