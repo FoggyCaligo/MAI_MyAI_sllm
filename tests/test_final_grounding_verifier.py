@@ -356,7 +356,7 @@ def test_reviewer_timeout_blocks_release_without_hanging(caplog) -> None:
     )
     caplog.set_level(logging.WARNING, logger="uvicorn.error")
 
-    with pytest.raises(AgentRunFailure, match="final reviewer"):
+    with pytest.raises(AgentRunFailure, match="release was not verified"):
         run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
 
 
@@ -544,6 +544,193 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
         "claims",
         "action_verdict",
     }
+
+
+def test_current_user_request_is_not_duplicated_in_candidate_context() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="답변",
+        messages=(
+            {"role": "user", "content": "이전 질문"},
+            {"role": "assistant", "content": "이전 답변"},
+            {"role": "user", "content": "현재 질문"},
+            {"role": "assistant", "content": "답변"},
+        ),
+        tool_results=(),
+    ))
+
+    assert result.ok
+    analysis_payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert analysis_payload["current_user_request"] == "현재 질문"
+    assert analysis_payload["conversation_context"] == [
+        {"role": "user", "content": "이전 질문"},
+        {"role": "assistant", "content": "이전 답변"},
+    ]
+
+
+def test_evidence_stage_never_receives_prior_assistant_as_evidence() -> None:
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "unsupported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "직전 assistant가 말한 구체적 사실",
+            "verdict": "unsupported",
+            "defect": "missing_evidence",
+            "reason": "User approval is not factual support for the referenced assistant claim.",
+        }],
+        "action_verdict": "not_applicable",
+    }])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="직전 assistant가 말한 구체적 사실입니다.",
+        messages=(
+            {"role": "assistant", "content": "직전 assistant가 말한 구체적 사실"},
+            {"role": "user", "content": "네 설명은 전부 맞아."},
+            {"role": "assistant", "content": "직전 assistant가 말한 구체적 사실입니다."},
+        ),
+        tool_results=(),
+    ))
+
+    assert not result.ok
+    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    evidence_sources = evidence_payload["evidence_sources"]
+    assert any(
+        source["id"] == "user:current"
+        and source["content"] == "네 설명은 전부 맞아."
+        for source in evidence_sources
+    )
+    assert all(source["kind"] != "assistant_message" for source in evidence_sources)
+    assert all(
+        source.get("content") != "직전 assistant가 말한 구체적 사실"
+        for source in evidence_sources
+    )
+
+
+def test_supported_claim_carries_exact_support_ids_into_result() -> None:
+    analysis = json.dumps({
+        "resolved_request": "제품 A 출시일을 알려줘.",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "제품 A는 2026-10-10에 출시된다",
+            "temporal": True,
+        }],
+    }, ensure_ascii=False)
+    evidence = json.dumps({
+        "evidence_verdict": "supported",
+        "coverage_verdict": "sufficient",
+        "coverage_reasons": [],
+        "reasons": [],
+        "claims": [{
+            "claim_id": "claim:0",
+            "verdict": "supported",
+            "defect": "none",
+            "reason": "",
+            "support_ids": ["tool:0:web_search"],
+        }],
+        "action_verdict": "not_applicable",
+    }, ensure_ascii=False)
+    reviewer = SequenceAdapter([analysis, evidence])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="제품 A는 2026-10-10에 출시됩니다.",
+        messages=({"role": "user", "content": "제품 A 출시일을 알려줘."},),
+        tool_results=(("web_search", True, None, "제품 A 출시일: 2026-10-10"),),
+    ))
+
+    assert result.ok
+    assert len(result.grounded_claims) == 1
+    assert result.grounded_claims[0].claim == "제품 A는 2026-10-10에 출시된다"
+    assert result.grounded_claims[0].support_ids == ("tool:0:web_search",)
+
+    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    assert evidence_payload["claims"] == [{
+        "claim_id": "claim:0",
+        "claim": "제품 A는 2026-10-10에 출시된다",
+        "temporal": True,
+    }]
+
+
+def test_supported_claim_without_support_ids_is_explicit_contract_failure() -> None:
+    analysis = json.dumps({
+        "resolved_request": "설명해줘.",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{"claim": "근거 없는 사실", "temporal": False}],
+    }, ensure_ascii=False)
+    evidence = json.dumps({
+        "evidence_verdict": "supported",
+        "coverage_verdict": "sufficient",
+        "coverage_reasons": [],
+        "reasons": [],
+        "claims": [{
+            "claim_id": "claim:0",
+            "verdict": "supported",
+            "defect": "none",
+            "reason": "",
+            "support_ids": [],
+        }],
+        "action_verdict": "not_applicable",
+    }, ensure_ascii=False)
+    verifier = FinalGroundingVerifier(reviewer_adapter=SequenceAdapter([analysis, evidence]))
+
+    with pytest.raises(RuntimeError, match="without support ids"):
+        run(verifier.verify(
+            candidate="근거 없는 사실입니다.",
+            messages=({"role": "user", "content": "설명해줘."},),
+            tool_results=(),
+        ))
+
+
+def test_evidence_reviewer_unknown_support_id_is_explicit_contract_failure() -> None:
+    analysis = json.dumps({
+        "resolved_request": "설명해줘.",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{"claim": "허구의 근거를 참조한 사실", "temporal": False}],
+    }, ensure_ascii=False)
+    evidence = json.dumps({
+        "evidence_verdict": "supported",
+        "coverage_verdict": "sufficient",
+        "coverage_reasons": [],
+        "reasons": [],
+        "claims": [{
+            "claim_id": "claim:0",
+            "verdict": "supported",
+            "defect": "none",
+            "reason": "",
+            "support_ids": ["tool:999:web_search"],
+        }],
+        "action_verdict": "not_applicable",
+    }, ensure_ascii=False)
+    verifier = FinalGroundingVerifier(reviewer_adapter=SequenceAdapter([analysis, evidence]))
+
+    with pytest.raises(RuntimeError, match="unknown support ids"):
+        run(verifier.verify(
+            candidate="허구의 근거를 참조한 사실입니다.",
+            messages=({"role": "user", "content": "설명해줘."},),
+            tool_results=(),
+        ))
+
+
+def test_alignment_failure_skips_evidence_stage() -> None:
+    reviewer = ReviewerAdapter([
+        ("supported", "misaligned", ("The candidate answers a different task.",)),
+    ])
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="다른 답변",
+        messages=({"role": "user", "content": "내 요청에 답해줘"},),
+        tool_results=(),
+    ))
+
+    assert not result.ok
+    assert result.issues[0].code == "task_alignment_failed"
+    assert len(reviewer.requests) == 1
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
