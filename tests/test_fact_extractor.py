@@ -101,3 +101,27 @@ def test_fact_extractor_has_no_default_fifteen_second_deadline() -> None:
         final_answer="hello",
         successful_tool_results=(),
     )) == ()
+
+def test_fact_extractor_prompt_prefers_multiple_durable_details() -> None:
+    adapter = FakeAdapter([
+        json.dumps({
+            "facts": [
+                "사용자는 플래티넘 플레지르의 알루미늄 배럴과 캡을 사용한다",
+                "사용자는 플래티넘 프레피의 하단부와 펜촉을 플레지르 바디에 결합해 사용한다",
+                "플레지르와 프레피의 나사산이 호환되어 사용자가 직접 결합했다",
+            ]
+        }, ensure_ascii=False),
+    ])
+    extractor = OllamaFactExtractor(adapter)
+
+    facts = run(extractor.extract(
+        user_text="최근에는 플레지르 배럴과 캡에 프레피 하단부를 연결해서 쓰고 있어.",
+        final_answer="최신 구성을 이해했어.",
+        successful_tool_results=(),
+    ))
+
+    assert len(facts) == 3
+    system_prompt = adapter.requests[0].messages[0]["content"]
+    assert "split them into multiple self-contained facts" in system_prompt
+    assert "current possessions/configurations" in system_prompt
+
