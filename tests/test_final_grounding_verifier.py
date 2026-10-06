@@ -233,12 +233,10 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
-def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
+def test_numeric_failure_short_circuits_llm_review() -> None:
     main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
     reviewer = ReviewerAdapter([
         ("supported", "misaligned", ("The requested comparison is missing.",)),
-        ("supported", "aligned", ()),
-        ("supported", "aligned", ()),
     ])
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
         run(AgentRuntime(
@@ -246,7 +244,7 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 3
+    assert reviewer.requests == []
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -323,8 +321,8 @@ def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
     assert result.content.startswith("확인한 스크린샷은 4장이고")
     assert result.model_rounds == 2
     assert "task_alignment_failed" in main.requests[1].messages[-1]["content"]
-    assert "MAI final reviewer start" in caplog.text
-    assert "MAI final verification numeric=pass evidence=supported alignment=misaligned" in caplog.text
+    assert "MAI candidate analyzer start" in caplog.text
+    assert "MAI final verification numeric=pass evidence=skipped alignment=misaligned" in caplog.text
     assert "MAI final rejected round=1 issues=task_alignment_failed" in caplog.text
     assert "MAI final accepted round=2" in caplog.text
 
@@ -386,7 +384,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 4
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -464,14 +462,23 @@ def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
     ))
 
     assert result.ok is True
-    payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["tool_results_in_execution_order"] == [{
+    assert len(reviewer.requests) == 2
+    payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    tool_sources = [
+        source
+        for source in payload["evidence_sources"]
+        if source["kind"] == "tool_result"
+    ]
+    assert tool_sources == [{
+        "id": "tool:0:terminal_run",
+        "kind": "tool_result",
         "index": 0,
         "tool": "terminal_run",
         "ok": False,
         "error_type": "TerminalCommandError",
-        "result": "collected 138 items; 136 passed, 2 failed",
+        "content": "collected 138 items; 136 passed, 2 failed",
     }]
+    assert "tool_results_in_execution_order" not in payload
 
 
 def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:
@@ -515,23 +522,28 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     ))
 
     assert result.ok is True
-    schema = reviewer.requests[0].response_format
-    assert isinstance(schema, dict)
-    assert schema["type"] == "object"
-    assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == {
-        "evidence_verdict",
+    assert len(reviewer.requests) == 2
+
+    analysis_schema = reviewer.requests[0].response_format
+    evidence_schema = reviewer.requests[1].response_format
+    assert analysis_schema["type"] == "object"
+    assert analysis_schema["additionalProperties"] is False
+    assert set(analysis_schema["required"]) == {
+        "resolved_request",
         "alignment_verdict",
+        "reasons",
+        "claims",
+    }
+    assert evidence_schema["type"] == "object"
+    assert evidence_schema["additionalProperties"] is False
+    assert set(evidence_schema["required"]) == {
+        "evidence_verdict",
         "coverage_verdict",
         "coverage_reasons",
         "reasons",
         "claims",
         "action_verdict",
     }
-    assert "claims" in schema["properties"]
-    assert "coverage_verdict" in schema["properties"]
-    assert "coverage_reasons" in schema["properties"]
-    assert "action_verdict" in schema["properties"]
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
@@ -734,20 +746,25 @@ def test_reviewer_has_no_default_deadline() -> None:
     assert verifier.reviewer_timeout_seconds is None
     result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
     assert result.ok
-    assert len(reviewer.requests) == 1
+    assert len(reviewer.requests) == 2
 
 
 def test_reviewer_recovers_after_two_invalid_outputs() -> None:
-    valid = json.dumps({
-        "evidence_verdict": "supported",
+    valid_analysis = json.dumps({
+        "resolved_request": "설명해줘",
         "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [],
+    }, ensure_ascii=False)
+    valid_evidence = json.dumps({
+        "evidence_verdict": "supported",
         "coverage_verdict": "sufficient",
         "coverage_reasons": [],
         "reasons": [],
         "claims": [],
         "action_verdict": "not_applicable",
-    })
-    reviewer = SequenceAdapter(["not-json", "{}", valid])
+    }, ensure_ascii=False)
+    reviewer = SequenceAdapter(["not-json", "{}", valid_analysis, valid_evidence])
 
     result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
         candidate="설명",
@@ -756,7 +773,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
     ))
 
     assert result.ok
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 4
 
 
 @pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
@@ -801,8 +818,10 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
         tool_results=(),
     ))
 
-    payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["authoritative_current_time"] == clock
+    analysis_payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    assert "authoritative_current_time" not in analysis_payload
+    assert evidence_payload["authoritative_current_time"] == clock
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
@@ -815,7 +834,7 @@ def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
     ))
 
     assert not result.ok
-    assert len(reviewer.requests) == 1
+    assert len(reviewer.requests) == 2
 
 def test_claim_level_unsupported_overrides_inconsistent_supported_overall_verdict(caplog) -> None:
     reviewer = StructuredReviewerAdapter([{
@@ -894,5 +913,5 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
 
     assert result.content == "이제 근거에 맞는 답변입니다."
     assert result.model_rounds == 6
-    assert len(reviewer.requests) == 6
+    assert len(reviewer.requests) == 12
 
