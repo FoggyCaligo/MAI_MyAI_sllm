@@ -89,7 +89,7 @@ Relations involving Fact nodes are used only when Fact extraction is actually en
 
 ## 4. Evidence
 
-Raw user input is stored in the immutable `evidence` table before semantic admission. Recording raw evidence is not semantic graph mutation. By default, post-response admission creates Fact nodes directly under the user's anchor and links Concepts from those Facts. Utterance graph nodes are created only when the Utterance environment switch is enabled.
+Raw user input is stored in the immutable `evidence` table during post-response admission, before Fact/Utterance graph mutation. Recording raw evidence is not semantic graph mutation. By default, post-response admission creates Fact nodes directly under the user's anchor and links Concepts from those Facts. Utterance graph nodes are created only when the Utterance environment switch is enabled.
 
 The evidence table remains the durable raw record even when no Utterance node is created.
 
@@ -99,14 +99,15 @@ The current production request path is **pure-agent C**. It has no Tool Requirem
 
 ```text
 User input
-  -> record immutable raw evidence
   -> create per-turn Working Graph
   -> expose role-appropriate native tools
   -> main Ollama-native agent loop
        memory tools are available like other native capabilities
        the model chooses whether and when to call them
   -> final response accepted
-  -> post-response memory update
+  -> post-response memory extraction/admission
+       record immutable raw evidence
+       create Facts and optional Utterance graph nodes
 ```
 
 Memory is therefore not injected into every turn automatically. If user history is needed, the model explicitly calls a model-visible memory tool.
@@ -200,10 +201,10 @@ There is no arbitrary-depth hidden traversal; farther recall requires another ex
 No interpreted graph memory is written during the native tool-use loop.
 
 ```text
-raw user evidence saved
-  -> agent/tool loop
+agent/tool loop
   -> final answer accepted
   -> broad Fact extraction
+  -> raw user evidence saved
   -> MemoryRuntime.finish_turn()
        create user-grounded Fact Nodes
        connect user_anchor -> fact (asserted_fact)
