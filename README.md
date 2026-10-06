@@ -113,17 +113,19 @@ Raw user text is preserved separately in the immutable evidence table.
 Retrieval은 embedding/vector space를 production identity로 사용하지 않는다.
 
 ```text
-query
+memory admission
   ↓ Sentence_Breaker
-canonical segments
+canonical Concept nodes
+
+memory_recall query
+  ↓ whitespace chunks only
+intact query chunks
   ↓
-exact hash lookup
-  ↓ miss
-SQLite FTS5 lexical retrieval
+Exact + SQLite FTS5 ConceptIndex
   ↓
-Concept Nodes
+internal Concept seeds
   ↓
-Graph neighborhood
+Fact neighborhoods
 ```
 
 현재 model-visible memory tool:
@@ -133,6 +135,8 @@ Graph neighborhood
 - `memory_search(node_id)`
 
 Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
+
+Recall query에는 Sentence_Breaker를 사용하지 않는다. 모델이 보낸 query를 공백 단위의 intact chunk로만 나누고, 각 chunk를 ConceptIndex에 독립적으로 조회한다. 각 chunk당 최고 hit 하나만 후보로 받고, 후보를 relevance 순으로 정렬한 뒤 기존 `concept_limit` 안에서 graph seed로 사용한다. Sentence_Breaker는 Fact를 Concept으로 기록하는 admission 단계에서는 계속 사용한다.
 
 `memory_recall`의 model-visible 결과는 **Anchor + Fact만** 반환한다. ConceptIndex/Concept node는 검색 진입점으로 내부에서만 사용하고, Concept 및 Utterance node는 recall payload에 노출하지 않는다. 원문 사용자 입력은 immutable `evidence` table에 그대로 보존된다.
 
