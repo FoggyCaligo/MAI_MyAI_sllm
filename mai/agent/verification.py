@@ -181,6 +181,7 @@ class ClaimReview:
     defect: str = "none"
     reason: str = ""
     evidence_refs: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +209,7 @@ class FinalGroundingVerifier:
             raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
+        self.last_review: FinalReview | None = None
 
     async def verify(
         self,
@@ -220,6 +222,7 @@ class FinalGroundingVerifier:
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
     ) -> FinalVerificationResult:
+        self.last_review = None
         if allow_evidence_review is None:
             allow_evidence_review = allow_semantic_review
         numeric_issue = self._numeric_issue(
@@ -299,6 +302,7 @@ class FinalGroundingVerifier:
             )
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
+        self.last_review = review
         self._log_result(
             numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
             evidence=review.evidence_verdict if allow_evidence_review else "skipped",
@@ -433,6 +437,7 @@ class FinalGroundingVerifier:
         allowed_evidence_refs = {str(item["ref"]) for item in evidence_sources}
         common_payload = {
             "current_user_request": current_user_request,
+            "current_user_evidence_ref": "current_user",
             "conversation_context": context_messages,
             "tool_results_in_execution_order": tool_evidence,
             "candidate_final": _clip_text(candidate, 6000),
