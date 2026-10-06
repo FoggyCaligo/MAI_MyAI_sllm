@@ -43,7 +43,7 @@ def test_semantic_graph_write_happens_only_in_finish_turn(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(
         graph,
         index,
@@ -86,7 +86,7 @@ def test_auto_recall_omits_utterances_by_default_but_keeps_fact_context(tmp_path
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter)
+    recall = RecallService(graph, index)
     memory = MemoryRuntime(
         graph,
         index,
@@ -121,7 +121,7 @@ def test_auto_recall_can_include_utterances_when_enabled(tmp_path):
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, include_utterances=True)
+    recall = RecallService(graph, index, include_utterances=True)
     memory = MemoryRuntime(
         graph,
         index,
@@ -149,7 +149,7 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
     graph = MemoryGraphRepository(tmp_path / "memory.db")
     index = FakeConceptIndex()
     segmenter = FixedSegmenter()
-    recall = RecallService(graph, index, segmenter, anchor_fact_limit=2)
+    recall = RecallService(graph, index, anchor_fact_limit=2)
     memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
 
     def store_turn(user_text: str, fact_text: str) -> None:
