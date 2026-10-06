@@ -442,6 +442,30 @@ def test_verifier_logs_numeric_evidence_and_alignment_verdicts(caplog) -> None:
     assert "MAI final verification numeric=pass evidence=supported alignment=aligned coverage=sufficient" in caplog.text
 
 
+def test_review_context_does_not_duplicate_current_user_request() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    run(verifier.verify(
+        candidate="답변",
+        messages=(
+            {"role": "user", "content": "이전 질문"},
+            {"role": "assistant", "content": "이전 답변"},
+            {"role": "user", "content": "현재 질문"},
+            {"role": "assistant", "content": "답변"},
+        ),
+        tool_results=(),
+    ))
+
+    for request in reviewer.requests:
+        payload = json.loads(request.messages[1]["content"])
+        assert payload["current_user_request"] == "현재 질문"
+        assert payload["conversation_context"] == [
+            {"role": "user", "content": "이전 질문"},
+            {"role": "assistant", "content": "이전 답변"},
+        ]
+
+
 def test_reviewer_request_uses_structured_output_schema() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
@@ -737,9 +761,10 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
         tool_results=(),
     ))
 
-    for request in reviewer.requests:
-        payload = json.loads(request.messages[1]["content"])
-        assert payload["authoritative_current_time"] == clock
+    grounding_payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    task_payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    assert grounding_payload["authoritative_current_time"] == clock
+    assert "authoritative_current_time" not in task_payload
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
