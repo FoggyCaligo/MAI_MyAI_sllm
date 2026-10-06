@@ -151,15 +151,11 @@ class MemoryRuntime:
             if not clean_fact:
                 raise ValueError("fact extractor returned an empty fact")
 
-            exact = self.graph.get_node_by_identity(f"fact:{user_id}:{clean_fact}")
-            if exact is not None:
-                fact = self.graph.reinforce_node(exact.id, now=self.now())
-            else:
-                fact, _ = self.graph.get_or_create_fact(
-                    user_id=user_id,
-                    text=clean_fact,
-                    now=self.now(),
-                )
+            fact, _ = self.graph.get_or_create_fact(
+                user_id=user_id,
+                text=clean_fact,
+                now=self.now(),
+            )
 
             self.graph.add_typed_edge(
                 anchor.id,
