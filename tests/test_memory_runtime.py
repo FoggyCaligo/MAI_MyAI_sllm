@@ -52,7 +52,8 @@ class OneFactExtractor:
         user_text,
         previous_assistant_message,
         final_answer,
-        successful_tool_results,
+        successful_tool_evidence,
+        grounded_final_claims,
     ):
         return ("MAI는 사용자의 개인 AI 프로젝트다",)
 
