@@ -8,3 +8,4 @@ def test_env_example_uses_family_install_defaults() -> None:
     assert "MAIN_MODEL=ornith-1.5:9b" in text
     assert 'TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]' in text
     assert "SESSION_HISTORY_MESSAGES=12" in text
+    assert "MEMORY_RECALL_INCLUDE_UTTERANCES=false" in text
