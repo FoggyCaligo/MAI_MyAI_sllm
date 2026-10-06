@@ -33,6 +33,26 @@ Admission rules:
 - A mixed message such as "do you remember X? recently it changed to Y" must extract the new Y information even if recall was also used during the turn.
 - Do not invent missing details or infer a stronger claim than the evidence supports.
 - Deduplicate semantically equivalent facts and keep each fact self-contained.
+- Do not impose a fixed maximum number of facts. Return every evidence-supported durable fact needed for recall coverage.
+""".strip()
+
+
+_FACT_IDENTITY_SYSTEM = """
+You decide whether one newly extracted durable user fact is semantically the same
+fact as one existing candidate Fact node.
+
+Return exactly one JSON object:
+{"equivalent_fact_id": integer_or_null}
+
+Rules:
+- Equivalent means the two facts express the same durable proposition/state and
+  can safely share one persistent Fact node.
+- Mere topical relatedness, shared entities, partial overlap, or one fact being
+  more general/specific than the other is not enough.
+- A correction, update, changed value, changed preference, changed ownership,
+  changed configuration, or contradiction is NOT equivalent to the prior state.
+- Choose an ID only from the supplied candidates.
+- If none are truly equivalent, return null.
 """.strip()
 
 
@@ -50,6 +70,84 @@ class FactExtractor(Protocol):
     ) -> Sequence[str]:
         """Return long-term fact texts derived from the completed turn."""
         ...
+
+
+class FactIdentityResolver(Protocol):
+    async def resolve(
+        self,
+        *,
+        new_fact: str,
+        candidates: Sequence[tuple[int, str]],
+    ) -> int | None:
+        """Return an equivalent existing Fact node ID, or None."""
+
+
+class OllamaFactIdentityResolver:
+    """Model-backed semantic identity judgment for persistent Fact reuse."""
+
+    def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float | None = None) -> None:
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        self.adapter = adapter
+        self.timeout_seconds = timeout_seconds
+
+    async def resolve(
+        self,
+        *,
+        new_fact: str,
+        candidates: Sequence[tuple[int, str]],
+    ) -> int | None:
+        if not new_fact.strip():
+            raise ValueError("new_fact must be non-empty")
+        normalized_candidates = tuple((int(node_id), str(text)) for node_id, text in candidates)
+        if not normalized_candidates:
+            return None
+
+        payload = {
+            "new_fact": new_fact,
+            "candidates": [
+                {"id": node_id, "fact": text}
+                for node_id, text in normalized_candidates
+            ],
+        }
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _FACT_IDENTITY_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+        )
+        try:
+            turn = await asyncio.wait_for(self.adapter.chat(request), timeout=self.timeout_seconds)
+        except TimeoutError as exc:
+            detail = (
+                "fact identity resolver timed out"
+                if self.timeout_seconds is None
+                else f"fact identity resolver timed out after {self.timeout_seconds:.1f}s"
+            )
+            raise FactExtractionError(detail) from exc
+        except Exception as exc:
+            raise FactExtractionError(
+                f"fact identity resolver model call failed: {type(exc).__name__}"
+            ) from exc
+
+        try:
+            data = json.loads(turn.content)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise FactExtractionError("fact identity resolver returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise FactExtractionError("fact identity resolver response must be a JSON object")
+
+        resolved = data.get("equivalent_fact_id")
+        if resolved is None:
+            return None
+        if isinstance(resolved, bool) or not isinstance(resolved, int):
+            raise FactExtractionError("equivalent_fact_id must be an integer or null")
+        allowed = {node_id for node_id, _text in normalized_candidates}
+        if resolved not in allowed:
+            raise FactExtractionError("fact identity resolver selected an unknown candidate ID")
+        return resolved
 
 
 class OllamaFactExtractor:
