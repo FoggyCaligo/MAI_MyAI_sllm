@@ -52,6 +52,9 @@ Rules:
 - A correction, update, changed value, changed preference, changed ownership,
   changed configuration, or contradiction is NOT equivalent to the prior state.
 - Choose an ID only from the supplied candidates.
+- Candidates are already ordered by graph support. If multiple candidates are
+  equally equivalent, choose the earliest listed candidate so reinforcement
+  converges on one existing node.
 - If none are truly equivalent, return null.
 """.strip()
 
