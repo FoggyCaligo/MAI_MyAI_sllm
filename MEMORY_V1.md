@@ -23,7 +23,7 @@ one canonical Sentence_Breaker segment = one Concept Node
 
 Repeated appearances of the same segment reuse the same Concept Node. Recall indexing never merges graph identity.
 
-The full original sentence remains a first-class Utterance Node so recall can show the model what the user actually said instead of forcing it to trust a rewritten relation description.
+The full original sentence remains a first-class Utterance Node so evidence is preserved. Production `memory_recall` omits Utterance nodes by default to keep retrieval compact; `memory_overview`, `memory_search`, or the recall environment switch can expose raw wording when needed.
 
 The production request path runs a model-backed `FactExtractor` during background post-response processing. Raw Utterance evidence is still preserved independently, and extraction failure does not silently fabricate Fact nodes.
 
@@ -168,7 +168,9 @@ memory_recall(query)
   -> Sentence_Breaker query segments
   -> Exact + FTS5 ConceptIndex
   -> Concept seeds
-  -> graph neighborhoods / available user-anchor paths
+  -> graph neighborhoods
+  -> by default project Utterance nodes/edges out of the recall payload
+  -> preserve Fact paths to the user anchor
   -> merge into the per-turn Working Graph
   -> return only this recall call's payload
 
@@ -183,11 +185,13 @@ Shortest-path discovery treats topology as undirected, while returned edges pres
 
 The Working Graph is temporary per-turn state and is not persisted as another graph. It accumulates recalled nodes internally so later expansion can continue from prior results, but each model-visible memory tool returns only the payload produced by that call rather than re-sending the entire accumulated Working Graph.
 
+Production defaults to `MEMORY_RECALL_INCLUDE_UTTERANCES=false`. Setting it to `true` restores raw Utterance nodes in `memory_recall` for comparison testing without changing what is stored in the permanent graph.
+
 ## 8. Deliberate memory expansion
 
 `memory_search(node_id)` expands one permanent-graph hop and merges that neighborhood into the current Working Graph. Newly visible nodes may also receive available shortest paths back to the current user's memory anchor.
 
-The user anchor is a deliberate exception to raw one-hop expansion: its unbounded `spoke` neighborhood is not exposed. Expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by occurrence count and then recency. Query-specific Utterances are reached through Concept hits and their anchor paths instead.
+The user anchor is a deliberate exception to raw one-hop expansion: its unbounded `spoke` neighborhood is not exposed. Expanding the current user's anchor returns only a bounded set of directly asserted Fact nodes, ranked by occurrence count and then recency. Regular `memory_search` remains the deliberate evidence-expansion path and may expose Utterance nodes; `memory_recall` itself omits them by default.
 
 There is no arbitrary-depth hidden traversal; farther recall requires another explicit memory call.
 
