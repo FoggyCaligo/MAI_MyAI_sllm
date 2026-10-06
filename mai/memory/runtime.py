@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Callable, Sequence
 
-from .extraction.service import FactExtractor
+from .extraction.service import FactExtractor, FactIdentityResolver
 from .graph.models import Evidence, MemoryNode
 from .graph.repository import MemoryGraphRepository
 from .index import ConceptIndex
@@ -123,6 +123,7 @@ class MemoryRuntime:
         user_evidence: Evidence,
         successful_tool_results: Sequence[str] = (),
         fact_texts: Sequence[str] | None = None,
+        fact_identity_resolver: FactIdentityResolver | None = None,
     ) -> None:
         now = self.now()
         anchor = self.graph.ensure_user_anchor(user_id, now=now)
@@ -150,8 +151,43 @@ class MemoryRuntime:
             clean_fact = str(fact_text).strip()
             if not clean_fact:
                 raise ValueError("fact extractor returned an empty fact")
-            fact, _ = self.graph.get_or_create_fact(user_id=user_id, text=clean_fact, now=self.now())
-            self.graph.add_typed_edge(anchor.id, fact.id, "asserted_fact", provenance="user_assertion", now=self.now())
+
+            exact = self.graph.get_node_by_identity(f"fact:{user_id}:{clean_fact}")
+            if exact is not None:
+                fact = self.graph.reinforce_node(exact.id, now=self.now())
+            else:
+                fact = None
+                if fact_identity_resolver is not None:
+                    segments = tuple(self.segmenter.segment(clean_fact))
+                    hits = self.concept_index.search(segments, limit=12)
+                    candidates = self.graph.user_fact_candidates_for_concepts(
+                        user_id,
+                        tuple(hit.node_id for hit in hits),
+                        limit=12,
+                    )
+                    resolved_id = await fact_identity_resolver.resolve(
+                        new_fact=clean_fact,
+                        candidates=tuple(
+                            (candidate.id, candidate.canonical_text)
+                            for candidate in candidates
+                        ),
+                    )
+                    if resolved_id is not None:
+                        fact = self.graph.reinforce_node(resolved_id, now=self.now())
+                if fact is None:
+                    fact, _ = self.graph.get_or_create_fact(
+                        user_id=user_id,
+                        text=clean_fact,
+                        now=self.now(),
+                    )
+
+            self.graph.add_typed_edge(
+                anchor.id,
+                fact.id,
+                "asserted_fact",
+                provenance="user_assertion",
+                now=self.now(),
+            )
             if utterance is not None:
                 self.graph.add_typed_edge(
                     utterance.id,
@@ -160,7 +196,12 @@ class MemoryRuntime:
                     provenance="derived_from_utterance",
                     now=self.now(),
                 )
-            self._link_concepts(carrier=fact, text=clean_fact, relation="mentions", provenance="fact_index")
+            self._link_concepts(
+                carrier=fact,
+                text=clean_fact,
+                relation="mentions",
+                provenance="fact_index",
+            )
 
     def _link_concepts(self, *, carrier: MemoryNode, text: str, relation: str, provenance: str) -> None:
         for segment in self.segmenter.segment(text):
