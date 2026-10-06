@@ -109,11 +109,7 @@ class MAIRuntime:
         self.graph = MemoryGraphRepository(self.memory_db_path)
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
         self.concept_index = SqliteFtsConceptIndex(self.memory_db_path)
-        self.recall = RecallService(
-            self.graph,
-            self.concept_index,
-            self.segmenter,
-        )
+        self.recall = RecallService(self.graph)
         self.memory = MemoryRuntime(
             self.graph,
             self.concept_index,
