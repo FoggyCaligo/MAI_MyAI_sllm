@@ -40,28 +40,68 @@ _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
 
-_FINAL_REVIEW_SYSTEM = """
-You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
+_CANDIDATE_ANALYSIS_SYSTEM = """
+You are the first, lightweight stage of MAI's judgment-only final-answer release verifier.
+You cannot call tools, choose tools, rewrite the answer, judge factual support, or add requirements.
 
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+Analyze only the candidate answer as a response to the current user request and recent conversation context.
+Do not use conversation context as factual evidence. This stage does not receive tool evidence and must not decide
+whether a factual claim is true.
 
 Your response is constrained by the supplied structured-output schema. Populate every required field:
-- evidence_verdict: "supported", "unsupported", or "uncertain"
-- alignment_verdict: "aligned", "misaligned", or "uncertain"
-- coverage_verdict: "sufficient", "insufficient", or "uncertain"
-- coverage_reasons: concrete material omissions from already supplied evidence only
-- reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
-- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+- resolved_request: the user's current request, with references resolved from conversational context only as needed;
+- alignment_verdict: "aligned", "misaligned", or "uncertain";
+- reasons: concrete task-alignment defects only;
+- claims: every material factual claim from the candidate that matters to the user's request.
+
+Claim extraction:
+- Extract material factual assertions from the candidate without deciding whether they are supported.
+- Keep each claim self-contained and preserve its semantic scope.
+- Include claims about external action completion or resulting state when the candidate presents them as factual.
+- Mark temporal=true when a claim's meaning or correctness depends on the current moment, a relative-time expression,
+  or a date/timestamp comparison. Do not decide temporal correctness in this stage.
+- Do not turn opinions, recommendations, formatting, or purely rhetorical language into factual claims unless they
+  contain a material factual assertion.
+
+Task alignment and partial-answer policy:
+- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
+- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
+- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
+- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
+- Do reject a candidate that hides a material failure and presents an unverified result as completed.
+- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
+- reasons should name concrete blocking alignment defects. If alignment is aligned or uncertain, reasons should normally be empty.
+""".strip()
+
+
+_EVIDENCE_REVIEW_SYSTEM = """
+You are the second stage of MAI's judgment-only final-answer release verifier.
+You cannot call tools, choose tools, rewrite the answer, discover new candidate claims, or add requirements.
+
+The first stage already extracted the candidate's material factual claims and resolved the user's task.
+Review only those supplied claims against the supplied evidence sources, and judge evidence coverage and action outcome.
+The resolved request is task context only, not factual evidence.
+
+Your response is constrained by the supplied structured-output schema. Populate every required field:
+- evidence_verdict: "supported", "unsupported", or "uncertain";
+- coverage_verdict: "sufficient", "insufficient", or "uncertain";
+- coverage_reasons: concrete material omissions from already supplied evidence only;
+- reasons: concrete grounding/action defects only;
+- claims: one review for every supplied claim_id, without adding or removing claims;
+- action_verdict: "not_applicable", "verified", "unverified", or "contradicted".
 
 Claim-level evidence grounding:
-- For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
+- For each supplied material factual claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
-- Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
+- Use "uncertain" only when you cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
-- Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
-- Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
-- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
+- Prior assistant text is not factual evidence and is intentionally absent from evidence_sources.
+- User-message evidence supports only factual content directly asserted by the user in that message.
+- A user's approval, agreement, confirmation, acceptance, or endorsement of assistant content is not factual evidence for the referenced assistant claims and must not be used to support them.
+- Each evidence source has an exact id. For every supported claim, support_ids must contain one or more exact source ids that materially establish the claim.
+- Never invent a support id. Do not cite task context, the candidate answer, or the claim itself as evidence.
+- A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. A failed tool result must never be treated as evidence that the requested operation itself succeeded.
+- For claims marked temporal=true, check the claim's temporal framing against authoritative_current_time and any source dates/timestamps.
 
 Temporal authority:
 - authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
@@ -77,7 +117,7 @@ Evidence scope preservation:
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
 Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
+- Judge coverage only from facts already present in the supplied user-message evidence and tool evidence. Do not imagine facts that additional research might discover.
 - Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
 - Prefer concrete supported results over replacing them with generic advice to check another source later.
 - Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
@@ -85,7 +125,7 @@ Evidence coverage:
 - coverage_reasons must identify the concrete already-observed information that the candidate should have used. If coverage is sufficient or uncertain, coverage_reasons should be empty.
 
 Action outcome verification:
-- Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
+- Determine whether the resolved current request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
 - If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
 - A successful action/tool invocation is evidence that the tool contract reported success. It is not automatically evidence for a broader requested end state.
 - Use "verified" only when the candidate claims completion and the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
@@ -93,26 +133,34 @@ Action outcome verification:
 - Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
-Task alignment and partial-answer policy:
-- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
-- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
-- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
-- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
-- Do reject a candidate that hides a material failure and presents an unverified result as completed.
-- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
-
 Overall verdicts:
-- evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
+- evidence_verdict is "unsupported" when at least one supplied material candidate claim is concretely unsupported.
 - evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
 - evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
+- reasons should name concrete blocking grounding/action defects. If no grounding/action axis is blocking, reasons should be empty.
 """.strip()
 
 
-class _ClaimReviewPayload(BaseModel):
+class _CandidateClaimPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     claim: str
+    temporal: bool
+
+
+class _CandidateAnalysisPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolved_request: str
+    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
+    reasons: list[str]
+    claims: list[_CandidateClaimPayload]
+
+
+class _EvidenceClaimPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str
     verdict: Literal["supported", "unsupported", "uncertain"]
     defect: Literal[
         "none",
@@ -122,19 +170,17 @@ class _ClaimReviewPayload(BaseModel):
         "missing_evidence",
     ]
     reason: str
+    support_ids: list[str]
 
 
-class _FinalReviewPayload(BaseModel):
-    """Strict provider-structured reviewer response."""
-
+class _EvidenceReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
-    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     reasons: list[str]
-    claims: list[_ClaimReviewPayload]
+    claims: list[_EvidenceClaimPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
