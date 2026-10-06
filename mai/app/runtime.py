@@ -122,14 +122,14 @@ class MAIRuntime:
         self.graph = MemoryGraphRepository(self.memory_db_path)
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
         self.concept_index = SqliteFtsConceptIndex(self.memory_db_path)
-        self.memory_recall_include_utterances = _read_bool_env(
+        self.memory_utterances_enabled = _read_bool_env(
             "MEMORY_RECALL_INCLUDE_UTTERANCES",
             default=False,
         )
         self.recall = RecallService(
             self.graph,
             self.concept_index,
-            include_utterances=self.memory_recall_include_utterances,
+            include_utterances=self.memory_utterances_enabled,
         )
         self.memory = MemoryRuntime(
             self.graph,
@@ -137,7 +137,7 @@ class MAIRuntime:
             self.segmenter,
             self.recall,
             now=lambda: datetime.now(timezone.utc),
-            record_utterances=self.memory_recall_include_utterances,
+            record_utterances=self.memory_utterances_enabled,
         )
         self._adapters: dict[str, OllamaAdapter] = {}
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
