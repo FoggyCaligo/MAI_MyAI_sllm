@@ -1,8 +1,7 @@
-"""SQLite schema for the Memory v1 graph.
+"""SQLite schema for the MK4-style Memory v1 graph.
 
-Facts are the default semantic memory nodes. Utterance graph nodes remain schema-
-compatible but are optional in production; immutable raw evidence is stored
-separately. Concept nodes are Sentence_Breaker segments used by the lexical index.
+Utterances remain directly addressable evidence-bearing nodes. Concept nodes are
+Sentence_Breaker segments and are the only nodes indexed by the vector backend.
 """
 
 SCHEMA_SQL = """

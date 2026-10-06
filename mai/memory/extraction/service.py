@@ -24,17 +24,12 @@ Evidence rules:
 - Existing persistent-memory recall results are intentionally absent and must not be reconstructed or recycled as new facts.
 
 Admission rules:
-- Prefer recall coverage over aggressive filtering. Extract all user-grounded details that are plausibly useful in a later conversation, not only a minimal summary.
-- Extract explicit user facts, current possessions/configurations, changes, decisions, preferences, plans, corrections, reasons for changes, durable project state, and tool-grounded facts tied to the user's context.
-- When one message contains several durable details, split them into multiple self-contained facts so later retrieval can match any important detail independently.
-- Preserve specific model names, component relationships, materials, compatibility details, chosen settings, and other concrete attributes when the user states them.
-- Distinct product/model identities must remain distinct facts even when they are compatible, combined, or discussed in the same sentence.
+- Extract concise facts that would be useful to remember later: explicit user facts, changes, decisions, preferences, plans, corrections, durable project state, or tool-grounded facts tied to the user's context.
 - Do not extract questions, requests, instructions to the assistant, or the mere fact that the user asked for recall/search/checking.
 - A pure recall question such as "do you remember X?" should normally return an empty facts array.
 - A mixed message such as "do you remember X? recently it changed to Y" must extract the new Y information even if recall was also used during the turn.
 - Do not invent missing details or infer a stronger claim than the evidence supports.
-- Keep each fact self-contained. Remove only exact duplicate fact strings; do not semantically collapse distinct facts that mention related entities, models, components, configurations, or states.
-- Do not impose a fixed maximum number of facts. Return every evidence-supported durable fact needed for recall coverage.
+- Deduplicate semantically equivalent facts and keep each fact self-contained.
 """.strip()
 
 
@@ -82,7 +77,6 @@ class OllamaFactExtractor:
             ),
             tools=(),
             think=False,
-            stage="memory_extraction",
         )
         try:
             turn = await asyncio.wait_for(self.adapter.chat(request), timeout=self.timeout_seconds)

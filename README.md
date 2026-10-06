@@ -23,10 +23,6 @@ Web/API authentication
   ↓
 AccessPrincipal(user_id, db_id, role)
   ↓
-LLM tool-requirement preflight
-  ↓
-FrozenToolRequirements
-  ↓
 Main Agent + Ollama native tool calls
   ↓
 Candidate Final
@@ -45,21 +41,19 @@ Final Response
 Background memory extraction / admission
 ```
 
-### Tool preflight + native-tool selection
+### Direct native-tool selection
 
-Production request path는 main agent 전에 선택된 동일 모델을 `think=False`, `tools=()`로 호출해 필수 native tool을 판정한다. 판정 결과는 `FrozenToolRequirements`로 고정되며, 등록된 handler가 실제로 시작돼야 충족된다.
+Production request path는 별도의 model-based tool requirement preflight를 호출하지 않는다. Main agent가 system prompt, 최근 대화, runtime context, 현재 등록된 native tool schema를 함께 보고 필요한 tool을 직접 선택한다.
 
-Preflight 입력은 `request_context`와 `factual_evidence`를 분리한다. 이전 assistant 답변은 참조 해석용 context일 뿐 사실 근거가 아니다. 최종 답변에 필요한 material external fact가 factual evidence에 없다면 모델의 학습 지식을 근거로 간주하지 않고 적절한 정보 tool을 필수로 선택한다.
+`OllamaToolRequirementPlanner`와 `FrozenToolRequirements` 지원 코드는 구조적 실험 및 단위 테스트를 위해 남아 있지만 현재 production composition에는 연결하지 않는다. 추가 LLM 호출의 지연을 피하기 위한 의도적인 선택이다.
 
-Main agent가 필수 tool 없이 final을 시도하면 아직 누락된 tool schema만 노출하는 correction round로 돌아간다. 그 밖의 추가 tool은 main agent가 전체 native schema를 보고 직접 선택한다.
+따라서 production에서는 required-tool gate가 final을 구조적으로 차단하지 않는다. 필요한 tool 사용은 main agent prompt와 tool schema에 의존하고, 생성된 candidate final의 근거성은 뒤의 `FinalGroundingVerifier`가 검토한다.
 
 ---
 
 ## 2. Final verification
 
 Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니다. Candidate final을 release하기 전에 user/tool evidence와 비교해 검증한다. Numeric grounding은 deterministic 검사이고, semantic review는 현재 chat에 선택된 동일 모델을 `think=False`, `tools=()`로 한 번 더 호출한다. Candidate가 거절되어 재작성되면 새 candidate마다 reviewer가 다시 호출될 수 있다.
-
-Semantic reviewer 입력도 `request_context`와 ID가 부여된 `factual_evidence`로 분리한다. 이전 assistant 답변은 요청 해석과 alignment 판단에만 사용하며 claim grounding, coverage, action outcome의 근거가 될 수 없다. 각 supported claim은 실제 factual evidence의 `evidence_ids`를 반환해야 하고, coverage 부족 판정도 `coverage_evidence_ids`를 제시해야 한다. ID 누락·중복·미등록 참조는 reviewer protocol failure로 처리한다.
 
 현재 검증 축은 다음과 같다.
 
@@ -73,11 +67,9 @@ Semantic reviewer 입력도 `request_context`와 ID가 부여된 `factual_eviden
 
 Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판정을 내리지 않는다. **현재 user/tool evidence 안에 이미 있는 구체적이고 사용자에게 중요한 정보를 candidate가 불필요하게 버린 경우**만 대상으로 한다.
 
-Candidate가 grounding에서 반려되면 correction round에는 blocked claim, defect, reason, 기존 evidence ID와 허용된 해결 방식이 구조화된 JSON으로 전달된다. 새 user/tool evidence를 확보하거나, 주장을 제거하거나, 미확인 상태를 명시해야 하며 같은 근거로 사실 설명만 바꿔 반복할 수 없다.
+Coverage correction은 별도 budget으로 최대 2번이다. 두 번 이후에는 coverage 부족만으로 final을 계속 붙잡지 않는다. Grounding, action, alignment와는 별도 축이다.
 
-각 검증 축의 correction budget은 최대 2회다. Semantic reviewer의 structured output, evidence ID 계약, timeout 또는 provider 호출이 재시도 뒤에도 실패하면 검증되지 않은 candidate를 반환하지 않고 실행 실패로 전달한다.
-
-모든 Ollama 호출은 `preflight`, `main`, `correction`, `reviewer`, memory 단계 label과 함께 입력 메시지 수·문자 수·tool schema 크기·wall time을 기록한다. Ollama가 제공하면 prompt/eval token 수와 load/prompt-eval/eval/total duration도 함께 기록한다.
+Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 이를 log하고 **fail-open**한다. Reviewer 장애 때문에 전체 사용자 요청을 서비스 오류로 끝내기보다 candidate final을 반환하는 가용성 우선 정책이다. 실패한 reviewer 출력을 문자열 heuristic으로 복원하지 않는다.
 
 ---
 
@@ -99,40 +91,41 @@ Recovery finalization 자체도 실패하면 원래 exception을 다시 드러�
 
 ## 4. Graph Long-term Memory
 
-MAI memory의 기본 production 구조는 Fact-first다.
+MAI memory의 기본 구조는 다음과 같다.
 
 ```text
-User Anchor ─asserted_fact→ Fact ─mentions→ Concept
-```
+User Anchor
+   └─asserted_fact→ Fact
 
-`.env`의 `MEMORY_RECALL_INCLUDE_UTTERANCES=true`일 때만 새 Utterance graph node도 함께 기록한다.
+Fact ─mentions→ Concept
 
-```text
-User Anchor ─spoke──────→ Utterance
-Utterance   ─derived_fact→ Fact
-Utterance   ─mentions────→ Concept
+Raw user text is preserved separately in the immutable evidence table.
 ```
 
 핵심 node:
 
 - **User Anchor**: `db_id`마다 하나씩 존재하는 사용자 기준점
-- **Fact**: 사용자 발화에서 폭넓게 추출한 durable fact
-- **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 개념
-- **Utterance**: 옵션. 토글이 켜진 경우에만 원문 발화 graph node를 생성
+- **Fact**: 발화에서 파생된 durable fact
+- **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 내부 검색 개념
 
-원문 자체는 Utterance node 사용 여부와 별개로 immutable `evidence` table에 보존한다.
+원문 사용자 입력은 graph Utterance node로 복제하지 않고 immutable raw evidence로 보존한다.
 
-Retrieval은 embedding/vector space를 production identity로 사용하지 않는다. 저장 시에는 Sentence_Breaker로 Concept을 만들지만, recall query는 다시 Sentence_Breaker로 분해하지 않는다.
+Retrieval은 embedding/vector space를 production identity로 사용하지 않는다.
 
 ```text
-model recall query
-  ↓ whitespace chunks
+memory admission
+  ↓ Sentence_Breaker
+canonical Concept nodes
+
+memory_recall query
+  ↓ whitespace chunks only
 intact query chunks
-  ├─ Fact canonical_text 포함검색
-  └─ ConceptIndex exact/FTS5 검색
-       └─ chunk당 최고 Concept seed 1개
   ↓
-bounded Fact + Concept context
+Exact + SQLite FTS5 ConceptIndex
+  ↓
+internal Concept seeds
+  ↓
+Fact neighborhoods
 ```
 
 현재 model-visible memory tool:
@@ -141,11 +134,11 @@ bounded Fact + Concept context
 - `memory_recall(query)`
 - `memory_search(node_id)`
 
-Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, **recency를 우선**하고 `occurrence_count`는 동률 보조로만 사용한다. Query Fact 포함검색도 match relevance → recency → occurrence_count 순으로 정렬한다.
+Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
 
-`memory_recall`은 공백 chunk 각각을 그대로 검색 단위로 사용한다. 각 chunk가 포함된 Fact 본문을 직접 찾고, 동시에 ConceptIndex에서 chunk당 최고 Concept seed 하나를 선택해 연결된 Fact context를 더한다. 따라서 `"만년필"`을 검색하면 하나의 Concept node만 보여주는 것이 아니라 본문에 `"만년필"`이 포함된 여러 Fact도 bounded result로 함께 들어온다.
+Recall query에는 Sentence_Breaker를 사용하지 않는다. 모델이 보낸 query를 공백 단위의 intact chunk로만 나누고, 각 chunk를 ConceptIndex에 독립적으로 조회한다. 각 chunk당 최고 hit 하나만 후보로 받고, 후보를 relevance 순으로 정렬한 뒤 기존 `concept_limit` 안에서 graph seed로 사용한다. Sentence_Breaker는 Fact를 Concept으로 기록하는 admission 단계에서는 계속 사용한다.
 
-`MEMORY_RECALL_INCLUDE_UTTERANCES=false`가 기본이며 이 경우 **새 Utterance graph node를 만들지 않고 recall에도 Utterance를 넣지 않는다.** `true`로 바꾸면 두 동작을 함께 활성화한다. raw user evidence는 토글과 무관하게 별도 evidence table에 보존한다.
+`memory_recall`의 model-visible 결과는 **Anchor + Fact만** 반환한다. ConceptIndex/Concept node는 검색 진입점으로 내부에서만 사용하고, Concept 및 Utterance node는 recall payload에 노출하지 않는다. 원문 사용자 입력은 immutable `evidence` table에 그대로 보존된다.
 
 Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
 
@@ -153,15 +146,9 @@ Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `m
 
 ### Post-response memory write
 
-최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다. 모델에게 별도 `memory_write` tool이 노출되지 않아도 이 background admission이 자동으로 실행된다.
+최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다.
 
-Fact extractor는 최소 요약 하나만 남기기보다, 이후 recall에 도움이 될 수 있는 사용자 상태·소유물·구성·변경·선호·이유·호환성 같은 세부사항을 여러 개의 self-contained Fact로 폭넓게 추출하도록 한다. 고정 Fact 개수 상한은 두지 않는다.
-
-Fact node identity는 #199 이전 방식으로 유지한다. 같은 사용자에서 canonical Fact text가 완전히 같으면 기존 node를 재사용하고 `occurrence_count`를 올린다. Concept도 동일 canonical segment면 기존 node를 재사용한다. 반면 text가 다른 Fact를 LLM이 의미상 같다고 판단해 기존 node에 합치는 semantic identity merge는 사용하지 않는다.
-
-동일 `(from_node_id, to_node_id, relation)` edge가 다시 관찰되면 기존 edge를 그대로 재사용하고 중복 row를 만들지 않는다. Edge 자체에는 별도 `occurrence_count` 강화/약화 가중치를 두지 않는다.
-
-Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent write를 생략한다. Extraction이 실패하면 실패를 숨기지 않고 raw evidence를 보존한다.
+새 graph Utterance node는 기록하지 않는다. FactExtractor가 durable Fact를 만들면 Anchor→Fact와 Fact→Concept만 기록하며, 원문은 immutable raw evidence에만 남긴다. Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent graph write를 생략한다.
 
 ---
 
@@ -284,7 +271,6 @@ python -m pip install -e ".[dev]"
 
 ```env
 MAIN_MODEL=gemma4:e4b
-MEMORY_RECALL_INCLUDE_UTTERANCES=false
 ```
 
 실행:

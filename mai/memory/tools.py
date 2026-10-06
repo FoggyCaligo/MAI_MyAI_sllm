@@ -60,11 +60,10 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         registry.add(
             name="memory_recall",
             description=(
-                "Search this user's persistent memory from a specific free-text query. Whitespace-delimited "
-                "chunks are searched as intact units. Recall returns bounded Fact text-containment matches and "
-                "Concept-linked Fact context; each chunk contributes at most one best Concept seed before the "
-                "global seed budget is applied. Raw Utterances are included only when the Utterance env switch "
-                "is enabled."
+                "Search this user's persistent memory from a specific free-text query. The default result is "
+                "compact Concept/Fact context and may omit raw Utterance nodes; use memory_search when exact "
+                "source wording or neighboring evidence is needed. Use recall when the answer depends on a "
+                "particular remembered topic, preference, decision, person, project, or past event."
             ),
             input_model=MemoryRecallInput,
             handler=memory_recall,
@@ -77,9 +76,9 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         registry.add(
             name="memory_overview",
             description=(
-                "Return a recent overview of user-grounded persistent memories. In the default Fact-first "
-                "configuration this is primarily recent asserted Facts; legacy/new Utterances appear only when "
-                "they exist in the graph."
+                "Return a recent overview of memories grounded in this user's own prior utterances and facts. "
+                "Use it for broad requests about what you remember about the user when there is no specific "
+                "lexical topic to search for."
             ),
             input_model=MemoryOverviewInput,
             handler=memory_overview,

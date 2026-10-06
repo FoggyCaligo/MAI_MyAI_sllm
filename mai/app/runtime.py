@@ -45,17 +45,6 @@ from .uploads import principal_upload_directory
 _LOG = logging.getLogger("uvicorn.error")
 
 
-def _read_bool_env(name: str, *, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().casefold()
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    raise ValueError(f"{name} must be either 'true' or 'false'")
-
 
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
@@ -65,8 +54,6 @@ Answer the current request fully; prior answers do not imply user knowledge or j
 Your capabilities are defined by the native tools supplied with this request. Do not rely on generic assumptions from model training about whether a language model can access memory, files, code, structured documents, images, the web, market data, the current local time, calculation, or the terminal.
 
 Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use file_read for local file contents, including PDF, DOCX, XLSX, CSV, and PPTX documents. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
-
-Persistent memory admission runs automatically after an accepted final response. The absence of a model-visible memory-write tool does not mean new user-grounded facts cannot be stored. Do not claim that persistent memory cannot be updated merely because only memory read/search tools are exposed. Do not promise that a specific fact was stored until a later recall or database/tool check verifies it.
 
 Large tool results may be represented by a bounded page containing a result_id, range metadata, and content. When more of that exact result is required, use tool_result_read with the supplied result_id and an explicit offset/limit rather than assuming omitted content.
 
@@ -122,14 +109,9 @@ class MAIRuntime:
         self.graph = MemoryGraphRepository(self.memory_db_path)
         self.segmenter = SentenceBreakerSegmenter(db_path=str(sentence_breaker_db_path))
         self.concept_index = SqliteFtsConceptIndex(self.memory_db_path)
-        self.memory_utterances_enabled = _read_bool_env(
-            "MEMORY_RECALL_INCLUDE_UTTERANCES",
-            default=False,
-        )
         self.recall = RecallService(
             self.graph,
             self.concept_index,
-            include_utterances=self.memory_utterances_enabled,
         )
         self.memory = MemoryRuntime(
             self.graph,
@@ -137,7 +119,6 @@ class MAIRuntime:
             self.segmenter,
             self.recall,
             now=lambda: datetime.now(timezone.utc),
-            record_utterances=self.memory_utterances_enabled,
         )
         self._adapters: dict[str, OllamaAdapter] = {}
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
