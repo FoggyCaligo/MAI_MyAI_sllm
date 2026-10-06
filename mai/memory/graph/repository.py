@@ -270,6 +270,56 @@ class MemoryGraphRepository:
         edges = tuple(self.get_edge(int(row["edge_id"])) for row in rows)
         return GraphNeighborhood(anchor.id, nodes, edges)
 
+    def user_fact_text_matches(
+        self,
+        user_id: str,
+        chunks: tuple[str, ...],
+        *,
+        limit: int,
+    ) -> GraphNeighborhood:
+        """Return bounded asserted Facts whose text contains intact query chunks."""
+        if limit < 0:
+            raise ValueError("fact text match limit must be >= 0")
+        anchor = self.get_user_anchor(user_id)
+        if anchor is None:
+            raise KeyError(f"user anchor for '{user_id}' does not exist")
+
+        clean_chunks = tuple(dict.fromkeys(chunk.strip() for chunk in chunks if chunk.strip()))
+        if not clean_chunks or limit == 0:
+            return GraphNeighborhood(anchor.id, (anchor,), ())
+
+        match_terms = " + ".join(
+            "CASE WHEN instr(lower(n.canonical_text), lower(?)) > 0 THEN 1 ELSE 0 END"
+            for _ in clean_chunks
+        )
+        where_terms = " OR ".join(
+            "instr(lower(n.canonical_text), lower(?)) > 0"
+            for _ in clean_chunks
+        )
+        params = (
+            *clean_chunks,
+            anchor.id,
+            *clean_chunks,
+            limit,
+        )
+        rows = self.connection.execute(
+            f"""
+            SELECT e.id AS edge_id, n.id AS node_id, ({match_terms}) AS match_count
+            FROM edges e
+            JOIN nodes n ON n.id = e.to_node_id
+            WHERE e.from_node_id = ?
+              AND e.relation = 'asserted_fact'
+              AND n.node_type = 'fact'
+              AND ({where_terms})
+            ORDER BY match_count DESC, n.occurrence_count DESC, n.last_seen_at DESC, n.id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        nodes = (anchor,) + tuple(self.get_node(int(row["node_id"])) for row in rows)
+        edges = tuple(self.get_edge(int(row["edge_id"])) for row in rows)
+        return GraphNeighborhood(anchor.id, nodes, edges)
+
     def shortest_path_to_user_anchor(self, node_id: int, user_id: str) -> GraphNeighborhood | None:
         anchor = self.get_user_anchor(user_id)
         if anchor is None:
