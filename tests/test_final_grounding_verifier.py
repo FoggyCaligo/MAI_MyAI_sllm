@@ -47,6 +47,11 @@ class ReviewerAdapter:
     async def chat(self, request):
         self.requests.append(deepcopy(request))
         schema_properties = request.response_format["properties"]
+        if "verdict" in schema_properties:
+            return turn(json.dumps({
+                "verdict": "unsupported",
+                "reasons": ["The changed numeric value is not derivable from the supplied evidence."],
+            }))
         if "user_assertions" in schema_properties and self.awaiting_evidence:
             self.reviews.pop(0)
             self.awaiting_evidence = False
@@ -83,6 +88,14 @@ class StructuredReviewerAdapter:
     async def chat(self, request):
         self.requests.append(deepcopy(request))
         schema_properties = request.response_format["properties"]
+        if "verdict" in schema_properties:
+            if not self.reviews:
+                raise AssertionError("unexpected extra reviewer call")
+            review = dict(self.reviews.pop(0))
+            return turn(json.dumps({
+                "verdict": review.get("numeric_verdict", "unsupported"),
+                "reasons": list(review.get("numeric_reasons", [])),
+            }, ensure_ascii=False))
         if "user_assertions" in schema_properties and self.awaiting_evidence:
             self.reviews.pop(0)
             self.awaiting_evidence = False
@@ -182,7 +195,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 3
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     assert rejected in str(main.requests[1].messages)
@@ -222,7 +235,7 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
-def test_numeric_failure_is_fail_fast_before_llm_review() -> None:
+def test_numeric_failure_uses_derivation_review_before_retry() -> None:
     main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
     reviewer = ReviewerAdapter([
         ("supported", "misaligned", ("The requested comparison is missing.",)),
@@ -233,7 +246,7 @@ def test_numeric_failure_is_fail_fast_before_llm_review() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 0
+    assert len(reviewer.requests) == 3
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -462,6 +475,48 @@ def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
         "error_type": "TerminalCommandError",
         "content": "collected 138 items; 136 passed, 2 failed",
     }]
+
+
+def test_numeric_derivation_review_can_accept_unit_conversion() -> None:
+    reviewer = StructuredReviewerAdapter([
+        {"numeric_verdict": "supported"},
+        {"evidence_verdict": "supported", "alignment_verdict": "aligned"},
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="전체 폴더 크기는 3.9GB입니다.",
+        messages=({"role": "user", "content": "플레이리스트 크기를 알려줘."},),
+        tool_results=((
+            "terminal_run",
+            True,
+            None,
+            "3980M\tC:\\Users\\bigla\\Documents\\Git\\playlist2\\pli",
+        ),),
+    ))
+
+    assert result.ok is True
+    numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert "storage:gib:3.9" in numeric_payload["unsupported_numeric_facts"]
+    assert numeric_payload["numeric_evidence_sources"][1]["tool"] == "terminal_run"
+
+
+def test_numeric_derivation_review_can_accept_rounded_summary() -> None:
+    reviewer = StructuredReviewerAdapter([
+        {"numeric_verdict": "supported"},
+        {"evidence_verdict": "supported", "alignment_verdict": "aligned"},
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="파일은 약 1,100개입니다.",
+        messages=({"role": "user", "content": "파일 수를 요약해줘."},),
+        tool_results=(("terminal_run", True, None, "1114\n"),),
+    ))
+
+    assert result.ok is True
+    numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert numeric_payload["unsupported_numeric_facts"] == ["1100"]
 
 
 def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:

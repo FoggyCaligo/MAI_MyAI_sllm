@@ -37,6 +37,10 @@ _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?![A-Za-z0-9_.])"
 )
 _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
+_STORAGE_UNIT_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*"
+    r"(?i:(kib|mib|gib|tib|kb|mb|gb|tb|k|m|g|t))(?=\b|[^A-Za-z0-9_])"
+)
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
 
@@ -136,6 +140,27 @@ Return exactly one review for every supplied candidate claim, using its exact cl
 """.strip()
 
 
+_NUMERIC_DERIVATION_REVIEW_SYSTEM = """
+You are a judgment-only numeric derivation reviewer. You cannot call tools, rewrite the answer, or add new facts.
+
+The deterministic exact numeric grounding check found candidate numeric values that are not written verbatim in user/tool evidence. Decide whether every listed value is nevertheless directly supported by the supplied raw evidence.
+
+Allowed support:
+- exact arithmetic explicitly implied by evidence, such as sums, differences, products, divisions, percentages, or counts;
+- unit conversion where the source value and source unit are present in evidence and the target value/unit in the candidate is a correct conversion or conventional rounded presentation;
+- rounded or summarized numbers when the candidate wording preserves approximation and the rounded value is a faithful summary of an observed evidence value.
+
+Reject support:
+- guessing a number from unrelated nearby numbers;
+- silently changing a precise value into a different precise value;
+- rounding that changes the material conclusion;
+- using conversation context that is not in numeric_evidence_sources as factual evidence;
+- treating ok=false as proof that the requested operation succeeded. A failed tool result may still support claims about observed stdout, stderr, diagnostics, or error details.
+
+Return "supported" only when all unsupported_numeric_facts are directly derivable from numeric_evidence_sources. Return "unsupported" if at least one listed value is not derivable or is contradicted. Return "uncertain" only when the evidence is ambiguous enough that you cannot judge.
+""".strip()
+
+
 class _CandidateClaimPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -186,6 +211,13 @@ class _EvidenceReviewPayload(BaseModel):
     reasons: list[str]
     claims: list[_ClaimEvidencePayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
+
+
+class _NumericDerivationReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["supported", "unsupported", "uncertain"]
+    reasons: list[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,7 +326,7 @@ class FinalReview:
 
 
 class FinalGroundingVerifier:
-    """Run deterministic numeric review, then staged task/claim and evidence review."""
+    """Run exact numeric review, derivation review, then staged claim/evidence review."""
 
     def __init__(
         self,
@@ -327,15 +359,39 @@ class FinalGroundingVerifier:
             tool_results=tool_results,
         )
         if allow_numeric_review and numeric_issue is not None:
-            self._log_result(
-                numeric="failed",
-                evidence="skipped",
-                alignment="skipped",
-                coverage="skipped",
-                action="skipped",
-                reasons=(numeric_issue.message,),
-            )
-            return FinalVerificationResult(ok=False, issues=(numeric_issue,))
+            if self.reviewer_adapter is not None:
+                numeric_derivation = await self._review_numeric_derivation(
+                    candidate=candidate,
+                    messages=messages,
+                    tool_results=tool_results,
+                    numeric_issue=numeric_issue,
+                )
+                if numeric_derivation.verdict == "supported":
+                    numeric_issue = None
+                elif numeric_derivation.verdict == "uncertain" and numeric_derivation.reasons:
+                    numeric_issue = VerificationIssue(
+                        code=numeric_issue.code,
+                        message=numeric_issue.message
+                        + " Reviewer was uncertain: "
+                        + "; ".join(numeric_derivation.reasons),
+                    )
+                elif numeric_derivation.verdict == "unsupported" and numeric_derivation.reasons:
+                    numeric_issue = VerificationIssue(
+                        code=numeric_issue.code,
+                        message=numeric_issue.message
+                        + " Reviewer found no valid derivation: "
+                        + "; ".join(numeric_derivation.reasons),
+                    )
+            if numeric_issue is not None:
+                self._log_result(
+                    numeric="failed",
+                    evidence="skipped",
+                    alignment="skipped",
+                    coverage="skipped",
+                    action="skipped",
+                    reasons=(numeric_issue.message,),
+                )
+                return FinalVerificationResult(ok=False, issues=(numeric_issue,))
 
         if self.reviewer_adapter is None or (
             not allow_semantic_review and not allow_evidence_review and not allow_coverage_review
@@ -470,24 +526,13 @@ class FinalGroundingVerifier:
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
     ) -> VerificationIssue | None:
-        evidence: set[str] = set()
-        for message in messages:
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-        for _, _, _, content in tool_results:
-            evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-
-        if not evidence:
-            return None
-
-        candidate_facts = _extract_material_numeric_facts(candidate)
-        unsupported = sorted(
-            fact for fact in candidate_facts
-            if fact not in evidence and not _supported_as_month_day_alias(fact, evidence)
+        unsupported = _unsupported_numeric_facts(
+            candidate=candidate,
+            messages=messages,
+            tool_results=tool_results,
         )
+        if unsupported is None:
+            return None
         if not unsupported:
             return None
         return VerificationIssue(
@@ -497,6 +542,80 @@ class FinalGroundingVerifier:
                 + ", ".join(unsupported)
             ),
         )
+
+    async def _review_numeric_derivation(
+        self,
+        *,
+        candidate: str,
+        messages: Sequence[Mapping[str, Any]],
+        tool_results: Sequence[ToolVerificationResult],
+        numeric_issue: VerificationIssue,
+    ) -> _NumericDerivationReviewPayload:
+        unsupported = _unsupported_numeric_facts(
+            candidate=candidate,
+            messages=messages,
+            tool_results=tool_results,
+        ) or ()
+        evidence_sources: list[dict[str, Any]] = []
+        for index, message in enumerate(messages):
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                evidence_sources.append({
+                    "ref": f"user:{index}",
+                    "kind": "user_message",
+                    "content": _clip_text(content, 2500),
+                })
+        for index, (name, ok, error_type, content) in enumerate(tool_results):
+            evidence_sources.append({
+                "ref": tool_evidence_ref(index, name),
+                "kind": "tool_result",
+                "tool": name,
+                "ok": ok,
+                "error_type": error_type,
+                "content": _clip_text(content, 3500),
+            })
+
+        current_user = next(
+            (
+                str(message.get("content") or "")
+                for message in reversed(messages)
+                if message.get("role") == "user" and isinstance(message.get("content"), str)
+            ),
+            "",
+        )
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _NUMERIC_DERIVATION_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps({
+                    "current_user_request": _clip_text(current_user, 4000),
+                    "candidate_final": _clip_text(candidate, 6000),
+                    "exact_numeric_grounding_issue": numeric_issue.message,
+                    "unsupported_numeric_facts": list(unsupported),
+                    "numeric_evidence_sources": evidence_sources,
+                }, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+            response_format=_NumericDerivationReviewPayload.model_json_schema(),
+        )
+        _LOG.info(
+            "MAI numeric derivation reviewer start timeout=%s evidence_sources=%d candidate_chars=%d",
+            self.reviewer_timeout_seconds,
+            len(evidence_sources),
+            len(candidate),
+        )
+        parsed = await self._request_structured(
+            request,
+            _NumericDerivationReviewPayload,
+            reviewer_name="numeric derivation reviewer",
+        )
+        reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
+        verdict = parsed.verdict
+        if verdict == "unsupported" and not reasons:
+            verdict = "uncertain"
+        return _NumericDerivationReviewPayload(verdict=verdict, reasons=list(reasons))
 
     async def _analyze_candidate(
         self,
@@ -898,7 +1017,37 @@ def _clip_text(text: str, limit: int) -> str:
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
-def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = False) -> set[str]:
+def _unsupported_numeric_facts(
+    *,
+    candidate: str,
+    messages: Sequence[Mapping[str, Any]],
+    tool_results: Sequence[ToolVerificationResult],
+) -> tuple[str, ...] | None:
+    evidence: set[str] = set()
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
+    for _, _, _, content in tool_results:
+        evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
+
+    if not evidence:
+        return None
+
+    candidate_facts = _extract_material_numeric_facts(candidate)
+    return tuple(sorted(
+        fact for fact in candidate_facts
+        if fact not in evidence and not _supported_as_month_day_alias(fact, evidence)
+    ))
+
+
+def _extract_material_numeric_facts(
+    text: str,
+    *,
+    include_date_aliases: bool = False,
+) -> set[str]:
     cleaned = _LIST_ORDINAL_RE.sub("", text)
     facts: set[str] = set()
     occupied: list[tuple[int, int]] = []
@@ -922,6 +1071,17 @@ def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = F
         facts.add(_decimal_key(value))
         occupied.append(match.span())
 
+    for match in _STORAGE_UNIT_RE.finditer(cleaned):
+        raw, unit = match.groups()
+        try:
+            value = Decimal(raw.replace(",", ""))
+        except InvalidOperation:
+            continue
+        unit_key = _storage_unit_key(unit)
+        if unit_key is not None:
+            facts.add(f"storage:{unit_key}:{_decimal_key(value)}")
+        occupied.append(match.span())
+
     for match in _NUMBER_RE.finditer(cleaned):
         if any(start <= match.start() and match.end() <= end for start, end in occupied):
             continue
@@ -941,6 +1101,19 @@ def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = F
         key = _decimal_key(value)
         facts.add(f"percent:{key}" if is_percent else key)
     return facts
+
+
+def _storage_unit_key(unit: str) -> str | None:
+    normalized = unit.lower()
+    if normalized in {"k", "kb", "kib"}:
+        return "kib"
+    if normalized in {"m", "mb", "mib"}:
+        return "mib"
+    if normalized in {"g", "gb", "gib"}:
+        return "gib"
+    if normalized in {"t", "tb", "tib"}:
+        return "tib"
+    return None
 
 
 def _supported_as_month_day_alias(fact: str, evidence: set[str]) -> bool:
