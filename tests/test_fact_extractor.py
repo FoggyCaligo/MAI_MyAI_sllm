@@ -60,7 +60,7 @@ def test_extractor_preserves_direct_current_user_fact_from_verified_source() -> 
         user_evidence=(
             UserFactEvidence(
                 ref="user:7:0",
-                content="최근에는 목표를 Y로 바꿨어",
+                content="사용자는 최근 목표를 Y로 변경했다",
                 source_excerpt="최근에는 목표를 Y로 바꿨어",
             ),
         ),
@@ -74,7 +74,7 @@ def test_extractor_preserves_direct_current_user_fact_from_verified_source() -> 
     assert request_payload["allowed_fact_sources"] == [{
         "ref": "user:7:0",
         "kind": "direct_user_assertion",
-        "content": "최근에는 목표를 Y로 바꿨어",
+        "content": "사용자는 최근 목표를 Y로 변경했다",
         "source_excerpt": "최근에는 목표를 Y로 바꿨어",
     }]
     assert adapter.requests[0].think is False

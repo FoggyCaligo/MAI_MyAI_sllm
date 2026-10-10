@@ -335,7 +335,7 @@ class MAIRuntime:
         current_user_evidence = tuple(
             UserFactEvidence(
                 ref=item.ref,
-                content=item.statement,
+                content=item.normalized_claim,
                 source_excerpt=item.source_excerpt,
             )
             for item in (
