@@ -42,38 +42,18 @@ class ReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
-        self.awaiting_evidence = False
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
-        schema_properties = request.response_format["properties"]
-        if "verdict" in schema_properties:
-            return turn(json.dumps({
-                "verdict": "unsupported",
-                "reasons": ["The changed numeric value is not derivable from the supplied evidence."],
-            }))
-        if "user_assertions" in schema_properties and self.awaiting_evidence:
-            self.reviews.pop(0)
-            self.awaiting_evidence = False
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        evidence_verdict, alignment_verdict, reasons = self.reviews[0]
-        if "user_assertions" in schema_properties:
-            self.awaiting_evidence = True
-            return turn(json.dumps({
-                "alignment_verdict": alignment_verdict,
-                "reasons": list(reasons) if alignment_verdict == "misaligned" else [],
-                "claims": [],
-                "user_assertions": [],
-            }))
-        self.reviews.pop(0)
-        self.awaiting_evidence = False
+        evidence_verdict, alignment_verdict, reasons = self.reviews.pop(0)
         return turn(json.dumps({
             "evidence_verdict": evidence_verdict,
-            "validated_user_source_ids": [],
+            "alignment_verdict": alignment_verdict,
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
-            "reasons": list(reasons) if evidence_verdict == "unsupported" else [],
+            "reasons": list(reasons),
             "claims": [],
             "action_verdict": "not_applicable",
         }))
@@ -83,74 +63,15 @@ class StructuredReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
-        self.awaiting_evidence = False
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
-        schema_properties = request.response_format["properties"]
-        if "verdict" in schema_properties:
-            if not self.reviews:
-                raise AssertionError("unexpected extra reviewer call")
-            review = dict(self.reviews.pop(0))
-            return turn(json.dumps({
-                "verdict": review.get("numeric_verdict", "unsupported"),
-                "reasons": list(review.get("numeric_reasons", [])),
-            }, ensure_ascii=False))
-        if "user_assertions" in schema_properties and self.awaiting_evidence:
-            self.reviews.pop(0)
-            self.awaiting_evidence = False
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        review = dict(self.reviews[0])
-        if "user_assertions" in schema_properties:
-            self.awaiting_evidence = True
-            alignment = review.get("alignment_verdict", "aligned")
-            return turn(json.dumps({
-                "alignment_verdict": alignment,
-                "reasons": list(review.get("reasons", [])) if alignment == "misaligned" else [],
-                "claims": [
-                    {
-                        "claim": item["claim"],
-                        "temporal": bool(item.get("temporal", False)),
-                    }
-                    for item in review.get("claims", [])
-                ],
-                "user_assertions": list(review.get("user_assertions", [])),
-            }, ensure_ascii=False))
-
-        self.reviews.pop(0)
-        self.awaiting_evidence = False
-        payload = json.loads(request.messages[1]["content"])
-        available_refs = [str(item["ref"]) for item in payload.get("evidence_sources", [])]
-        user_refs = [
-            str(item["ref"])
-            for item in payload.get("evidence_sources", [])
-            if item.get("kind") == "user_assertion"
-        ]
-        claims = []
-        for index, item in enumerate(review.get("claims", [])):
-            raw = dict(item)
-            claims.append({
-                "claim_id": f"claim:{index}",
-                "verdict": raw.get("verdict", "supported"),
-                "defect": raw.get("defect", "none"),
-                "reason": raw.get("reason", ""),
-                "support_ids": list(raw.get(
-                    "support_ids",
-                    available_refs[:1] if raw.get("verdict", "supported") == "supported" else [],
-                )),
-            })
-        return turn(json.dumps({
-            "evidence_verdict": review.get("evidence_verdict", "supported"),
-            "validated_user_source_ids": list(
-                review.get("validated_user_source_ids", user_refs)
-            ),
-            "coverage_verdict": review.get("coverage_verdict", "sufficient"),
-            "coverage_reasons": list(review.get("coverage_reasons", [])),
-            "reasons": list(review.get("reasons", [])),
-            "claims": claims,
-            "action_verdict": review.get("action_verdict", "not_applicable"),
-        }, ensure_ascii=False))
+        review = dict(self.reviews.pop(0))
+        review.setdefault("coverage_verdict", "sufficient")
+        review.setdefault("coverage_reasons", [])
+        return turn(json.dumps(review, ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -161,17 +82,9 @@ class SlowReviewerAdapter:
     async def chat(self, request):
         self.requests.append(deepcopy(request))
         await asyncio.sleep(self.delay_seconds)
-        schema_properties = request.response_format["properties"]
-        if "user_assertions" in schema_properties:
-            return turn(json.dumps({
-                "alignment_verdict": "aligned",
-                "reasons": [],
-                "claims": [],
-                "user_assertions": [],
-            }))
         return turn(json.dumps({
             "evidence_verdict": "supported",
-            "validated_user_source_ids": [],
+            "alignment_verdict": "aligned",
             "coverage_verdict": "sufficient",
             "coverage_reasons": [],
             "reasons": [],
@@ -195,7 +108,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 2
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     assert rejected in str(main.requests[1].messages)
@@ -235,10 +148,12 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
-def test_numeric_failure_uses_derivation_review_before_retry() -> None:
+def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
     main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
     reviewer = ReviewerAdapter([
         ("supported", "misaligned", ("The requested comparison is missing.",)),
+        ("supported", "aligned", ()),
+        ("supported", "aligned", ()),
     ])
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
         run(AgentRuntime(
@@ -279,7 +194,7 @@ def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
 
 
 def test_claim_grounding_failures_consume_evidence_budget() -> None:
-    main = SequenceAdapter(["근거 없는 설명입니다."] * 6)
+    main = SequenceAdapter(["근거 없는 설명입니다."] * 3)
     review = {
         "evidence_verdict": "unsupported",
         "alignment_verdict": "aligned",
@@ -292,7 +207,7 @@ def test_claim_grounding_failures_consume_evidence_budget() -> None:
         }],
         "action_verdict": "not_applicable",
     }
-    reviewer = StructuredReviewerAdapter([review] * 6)
+    reviewer = StructuredReviewerAdapter([review] * 3)
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
         run(AgentRuntime(
             main, ToolRegistry(),
@@ -323,8 +238,8 @@ def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
     assert result.content.startswith("확인한 스크린샷은 4장이고")
     assert result.model_rounds == 2
     assert "task_alignment_failed" in main.requests[1].messages[-1]["content"]
-    assert "MAI candidate analyzer start" in caplog.text
-    assert "MAI final verification numeric=pass evidence=skipped alignment=misaligned" in caplog.text
+    assert "MAI final reviewer start" in caplog.text
+    assert "MAI final verification numeric=pass evidence=supported alignment=misaligned" in caplog.text
     assert "MAI final rejected round=1 issues=task_alignment_failed" in caplog.text
     assert "MAI final accepted round=2" in caplog.text
 
@@ -358,7 +273,7 @@ def test_reviewer_timeout_blocks_release_without_hanging(caplog) -> None:
     )
     caplog.set_level(logging.WARNING, logger="uvicorn.error")
 
-    with pytest.raises(AgentRunFailure, match="candidate analyzer"):
+    with pytest.raises(AgentRunFailure, match="final reviewer"):
         run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
 
 
@@ -386,7 +301,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 4
+    assert len(reviewer.requests) == 3
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -464,59 +379,14 @@ def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
     ))
 
     assert result.ok is True
-    payload = json.loads(reviewer.requests[1].messages[1]["content"])
-    tool_sources = [item for item in payload["evidence_sources"] if item["kind"] == "tool_result"]
-    assert tool_sources == [{
-        "ref": "tool:0:terminal_run",
-        "kind": "tool_result",
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert payload["tool_results_in_execution_order"] == [{
         "index": 0,
         "tool": "terminal_run",
         "ok": False,
         "error_type": "TerminalCommandError",
-        "content": "collected 138 items; 136 passed, 2 failed",
+        "result": "collected 138 items; 136 passed, 2 failed",
     }]
-
-
-def test_numeric_derivation_review_can_accept_unit_conversion() -> None:
-    reviewer = StructuredReviewerAdapter([
-        {"numeric_verdict": "supported"},
-        {"evidence_verdict": "supported", "alignment_verdict": "aligned"},
-    ])
-    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
-
-    result = run(verifier.verify(
-        candidate="전체 폴더 크기는 3.9GB입니다.",
-        messages=({"role": "user", "content": "플레이리스트 크기를 알려줘."},),
-        tool_results=((
-            "terminal_run",
-            True,
-            None,
-            "3980M\tC:\\Users\\bigla\\Documents\\Git\\playlist2\\pli",
-        ),),
-    ))
-
-    assert result.ok is True
-    numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert "storage:gib:3.9" in numeric_payload["unsupported_numeric_facts"]
-    assert numeric_payload["numeric_evidence_sources"][1]["tool"] == "terminal_run"
-
-
-def test_numeric_derivation_review_can_accept_rounded_summary() -> None:
-    reviewer = StructuredReviewerAdapter([
-        {"numeric_verdict": "supported"},
-        {"evidence_verdict": "supported", "alignment_verdict": "aligned"},
-    ])
-    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
-
-    result = run(verifier.verify(
-        candidate="파일은 약 1,100개입니다.",
-        messages=({"role": "user", "content": "파일 수를 요약해줘."},),
-        tool_results=(("terminal_run", True, None, "1114\n"),),
-    ))
-
-    assert result.ok is True
-    numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert numeric_payload["unsupported_numeric_facts"] == ["1100"]
 
 
 def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:
@@ -560,239 +430,23 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     ))
 
     assert result.ok is True
-    analysis_schema = reviewer.requests[0].response_format
-    evidence_schema = reviewer.requests[1].response_format
-    assert isinstance(analysis_schema, dict)
-    assert analysis_schema["additionalProperties"] is False
-    assert set(analysis_schema["required"]) == {
-        "alignment_verdict",
-        "reasons",
-        "claims",
-        "user_assertions",
-    }
-    assert evidence_schema["additionalProperties"] is False
-    assert set(evidence_schema["required"]) == {
+    schema = reviewer.requests[0].response_format
+    assert isinstance(schema, dict)
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {
         "evidence_verdict",
-        "validated_user_source_ids",
+        "alignment_verdict",
         "coverage_verdict",
         "coverage_reasons",
         "reasons",
         "claims",
         "action_verdict",
     }
-
-
-def test_user_approval_context_is_not_exposed_as_factual_evidence_source() -> None:
-    reviewer = SequenceAdapter([
-        json.dumps({
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [{
-                "claim": "직전 assistant의 만년필 설명은 사실이다",
-                "temporal": False,
-            }],
-            "user_assertions": [],
-        }, ensure_ascii=False),
-        json.dumps({
-            "evidence_verdict": "unsupported",
-            "validated_user_source_ids": [],
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
-            "reasons": ["No eligible factual source establishes the prior assistant claim."],
-            "claims": [{
-                "claim_id": "claim:0",
-                "verdict": "unsupported",
-                "defect": "missing_evidence",
-                "reason": "The user message only approves prior assistant content.",
-                "support_ids": [],
-            }],
-            "action_verdict": "not_applicable",
-        }, ensure_ascii=False),
-    ])
-    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
-
-    result = run(verifier.verify(
-        candidate="직전 설명대로 사용자의 만년필 구성은 확정되어 있습니다.",
-        messages=(
-            {"role": "assistant", "content": "사용자의 만년필 구성에 대한 설명"},
-            {"role": "user", "content": "방금 설명한 내용은 전부 맞아."},
-        ),
-        tool_results=(),
-    ))
-
-    assert result.ok is False
-    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
-    assert evidence_payload["current_user_request"] == "방금 설명한 내용은 전부 맞아."
-    assert not any(
-        source["kind"] == "user_assertion"
-        for source in evidence_payload["evidence_sources"]
-    )
-    assert evidence_payload["conversation_context"] == [
-        {"role": "assistant", "content": "사용자의 만년필 구성에 대한 설명"},
-    ]
-
-
-def test_direct_user_assertion_becomes_literal_factual_evidence_source() -> None:
-    reviewer = SequenceAdapter([
-        json.dumps({
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [{
-                "claim": "사용자의 만년필은 은색 플레지르다",
-                "temporal": False,
-            }],
-            "user_assertions": [{
-                "message_index": 0,
-                "source_excerpt": "내 만년필은 은색 플레지르야.",
-                "normalized_claim": "사용자는 은색 플레지르 만년필을 사용한다.",
-            }],
-        }, ensure_ascii=False),
-        json.dumps({
-            "evidence_verdict": "supported",
-            "validated_user_source_ids": ["user:0:0"],
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
-            "reasons": [],
-            "claims": [{
-                "claim_id": "claim:0",
-                "verdict": "supported",
-                "defect": "none",
-                "reason": "",
-                "support_ids": ["user:0:0"],
-            }],
-            "action_verdict": "not_applicable",
-        }, ensure_ascii=False),
-    ])
-    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
-
-    result = run(verifier.verify(
-        candidate="사용자의 만년필은 은색 플레지르입니다.",
-        messages=({"role": "user", "content": "내 만년필은 은색 플레지르야."},),
-        tool_results=(),
-    ))
-
-    assert result.ok is True
-    assert result.user_evidence[0].normalized_claim == "사용자는 은색 플레지르 만년필을 사용한다."
-    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
-    user_sources = [
-        source
-        for source in evidence_payload["evidence_sources"]
-        if source["kind"] == "user_assertion"
-    ]
-    assert user_sources == [{
-        "ref": "user:0:0",
-        "kind": "user_assertion",
-        "content": "내 만년필은 은색 플레지르야.",
-        "source_excerpt": "내 만년필은 은색 플레지르야.",
-        "normalized_claim": "사용자는 은색 플레지르 만년필을 사용한다.",
-    }]
-
-
-def test_normalized_user_source_must_be_validated_against_literal_excerpt() -> None:
-    reviewer = SequenceAdapter([
-        json.dumps({
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [{
-                "claim": "사용자의 만년필은 은색 플레지르다",
-                "temporal": False,
-            }],
-            "user_assertions": [{
-                "message_index": 1,
-                "source_excerpt": "방금 설명한 내용은 전부 맞아.",
-                "normalized_claim": "사용자의 만년필은 은색 플레지르다",
-            }],
-        }, ensure_ascii=False),
-        json.dumps({
-            "evidence_verdict": "unsupported",
-            "validated_user_source_ids": [],
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
-            "reasons": ["The approval excerpt does not itself establish the normalized claim."],
-            "claims": [{
-                "claim_id": "claim:0",
-                "verdict": "unsupported",
-                "defect": "missing_evidence",
-                "reason": "The cited user excerpt only approves prior assistant content.",
-                "support_ids": [],
-            }],
-            "action_verdict": "not_applicable",
-        }, ensure_ascii=False),
-    ])
-
-    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
-        candidate="사용자의 만년필은 은색 플레지르입니다.",
-        messages=(
-            {"role": "assistant", "content": "사용자의 만년필은 은색 플레지르다."},
-            {"role": "user", "content": "방금 설명한 내용은 전부 맞아."},
-        ),
-        tool_results=(),
-    ))
-
-    assert result.ok is False
-    assert result.user_evidence == ()
-
-
-def test_unvalidated_normalized_user_source_cannot_support_candidate_claim() -> None:
-    reviewer = SequenceAdapter([
-        json.dumps({
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [{
-                "claim": "사용자의 만년필은 은색 플레지르다",
-                "temporal": False,
-            }],
-            "user_assertions": [{
-                "message_index": 0,
-                "source_excerpt": "내 펜은 은색이야.",
-                "normalized_claim": "사용자의 만년필은 은색 플레지르다",
-            }],
-        }, ensure_ascii=False),
-        json.dumps({
-            "evidence_verdict": "supported",
-            "validated_user_source_ids": [],
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
-            "reasons": [],
-            "claims": [{
-                "claim_id": "claim:0",
-                "verdict": "supported",
-                "defect": "none",
-                "reason": "",
-                "support_ids": ["user:0:0"],
-            }],
-            "action_verdict": "not_applicable",
-        }, ensure_ascii=False),
-    ])
-
-    with pytest.raises(RuntimeError, match="unvalidated user sources"):
-        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
-            candidate="사용자의 만년필은 은색 플레지르입니다.",
-            messages=({"role": "user", "content": "내 펜은 은색이야."},),
-            tool_results=(),
-        ))
-
-
-def test_candidate_analyzer_cannot_invent_user_evidence_excerpt() -> None:
-    reviewer = SequenceAdapter([
-        json.dumps({
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [],
-            "user_assertions": [{
-                "message_index": 0,
-                "source_excerpt": "사용자는 은색 만년필을 쓴다",
-                "normalized_claim": "사용자는 은색 만년필을 쓴다",
-            }],
-        }, ensure_ascii=False),
-    ])
-
-    with pytest.raises(RuntimeError, match="excerpt is not present"):
-        run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
-            candidate="알겠어.",
-            messages=({"role": "user", "content": "내 펜은 은색이야."},),
-            tool_results=(),
-        ))
+    assert "claims" in schema["properties"]
+    assert "coverage_verdict" in schema["properties"]
+    assert "coverage_reasons" in schema["properties"]
+    assert "action_verdict" in schema["properties"]
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
@@ -995,26 +649,20 @@ def test_reviewer_has_no_default_deadline() -> None:
     assert verifier.reviewer_timeout_seconds is None
     result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
     assert result.ok
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 1
 
 
 def test_reviewer_recovers_after_two_invalid_outputs() -> None:
-    valid_analysis = json.dumps({
-        "alignment_verdict": "aligned",
-        "reasons": [],
-        "claims": [],
-        "user_assertions": [],
-    })
-    valid_evidence = json.dumps({
+    valid = json.dumps({
         "evidence_verdict": "supported",
-        "validated_user_source_ids": [],
+        "alignment_verdict": "aligned",
         "coverage_verdict": "sufficient",
         "coverage_reasons": [],
         "reasons": [],
         "claims": [],
         "action_verdict": "not_applicable",
     })
-    reviewer = SequenceAdapter(["not-json", "{}", valid_analysis, valid_evidence])
+    reviewer = SequenceAdapter(["not-json", "{}", valid])
 
     result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
         candidate="설명",
@@ -1023,7 +671,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
     ))
 
     assert result.ok
-    assert len(reviewer.requests) == 4
+    assert len(reviewer.requests) == 3
 
 
 @pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
@@ -1068,10 +716,8 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
         tool_results=(),
     ))
 
-    analysis_payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    evidence_payload = json.loads(reviewer.requests[1].messages[1]["content"])
-    assert "authoritative_current_time" not in analysis_payload
-    assert evidence_payload["authoritative_current_time"] == clock
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert payload["authoritative_current_time"] == clock
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
@@ -1084,7 +730,7 @@ def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
     ))
 
     assert not result.ok
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 1
 
 def test_claim_level_unsupported_overrides_inconsistent_supported_overall_verdict(caplog) -> None:
     reviewer = StructuredReviewerAdapter([{
@@ -1163,5 +809,5 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
 
     assert result.content == "이제 근거에 맞는 답변입니다."
     assert result.model_rounds == 6
-    assert len(reviewer.requests) == 12
+    assert len(reviewer.requests) == 6
 
