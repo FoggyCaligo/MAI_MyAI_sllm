@@ -39,6 +39,7 @@ _NUMBER_RE = re.compile(
 )
 _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
+_REVIEW_TOOL_RESULT_LIMIT = 20
 _LOG = logging.getLogger("uvicorn.error")
 
 _NUMERIC_REVIEW_SYSTEM = """
@@ -77,7 +78,8 @@ Claim-level evidence grounding:
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
-- Each tool result includes explicit `ok` and `error_type`. A failed tool result can still contain observed stdout, stderr, diagnostics, or error details that support claims about what was observed. `ok=false` must never be treated as evidence that the requested operation itself succeeded.
+- The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
+- A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 
 Temporal authority:
@@ -389,7 +391,9 @@ class FinalGroundingVerifier:
             content = message.get("content")
             if isinstance(content, str):
                 evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-        for _, _, _, content in tool_results:
+        for _, ok, _, content in tool_results:
+            if not ok:
+                continue
             evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
         if not evidence:
@@ -647,10 +651,9 @@ def _review_payload(
             "ok": ok,
             "error_type": error_type,
             "result": _clip_text(content, 3500),
+            **_tool_evidence_metadata(name=name, ok=ok),
         }
-        for index, (name, ok, error_type, content) in enumerate(
-            tool_results[-10:], start=max(0, len(tool_results) - 10)
-        )
+        for index, (name, ok, error_type, content) in _select_review_tool_results(tool_results)
     ]
     return {
         "authoritative_current_time": current_time(),
@@ -659,6 +662,36 @@ def _review_payload(
         "tool_results_in_execution_order": tool_evidence,
         "candidate_final": _clip_text(candidate, 6000),
     }
+
+
+def _select_review_tool_results(
+    tool_results: Sequence[ToolVerificationResult],
+    *,
+    limit: int = _REVIEW_TOOL_RESULT_LIMIT,
+) -> tuple[tuple[int, ToolVerificationResult], ...]:
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    indexed = tuple(enumerate(tool_results))
+    selected: dict[int, ToolVerificationResult] = {}
+    for index, result in reversed(indexed):
+        _, ok, _, _ = result
+        if ok:
+            selected[index] = result
+            if len(selected) >= limit:
+                break
+    return tuple((index, selected[index]) for index in sorted(selected))
+
+
+def _tool_evidence_metadata(*, name: str, ok: bool) -> dict[str, str]:
+    if name == "web_search" and ok:
+        return {
+            "evidence_note": (
+                "Successful web_search output is observed search evidence. Ranked result titles, URLs, and snippets "
+                "can support claims that those visible search results stated the details, especially when the result "
+                "identifies an official source or account."
+            ),
+        }
+    return {}
 
 
 def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = False) -> set[str]:

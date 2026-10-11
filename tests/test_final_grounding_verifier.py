@@ -447,12 +447,12 @@ def test_image_comma_grouped_number_grounds_plain_integer() -> None:
     assert result.ok is True
 
 
-def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
+def test_failed_tool_outputs_are_omitted_from_review_evidence() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
 
     result = run(verifier.verify(
-        candidate="pytest는 138개를 수집했고 136개가 통과했습니다.",
+        candidate="pytest 실행은 실패했다고 보고합니다.",
         messages=({"role": "user", "content": "pytest 결과를 알려줘."},),
         tool_results=((
             "terminal_run",
@@ -464,13 +464,63 @@ def test_failed_tool_output_is_numeric_evidence_with_failure_status() -> None:
 
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["tool_results_in_execution_order"] == [{
-        "index": 0,
-        "tool": "terminal_run",
-        "ok": False,
-        "error_type": "TerminalCommandError",
-        "result": "collected 138 items; 136 passed, 2 failed",
-    }]
+    assert payload["tool_results_in_execution_order"] == []
+
+
+def test_review_payload_keeps_recent_twenty_successful_results_and_omits_failures() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+    tool_results = tuple(
+        (
+            "web_search",
+            index % 2 == 0,
+            None if index % 2 == 0 else "WebSearchError",
+            f"tool result {index}",
+        )
+        for index in range(50)
+    )
+
+    result = run(verifier.verify(
+        candidate="공식 검색 결과에서 확인된 행사 일정입니다.",
+        messages=({"role": "user", "content": "행사 일정을 찾아줘."},),
+        tool_results=tool_results,
+    ))
+
+    assert result.ok is True
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    evidence = payload["tool_results_in_execution_order"]
+    assert len(evidence) == 20
+    assert [item["index"] for item in evidence] == list(range(10, 50, 2))
+    assert all(item["ok"] is True for item in evidence)
+
+
+def test_web_search_payload_marks_snippets_as_observed_search_evidence() -> None:
+    reviewer = ReviewerAdapter([("supported", "aligned", ())])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="공식 계정 검색 결과에 행사 일정이 표시됐습니다.",
+        messages=({"role": "user", "content": "다음 행사 일정을 찾아줘."},),
+        tool_results=((
+            "web_search",
+            True,
+            None,
+            json.dumps({
+                "results": [{
+                    "title": "코믹월드 (@comicw) / X",
+                    "url": "https://x.com/comicw",
+                    "snippet": "26. 10. 24-25 코믹월드 338 수원",
+                }],
+            }, ensure_ascii=False),
+        ),),
+    ))
+
+    assert result.ok is True
+    payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    evidence = payload["tool_results_in_execution_order"][0]
+    assert evidence["tool"] == "web_search"
+    assert "observed search evidence" in evidence["evidence_note"]
+    assert "official source or account" in evidence["evidence_note"]
 
 
 def test_unrelated_decimal_is_not_accepted_as_date_alias() -> None:
