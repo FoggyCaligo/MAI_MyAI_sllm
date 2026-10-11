@@ -69,8 +69,9 @@ class StructuredReviewerAdapter:
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         review = dict(self.reviews.pop(0))
-        review.setdefault("coverage_verdict", "sufficient")
-        review.setdefault("coverage_reasons", [])
+        if "numeric_verdict" not in review:
+            review.setdefault("coverage_verdict", "sufficient")
+            review.setdefault("coverage_reasons", [])
         return turn(json.dumps(review, ensure_ascii=False))
 
 
@@ -98,7 +99,26 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
         "케이씨텍은 72,000원에 팔았습니다.",
         "케이씨텍은 70,000원에 팔았습니다.",
     ])
-    reviewer = ReviewerAdapter([("supported", "aligned", ())] * 2)
+    reviewer = StructuredReviewerAdapter([
+        {
+            "numeric_verdict": "unsupported",
+            "reason": "The evidence says 70,000, not 72,000.",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+    ])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
@@ -108,7 +128,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 3
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     assert rejected in str(main.requests[1].messages)
@@ -150,10 +170,40 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
 
 def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
     main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
-    reviewer = ReviewerAdapter([
-        ("supported", "misaligned", ("The requested comparison is missing.",)),
-        ("supported", "aligned", ()),
-        ("supported", "aligned", ()),
+    reviewer = StructuredReviewerAdapter([
+        {
+            "numeric_verdict": "unsupported",
+            "reason": "The evidence says 70,000, not 72,000.",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "misaligned",
+            "reasons": ["The requested comparison is missing."],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "numeric_verdict": "unsupported",
+            "reason": "The evidence says 70,000, not 72,000.",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+        {
+            "numeric_verdict": "unsupported",
+            "reason": "The evidence says 70,000, not 72,000.",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
     ])
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
         run(AgentRuntime(
@@ -161,7 +211,7 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 6
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -343,6 +393,40 @@ def test_image_full_dates_ground_short_month_day_forms() -> None:
     ))
 
     assert result.ok is True
+
+
+def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
+    reviewer = StructuredReviewerAdapter([
+        {
+            "numeric_verdict": "supported",
+            "reason": "The Korean date phrase is equivalent to the full dates in the tool result.",
+        },
+        {
+            "evidence_verdict": "supported",
+            "alignment_verdict": "aligned",
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+        },
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
+
+    result = run(verifier.verify(
+        candidate="서일페 V.22는 2026년 12월 24일부터 27일까지 코엑스에서 열립니다.",
+        messages=({"role": "user", "content": "다음 일러스타페는 언제 열려?"},),
+        tool_results=((
+            "web_search",
+            True,
+            None,
+            "서울일러스트레이션페어 V.22 2026.12.24 - 2026.12.27 코엑스 C홀",
+        ),),
+    ))
+
+    assert result.ok is True
+    assert len(reviewer.requests) == 2
+    numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
+    assert numeric_payload["flagged_numeric_or_date_values"] == ["2026"]
+    assert reviewer.requests[0].response_format["properties"]["numeric_verdict"]
 
 
 def test_image_comma_grouped_number_grounds_plain_integer() -> None:
