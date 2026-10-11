@@ -145,26 +145,9 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True, slots=True)
-class UserEvidence:
-    ref: str
-    normalized_claim: str
-    message_index: int
-    source_excerpt: str
-    is_current: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class GroundedClaim:
-    claim: str
-    support_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
-    grounded_claims: tuple[GroundedClaim, ...] = ()
-    user_evidence: tuple[UserEvidence, ...] = ()
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -529,10 +512,6 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
-
-
-def tool_evidence_ref(index: int, tool_name: str) -> str:
-    return f"tool:{index}:{tool_name}"
 
 
 def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str:
