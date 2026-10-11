@@ -273,6 +273,12 @@ python -m pip install -e ".[dev]"
 MAIN_MODEL=gemma4:e4b
 ```
 
+세팅:
+```bash
+python -m pip install -e ".[dev]"
+source .venv/Scripts/activate
+```
+
 실행:
 
 ```bash
