@@ -110,3 +110,18 @@ def test_explicit_requirements_skip_preflight() -> None:
 
     assert result.content == "done"
     assert len(adapter.requests) == 1
+
+
+def test_tool_requirement_verifier_can_be_disabled() -> None:
+    adapter = FakeOllamaAdapter([final_turn("done")])
+    registry = ToolRegistry()
+
+    result = run(AgentRuntime(
+        adapter,
+        registry,
+        enable_tool_requirement_verifier=False,
+    ).run_user_message("inspect it"))
+
+    assert result.content == "done"
+    assert len(adapter.requests) == 1
+    assert adapter.requests[0].response_format is None

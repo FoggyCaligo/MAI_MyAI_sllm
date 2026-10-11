@@ -36,6 +36,7 @@ class AgentRuntime:
         max_semantic_verification_retries: int = 2,
         tool_result_store: ToolResultStore | None = None,
         tool_requirement_planner: ToolRequirementPlanner | None = None,
+        enable_tool_requirement_verifier: bool = True,
     ) -> None:
         self.loop = AgentLoop(
             adapter,
@@ -45,7 +46,9 @@ class AgentRuntime:
             max_semantic_verification_retries=max_semantic_verification_retries,
             tool_result_store=tool_result_store,
         )
-        if tool_requirement_planner is not None:
+        if not enable_tool_requirement_verifier:
+            self.tool_requirement_planner = None
+        elif tool_requirement_planner is not None:
             self.tool_requirement_planner = tool_requirement_planner
         elif isinstance(adapter, OllamaAdapter):
             self.tool_requirement_planner = OllamaToolRequirementPlanner(adapter)
