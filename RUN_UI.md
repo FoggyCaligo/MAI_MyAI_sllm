@@ -516,6 +516,7 @@ MAIN_MODEL=ornith-1.5:9b
 VISION_MODEL=
 OLLAMA_REQUEST_TIMEOUT_SECONDS=300
 OLLAMA_THINK=true
+TOOL_REQUIREMENT_VERIFIER=false
 ```
 
 - `OLLAMA_HOST`
@@ -531,6 +532,10 @@ OLLAMA_THINK=true
   - 모델 한 번 호출을 최대 몇 초 기다릴지 정한다.
 - `OLLAMA_THINK`
   - Ollama 요청의 think 설정이다.
+- `TOOL_REQUIREMENT_VERIFIER`
+  - `false`면 툴을 반드시 호출해야 하는지 미리 판정하는 별도 모델 호출을 끈다.
+  - `true`면 답변 전에 별도 판정기가 필요한 툴 목록을 고정하고, 본 답변 루프가 그 툴을 실제로 호출했는지 확인한다.
+  - 기본 권장값은 `false`다. 이 값이 툴 호출 전 지연을 줄인다.
 
 ### 저장 위치
 
