@@ -1,7 +1,8 @@
 """Final-answer grounding verification for MAI.
 
 This module deliberately separates five concerns:
-- deterministic numeric grounding against user/tool evidence,
+- deterministic numeric grounding against user/tool evidence, with model-based
+  equivalence review for exact-match misses,
 - model-based claim-level evidence and scope review,
 - model-based evidence-coverage review,
 - model-based action-outcome verification,
@@ -39,6 +40,22 @@ _NUMBER_RE = re.compile(
 _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
+
+_NUMERIC_REVIEW_SYSTEM = """
+You are a judgment-only numeric and date equivalence reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
+
+A deterministic checker flagged numeric/date values from a candidate final answer because the exact normalized tokens were not found in the supplied user or tool evidence.
+
+Decide whether every flagged numeric/date value is nevertheless semantically established by the supplied evidence.
+
+Return "supported" only when all flagged values are the same factual values as the evidence despite formatting differences, aliases, or equivalent phrasing. Examples include comma grouping differences, Korean date phrasing for an explicit ISO-like date, a month/day alias for a full date with the same month/day, and equivalent range endpoints.
+
+Return "unsupported" when any flagged value is absent, contradicted, materially broader than the evidence, or only inferable from unsupported assumptions.
+
+Return "uncertain" when the evidence may support the value but you cannot confidently establish equivalence.
+
+Judge only numeric/date grounding for the flagged values. Do not decide overall answer quality, task alignment, optional completeness, or non-numeric factual claims.
+""".strip()
 
 _FINAL_REVIEW_SYSTEM = """
 You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
@@ -138,6 +155,15 @@ class _FinalReviewPayload(BaseModel):
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
+class _NumericReviewPayload(BaseModel):
+    """Strict provider-structured numeric equivalence response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    numeric_verdict: Literal["supported", "unsupported", "uncertain"]
+    reason: str
+
+
 @dataclass(frozen=True, slots=True)
 class VerificationIssue:
     code: str
@@ -234,15 +260,44 @@ class FinalGroundingVerifier:
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
     ) -> FinalVerificationResult:
-        if allow_evidence_review is None:
-            allow_evidence_review = allow_semantic_review
-        numeric_issue = self._numeric_issue(
+        numeric_issue: VerificationIssue | None = None
+        numeric_facts = self._unsupported_numeric_facts(
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
         )
+        if allow_numeric_review and numeric_facts:
+            numeric_issue = self._numeric_issue_from_facts(numeric_facts)
+            if self.reviewer_adapter is not None:
+                numeric_review = await self._review_numeric_grounding(
+                    candidate=candidate,
+                    messages=messages,
+                    tool_results=tool_results,
+                    unsupported_facts=numeric_facts,
+                )
+                if numeric_review.numeric_verdict == "supported":
+                    _LOG.info(
+                        "MAI numeric verification semantic_review=supported reason=%s",
+                        numeric_review.reason.strip() or "-",
+                    )
+                    numeric_issue = None
+                else:
+                    reason = numeric_review.reason.strip()
+                    if reason:
+                        numeric_issue = VerificationIssue(
+                            code=numeric_issue.code,
+                            message=f"{numeric_issue.message} Semantic numeric review: {reason}",
+                        )
+                    _LOG.info(
+                        "MAI numeric verification semantic_review=%s reason=%s",
+                        numeric_review.numeric_verdict,
+                        reason or "-",
+                    )
+
+        if allow_evidence_review is None:
+            allow_evidence_review = allow_semantic_review
         issues: list[VerificationIssue] = []
-        if allow_numeric_review and numeric_issue is not None:
+        if numeric_issue is not None:
             issues.append(numeric_issue)
 
         if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
@@ -320,13 +375,13 @@ class FinalGroundingVerifier:
         )
         return FinalVerificationResult(ok=not issues, issues=tuple(issues))
 
-    def _numeric_issue(
+    def _unsupported_numeric_facts(
         self,
         *,
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
-    ) -> VerificationIssue | None:
+    ) -> tuple[str, ...]:
         evidence: set[str] = set()
         for message in messages:
             if message.get("role") != "user":
@@ -338,15 +393,18 @@ class FinalGroundingVerifier:
             evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
         if not evidence:
-            return None
+            return ()
 
         candidate_facts = _extract_material_numeric_facts(candidate)
-        unsupported = sorted(
+        return tuple(sorted(
             fact for fact in candidate_facts
             if fact not in evidence and not _supported_as_month_day_alias(fact, evidence)
-        )
+        ))
+
+    @staticmethod
+    def _numeric_issue_from_facts(unsupported: Sequence[str]) -> VerificationIssue:
         if not unsupported:
-            return None
+            raise ValueError("unsupported numeric facts must be non-empty")
         return VerificationIssue(
             code="numeric_grounding_failed",
             message=(
@@ -355,6 +413,47 @@ class FinalGroundingVerifier:
             ),
         )
 
+    async def _review_numeric_grounding(
+        self,
+        *,
+        candidate: str,
+        messages: Sequence[Mapping[str, Any]],
+        tool_results: Sequence[ToolVerificationResult],
+        unsupported_facts: Sequence[str],
+    ) -> _NumericReviewPayload:
+        payload = _review_payload(
+            candidate=candidate,
+            messages=messages,
+            tool_results=tool_results,
+        )
+        payload["flagged_numeric_or_date_values"] = tuple(unsupported_facts)
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _NUMERIC_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+            response_format=_NumericReviewPayload.model_json_schema(),
+        )
+        _LOG.info(
+            "MAI numeric reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d flagged=%s",
+            self.reviewer_timeout_seconds,
+            len(payload["conversation_context"]),
+            len(payload["tool_results_in_execution_order"]),
+            len(candidate),
+            ",".join(unsupported_facts),
+        )
+        try:
+            return await self._request_numeric_review(request)
+        except TimeoutError as exc:
+            _LOG.warning("MAI numeric verification reviewer timed out")
+            raise RuntimeError("numeric reviewer timed out; release was not verified") from exc
+        except ValidationError as exc:
+            raise RuntimeError("numeric reviewer violated structured output schema") from exc
+        except Exception as exc:
+            raise RuntimeError("numeric reviewer failed; release was not verified") from exc
+
     async def _review_final(
         self,
         *,
@@ -362,41 +461,11 @@ class FinalGroundingVerifier:
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
-        user_messages = [
-            str(message.get("content"))
-            for message in messages
-            if message.get("role") == "user" and isinstance(message.get("content"), str)
-        ]
-        current_user_request = _clip_text(user_messages[-1], 4000) if user_messages else ""
-
-        context_messages = [
-            {
-                "role": str(message.get("role") or ""),
-                "content": _clip_text(str(message.get("content") or ""), 1800),
-            }
-            for message in messages[:-1]
-            if message.get("role") in {"user", "assistant"}
-            and isinstance(message.get("content"), str)
-        ][-10:]
-        tool_evidence = [
-            {
-                "index": index,
-                "tool": name,
-                "ok": ok,
-                "error_type": error_type,
-                "result": _clip_text(content, 3500),
-            }
-            for index, (name, ok, error_type, content) in enumerate(
-                tool_results[-10:], start=max(0, len(tool_results) - 10)
-            )
-        ]
-        payload = {
-            "authoritative_current_time": current_time(),
-            "current_user_request": current_user_request,
-            "conversation_context": context_messages,
-            "tool_results_in_execution_order": tool_evidence,
-            "candidate_final": _clip_text(candidate, 6000),
-        }
+        payload = _review_payload(
+            candidate=candidate,
+            messages=messages,
+            tool_results=tool_results,
+        )
         request = ChatRequest(
             messages=(
                 {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
@@ -409,8 +478,8 @@ class FinalGroundingVerifier:
         _LOG.info(
             "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
-            len(context_messages),
-            len(tool_evidence),
+            len(payload["conversation_context"]),
+            len(payload["tool_results_in_execution_order"]),
             len(candidate),
         )
         try:
@@ -457,6 +526,24 @@ class FinalGroundingVerifier:
             raise RuntimeError("final reviewer failed; release was not verified") from exc
 
     async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
+        payload = await self._request_structured_review(request, _FinalReviewPayload, label="final")
+        if not isinstance(payload, _FinalReviewPayload):
+            raise AssertionError("unexpected final reviewer payload type")
+        return payload
+
+    async def _request_numeric_review(self, request: ChatRequest) -> _NumericReviewPayload:
+        payload = await self._request_structured_review(request, _NumericReviewPayload, label="numeric")
+        if not isinstance(payload, _NumericReviewPayload):
+            raise AssertionError("unexpected numeric reviewer payload type")
+        return payload
+
+    async def _request_structured_review(
+        self,
+        request: ChatRequest,
+        payload_model: type[BaseModel],
+        *,
+        label: str,
+    ) -> BaseModel:
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
         for attempt in range(1, 4):
@@ -465,7 +552,7 @@ class FinalGroundingVerifier:
                     self.reviewer_adapter.chat(request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return _FinalReviewPayload.model_validate_json(turn.content, strict=True)
+                return payload_model.model_validate_json(turn.content, strict=True)
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
@@ -482,7 +569,8 @@ class FinalGroundingVerifier:
                         cause.status_code == 429 or 500 <= cause.status_code <= 599
                     )
                 _LOG.warning(
-                    "MAI final reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    "MAI %s reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
+                    label,
                     attempt,
                     type(exc).__name__,
                     retryable,
@@ -490,7 +578,7 @@ class FinalGroundingVerifier:
                 if not retryable or attempt == 3:
                     raise
                 await asyncio.sleep(0.25 * attempt)
-        raise AssertionError("unreachable reviewer retry state")
+        raise AssertionError(f"unreachable {label} reviewer retry state")
 
     @staticmethod
     def _log_result(
@@ -530,6 +618,47 @@ def _clip_text(text: str, limit: int) -> str:
     head = (limit * 2) // 3
     tail = limit - head - 24
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
+
+
+def _review_payload(
+    *,
+    candidate: str,
+    messages: Sequence[Mapping[str, Any]],
+    tool_results: Sequence[ToolVerificationResult],
+) -> dict[str, Any]:
+    user_messages = [
+        str(message.get("content"))
+        for message in messages
+        if message.get("role") == "user" and isinstance(message.get("content"), str)
+    ]
+    context_messages = [
+        {
+            "role": str(message.get("role") or ""),
+            "content": _clip_text(str(message.get("content") or ""), 1800),
+        }
+        for message in messages[:-1]
+        if message.get("role") in {"user", "assistant"}
+        and isinstance(message.get("content"), str)
+    ][-10:]
+    tool_evidence = [
+        {
+            "index": index,
+            "tool": name,
+            "ok": ok,
+            "error_type": error_type,
+            "result": _clip_text(content, 3500),
+        }
+        for index, (name, ok, error_type, content) in enumerate(
+            tool_results[-10:], start=max(0, len(tool_results) - 10)
+        )
+    ]
+    return {
+        "authoritative_current_time": current_time(),
+        "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
+        "conversation_context": context_messages,
+        "tool_results_in_execution_order": tool_evidence,
+        "candidate_final": _clip_text(candidate, 6000),
+    }
 
 
 def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = False) -> set[str]:
