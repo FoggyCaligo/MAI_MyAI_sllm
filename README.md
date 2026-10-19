@@ -6,6 +6,7 @@ MAI는 **사용자를 장기적으로 기억하고, 그 기억을 바탕으로 �
 
 세부 문서:
 
+- [`setup.md`](setup.md): Windows 비개발자용 MAI 첫 설치 전체 안내 (Git/Python/Ollama/Chromium/Tailscale)
 - [`MEMORY_V1.md`](MEMORY_V1.md): memory graph와 retrieval 구조
 - [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md): 현재 runtime 구현 계약
 - [`RUN_UI.md`](RUN_UI.md): Web UI, 계정, Tailscale 실행
@@ -341,3 +342,17 @@ MAI는 contract violation을 문자열 비교나 임시 fallback으로 성공처
 - Tailscale Funnel failure
 
 실패했을 때는 실패로 드러내되, 이미 확보된 유용한 결과가 있다면 사용자에게 truthful partial answer로 전달하는 것을 우선한다.
+
+
+### JavaScript-rendered web pages (Playwright)
+
+MAI keeps lightweight `web_fetch` for static HTML. For JavaScript-rendered pages and pagination, the model can use `browser_open`, `browser_snapshot`, `browser_click`, `browser_scroll`, and `browser_close`. A browser session is isolated to one agent run and automatically closed when the run ends. Element references come from the latest snapshot (not text selectors), and each snapshot contains rendered text plus actual link URLs. Public HTTP(S) requests only; pages may not reach private network addresses. Do not treat blocked requests as successful page retrieval.
+
+Install Chromium once in the same Python environment where MAI runs:
+
+```bash
+python -m pip install -e .
+python -m playwright install chromium
+```
+
+The browser requires an installed Chromium binary. A missing browser dependency or failed navigation is reported as a tool error rather than silently falling back to static HTTP. To conserve context, snapshots cap the number of returned elements and text length; use new snapshots after interaction and use `web_fetch` for discovered static article URLs.

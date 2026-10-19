@@ -31,6 +31,7 @@ from ..memory.runtime import MemoryRuntime
 from ..memory.segmenter import SentenceBreakerSegmenter
 from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
+from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.documents import register_document_tools
 from ..tools.external import register_external_information_tools
@@ -72,7 +73,7 @@ Your capabilities are defined by the native tools supplied with this request. Do
 
 Pretrained knowledge may be used for reasoning, but must not be treated as a source of factual claims.
 
-Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use file_read for local file contents, including PDF, DOCX, XLSX, CSV, and PPTX documents. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
+Use an available native tool whenever information required to answer is not present in the current conversation. Use memory tools for stored user history, preferences, decisions, and project context. Use file/code/terminal tools when the request requires inspecting or acting on the local computer. Use file_read for local file contents, including PDF, DOCX, XLSX, CSV, and PPTX documents. Use image_analyze for visual content when that tool is exposed. Use web_search to discover current public-web sources and web_fetch to read a known public page. web_fetch does not execute JavaScript. For dynamically rendered pages or interaction, use browser_open, browser_snapshot, browser_click, browser_scroll and browser_close. Browser element_ref values are opaque and must come from the latest snapshot; avoid guessing links or element refs. After discovering URLs, prefer faster web_fetch for static individual pages. Use market tools for current Korean market data. Use the time tool when the answer depends on the actual current date or time rather than assuming it from model knowledge.
 
 Large tool results may be represented by a bounded page containing a result_id, range metadata, and content. When more of that exact result is required, use tool_result_read with the supplied result_id and an explicit offset/limit rather than assuming omitted content.
 
@@ -192,12 +193,14 @@ class MAIRuntime:
         principal: AccessPrincipal,
         working: WorkingGraph,
         tool_result_store: ToolResultStore,
+        browser_manager: BrowserSessionManager,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         register_time_tools(registry)
         register_calculator_tools(registry)
         register_external_information_tools(registry)
+        register_browser_tools(registry, browser_manager)
         register_document_tools(registry, cwd=self.cwd)
         if self.vision_model is not None:
             register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
@@ -237,7 +240,8 @@ class MAIRuntime:
 
         working = WorkingGraph()
         tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
-        registry = self._registry_for(principal, working, tool_result_store)
+        browser_manager = BrowserSessionManager()
+        registry = self._registry_for(principal, working, tool_result_store, browser_manager)
 
         agent = AgentRuntime(
             adapter,
@@ -250,13 +254,16 @@ class MAIRuntime:
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
-        result = await agent.run_user_message(
-            prompt,
-            prior_messages=messages,
-            on_tool_execution=on_tool_execution,
-            on_model_turn=on_model_turn,
-            on_verification_rejection=on_verification_rejection,
-        )
+        try:
+            result = await agent.run_user_message(
+                prompt,
+                prior_messages=messages,
+                on_tool_execution=on_tool_execution,
+                on_model_turn=on_model_turn,
+                on_verification_rejection=on_verification_rejection,
+            )
+        finally:
+            await browser_manager.close_all()
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions
