@@ -21,6 +21,7 @@ def test_chat_job_lifecycle_and_user_scope() -> None:
     assert pending["tools"] == []
     assert pending["thinking"] is None
     assert pending["model_round"] is None
+    assert pending["verification_rejections"] == []
     assert store.snapshot_for(job_id=job.job_id, auth_user_id="other") is None
 
     store.mark_running(job.job_id)
@@ -90,6 +91,27 @@ def test_latest_model_thinking_is_visible_and_can_be_cleared() -> None:
     assert cleared is not None
     assert cleared["thinking"] is None
     assert cleared["model_round"] == 3
+
+
+def test_verification_rejection_progress_is_preserved() -> None:
+    store = ChatJobStore()
+    job = store.create(auth_user_id="owner")
+    store.mark_running(job.job_id)
+
+    feedback = "The candidate final answer was rejected.\n- numeric_grounding_failed: 72000"
+    store.append_verification_rejection(job.job_id, model_round=3, feedback=feedback)
+
+    snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert snapshot is not None
+    assert snapshot["verification_rejections"] == [{
+        "model_round": 3,
+        "feedback": feedback,
+    }]
+
+    snapshot["verification_rejections"][0]["feedback"] = "mutated"
+    fresh = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert fresh is not None
+    assert fresh["verification_rejections"][0]["feedback"] == feedback
 
 
 def test_chat_job_failure_preserves_error_payload() -> None:
