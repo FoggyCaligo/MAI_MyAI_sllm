@@ -355,7 +355,7 @@ def test_runtime_rejects_empty_user_message() -> None:
         run(runtime.run_user_message("   "))
 
 
-def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
+def test_rejected_draft_thinking_is_replayed_without_being_a_delivered_answer() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
     draft = assistant_turn(content="unreleased draft")
@@ -371,7 +371,72 @@ def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
     assert '"missing_tools": ["echo"]' in first
     retry = adapter.requests[1].messages
     assert all(m.get("role") != "assistant" or m.get("content") != "unreleased draft" for m in retry)
-    assert "private mistaken reasoning" not in str(retry)
+    assert "private mistaken reasoning" in str(retry)
     assert '"delivered": false' in str(retry)
     assert "unreleased draft" not in str(result.messages)
     assert any(m.get("content") == "approved answer" for m in result.messages)
+
+
+def test_rejected_draft_replay_keeps_chronology_and_only_latest_body() -> None:
+    from mai.agent.loop import AgentLoop
+    from mai.agent.verification import FinalVerificationResult, VerificationIssue
+
+    class RejectTwice:
+        def __init__(self):
+            self.attempts = 0
+
+        async def verify(self, **kwargs):
+            self.attempts += 1
+            if self.attempts <= 2:
+                return FinalVerificationResult(
+                    ok=False,
+                    issues=(VerificationIssue(
+                        code="claim_grounding_failed",
+                        message=f"grounding defect {self.attempts}",
+                    ),),
+                )
+            return FinalVerificationResult(ok=True)
+
+    adapter = FakeAdapter([
+        assistant_turn(content="obsolete draft one", thinking="reasoning one"),
+        assistant_turn(content="latest draft two", thinking="reasoning two"),
+        assistant_turn(content="accepted"),
+    ])
+    result = run(AgentLoop(
+        adapter, ToolRegistry(), final_verifier=RejectTwice(),
+    ).run([{"role": "user", "content": "check"}]))
+    assert result.content == "accepted"
+    messages = adapter.requests[2].messages
+    joined = str(messages)
+    assert "obsolete draft one" not in joined
+    assert joined.count("latest draft two") == 1
+    assert "reasoning one" in joined and "reasoning two" in joined
+    first_reason = next(i for i, m in enumerate(messages)
+                        if "grounding defect 1" in m.get("content", ""))
+    second_reason = next(i for i, m in enumerate(messages)
+                         if "grounding defect 2" in m.get("content", ""))
+    latest_draft = next(i for i, m in enumerate(messages)
+                        if "latest draft two" in m.get("content", ""))
+    assert first_reason < latest_draft < second_reason
+
+
+def test_native_tool_call_arguments_are_not_duplicated_in_tool_result() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo.", input_model=EchoInput,
+                 handler=lambda text: {"output": "ok"})
+    adapter = FakeAdapter([
+        assistant_turn(thinking="check the tool", calls=(
+            NativeToolCall(name="echo", arguments={"text": "unique-argument"}),)),
+        assistant_turn(content="finished"),
+    ])
+    run(AgentRuntime(adapter, registry).run_user_message("test"))
+    messages = adapter.requests[1].messages
+    assistant_calls = [m for m in messages if m.get("tool_calls")]
+    tool_results = [m for m in messages if m.get("role") == "tool"]
+    assert len(assistant_calls) == 1
+    assert len(tool_results) == 1
+    assert assistant_calls[0]["tool_calls"][0]["function"]["arguments"] == {
+        "text": "unique-argument",
+    }
+    assert "unique-argument" not in tool_results[0]["content"]
+    assert "check the tool" in assistant_calls[0]["thinking"]
