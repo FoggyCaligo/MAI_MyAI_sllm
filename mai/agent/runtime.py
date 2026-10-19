@@ -9,7 +9,7 @@ from ..llm.ollama import OllamaAdapter
 from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
-from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver
+from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver, VerificationRejectionObserver
 from .requirements import FrozenToolRequirements, ToolRequirementPlanner
 from .tool_planner import OllamaToolRequirementPlanner
 from .tool_results import ToolResultStore
@@ -64,6 +64,7 @@ class AgentRuntime:
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         runtime_context = self.loop.registry.model_context()
         effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
@@ -80,6 +81,7 @@ class AgentRuntime:
                 requirements=requirements,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
+                on_verification_rejection=on_verification_rejection,
             )
             artifacts.cleanup()
             return result
@@ -94,6 +96,7 @@ class AgentRuntime:
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
@@ -124,4 +127,5 @@ class AgentRuntime:
             requirements=effective_requirements,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_verification_rejection=on_verification_rejection,
         )

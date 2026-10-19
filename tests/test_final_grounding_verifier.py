@@ -135,6 +135,28 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert all(message.get("content") != rejected for message in result.messages)
 
 
+def test_verification_rejection_observer_receives_same_feedback_sent_to_model() -> None:
+    main = SequenceAdapter([
+        "케이씨텍은 72,000원에 팔았습니다.",
+        "케이씨텍은 70,000원에 팔았습니다.",
+    ])
+    verifier = FinalGroundingVerifier(reviewer_adapter=None)
+    observed = []
+
+    result = run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message(
+        "케이씨텍은 70,000원에 팔았어.",
+        on_verification_rejection=lambda round_number, verification: observed.append(
+            (round_number, verification.feedback_message())
+        ),
+    ))
+
+    assert result.content == "케이씨텍은 70,000원에 팔았습니다."
+    assert len(observed) == 1
+    assert observed[0][0] == 1
+    assert "numeric_grounding_failed" in observed[0][1]
+    assert observed[0][1] == main.requests[1].messages[-1]["content"]
+
+
 def test_numeric_verification_retries_are_bounded() -> None:
     main = SequenceAdapter(["케이씨텍은 72,000원에 팔았습니다."] * 3)
     verifier = FinalGroundingVerifier(reviewer_adapter=None)
