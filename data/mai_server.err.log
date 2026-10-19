@@ -1,0 +1,205 @@
+INFO:     Started server process [6660]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     MAI model round start round=1
+INFO:     MAI model round start round=1
+INFO:     MAI tool call round=1 name=web_search args={"max_results":6,"query":"Comic World 338 부스 리스트 Steliave"}
+INFO:     MAI tool result round=1 name=web_search ok=false handler_started=true error_type=WebSearchError elapsed_ms=14059 visible_chars=116
+INFO:     MAI tool call round=1 name=web_search args={"max_results":6,"query":"스텔라이브 서코 338 부스 아카네 리제"}
+INFO:     MAI tool result round=1 name=web_search ok=true handler_started=true error_type=- elapsed_ms=6287 visible_chars=1596
+INFO:     MAI model round start round=2
+INFO:     MAI tool call round=2 name=web_fetch args={"url":"https://gall.dcinside.com/mgallery/board/view/?id=akane_lize&no=134426"}
+INFO:     MAI tool result round=2 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=466 visible_chars=12553
+INFO:     MAI tool call round=2 name=web_search args={"max_results":6,"query":"스텔라이브 서코 부스 위치 AA A3 아카네 리제 굿즈"}
+INFO:     MAI tool result round=2 name=web_search ok=false handler_started=true error_type=WebSearchError elapsed_ms=5782 visible_chars=115
+INFO:     MAI model round start round=3
+INFO:     MAI tool call round=3 name=web_search args={"max_results":6,"query":"Comic World 2026 부스 안내서 338 부스 배정"}
+INFO:     MAI tool result round=3 name=web_search ok=true handler_started=true error_type=- elapsed_ms=7663 visible_chars=1546
+INFO:     MAI tool call round=3 name=web_fetch args={"url":"https://fanding.kr/@stellive/shop"}
+INFO:     MAI tool result round=3 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=508 visible_chars=914
+INFO:     MAI model round start round=4
+INFO:     MAI tool call round=4 name=web_search args={"max_results":6,"query":"스텔라이브 부스 배정 서코 338 2026"}
+INFO:     MAI tool result round=4 name=web_search ok=true handler_started=true error_type=- elapsed_ms=7666 visible_chars=1798
+INFO:     MAI tool call round=4 name=web_fetch args={"url":"https://comicw.net"}
+INFO:     MAI tool result round=4 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=205 visible_chars=2130
+INFO:     MAI model round start round=5
+INFO:     MAI final candidate round=5 chars=1146 semantic_retries=0 numeric_retries=0 coverage_retries=0
+INFO:     MAI numeric reviewer start timeout=None context_messages=8 tool_results=6 candidate_chars=1146 flagged=date:2026-10-24
+INFO:     MAI numeric verification semantic_review=supported reason=The flagged date 2026-10-24 (서코 338 수원) is explicitly established in the assistant's own earlier answer as '2026년 10월 24일(토) ~ 25일(일)' and is independently corroborated by evidence: the comicw.net fetch lists '코믹월드 338 수원 2026. 10. 24 \u2014 10. 25', the current time date is 2026-10-13, and search results reference the 서코 338 dates. Format is ISO YYYY-MM-DD vs. the assistant's 2026.10.24, a formatting/equivalent-phrasing difference only.
+INFO:     MAI final reviewer start timeout=None context_messages=8 tool_results=6 candidate_chars=1146
+INFO:     MAI final verification numeric=pass evidence=unsupported alignment=aligned coverage=sufficient action=not_applicable reason=아카네 리제 2026 생일 굿즈 '예약판매 공지(아카네 리제 갤러리 공지, 26.10.01)'에 대한 구체적 근거가 제공된 도구 결과에 없음. 실제 서브컬처 캘린더에 서코 338이 D-11(2026.10.24~25)로 표시된 점은 확인됨. | evidence_verdict를 supported로 잡되, '26.10.01 리제 생일 굿즈 예약판매 공지'라는 구체적 세부 사항은 supplied evidence로 뒷받침되지 않음
+WARNING:  MAI final rejected round=5 issues=claim_grounding_failed semantic_retries=0/2 numeric_retries=0/2 coverage_retries=0/2 evidence_retries=1/5
+INFO:     MAI model round start round=6
+INFO:     MAI tool call round=6 name=web_search args={"max_results":6,"query":"스텔라이브 서코 부스 위치 리포 2026 여름"}
+INFO:     MAI tool result round=6 name=web_search ok=false handler_started=true error_type=WebSearchError elapsed_ms=8538 visible_chars=110
+INFO:     MAI tool call round=6 name=web_fetch args={"url":"https://x.com/gonggong_ill/status/2067951652058124488"}
+INFO:     MAI tool result round=6 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=1226 visible_chars=2021
+INFO:     MAI model round start round=7
+INFO:     MAI tool call round=7 name=web_fetch args={"url":"https://comicw.net/participation"}
+INFO:     MAI tool result round=7 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=115 visible_chars=203
+INFO:     MAI tool call round=7 name=web_search args={"max_results":6,"query":"코믹월드 338 부스 배정 공개 참가 라인업 전문부스"}
+INFO:     MAI tool result round=7 name=web_search ok=true handler_started=true error_type=- elapsed_ms=8464 visible_chars=1606
+INFO:     MAI model round start round=8
+INFO:     MAI tool call round=8 name=web_fetch args={"url":"https://m.comicw.net/free/9247"}
+INFO:     MAI tool result round=8 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=262 visible_chars=2898
+INFO:     MAI tool call round=8 name=web_fetch args={"url":"https://comicw.net/free/9247"}
+INFO:     MAI tool result round=8 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=211 visible_chars=2894
+INFO:     MAI model round start round=9
+INFO:     MAI tool call round=9 name=web_fetch args={"url":"https://comicw.net/s/X8BT"}
+INFO:     MAI tool result round=9 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=293 visible_chars=5871
+INFO:     MAI tool call round=9 name=web_search args={"max_results":8,"query":"스텔라이브 서코 부스 위치 리포 2026 아카네 리제 굿즈 부스"}
+INFO:     MAI tool result round=9 name=web_search ok=true handler_started=true error_type=- elapsed_ms=8331 visible_chars=1794
+INFO:     MAI model round start round=10
+INFO:     MAI tool call round=10 name=web_fetch args={"url":"https://comicw.net/free/8899"}
+INFO:     MAI tool result round=10 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=191 visible_chars=2858
+INFO:     MAI tool call round=10 name=web_search args={"max_results":8,"query":"서코 338 배치도 전문부스 스텔라이브 위치"}
+INFO:     MAI tool result round=10 name=web_search ok=false handler_started=true error_type=WebSearchError elapsed_ms=7403 visible_chars=109
+INFO:     MAI model round start round=11
+ERROR:    MAI agent run failed round=11 error_type=OllamaChatTimeoutError
+Traceback (most recent call last):
+  File "C:\Users\bigla\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\ollama\_client.py", line 1047, in chat
+    return await self._request(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<16 lines>...
+    )
+    ^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\ollama\_client.py", line 819, in _request
+    return cls(**(await self._request_raw(*args, **kwargs)).json())
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\ollama\_client.py", line 759, in _request_raw
+    r = await self._client.request(*args, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpx\_client.py", line 1540, in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpx\_client.py", line 1629, in send
+    response = await self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpx\_client.py", line 1657, in _send_handling_auth
+    response = await self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpx\_client.py", line 1694, in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpx\_client.py", line 1730, in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpx\_transports\default.py", line 394, in handle_async_request
+    resp = await self._pool.handle_async_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\connection_pool.py", line 256, in handle_async_request
+    raise exc from None
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\connection_pool.py", line 236, in handle_async_request
+    response = await connection.handle_async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        pool_request.request
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\connection.py", line 103, in handle_async_request
+    return await self._connection.handle_async_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\http11.py", line 136, in handle_async_request
+    raise exc
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\http11.py", line 106, in handle_async_request
+    ) = await self._receive_response_headers(**kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\http11.py", line 177, in _receive_response_headers
+    event = await self._receive_event(timeout=timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_async\http11.py", line 217, in _receive_event
+    data = await self._network_stream.read(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        self.READ_NUM_BYTES, timeout=timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\httpcore\_backends\anyio.py", line 35, in read
+    return await self._stream.receive(max_bytes=max_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1407, in receive
+    await self._protocol.read_event.wait()
+  File "C:\Users\bigla\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\locks.py", line 213, in wait
+    await fut
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\mai\llm\ollama.py", line 68, in chat
+    response = await asyncio.wait_for(
+               ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\bigla\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\tasks.py", line 487, in wait_for
+    async with timeouts.timeout(timeout):
+               ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "C:\Users\bigla\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\mai\agent\loop.py", line 168, in run
+    turn = await self.adapter.chat(ChatRequest(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    ))
+    ^^
+  File "C:\Users\bigla\Documents\Git\MAI_MyAI_sllm\mai\llm\ollama.py", line 73, in chat
+    raise OllamaChatTimeoutError(
+        f"Ollama chat request exceeded {self.config.request_timeout_seconds:g} seconds"
+    ) from exc
+mai.llm.ollama.OllamaChatTimeoutError: Ollama chat request exceeded 300 seconds
+INFO:     MAI model round start round=1
+INFO:     MAI tool call round=1 name=web_search args={"query":"스테라이브 아카네 리제 코믹월드 부스"}
+INFO:     MAI tool result round=1 name=web_search ok=false handler_started=true error_type=WebSearchError elapsed_ms=11267 visible_chars=105
+INFO:     MAI tool call round=1 name=web_search args={"query":"StelaiVe Akane Rise Comic World booth"}
+INFO:     MAI tool result round=1 name=web_search ok=false handler_started=true error_type=WebSearchError elapsed_ms=5268 visible_chars=122
+INFO:     MAI model round start round=2
+INFO:     MAI tool call round=2 name=web_search args={"query":"스테라 라이브 굿즈 부스 코믹월드"}
+INFO:     MAI tool result round=2 name=web_search ok=true handler_started=true error_type=- elapsed_ms=7901 visible_chars=4708
+INFO:     MAI tool call round=2 name=web_search args={"query":"Akane Rise StelaiVe booth info"}
+INFO:     MAI tool result round=2 name=web_search ok=true handler_started=true error_type=- elapsed_ms=9314 visible_chars=4607
+INFO:     MAI model round start round=3
+INFO:     MAI tool call round=3 name=web_fetch args={"url":"https://en.namu.wiki/w/스텔라이브"}
+INFO:     MAI tool result round=3 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=592 visible_chars=15794
+INFO:     MAI tool call round=3 name=web_search args={"query":"서코 338 부스 목록 스텔라이브 아카네 리제 10월"}
+INFO:     MAI tool result round=3 name=web_search ok=true handler_started=true error_type=- elapsed_ms=9643 visible_chars=4063
+INFO:     MAI model round start round=4
+INFO:     MAI tool call round=4 name=web_search args={"query":"서코 338 부스 인포 스텔라이브 10월 24"}
+INFO:     MAI tool result round=4 name=web_search ok=true handler_started=true error_type=- elapsed_ms=13238 visible_chars=2660
+INFO:     MAI tool call round=4 name=web_fetch args={"url":"https://comicw.net/g/3001"}
+INFO:     MAI tool result round=4 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=240 visible_chars=1569
+INFO:     MAI model round start round=5
+INFO:     MAI tool call round=5 name=web_fetch args={"url":"https://blog.naver.com/arlgorithm/220507532803"}
+INFO:     MAI tool result round=5 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=140 visible_chars=275
+INFO:     MAI tool call round=5 name=web_fetch args={"url":"https://gall.dcinside.com/mgallery/board/view/?id=seko&no=129107"}
+INFO:     MAI tool result round=5 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=457 visible_chars=12665
+INFO:     MAI tool call round=5 name=web_fetch args={"url":"https://gall.dcinside.com/mgallery/board/view/?id=akane_lize&no=134426"}
+INFO:     MAI tool result round=5 name=web_fetch ok=true handler_started=true error_type=- elapsed_ms=498 visible_chars=12514
+INFO:     MAI model round start round=6
+INFO:     MAI final candidate round=6 chars=1181 semantic_retries=0 numeric_retries=0 coverage_retries=0
+INFO:     MAI numeric reviewer start timeout=None context_messages=10 tool_results=9 candidate_chars=1181 flagged=10.24,date:2026-10-01
+INFO:     MAI numeric verification semantic_review=supported reason=Both flagged values are supported by the evidence.
+
+1. '10.24' (서코 338 start date): The evidence establishes 서코 338 = 2026년 10월 24일 ~ 10월 25일. Rank-4 search result explicitly states '코믹월드 338 수원 개최장소 수원메쎄 전관 개최일정 2026년 10월 24일 ~ 10월 25일 부스 번호 CK_05.' The assistant's own answer uses '10.24~25 수원메쎄'. This is a formatting difference (compact '10.24' vs '2026-10-24'), same date. Supported.
+
+2. 'date:2026-10-01' (Akane Rize birthday goods pre-order start): The evidence establishes 2026년 10월 1일 as the 2026 생일 기념 총공 (rank-3/13) and the '2026 아카네 리제 생일 굿즈' pre-order window starting '2026년 10월 1일' (rank-14: '2025년 10월 1일 (수) 12시부터...'). The assistant conflates these into the pre-order start date '2026.10.1'. The date 2026-10-01 is present in evidence as the birthday event/pre-order start; formatting difference only. Supported.
+INFO:     MAI final reviewer start timeout=None context_messages=10 tool_results=9 candidate_chars=1181
+INFO:     MAI final verification numeric=pass evidence=supported alignment=aligned coverage=sufficient action=not_applicable reason=-
+INFO:     MAI final accepted round=6
+INFO:     MAI memory extraction ok facts=18 tool_results=9
+INFO:     MAI memory admission stored source=user_utterance chars=3 tools=web_fetch,web_search facts=18 extraction_tool_results=9
