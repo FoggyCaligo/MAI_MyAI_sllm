@@ -7,3 +7,4 @@ mai_uploads/
 .pytest_cache/
 .coverage
 htmlcov/
+data/log.sqlite3*

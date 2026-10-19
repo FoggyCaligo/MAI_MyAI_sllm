@@ -222,8 +222,14 @@
       normalized.forEach(message => {
         if (message?.role === 'user') addMessage('user', String(message.content || ''));
         if (message?.role === 'assistant') {
-          const rendered = addMessage('mai', String(message.content || ''));
           const metadata = message?.metadata;
+          const isError = metadata?.kind === 'error';
+          const rendered = addMessage('mai', isError ? '' : String(message.content || ''));
+          if (isError) {
+            rendered.bubble.classList.add('error');
+            const prefix = metadata.error_type ? `${metadata.error_type}: ` : '';
+            rendered.bubble.textContent = `오류: ${prefix}${String(message.content || '')}`;
+          }
           if (metadata && typeof renderToolLog === 'function') {
             renderToolLog(
               rendered.wrap,

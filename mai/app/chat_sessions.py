@@ -152,11 +152,17 @@ class ChatSessionStore:
         session_id: str,
         limit: int | None = None,
         include_metadata: bool = False,
+        exclude_errors: bool = False,
     ) -> list[dict[str, object]]:
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative or None")
         if limit == 0:
             return []
+        # Exclude persisted error bubbles from model context without changing UI history.
+        error_clause = (
+            "AND (metadata_json IS NULL OR json_extract(metadata_json, '$.kind') IS NOT 'error')"
+            if exclude_errors else ""
+        )
         with self._connect() as connection:
             if limit is None:
                 rows = connection.execute(
@@ -164,6 +170,7 @@ class ChatSessionStore:
                     SELECT role, content, metadata_json
                     FROM {WEB_CHAT_TABLE}
                     WHERE db_id = ? AND session_id = ?
+                    {error_clause}
                     ORDER BY id ASC
                     """,
                     (db_id, session_id),
@@ -176,6 +183,7 @@ class ChatSessionStore:
                         SELECT id, role, content, metadata_json
                         FROM {WEB_CHAT_TABLE}
                         WHERE db_id = ? AND session_id = ?
+                        {error_clause}
                         ORDER BY id DESC
                         LIMIT ?
                     )
