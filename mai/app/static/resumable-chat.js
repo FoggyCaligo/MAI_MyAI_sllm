@@ -44,14 +44,26 @@
     liveProgressWrap = null;
   }
 
-  function renderLiveThinking(thinking) {
+  function renderLiveThinking(thinking, verificationRejections = []) {
     if (!liveProgressWrap) return;
     const bubble = liveProgressWrap.querySelector('.bubble');
     if (!bubble) return;
 
     let placeholder = bubble.querySelector('[data-live-thinking="true"]');
+    const sections = [];
     const text = typeof thinking === 'string' ? thinking.trim() : '';
-    if (!text) {
+    if (text) sections.push(text);
+
+    if (Array.isArray(verificationRejections)) {
+      verificationRejections.forEach(rejection => {
+        const feedback = typeof rejection?.feedback === 'string' ? rejection.feedback.trim() : '';
+        if (!feedback) return;
+        const round = Number.isInteger(rejection?.model_round) ? ` · round ${rejection.model_round}` : '';
+        sections.push(`REJECTED${round}\n${feedback}`);
+      });
+    }
+
+    if (!sections.length) {
       placeholder?.remove();
       return;
     }
@@ -68,7 +80,7 @@
       placeholder.style.overflowWrap = 'anywhere';
       bubble.appendChild(placeholder);
     }
-    placeholder.textContent = text;
+    placeholder.textContent = sections.join('\n\n');
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
@@ -268,9 +280,13 @@
           headers: headersWithAuth(),
           cache: 'no-store',
         });
-      } catch (_) {
-        await sleep(pollDelayMs);
-        continue;
+      } catch (error) {
+        localStorage.removeItem(storageKey);
+        const detail = error instanceof Error ? error.message : String(error);
+        return jsonResponse({
+          error_type: error instanceof Error ? error.name : 'NetworkError',
+          detail: detail || '대화 작업 상태 조회 중 연결이 끊겼습니다.',
+        }, 503);
       }
 
       if (res.status === 401) return res;
@@ -281,7 +297,7 @@
       if (!res.ok) return res;
 
       const data = await res.json();
-      renderLiveThinking(data.thinking);
+      renderLiveThinking(data.thinking, data.verification_rejections);
       renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
       if (data.status === 'completed') {
         localStorage.removeItem(storageKey);
