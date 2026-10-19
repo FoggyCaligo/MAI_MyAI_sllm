@@ -279,6 +279,8 @@ class AgentLoop:
                                 or (coverage_failure and coverage_verification_retries >= _MAX_COVERAGE_VERIFICATION_RETRIES)
                             )
                             if exhausted:
+                                if on_verification_rejection is not None:
+                                    on_verification_rejection(round_number, verification)
                                 raise VerificationRetriesExhausted(
                                     "final verification correction budget exhausted: " + issue_codes)
                             if numeric_failure:
