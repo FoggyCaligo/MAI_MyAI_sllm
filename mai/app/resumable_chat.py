@@ -171,9 +171,8 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
         if audit is not None:
             try:
                 audit.finish(job_id, status="failed", error_type=type(exc).__name__, error_message=str(exc))
-            except Exception:
-                # Preserve the original audit failure as the job error below.
-                pass
+            except Exception as audit_exc:
+                error += f"; audit finish failure: {type(audit_exc).__name__}: {audit_exc}"
         chat_job_store.fail(
             job_id,
             error=error,
