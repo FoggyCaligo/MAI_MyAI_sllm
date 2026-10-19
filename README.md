@@ -12,6 +12,27 @@ MAI는 **사용자를 장기적으로 기억하고, 그 기억을 바탕으로 �
 
 ---
 
+## 독립 감사 로그: `log.sqlite3`
+
+`LOG_DB_PATH` (기본 `./data/log.sqlite3`)는 사용자 요청, 모델 후보 출력,
+모델 THINK, verifier의 REJECTED 피드백과 ACCEPTED 결과, native tool 실행 결과를
+감사용으로 기록합니다. 대화 문맥은 계속 `chat.sqlite3`에서, 장기기억은
+`memory.sqlite3`에서 읽습니다. 감사 로그는 agent tool이나 memory recall에 노출되지
+않으며, 모델 프롬프트에 사용하지 않습니다.
+
+- `runs`: 실행 ID, 계정의 안정적 `db_id`, 세션, 시작/종료 시각, 완료·실패·취소 상태, 오류 유형 및 메시지
+- `steps`: 실행 ID, 자동 증가 ID 및 타임스탬프 순으로 읽는 단일 로그 테이블
+- `steps.role`: `user`, `model`, `model_think_step`, `verifier_step`, `tool_log`
+- `steps.content`: 사람이 바로 읽을 수 있는 원문/THINK/피드백/툴 결과
+- `steps.details_json`: native tool 이름과 호출 인자, 모델이 제시한 tool calls, verifier의 구조화된 issue 목록 등 부가 데이터
+
+예를 들어 `SELECT timestamp, round_number, role, status, content FROM steps ORDER BY id;`
+로 생성 순서대로 전체 실행 기록을 조회할 수 있습니다. 기록은 append-only로 남으며
+대화 기록 삭제와 별도로 보존됩니다. 이 로그에는 파일 내용이나 툴 출력 등 민감한
+정보가 남을 수 있으므로 파일을 외부에 공개하지 마세요.
+
+---
+
 ## 1. 현재 production 흐름
 
 현재 production은 pure-agent C 계열의 multi-round native-tool agent다.
