@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..agent import AgentRunFailure
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
 from .chat_sessions import ChatSessionStore
+from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
 from .tailscale import TailscaleFunnel
 from .uploads import principal_upload_directory
@@ -105,6 +106,7 @@ def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int 
         db_id=principal.db_id,
         session_id=session_id,
         limit=limit,
+        exclude_errors=True,
     )
 
 
@@ -395,41 +397,90 @@ async def chat(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    limit = _history_limit()
-    prior = _session_history(principal, request.session_id, limit=limit) if limit else []
-    _append_session_message(principal, request.session_id, role="user", content=request.message)
-    active_model = selected_model or runtime.model
+    audit = AuditLogStore(os.environ.get("LOG_DB_PATH", "./data/log.sqlite3"))
+    run_id = secrets.token_urlsafe(18)
+    audit.start(run_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
+    current_round: int | None = None
+
+    def publish_model_turn(round_number: int, turn: object) -> None:
+        nonlocal current_round
+        current_round = round_number
+        thinking = getattr(turn, "thinking")
+        if thinking:
+            audit.append(run_id, "model_think_step", thinking, round_number=round_number)
+        audit.append(
+            run_id, "model", getattr(turn, "content"), round_number=round_number,
+            status="candidate",
+            details={"tool_calls": [
+                {"name": call.name, "arguments": call.arguments}
+                for call in getattr(turn, "tool_calls")
+            ]},
+        )
+
+    def publish_tool(execution: object) -> None:
+        payload = _tool_payload(execution)
+        audit.append(
+            run_id, "tool_log", str(payload["result"]), round_number=current_round,
+            status="ok" if payload["ok"] else "failed",
+            details={
+                "name": payload["name"], "arguments": payload["arguments"],
+                "error_type": payload["error_type"],
+            },
+        )
+
+    def publish_verification_rejection(round_number: int, verification: object) -> None:
+        audit.append(
+            run_id, "verifier_step", verification.feedback_message(),
+            round_number=round_number, status="REJECTED",
+            details={"issues": [
+                {"code": issue.code, "message": issue.message}
+                for issue in verification.issues
+            ]},
+        )
+
     try:
+        limit = _history_limit()
+        prior = _session_history(principal, request.session_id, limit=limit) if limit else []
+        _append_session_message(principal, request.session_id, role="user", content=request.message)
+        active_model = selected_model or runtime.model
         result = await runtime.run_user_message(
             request.message,
             principal=principal,
             prior_messages=prior,
             model=selected_model,
+            on_tool_execution=publish_tool,
+            on_model_turn=publish_model_turn,
+            on_verification_rejection=publish_verification_rejection,
         )
+        _append_session_message(principal, request.session_id, role="assistant", content=result.answer)
+        audit.append(run_id, "verifier_step", "Final answer accepted.",
+                     round_number=result.model_rounds, status="ACCEPTED")
+        audit.finish(run_id, status="completed")
     except AgentRunFailure as exc:
+        audit.finish(run_id, status="failed", error_type=exc.error_type, error_message=exc.error_message)
         return JSONResponse(
             status_code=500,
             content={
                 "error_type": exc.error_type,
                 "detail": exc.error_message,
-                "model": active_model,
+                "model": selected_model or runtime.model,
                 "model_rounds": exc.context.model_rounds,
                 "tools": [_tool_payload(execution) for execution in exc.context.tool_executions],
             },
         )
     except Exception as exc:
+        audit.finish(run_id, status="failed", error_type=type(exc).__name__, error_message=str(exc))
         return JSONResponse(
             status_code=500,
             content={
                 "error_type": type(exc).__name__,
                 "detail": str(exc),
-                "model": active_model,
+                "model": selected_model or runtime.model,
                 "model_rounds": 0,
                 "tools": [],
             },
         )
 
-    _append_session_message(principal, request.session_id, role="assistant", content=result.answer)
     return ChatResponse(
         answer=result.answer,
         model=result.model,
