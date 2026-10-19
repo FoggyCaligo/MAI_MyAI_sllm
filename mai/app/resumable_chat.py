@@ -92,9 +92,10 @@ async def _execute_chat(
 
 
 async def _run_job(*, job_id: str, request: server.ChatRequest, principal: object) -> None:
-    audit = AuditLogStore(os.environ.get("LOG_DB_PATH", "./data/log.sqlite3"))
-    audit.start(job_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
+    audit: AuditLogStore | None = None
     try:
+        audit = AuditLogStore(os.environ.get("LOG_DB_PATH", "./data/log.sqlite3"))
+        audit.start(job_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
         async with chat_job_store.lock_for(principal.user_id):
             chat_job_store.mark_running(job_id)
             current_round: int | None = None
@@ -162,11 +163,17 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
             payload = {**payload, "status_code": status_code}
             chat_job_store.fail(job_id, error=detail, response=payload)
     except asyncio.CancelledError:
-        audit.finish(job_id, status="cancelled")
+        if audit is not None:
+            audit.finish(job_id, status="cancelled")
         raise
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
-        audit.finish(job_id, status="failed", error_type=type(exc).__name__, error_message=str(exc))
+        if audit is not None:
+            try:
+                audit.finish(job_id, status="failed", error_type=type(exc).__name__, error_message=str(exc))
+            except Exception:
+                # Preserve the original audit failure as the job error below.
+                pass
         chat_job_store.fail(
             job_id,
             error=error,
