@@ -11,7 +11,7 @@ from typing import Any, Mapping, Sequence
 
 from ollama import AsyncClient
 
-from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
+from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
@@ -212,6 +212,7 @@ class MAIRuntime:
         model: str | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> MAIRunResult:
         if not prompt.strip():
             raise ValueError("prompt must be non-empty")
@@ -242,6 +243,7 @@ class MAIRuntime:
             prior_messages=messages,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_verification_rejection=on_verification_rejection,
         )
         answer = result.content
         model_rounds = result.model_rounds
