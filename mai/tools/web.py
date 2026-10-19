@@ -247,7 +247,7 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
     registry.add(
         name="web_fetch",
         description=(
-            "Read the text body of a specific public HTTP(S) page after a URL is known. Supports HTML and "
+            "Read a specific public HTTP(S) document without executing JavaScript. For JS-rendered pages use browser_open. Supports HTML and "
             "plain text. Returns text plus actual HTML link labels/absolute URLs and structural pagination hints (rel next/prev, navigation with aria-current=page). Follow returned page URLs with subsequent web_fetch calls; do not invent page numbers. Validates public redirect destinations and refuses private-network addresses."
         ),
         input_model=WebFetchInput,
