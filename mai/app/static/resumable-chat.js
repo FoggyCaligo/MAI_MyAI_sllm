@@ -281,7 +281,6 @@
           cache: 'no-store',
         });
       } catch (error) {
-        localStorage.removeItem(storageKey);
         const detail = error instanceof Error ? error.message : String(error);
         return jsonResponse({
           error_type: error instanceof Error ? error.name : 'NetworkError',
