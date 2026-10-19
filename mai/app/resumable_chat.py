@@ -97,12 +97,14 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
     try:
         async with chat_job_store.lock_for(principal.user_id):
             chat_job_store.mark_running(job_id)
+            current_round: int | None = None
 
             def publish_tool(execution: object) -> None:
                 payload = server._tool_payload(execution)
                 chat_job_store.append_tool(job_id, payload)
                 audit.append(
                     job_id, "tool_log", str(payload["result"]),
+                    round_number=current_round,
                     status="ok" if payload["ok"] else "failed",
                     details={
                         "name": payload["name"],
@@ -112,6 +114,8 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 )
 
             def publish_model_turn(round_number: int, turn: object) -> None:
+                nonlocal current_round
+                current_round = round_number
                 raw_thinking = getattr(turn, "thinking", "")
                 thinking = raw_thinking if isinstance(raw_thinking, str) and raw_thinking.strip() else None
                 chat_job_store.update_model_progress(
