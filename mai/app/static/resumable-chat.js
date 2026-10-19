@@ -163,7 +163,7 @@
       return;
     }
 
-    const hasMessage = Boolean(input.value.trim());
+    const hasMessage = Boolean(input.value.trim()) || Boolean(document.getElementById('clipboard-previews')?.children.length);
     sendButton.textContent = hasMessage ? '전송' : '중단';
     sendButton.classList.toggle('stop-mode', !hasMessage);
     sendButton.disabled = false;
