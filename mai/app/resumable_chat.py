@@ -31,6 +31,7 @@ async def _execute_chat(
     *,
     on_tool_execution=None,
     on_model_turn=None,
+    on_verification_rejection=None,
 ) -> tuple[int, dict[str, object]]:
     runtime = server._get_runtime()
     try:
@@ -54,6 +55,7 @@ async def _execute_chat(
             model=selected_model,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_verification_rejection=on_verification_rejection,
         )
     except AgentRunFailure as exc:
         return 500, {
@@ -104,11 +106,25 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                     model_round=round_number,
                 )
 
+            def publish_verification_rejection(round_number: int, verification: object) -> None:
+                feedback_message = getattr(verification, "feedback_message", None)
+                if not callable(feedback_message):
+                    raise TypeError("verification result must expose feedback_message()")
+                feedback = feedback_message()
+                if not isinstance(feedback, str) or not feedback.strip():
+                    raise ValueError("verification rejection feedback must be non-empty")
+                chat_job_store.append_verification_rejection(
+                    job_id,
+                    model_round=round_number,
+                    feedback=feedback,
+                )
+
             status_code, payload = await _execute_chat(
                 request,
                 principal,
                 on_tool_execution=publish_tool,
                 on_model_turn=publish_model_turn,
+                on_verification_rejection=publish_verification_rejection,
             )
         if status_code == 200:
             chat_job_store.complete(job_id, payload)

@@ -67,6 +67,7 @@ class ToolExecution:
 
 ToolExecutionObserver = Callable[[ToolExecution], None]
 ModelTurnObserver = Callable[[int, ModelTurn], None]
+VerificationRejectionObserver = Callable[[int, FinalVerificationResult], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +129,7 @@ class AgentLoop:
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
@@ -300,7 +302,10 @@ class AgentLoop:
                                 evidence_verification_retries,
                                 _MAX_EVIDENCE_VERIFICATION_RETRIES,
                             )
-                            history.append({"role": "system", "content": verification.feedback_message()})
+                            feedback = verification.feedback_message()
+                            if on_verification_rejection is not None:
+                                on_verification_rejection(round_number, verification)
+                            history.append({"role": "system", "content": feedback})
                             round_number += 1
                             continue
                     _LOG.info("MAI final accepted round=%d", round_number)
