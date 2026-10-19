@@ -24,6 +24,7 @@ class ChatJob:
     tools: list[dict[str, Any]] = field(default_factory=list)
     thinking: str | None = None
     model_round: int | None = None
+    verification_rejections: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ChatJobStore:
@@ -64,6 +65,14 @@ class ChatJobStore:
         job = self._require(job_id)
         job.thinking = thinking
         job.model_round = model_round
+        job.updated_at = time.time()
+
+    def append_verification_rejection(self, job_id: str, *, model_round: int, feedback: str) -> None:
+        job = self._require(job_id)
+        job.verification_rejections.append({
+            "model_round": model_round,
+            "feedback": feedback,
+        })
         job.updated_at = time.time()
 
     def complete(self, job_id: str, response: dict[str, Any]) -> None:
@@ -154,6 +163,7 @@ class ChatJobStore:
             "tools": [dict(tool) for tool in job.tools],
             "thinking": job.thinking,
             "model_round": job.model_round,
+            "verification_rejections": [dict(item) for item in job.verification_rejections],
         }
 
     def _require(self, job_id: str) -> ChatJob:
