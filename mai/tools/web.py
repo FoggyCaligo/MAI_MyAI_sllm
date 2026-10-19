@@ -165,10 +165,51 @@ def web_fetch(url: str, max_chars: int = 50000) -> dict[str, object]:
 
     text = response.text
     title: str | None = None
+    links: list[dict[str, object]] = []
+    pagination: dict[str, object] = {"next": [], "prev": [], "navigation": []}
     if content_type in {"text/html", "application/xhtml+xml"}:
         soup = BeautifulSoup(text, "html.parser")
         if soup.title and soup.title.string:
             title = soup.title.string.strip()
+        # Keep native link targets: get_text() alone loses all navigation URLs.
+        # No URL guessing: only return destinations actually present in the HTML.
+        def link_record(node: Any) -> dict[str, object] | None:
+            href = node.get("href")
+            if not isinstance(href, str) or not href.strip():
+                return None
+            target = urljoin(current, href.strip())
+            if urlsplit(target).scheme not in {"http", "https"}:
+                return None
+            rel = node.get("rel") or []
+            return {
+                "text": node.get_text(" ", strip=True),
+                "url": target,
+                "rel": list(rel),
+                "aria_current": node.get("aria-current"),
+            }
+
+        for node in soup.select("a[href]"):
+            record = link_record(node)
+            if record is not None:
+                links.append(record)
+                for relation in ("next", "prev"):
+                    if relation in record["rel"]:
+                        pagination[relation].append(record["url"])
+        for node in soup.select("link[href][rel]"):
+            record = link_record(node)
+            if record is not None:
+                for relation in ("next", "prev"):
+                    if relation in record["rel"]:
+                        pagination[relation].append(record["url"])
+
+        # A navigation region containing an explicitly marked current page
+        # supplies structured pagination candidates without text heuristics.
+        for nav in soup.select("nav, [role='navigation']"):
+            if not nav.select("[aria-current='page']"):
+                continue
+            records = [record for anchor in nav.select("a[href]")
+                       if (record := link_record(anchor)) is not None]
+            pagination["navigation"].extend(records)
         for node in soup(["script", "style", "noscript", "template"]):
             node.decompose()
         text = soup.get_text("\n", strip=True)
@@ -184,6 +225,8 @@ def web_fetch(url: str, max_chars: int = 50000) -> dict[str, object]:
         "title": title,
         "text": text,
         "truncated": truncated,
+        "links": links,
+        "pagination": pagination,
     }
 
 
@@ -205,7 +248,7 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
         name="web_fetch",
         description=(
             "Read the text body of a specific public HTTP(S) page after a URL is known. Supports HTML and "
-            "plain text, follows validated public redirects, and refuses loopback/private-network destinations."
+            "plain text. Returns text plus actual HTML link labels/absolute URLs and structural pagination hints (rel next/prev, navigation with aria-current=page). Follow returned page URLs with subsequent web_fetch calls; do not invent page numbers. Validates public redirect destinations and refuses private-network addresses."
         ),
         input_model=WebFetchInput,
         handler=web_fetch,
