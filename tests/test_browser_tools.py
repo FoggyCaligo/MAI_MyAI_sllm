@@ -1,4 +1,6 @@
 """Contract tests for opt-in browser tools (no installed Chromium required)."""
+import asyncio
+
 import pytest
 from pydantic import ValidationError
 
@@ -34,11 +36,12 @@ def test_browser_inputs_are_structurally_validated():
         BrowserScrollInput.model_validate({"session_id": "abc", "pixels": "200"}, strict=True)
 
 
-@pytest.mark.asyncio
-async def test_unknown_session_fails_visibly():
-    manager = BrowserSessionManager()
-    with pytest.raises(BrowserNavigationError, match="Unknown or closed"):
-        await manager.snapshot("nonexistent")
-    with pytest.raises(BrowserNavigationError, match="Unknown or closed"):
-        await manager.close("nonexistent")
-    await manager.close_all()
+def test_unknown_session_fails_visibly():
+    async def check():
+        manager = BrowserSessionManager()
+        with pytest.raises(BrowserNavigationError, match="Unknown or closed"):
+            await manager.snapshot("nonexistent")
+        with pytest.raises(BrowserNavigationError, match="Unknown or closed"):
+            await manager.close("nonexistent")
+        await manager.close_all()
+    asyncio.run(check())
