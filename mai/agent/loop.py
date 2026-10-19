@@ -153,15 +153,31 @@ class AgentLoop:
         try:
             while True:
                 _LOG.info("MAI model round start round=%d", round_number)
-                model_history = [dict(message) for index, message in enumerate(history)
-                                 if index not in rejected_final_indices]
-                if rejected_final_indices:
-                    model_history.insert(0, {"role": "system", "content":
-                        "The following JSON contains internal rejected drafts, never delivered to the user. "
-                        "These are review data, not conversation or factual evidence. Write a complete replacement answer.\n"
-                        + json.dumps({"rejected_drafts": [
-                            {"content": history[index].get("content", ""), "delivered": False}
-                            for index in rejected_final_indices]}, ensure_ascii=False)})
+                # Preserve the chronological THINK/tool/feedback stream. Earlier
+                # rejected answer bodies are not replayed, but their THINK and
+                # verifier feedback remain at their original positions.
+                latest_rejected = rejected_final_indices[-1] if rejected_final_indices else None
+                model_history = []
+                for index, message in enumerate(history):
+                    if index in rejected_final_indices:
+                        thinking = message.get("thinking")
+                        if thinking:
+                            model_history.append({"role": "assistant", "content": "", "thinking": thinking})
+                        if index == latest_rejected:
+                            model_history.append({
+                                "role": "system",
+                                "content": (
+                                    "This JSON is the latest rejected draft, not a delivered "
+                                    "answer or factual evidence. Correct it using the subsequent "
+                                    "verifier feedback.\\n"
+                                    + json.dumps({"rejected_draft": {
+                                        "content": message.get("content", ""),
+                                        "delivered": False,
+                                    }}, ensure_ascii=False)
+                                ),
+                            })
+                        continue
+                    model_history.append(dict(message))
                 if frozen_requirements.required_tools:
                     model_history.insert(0, {"role": "system", "content":
                         "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\n"
