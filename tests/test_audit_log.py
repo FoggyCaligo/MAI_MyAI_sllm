@@ -47,3 +47,23 @@ def test_audit_retains_failed_run_and_rejects_invalid_roles(tmp_path):
     assert result == ("failed", "ValueError", "failure")
     with pytest.raises(RuntimeError, match="not active"):
         store.finish("run", status="completed")
+
+
+def test_audit_steps_are_committed_before_run_finishes(tmp_path):
+    store = AuditLogStore(tmp_path / "log.sqlite3")
+    store.start("live-run", db_id="owner", session_id="chat", prompt="질문")
+    store.append("live-run", "model_think_step", "생각", round_number=1)
+    store.append("live-run", "tool_log", "결과", round_number=1,
+                 details={"name": "web_search", "arguments": {"query": "test"}})
+    store.append("live-run", "verifier_step", "거절", round_number=2, status="REJECTED")
+    # Verify from a separate SQLite connection while the run is still active.
+    with sqlite3.connect(store.path) as conn:
+        steps = conn.execute(
+            "SELECT role, content FROM steps WHERE run_id=? ORDER BY id", ("live-run",)
+        ).fetchall()
+        status = conn.execute("SELECT status FROM runs WHERE run_id=?", ("live-run",)).fetchone()
+    assert steps == [
+        ("user", "질문"), ("model_think_step", "생각"),
+        ("tool_log", "결과"), ("verifier_step", "거절"),
+    ]
+    assert status == ("running",)

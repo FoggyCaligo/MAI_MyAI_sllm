@@ -158,8 +158,17 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
             chat_job_store.complete(job_id, payload)
         else:
             detail = str(payload.get("detail") or payload.get("error_type") or "chat failed")
+            error_type = str(payload.get("error_type") or "ChatError")
+            audit.append(job_id, "model", detail, status="ERROR",
+                         details={"error_type": error_type, "status_code": status_code})
+            server._append_session_message(
+                principal, request.session_id, role="assistant", content=detail,
+                metadata={"kind": "error", "error_type": error_type,
+                          "model": payload.get("model"), "model_rounds": payload.get("model_rounds"),
+                          "tools": payload.get("tools", [])},
+            )
             audit.finish(job_id, status="failed",
-                         error_type=str(payload.get("error_type") or "ChatError"), error_message=detail)
+                         error_type=error_type, error_message=detail)
             payload = {**payload, "status_code": status_code}
             chat_job_store.fail(job_id, error=detail, response=payload)
     except asyncio.CancelledError:
@@ -170,9 +179,16 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
         error = f"{type(exc).__name__}: {exc}"
         if audit is not None:
             try:
+                audit.append(job_id, "model", str(exc), status="ERROR",
+                             details={"error_type": type(exc).__name__})
                 audit.finish(job_id, status="failed", error_type=type(exc).__name__, error_message=str(exc))
             except Exception as audit_exc:
                 error += f"; audit finish failure: {type(audit_exc).__name__}: {audit_exc}"
+        server._append_session_message(
+            principal, request.session_id, role="assistant", content=error,
+            metadata={"kind": "error", "error_type": type(exc).__name__,
+                      "model_rounds": 0, "tools": []},
+        )
         chat_job_store.fail(
             job_id, error=error,
             response={"status_code": 500, "error_type": type(exc).__name__,

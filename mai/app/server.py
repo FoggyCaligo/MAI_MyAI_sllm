@@ -106,6 +106,7 @@ def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int 
         db_id=principal.db_id,
         session_id=session_id,
         limit=limit,
+        exclude_errors=True,
     )
 
 

@@ -199,3 +199,26 @@ def test_chat_history_restores_assistant_tool_log_metadata(tmp_path) -> None:
         session_id="default",
         include_metadata=True,
     ) == [{"role": "assistant", "content": "완료", "metadata": metadata}]
+
+
+def test_persisted_error_bubble_is_visible_but_excluded_from_model_context(tmp_path) -> None:
+    store = ChatSessionStore(tmp_path / "chat.sqlite3")
+    for role, content, metadata in [
+        ("user", "question one", None),
+        ("assistant", "Ollama exceeded 300 seconds", {"kind": "error", "error_type": "OllamaChatTimeoutError"}),
+        ("user", "question two", None),
+        ("assistant", "answer two", None),
+    ]:
+        store.append(db_id="local-user", session_id="default",
+                     role=role, content=content, metadata=metadata)
+
+    visible = store.messages(db_id="local-user", session_id="default",
+                             limit=4, include_metadata=True)
+    assert len(visible) == 4
+    assert visible[1]["metadata"]["kind"] == "error"
+
+    context = store.messages(db_id="local-user", session_id="default",
+                             limit=3, exclude_errors=True)
+    assert [message["content"] for message in context] == [
+        "question one", "question two", "answer two",
+    ]
