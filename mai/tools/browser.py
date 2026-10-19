@@ -42,6 +42,7 @@ class _Session:
     context: BrowserContext
     page: Page
     snapshot_generation: int = 0
+    element_refs: frozenset[str] = frozenset()
 
 
 # DOM reads are structural; element labels and links come from the rendered page,
@@ -143,18 +144,20 @@ class BrowserSessionManager:
 
     async def _snapshot(self, session: _Session) -> dict[str, Any]:
         session.snapshot_generation += 1
-        return await session.page.evaluate(
+        result = await session.page.evaluate(
             _SNAPSHOT_JS,
             {"generation": session.snapshot_generation, "maxText": 16000, "maxElements": 350},
         )
+        session.element_refs = frozenset(item["ref"] for item in result["elements"])
+        return result
 
     async def snapshot(self, session_id: str) -> dict[str, Any]:
         return {"session_id": session_id, **await self._snapshot(self._get(session_id))}
 
     async def click(self, session_id: str, element_ref: str) -> dict[str, Any]:
         session = self._get(session_id)
-        if not element_ref.startswith(f"g{session.snapshot_generation}e"):
-            raise BrowserNavigationError("Stale element reference: take a new snapshot")
+        if element_ref not in session.element_refs:
+            raise BrowserNavigationError("Unknown or stale element reference: take a new snapshot")
         target = session.page.locator(f'[data-mai-ref="{element_ref}"]')
         if await target.count() != 1:
             raise BrowserNavigationError("Element not present or not unique in current page")
