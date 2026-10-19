@@ -149,22 +149,53 @@ class AgentLoop:
         empty_final_retries = 0
         pending_history_compactions: dict[int, str] = {}
         rejected_final_indices: list[int] = []
+        initial_history_size = len(history)
+        latest_verifier_feedback: str | None = None
+        pending_runtime_notices: list[str] = []
 
         try:
             while True:
                 _LOG.info("MAI model round start round=%d", round_number)
-                model_history = [dict(message) for index, message in enumerate(history)
-                                 if index not in rejected_final_indices]
+                # Replay the original conversation window, not prior intermediate
+                # thinking, assistant tool-call messages, or superseded feedback.
+                model_history = [dict(message) for message in history[:initial_history_size]]
+                tool_messages = [message for message in history[initial_history_size:]
+                                 if message.get("role") == "tool"]
+                if len(tool_messages) != len(executions):
+                    raise AgentRuntimeError("tool execution history is out of sync")
+                if executions:
+                    model_history.append({
+                        "role": "system",
+                        "content": (
+                            "Observed tool executions in order. Every result is paired with the "
+                            "actual tool name and arguments; failures are not successes.\\n"
+                            + json.dumps({"tool_executions": [
+                                {"name": execution.name, "arguments": execution.arguments,
+                                 "ok": execution.ok, "error_type": execution.error_type,
+                                 "handler_started": execution.handler_started,
+                                 "result": message["content"]}
+                                for execution, message in zip(executions, tool_messages)
+                            ]}, ensure_ascii=False)
+                        ),
+                    })
                 if rejected_final_indices:
-                    model_history.insert(0, {"role": "system", "content":
-                        "The following JSON contains internal rejected drafts, never delivered to the user. "
-                        "These are review data, not conversation or factual evidence. Write a complete replacement answer.\n"
-                        + json.dumps({"rejected_drafts": [
-                            {"content": history[index].get("content", ""), "delivered": False}
-                            for index in rejected_final_indices]}, ensure_ascii=False)})
+                    model_history.append({
+                        "role": "system",
+                        "content": (
+                            "The following JSON is the latest rejected draft, not delivered to the user. "
+                            "It is correction context, not factual evidence.\\n"
+                            + json.dumps({"rejected_draft": {
+                                "content": history[rejected_final_indices[-1]].get("content", ""),
+                                "delivered": False}}, ensure_ascii=False)
+                        ),
+                    })
+                if latest_verifier_feedback is not None:
+                    model_history.append({"role": "system", "content": latest_verifier_feedback})
+                if pending_runtime_notices:
+                    model_history.append({"role": "system", "content": "\\n".join(pending_runtime_notices)})
                 if frozen_requirements.required_tools:
                     model_history.insert(0, {"role": "system", "content":
-                        "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\n"
+                        "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\\n"
                         + json.dumps({"required_tools": sorted(frozen_requirements.required_tools),
                                       "missing_tools": sorted(frozen_requirements.missing_from(requirement_observed_tools))})})
                 turn = await self.adapter.chat(ChatRequest(
@@ -173,6 +204,7 @@ class AgentLoop:
                     think=think,
                     options=options,
                 ))
+                pending_runtime_notices.clear()
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
                     history[history_index] = {**previous, "content": compact_content}
@@ -192,6 +224,11 @@ class AgentLoop:
                             "MAI empty final response rejected round=%d retry=%d/1",
                             round_number,
                             empty_final_retries,
+                        )
+                        pending_runtime_notices.append(
+                            "Your previous assistant turn attempted to finish with an empty response. "
+                            "Do not finish with empty content. Continue the task: call any additional tools "
+                            "you still need, or provide a non-empty final answer that directly addresses the user."
                         )
                         history.append({
                             "role": "system",
@@ -216,6 +253,10 @@ class AgentLoop:
                             "MAI final rejected for missing required tools round=%d missing=%s",
                             round_number,
                             ",".join(missing_tools),
+                        )
+                        pending_runtime_notices.append(
+                            "The preceding draft lacked required tool executions; call the missing tools "
+                            "from the frozen requirement contract before finishing."
                         )
                         history.append({
                             "role": "system",
@@ -307,6 +348,7 @@ class AgentLoop:
                             feedback = verification.feedback_message()
                             if on_verification_rejection is not None:
                                 on_verification_rejection(round_number, verification)
+                            latest_verifier_feedback = feedback
                             history.append({"role": "system", "content": feedback})
                             round_number += 1
                             continue
@@ -414,6 +456,7 @@ class AgentLoop:
                         active_tool_names = all_tool_names
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
+                    pending_runtime_notices.append(notice)
                     history.append({"role": "system", "content": notice})
                 round_number += 1
         except AgentRunFailure:

@@ -82,9 +82,14 @@ def test_runtime_completes_native_tool_round_trip() -> None:
     assert result.tool_executions[0].ok is True
     assert result.tool_executions[0].handler_started is True
     followup_messages = adapter.requests[1].messages
-    assert followup_messages[2]["role"] == "assistant"
-    assert followup_messages[2]["tool_calls"][0]["function"]["name"] == "echo"
-    assert followup_messages[3] == {"role": "tool", "tool_name": "echo", "content": '{"echo":"hello"}'}
+    evidence = json.loads(followup_messages[-1]["content"].split("\\n", 1)[1])
+    assert evidence["tool_executions"] == [{
+        "name": "echo", "arguments": {"text": "hello"}, "ok": True,
+        "error_type": None, "handler_started": True, "result": '{"echo":"hello"}',
+    }]
+    assert all(message["role"] != "tool" and not message.get("tool_calls")
+               for message in followup_messages)
+    assert all("thinking" not in message for message in followup_messages)
 
 
 def test_runtime_preserves_multiple_tool_calls_in_order() -> None:
@@ -283,13 +288,12 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
     assert [execution.ok for execution in result.tool_executions] == [False, False, False, False, False, True]
     assert all(execution.handler_started for execution in result.tool_executions)
     for request_index, failed_command in enumerate(failed_commands, start=1):
-        tool_message = adapter.requests[request_index].messages[-1]
-        assert tool_message["role"] == "tool"
-        assert tool_message["tool_name"] == "terminal_run"
-        payload = json.loads(tool_message["content"])
-        assert payload["ok"] is False
-        assert payload["error_type"] == "RuntimeError"
-        assert failed_command in payload["message"]
+        message = next(m for m in adapter.requests[request_index].messages
+                       if '"tool_executions"' in m.get("content", ""))
+        evidence = json.loads(message["content"].split("\\n", 1)[1])["tool_executions"]
+        assert evidence[request_index - 1]["ok"] is False
+        assert evidence[request_index - 1]["error_type"] == "RuntimeError"
+        assert evidence[request_index - 1]["arguments"]["command"] == failed_command
 
 
 def test_empty_final_response_gets_one_structural_retry() -> None:
@@ -375,3 +379,61 @@ def test_rejected_draft_thinking_is_not_replayed_as_conversation() -> None:
     assert '"delivered": false' in str(retry)
     assert "unreleased draft" not in str(result.messages)
     assert any(m.get("content") == "approved answer" for m in result.messages)
+
+
+def test_only_latest_rejected_draft_and_feedback_are_replayed() -> None:
+    from mai.agent.verification import FinalVerificationResult, VerificationIssue
+
+    class RejectTwice:
+        def __init__(self):
+            self.count = 0
+
+        async def verify(self, **kwargs):
+            self.count += 1
+            if self.count <= 2:
+                return FinalVerificationResult(
+                    ok=False,
+                    issues=(VerificationIssue(code="claim_grounding_failed",
+                                              message=f"reason-{self.count}"),),
+                )
+            return FinalVerificationResult(ok=True)
+
+    adapter = FakeAdapter([
+        assistant_turn(content="draft one", thinking="private one"),
+        assistant_turn(content="draft two", thinking="private two"),
+        assistant_turn(content="approved"),
+    ])
+    from mai.agent.loop import AgentLoop
+    result = run(AgentLoop(adapter, ToolRegistry(), final_verifier=RejectTwice()).run(
+        [{"role": "user", "content": "question"}]))
+    assert result.content == "approved"
+    final_request = str(adapter.requests[2].messages)
+    assert "draft two" in final_request
+    assert "reason-2" in final_request
+    assert "draft one" not in final_request
+    assert "reason-1" not in final_request
+    assert "private one" not in final_request
+    assert "private two" not in final_request
+
+
+def test_all_tool_results_keep_names_and_arguments_without_replaying_thinking() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text.", input_model=EchoInput,
+                 handler=lambda text: text.upper())
+    adapter = FakeAdapter([
+        assistant_turn(thinking="private first",
+                       calls=(NativeToolCall(name="echo", arguments={"text": "alpha"}),)),
+        assistant_turn(thinking="private second",
+                       calls=(NativeToolCall(name="echo", arguments={"text": "beta"}),)),
+        assistant_turn(content="done"),
+    ])
+    run(AgentRuntime(adapter, registry).run_user_message("both"))
+    messages = adapter.requests[2].messages
+    assert all("thinking" not in m and not m.get("tool_calls") and m["role"] != "tool"
+               for m in messages)
+    tool_record = next(m for m in messages if '"tool_executions"' in m.get("content", ""))
+    records = json.loads(tool_record["content"].split("\\n", 1)[1])["tool_executions"]
+    assert [(r["name"], r["arguments"], r["result"]) for r in records] == [
+        ("echo", {"text": "alpha"}, "ALPHA"),
+        ("echo", {"text": "beta"}, "BETA"),
+    ]
