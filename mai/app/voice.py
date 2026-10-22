@@ -70,7 +70,7 @@ class VoiceService:
         except (EOFError, wave.Error, ValueError) as exc:
             raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
         if count / rate < minimum_seconds:
-            raise HTTPException(422, f"at least {minimum_seconds:g} seconds of recording is required")
+            raise HTTPException(422, {"code": "insufficient_speech", "message": f"at least {minimum_seconds:g} seconds of recording is required"})
         divisor = gcd(rate, 16000)
         processed = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
         if self._vad is None:
@@ -78,10 +78,10 @@ class VoiceService:
         vad = self._vad
         timestamps = vad.get_speech_segments(processed, sample_rate=16000)
         if not timestamps:
-            raise HTTPException(422, "not enough speech detected in recording")
+            raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
         speech = np.concatenate([processed[int(segment.start * 16000):int(segment.end * 16000)] for segment in timestamps])
         if len(speech) < 16000 * minimum_seconds:
-            raise HTTPException(422, "not enough speech detected in recording")
+            raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
         return speech
 
     def last_speech_end(self, payload: bytes) -> float | None:
