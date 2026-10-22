@@ -77,7 +77,38 @@
     return new Blob([output], {type: 'audio/wav'});
   }
 
-  async function finish() {
+  async function checkSpeechEnd(capture) {
+    capture.checking = true;
+    try {
+      const all = new Float32Array(capture.chunks.reduce((n, c) => n + c.length, 0));
+      let offset = 0;
+      for (const chunk of capture.chunks) { all.set(chunk, offset); offset += chunk.length; }
+      const recentLength = Math.min(all.length, capture.sampleRate * 8);
+      const recent = all.subarray(all.length - recentLength);
+      const windowStart = (all.length - recentLength) / capture.sampleRate;
+      const body = new FormData();
+      body.append('file', toWave(recent, capture.sampleRate), 'activity.wav');
+      const result = await request('/voice/activity', {method: 'POST', body});
+      if (active !== capture) return;
+      if (result.speech_end_seconds !== null) {
+        const end = windowStart + result.speech_end_seconds;
+        capture.lastSpeechEnd = Math.max(capture.lastSpeechEnd ?? 0, end);
+      }
+      const elapsed = capture.context.currentTime - capture.began;
+      if (capture.lastSpeechEnd !== null && elapsed - capture.lastSpeechEnd >= capture.silenceSeconds) {
+        void finish();
+      }
+    } catch (error) {
+      if (active === capture) {
+        void finish(true);
+        setStatus('발화 구간 검사 오류: ' + error.message, true);
+      }
+    } finally {
+      capture.checking = false;
+    }
+  }
+
+  async function finish(discard = false) {
     if (!active) return;
     const capture = active;
     active = null;
@@ -86,6 +117,7 @@
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
+    if (discard) return;
     if (!capture.chunks.length || capture.speechSeconds < capture.minSpeechSeconds) {
       setStatus('음성이 충분하지 않아 인식을 중단했어.', true);
       return;
