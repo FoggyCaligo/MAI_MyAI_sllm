@@ -19,6 +19,7 @@ from typing import Mapping
 
 class AccessRole(str, Enum):
     OWNER = "owner"
+    FAMILY = "family"
     TRIAL = "trial"
 
 
@@ -51,16 +52,17 @@ class AccessPrincipal:
 @dataclass(frozen=True, slots=True)
 class AccessPolicy:
     owners: Mapping[str, UserInfo]
+    families: Mapping[str, UserInfo]
     trials: Mapping[str, UserInfo]
 
     def __post_init__(self) -> None:
         if not self.owners:
             raise ValueError("OWNER_USERS must contain at least one account")
 
-        all_infos = [*self.owners.values(), *self.trials.values()]
+        all_infos = [*self.owners.values(), *self.families.values(), *self.trials.values()]
         all_user_ids = [info.user_id for info in all_infos]
         if len(set(all_user_ids)) != len(all_user_ids):
-            raise ValueError("user_id must be unique across owner and trial accounts")
+            raise ValueError("user_id must be unique across owner, family, and trial accounts")
 
         db_ids = [info.db_id for info in all_infos]
         if len(set(db_ids)) != len(db_ids):
@@ -83,11 +85,14 @@ class AccessPolicy:
         *,
         owner_users: str | None,
         trial_users: str | None,
+        family_users: str | None = None,
     ) -> "AccessPolicy":
         owners = _parse_user_infos(owner_users, env_name="OWNER_USERS", required=True)
         trials = _parse_user_infos(trial_users, env_name="TRIAL_USERS", required=False)
+        families = _parse_user_infos(family_users, env_name="FAMILY_USERS", required=False)
         return cls(
             owners={info.user_id: info for info in owners},
+            families={info.user_id: info for info in families},
             trials={info.user_id: info for info in trials},
         )
 
@@ -95,6 +100,9 @@ class AccessPolicy:
         clean = user_id.strip()
         info = self.owners.get(clean)
         role = AccessRole.OWNER
+        if info is None:
+            info = self.families.get(clean)
+            role = AccessRole.FAMILY
         if info is None:
             info = self.trials.get(clean)
             role = AccessRole.TRIAL
@@ -109,6 +117,9 @@ class AccessPolicy:
 
         info = self.owners.get(user_id)
         role = AccessRole.OWNER
+        if info is None:
+            info = self.families.get(user_id)
+            role = AccessRole.FAMILY
         if info is None:
             info = self.trials.get(user_id)
             role = AccessRole.TRIAL
