@@ -266,6 +266,7 @@ python -m pip install -e .
 - `pip`: Python 패키지 설치 도구.
 - `-e .`: 현재 폴더의 MAI를 **편집 가능한(editable) 방식**으로 설치. 코드가 바뀌어도 패키지를 매번 복사할 필요가 없다.
 - 설치 중 GitHub에서 `sentence-breaker`를 다운로드하므로 인터넷과 Git이 필요하다.
+- 이제 기본 설치에 **Resemblyzer(화자 검증), Faster-Whisper(STT), NumPy**도 포함된다. 음성 전용 추가 설치 명령은 필요하지 않다. 음성 모델 가중치는 최초 사용 시 별도 다운로드될 수 있다.
 - 설치 중 오류가 나면 완료된 것으로 간주하면 안 된다. 마지막 오류 메시지를 확인한다.
 
 테스트용 `pytest`까지 설치하고 싶으면 기본 설치 대신 아래 명령을 사용해도 된다.
@@ -279,9 +280,10 @@ python -m pip install -e ".[dev]"
 ```powershell
 python -m pip show mai-myai-sllm
 python -m pip show playwright
+python -c "import resemblyzer, faster_whisper, numpy; print('Voice dependencies OK')"
 ```
 
-둘 다 패키지 정보가 출력되면 Python 패키지 설치가 완료됐다. 그러나 **Chromium 본체는 아직 없다.** 다음 단계가 필요하다.
+패키지 정보가 출력되고 `Voice dependencies OK`가 보이면 기본 Python 패키지 및 음성 라이브러리 import까지 확인한 것이다. 그러나 **Chromium 본체는 아직 없다.** 다음 단계가 필요하다.
 
 ---
 
@@ -891,19 +893,20 @@ Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 
 
 ---
 
-## 로컬 음성 입력 및 화자 검증 (선택)
+## 로컬 음성 입력 및 화자 검증
 
 기존 Owner/Trial/Family 계정 및 메모리 구조는 변경하지 않는다. 음성 입력 기능은 **Owner 로그인에만** 제공된다. 현재 로그인 Owner의 `db_id`별로 녹음한 목소리 특징을 따로 저장한다. 모델이 인식한 내용을 기존 메시지 입력란에 채운 후, 사용자가 확인하고 '전송'을 눌러야 일반 채팅으로 들어간다.
 
-### 설치
+### 설치 및 확인
 
-가상환경에서 다음 명령을 실행한다.
+음성 기능의 Python 라이브러리는 **6단계의 기본 설치 명령** `python -m pip install -e .`에 포함된다. 이전 버전에서 업데이트한 경우, `git pull origin dev` 후 가상환경에서 이 명령을 다시 실행해야 새 의존성이 설치된다.
 
 ```powershell
-python -m pip install -e '.[voice]'
+python -m pip install -e .
+python -c "import resemblyzer, faster_whisper, numpy; print('Voice dependencies OK')"
 ```
 
-위 선택 의존성은 SpeechBrain 계열 화자 임베딩 라이브러리인 Resemblyzer와 로컬 Faster-Whisper를 설치한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
+Resemblyzer는 화자 특징 추출, Faster-Whisper는 로컬 음성인식(STT), NumPy는 음성 수치 연산을 담당한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
 
 ### 환경 변수
 
