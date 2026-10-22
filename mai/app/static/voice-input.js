@@ -40,8 +40,14 @@
 
   async function request(path, options = {}) {
     const response = await fetch(path, {...options, headers: authHeaders(options.headers || {})});
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+      throw new Error(`Voice API returned HTTP ${response.status} with non-JSON content (${contentType || 'no content type'}). Check the MAI server terminal traceback.`);
+    }
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || `Voice HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`Voice API HTTP ${response.status}: ${JSON.stringify(payload)}`);
+    }
     return payload;
   }
 
