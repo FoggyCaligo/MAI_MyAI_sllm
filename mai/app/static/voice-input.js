@@ -1,10 +1,19 @@
 (() => {
   const mic = document.getElementById('mic-btn');
   const enroll = document.getElementById('voice-enroll-btn');
+  const speaker = document.getElementById('tts-toggle-btn');
   const status = document.getElementById('upload-status');
   const input = document.getElementById('msg-input');
   let active = null;
   let voiceMode = false;
+  let ttsEnabled = true;
+  let currentUtterance = null;
+  let starting = false;
+
+  function stopTts() {
+    currentUtterance = null;
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  }
 
   function setVoiceMode(enabled) {
     voiceMode = enabled;
@@ -12,7 +21,7 @@
     mic.setAttribute('aria-pressed', String(enabled));
     mic.title = enabled ? '음성 모드 끄기' : '음성 입력 시작';
     mic.setAttribute('aria-label', mic.title);
-    if (!enabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    if (!enabled) stopTts();
   }
 
   function spokenText(markdown) {
@@ -32,30 +41,48 @@
   }
 
   function resumeAfterAnswer() {
-    if (!voiceMode || active || mic.disabled) return;
+    if (!voiceMode || active || starting || currentUtterance) return;
     void start('transcribe');
   }
 
+  speaker.addEventListener('click', () => {
+    ttsEnabled = !ttsEnabled;
+    speaker.classList.toggle('muted', !ttsEnabled);
+    speaker.setAttribute('aria-pressed', String(ttsEnabled));
+    speaker.title = ttsEnabled ? '답변 음성 끄기' : '답변 음성 켜기';
+    speaker.setAttribute('aria-label', speaker.title);
+    if (!ttsEnabled && currentUtterance) {
+      stopTts();
+      resumeAfterAnswer();
+    }
+  });
+
   document.addEventListener('mai:answer-complete', event => {
-    if (!voiceMode || !event.detail?.text) return;
+    if (!voiceMode) return;
+    if (!ttsEnabled || !event.detail?.text) { resumeAfterAnswer(); return; }
     if (!('speechSynthesis' in window)) {
       setStatus('이 브라우저는 음성 합성(TTS)을 지원하지 않아.', true);
       return;
     }
-    const synthesizer = window.speechSynthesis;
-    synthesizer.cancel();
     const message = spokenText(event.detail.text);
     if (!message) { resumeAfterAnswer(); return; }
+    stopTts();
     const utterance = new SpeechSynthesisUtterance(message);
+    currentUtterance = utterance;
     utterance.lang = 'ko-KR';
     utterance.rate = 1;
-    utterance.onend = () => resumeAfterAnswer();
+    utterance.onend = () => {
+      if (currentUtterance !== utterance) return;
+      currentUtterance = null;
+      resumeAfterAnswer();
+    };
     utterance.onerror = eventError => {
+      if (currentUtterance !== utterance) return;
+      currentUtterance = null;
       if (eventError.error !== 'canceled') setStatus('TTS 재생 오류: ' + eventError.error, true);
     };
-    synthesizer.speak(utterance);
+    window.speechSynthesis.speak(utterance);
   });
-
 
   function setStatus(message, failed = false) {
     status.textContent = message;
@@ -144,7 +171,7 @@
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
-    if (discard) return;
+    if (discard || (capture.mode === 'transcribe' && !voiceMode)) return;
     if (!capture.chunks.length || capture.speechSeconds < capture.minSpeechSeconds) {
       setStatus('음성이 충분하지 않아 인식을 중단했어.', true);
       return;
@@ -154,7 +181,6 @@
     for (const chunk of capture.chunks) { data.set(chunk, offset); offset += chunk.length; }
     const body = new FormData();
     body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
-    mic.disabled = true;
     let retryAfterMismatch = false;
     try {
       setStatus(capture.mode === 'enroll' ? '목소리 특징 등록 중…' : '화자 확인 및 음성 인식 중…');
@@ -196,7 +222,8 @@
   }
 
   async function start(mode) {
-    mic.disabled = true;
+    if (starting || active || !voiceMode && mode === 'transcribe' && mic.classList.contains('active')) return;
+    starting = true;
     try {
       const config = await request('/voice/config');
       if (mode === 'transcribe' && !config.enrolled) {
@@ -247,13 +274,17 @@
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
     } finally {
-      mic.disabled = false;
+      starting = false;
     }
   }
 
   mic.addEventListener('click', () => {
-    if (active) { void finish(); setVoiceMode(false); return; }
-    if (voiceMode) { setVoiceMode(false); return; }
+    if (voiceMode) {
+      setVoiceMode(false);
+      if (active) void finish(true);
+      return;
+    }
+    setVoiceMode(true);
     void start('transcribe');
   });
   enroll.addEventListener('click', () => {
