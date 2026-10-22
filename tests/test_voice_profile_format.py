@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from mai.app.voice import VoiceService
 
 
-def test_speechbrain_profile_roundtrip(tmp_path, monkeypatch):
+def test_onnx_profile_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("VOICE_PROFILE_DIR", str(tmp_path))
     voice = VoiceService()
     original = np.array([1.0, 0.0], dtype=np.float32)
