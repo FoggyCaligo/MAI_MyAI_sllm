@@ -41,7 +41,7 @@ class VoiceService:
         # Optional packages are loaded only if voice has been used. Missing
         # dependencies fail explicitly, rather than silently bypassing checks.
         if self._encoder is None:
-            from speechbrain.inference.speaker import EncoderClassifier
+            from speechbrain.inference.classifiers import EncoderClassifier
             self._encoder = EncoderClassifier.from_hparams(
                 source="speechbrain/spkrec-ecapa-voxceleb",
                 savedir=str(self.root / "models" / "speechbrain-ecapa"),
