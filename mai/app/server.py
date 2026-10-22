@@ -59,7 +59,7 @@ def _visible_models_for_principal(
 ) -> tuple[str, ...]:
     if principal.role is AccessRole.TRIAL:
         return (runtime_model,)
-    if principal.role is AccessRole.OWNER:
+    if principal.role in (AccessRole.OWNER, AccessRole.FAMILY):
         if installed_models is None:
             raise ValueError("installed_models is required for owner model selection")
         return installed_models
@@ -72,7 +72,7 @@ def _selected_model_for_principal(
     runtime_model: str,
     requested_model: str | None,
 ) -> str | None:
-    if principal.role is AccessRole.OWNER:
+    if principal.role in (AccessRole.OWNER, AccessRole.FAMILY):
         return requested_model
     if principal.role is AccessRole.TRIAL:
         if requested_model is not None and requested_model.strip() != runtime_model:
@@ -140,6 +140,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _access_policy = AccessPolicy.from_env_values(
         owner_users=os.environ.get("OWNER_USERS"),
         trial_users=os.environ.get("TRIAL_USERS"),
+        family_users=os.environ.get("FAMILY_USERS"),
     )
     _chat_session_store = ChatSessionStore(os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3"))
     # PR #134 initially keyed persisted chat rows by login ID. Move those rows
