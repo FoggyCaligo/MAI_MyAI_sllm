@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import re
-from typing import Annotated, Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
@@ -132,7 +132,7 @@ Overall verdicts:
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim: str = Field(max_length=240)
+    claim: str
     verdict: Literal["supported", "unsupported", "uncertain"]
     defect: Literal[
         "none",
@@ -141,7 +141,7 @@ class _ClaimReviewPayload(BaseModel):
         "unsupported_inference",
         "missing_evidence",
     ]
-    reason: str = Field(max_length=240)
+    reason: str
 
 
 class _FinalReviewPayload(BaseModel):
@@ -152,9 +152,9 @@ class _FinalReviewPayload(BaseModel):
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
-    coverage_reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
-    reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
-    claims: list[_ClaimReviewPayload] = Field(max_length=12)
+    coverage_reasons: list[str]
+    reasons: list[str]
+    claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
@@ -181,18 +181,23 @@ class FinalVerificationResult:
     def feedback_message(self) -> str:
         if self.ok:
             return ""
+        # The full issues tuple remains authoritative for auditing and diagnostics.
+        # Retry guidance summarizes issue categories without string-based semantic
+        # classification or truncation of the original evidence.
+        grouped: dict[str, list[VerificationIssue]] = {}
+        for issue in self.issues:
+            grouped.setdefault(issue.code, []).append(issue)
         lines = [
-            "Rejected final answer. Correct the listed defects and provide the full answer.",
-            "Keep supported findings; do not invent evidence or assert unverified outcomes.",
+            "Rejected final answer. Correct material defects and provide the full answer.",
+            "Preserve supported findings; obtain evidence or narrow unsupported claims.",
         ]
-        lines.extend(f"- {issue.code}: {issue.message}" for issue in self.issues)
-        if any(issue.code == "evidence_coverage_insufficient" for issue in self.issues):
-            lines.append("Include only material facts already present in evidence.")
-        if any(issue.code in {
-            "evidence_grounding_failed", "claim_grounding_failed", "evidence_scope_expansion",
-            "action_outcome_unverified", "action_outcome_contradicted",
-        } for issue in self.issues):
-            lines.append("For unsupported claims, obtain new tool evidence or remove/narrow the claim; state uncertainty.")
+        for code, issues in grouped.items():
+            sample = issues[0].message
+            # This is a representative detail, not an attempt to replace all
+            # original issues (which remain available in the audit log).
+            lines.append(f"- {code} ({len(issues)}): {sample}")
+        if len(self.issues) > len(grouped):
+            lines.append("This is a category summary; full individual rejection details are retained in the audit log.")
         return "\n".join(lines)
 
 
