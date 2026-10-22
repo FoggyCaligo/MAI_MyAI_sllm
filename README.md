@@ -6,10 +6,9 @@ MAI는 **사용자를 장기적으로 기억하고, 그 기억을 바탕으로 �
 
 세부 문서:
 
-- [`setup.md`](setup.md): Windows 비개발자용 MAI 첫 설치 전체 안내 (Git/Python/Ollama/Chromium/Tailscale)
+- [`setup.md`](setup.md): Windows 비개발자용 설치 및 Web UI·계정·Tailscale 운영 통합 안내
 - [`MEMORY_V1.md`](MEMORY_V1.md): memory graph와 retrieval 구조
 - [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md): 현재 runtime 구현 계약
-- [`RUN_UI.md`](RUN_UI.md): Web UI, 계정, Tailscale 실행
 
 ---
 

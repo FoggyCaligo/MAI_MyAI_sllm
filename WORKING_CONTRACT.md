@@ -1,6 +1,6 @@
 # MAI MyAI sLLM — Working Contract
 
-이 문서는 현재 MAI production runtime이 지켜야 하는 **구조적 구현 계약**을 기록한다. 소개는 [`README.md`](README.md), memory 세부 구조는 [`MEMORY_V1.md`](MEMORY_V1.md), Web UI 실행은 [`RUN_UI.md`](RUN_UI.md)를 기준으로 한다.
+이 문서는 현재 MAI production runtime이 지켜야 하는 **구조적 구현 계약**을 기록한다. 소개는 [`README.md`](README.md), memory 세부 구조는 [`MEMORY_V1.md`](MEMORY_V1.md), Web UI 실행은 [`setup.md`](setup.md)를 기준으로 한다.
 
 ---
 
