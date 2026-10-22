@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 function Run-Command {
-    param([string]$Executable, [string[]]$Arguments)
+    param([string]$Executable, [Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
     & $Executable @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "$Executable exited with code $LASTEXITCODE"
@@ -40,7 +40,7 @@ function Read-RequiredValue {
     return $value
 }
 
-if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') {
+if ($env:OS -ne 'Windows_NT') {
     throw 'This installer supports Windows only.'
 }
 Write-Host 'MAI first-run setup - existing .env and databases will be preserved.'
