@@ -175,7 +175,7 @@ class VoiceService:
                 or original_similarity < self.match_threshold - 0.03
                 or adapted_similarity < self.match_threshold
             ):
-                raise HTTPException(403, "speaker verification failed")
+                raise HTTPException(403, {"code": "speaker_mismatch", "message": "speaker verification failed"})
 
             if self._transcriber is None:
                 from faster_whisper import WhisperModel
