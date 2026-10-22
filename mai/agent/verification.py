@@ -291,7 +291,7 @@ class FinalGroundingVerifier:
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues), retry_summary="Correct unsupported numeric claims using user or tool evidence." if issues else "")
+            return FinalVerificationResult(ok=not issues, issues=tuple(issues), retry_summary=f"{numeric_issue.code}: {numeric_issue.message}" if numeric_issue else "")
 
         review = await self._review_final(
             candidate=candidate,
@@ -356,7 +356,7 @@ class FinalGroundingVerifier:
         )
         return FinalVerificationResult(
             ok=not issues, issues=tuple(issues),
-            retry_summary=(("Correct unsupported numeric claims using user or tool evidence. " if numeric_issue else "") + review.retry_summary) if issues else "",
+            retry_summary=((f"{numeric_issue.code}: {numeric_issue.message}. " if numeric_issue else "") + review.retry_summary) if issues else "",
         )
 
     def _unsupported_numeric_facts(
