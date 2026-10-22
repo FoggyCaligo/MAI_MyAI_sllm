@@ -19,12 +19,12 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import re
-from typing import Any, Literal, Mapping, Sequence
+from typing import Annotated, Any, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
@@ -63,7 +63,8 @@ You are a judgment-only final-answer release reviewer. You cannot call tools, ch
 
 Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
 
-Your response is constrained by the supplied structured-output schema. Populate every required field:
+Your response is constrained by the supplied structured-output schema. Populate every required field.
+Keep feedback concise and actionable: one language (English), no translations or bilingual repetition, no restatement of the user question or full candidate answer. Report only independent blocking defects. Each reason must fit within 240 characters; each claim within 240 characters. Use at most 6 reasons, 6 coverage reasons, and 12 material claims. Preserve precise evidence references needed to correct each defect; do not omit a distinct material defect to meet the limits.
 - evidence_verdict: "supported", "unsupported", or "uncertain"
 - alignment_verdict: "aligned", "misaligned", or "uncertain"
 - coverage_verdict: "sufficient", "insufficient", or "uncertain"
@@ -131,7 +132,7 @@ Overall verdicts:
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim: str
+    claim: str = Field(max_length=240)
     verdict: Literal["supported", "unsupported", "uncertain"]
     defect: Literal[
         "none",
@@ -140,7 +141,7 @@ class _ClaimReviewPayload(BaseModel):
         "unsupported_inference",
         "missing_evidence",
     ]
-    reason: str
+    reason: str = Field(max_length=240)
 
 
 class _FinalReviewPayload(BaseModel):
@@ -151,9 +152,9 @@ class _FinalReviewPayload(BaseModel):
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
-    coverage_reasons: list[str]
-    reasons: list[str]
-    claims: list[_ClaimReviewPayload]
+    coverage_reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
+    reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
+    claims: list[_ClaimReviewPayload] = Field(max_length=12)
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
 
@@ -163,7 +164,7 @@ class _NumericReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     numeric_verdict: Literal["supported", "unsupported", "uncertain"]
-    reason: str
+    reason: str = Field(max_length=240)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,40 +182,17 @@ class FinalVerificationResult:
         if self.ok:
             return ""
         lines = [
-            "The candidate final answer was rejected by final grounding verification.",
-            "This rejected answer was not shown to the user. Provide the corrected answer in full.",
-            "Correct only the concrete defects below. Do not broaden the task or invent additional facts.",
-            "Preserve every supported result that is still useful to the user.",
+            "Rejected final answer. Correct the listed defects and provide the full answer.",
+            "Keep supported findings; do not invent evidence or assert unverified outcomes.",
         ]
         lines.extend(f"- {issue.code}: {issue.message}" for issue in self.issues)
         if any(issue.code == "evidence_coverage_insufficient" for issue in self.issues):
-            lines.append(
-                "For evidence coverage insufficiency, expand the answer using material user-relevant facts already "
-                "present in the supplied evidence. Do not invent unsupported facts or chase optional completeness."
-            )
-        evidence_issue_codes = {
-            "evidence_grounding_failed",
-            "claim_grounding_failed",
-            "evidence_scope_expansion",
-            "action_outcome_unverified",
-            "action_outcome_contradicted",
-        }
-        if any(issue.code in evidence_issue_codes for issue in self.issues):
-            lines.extend([
-                "The factual claims identified by the evidence issues above are blocked from release in their current form.",
-                "Do not restate, paraphrase, or replace a blocked claim with another factual explanation unless new user "
-                "or tool evidence obtained after this rejection actually supports the replacement.",
-                "A correction round may call native tools. If the blocked information is materially needed to answer the "
-                "user, obtain evidence with an appropriate available tool before attempting another final answer.",
-                "If no new supporting evidence is obtained, remove the unsupported explanation and answer only from the "
-                "established evidence, explicitly stating any material point that remains unknown.",
-            ])
-        lines.extend([
-            "For any unsupported or unverified portion, either obtain genuinely needed evidence with an available tool, "
-            "or narrow/remove that claim and state clearly what remains unverified or failed.",
-            "A truthful partial answer is preferable to claiming an outcome that the evidence does not establish.",
-            "Return a corrected final answer that directly addresses the user.",
-        ])
+            lines.append("Include only material facts already present in evidence.")
+        if any(issue.code in {
+            "evidence_grounding_failed", "claim_grounding_failed", "evidence_scope_expansion",
+            "action_outcome_unverified", "action_outcome_contradicted",
+        } for issue in self.issues):
+            lines.append("For unsupported claims, obtain new tool evidence or remove/narrow the claim; state uncertainty.")
         return "\n".join(lines)
 
 
