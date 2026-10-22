@@ -93,6 +93,7 @@ class SlowReviewerAdapter:
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
+            "retry_summary": "Correct the listed material defects using observed evidence.",
         }))
 
 
@@ -756,7 +757,7 @@ def test_evidence_coverage_rejects_generic_answer_that_omits_available_results()
     assert result.issues[0].code == "evidence_coverage_insufficient"
     feedback = result.feedback_message()
     assert "Correct the listed material defects" in feedback
-    assert result.issues[0].message == "Concrete supported result A was omitted."
+    assert "concrete upcoming VTuber event" in result.issues[0].message
 
 
 def test_coverage_correction_exhaustion_blocks_release() -> None:
