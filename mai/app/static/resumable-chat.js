@@ -84,48 +84,34 @@
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
-  function captureToolResultScroll(details) {
-    if (!details) return [];
-    return Array.from(details.querySelectorAll('.tool-result'), result => ({
-      top: result.scrollTop,
-      left: result.scrollLeft,
-    }));
-  }
-
-  function restoreToolResultScroll(details, positions) {
-    if (!details || !positions.length) return;
-    const results = details.querySelectorAll('.tool-result');
-    results.forEach((result, index) => {
-      const position = positions[index];
-      if (!position) return;
-      result.scrollTop = position.top;
-      result.scrollLeft = position.left;
-    });
-  }
-
   function renderLiveToolProgress(tools) {
     if (!liveProgressWrap || !Array.isArray(tools) || !tools.length) return;
 
-    let details = liveProgressWrap.querySelector('[data-live-tool-progress="true"]');
-    const wasOpen = details?.open ?? false;
-    const resultScrollPositions = captureToolResultScroll(details);
-    if (!details) {
-      details = document.createElement('details');
-      details.className = 'tool-log';
-      details.dataset.liveToolProgress = 'true';
-      liveProgressWrap.appendChild(details);
+    let panel = liveProgressWrap.querySelector('[data-live-tool-progress="true"]');
+    const existingEntries = panel?.querySelector('.tool-log-entries');
+    const scrollTop = existingEntries?.scrollTop ?? 0;
+    const openEntries = existingEntries
+      ? Array.from(existingEntries.querySelectorAll('details.tool-entry'), entry => entry.open)
+      : [];
+    const wasOpen = panel?.open ?? true;
+
+    if (!panel) {
+      panel = document.createElement('details');
+      panel.className = 'tool-log';
+      panel.dataset.liveToolProgress = 'true';
+      liveProgressWrap.appendChild(panel);
     }
 
-    details.replaceChildren();
-    details.open = wasOpen;
     const summary = document.createElement('summary');
     summary.textContent = `tool log · ${tools.length} call${tools.length === 1 ? '' : 's'} · running`;
-    details.appendChild(summary);
+    const entries = document.createElement('div');
+    entries.className = 'tool-log-entries';
 
-    tools.forEach(tool => {
-      const entry = document.createElement('div');
+    tools.forEach((tool, index) => {
+      const entry = document.createElement('details');
       entry.className = 'tool-entry';
-      const head = document.createElement('div');
+      entry.open = openEntries[index] ?? false;
+      const head = document.createElement('summary');
       head.className = 'tool-head';
       const name = document.createElement('span');
       name.textContent = tool.name;
@@ -143,13 +129,14 @@
         const result = document.createElement('div');
         result.className = 'tool-result';
         result.textContent = tool.result;
-        if (typeof containToolResultScroll === 'function') containToolResultScroll(result);
         entry.appendChild(result);
       }
-      details.appendChild(entry);
+      entries.appendChild(entry);
     });
-    restoreToolResultScroll(details, resultScrollPositions);
-    if (typeof scrollToBottom === 'function') scrollToBottom();
+
+    panel.replaceChildren(summary, entries);
+    panel.open = wasOpen;
+    entries.scrollTop = scrollTop;
   }
 
   function syncSingleSendControl() {
