@@ -17,6 +17,7 @@ from .filesystem import (
     file_move,
     file_copy,
 )
+from .google_workspace import register_google_tools
 from .images import ImageAnalyzer, register_image_tools
 from .local import register_local_pc_tools, register_readonly_local_tools
 from .market import MarketDataError, MarketDataNotFoundError, MarketDataProtocolError, market_data, register_market_tools
@@ -71,6 +72,7 @@ __all__ = [
     "register_filesystem_read_tools",
     "register_filesystem_tools",
     "register_upload_scoped_write_tools",
+    "register_google_tools",
     "register_image_tools",
     "register_local_pc_tools",
     "register_market_tools",
