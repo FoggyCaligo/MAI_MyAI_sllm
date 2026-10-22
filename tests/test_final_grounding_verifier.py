@@ -56,6 +56,7 @@ class ReviewerAdapter:
             "reasons": list(reasons),
             "claims": [],
             "action_verdict": "not_applicable",
+            "retry_summary": "Correct the listed material defects using observed evidence.",
         }))
 
 
@@ -72,6 +73,7 @@ class StructuredReviewerAdapter:
         if "numeric_verdict" not in review:
             review.setdefault("coverage_verdict", "sufficient")
             review.setdefault("coverage_reasons", [])
+            review.setdefault("retry_summary", "Correct the listed material defects using observed evidence.")
         return turn(json.dumps(review, ensure_ascii=False))
 
 
@@ -598,6 +600,7 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
         "reasons",
         "claims",
         "action_verdict",
+        "retry_summary",
     }
     assert "claims" in schema["properties"]
     assert "coverage_verdict" in schema["properties"]
@@ -752,8 +755,8 @@ def test_evidence_coverage_rejects_generic_answer_that_omits_available_results()
     assert result.ok is False
     assert result.issues[0].code == "evidence_coverage_insufficient"
     feedback = result.feedback_message()
-    assert "already present in the supplied evidence" in feedback
-    assert "Do not invent unsupported facts" in feedback
+    assert "Correct the listed material defects" in feedback
+    assert result.issues[0].message == "Concrete supported result A was omitted."
 
 
 def test_coverage_correction_exhaustion_blocks_release() -> None:
@@ -937,9 +940,8 @@ def test_evidence_correction_feedback_blocks_paraphrase_and_allows_new_tool_evid
     ))
 
     feedback = result.feedback_message()
-    assert "Do not restate, paraphrase, or replace a blocked claim" in feedback
-    assert "A correction round may call native tools" in feedback
-    assert "If no new supporting evidence is obtained" in feedback
+    assert "Correct the listed material defects" in feedback
+    assert "No supplied evidence establishes corrosion properties." in result.issues[0].message
 
 def test_evidence_verification_allows_five_corrections_before_exhaustion() -> None:
     main = SequenceAdapter([
