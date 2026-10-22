@@ -94,6 +94,12 @@
     #send-btn:hover { background:#9585ff; } #send-btn:disabled { opacity:.4; cursor:default; }
     #send-btn.stop-mode { background:#26171c; color:var(--danger); }
     #send-btn.stop-mode:hover { background:#321c22; }
+    #mic-btn { border:0; background:transparent; padding:5px; color:var(--text-dim); flex-shrink:0; cursor:pointer; display:grid; place-items:center; }
+    #mic-btn svg { width:20px; height:20px; stroke:currentColor; stroke-width:1.5; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+    #mic-btn.active { color:var(--danger); }
+    #mic-btn:disabled { opacity:.35; cursor:wait; }
+    #voice-enroll-btn { color:var(--text-dim); background:transparent; border:0; padding:0 5px; cursor:pointer; font-size:11px; }
+    #voice-enroll-btn:hover { color:var(--text); }
 
     @media (max-width:680px) {
       header { align-items:flex-start; flex-direction:column; padding:12px; }
@@ -125,11 +131,13 @@
   <div id="input-area">
     <form id="chat-form">
       <div id="upload-status"></div>
+      <button id="voice-enroll-btn" type="button" hidden>목소리 등록</button>
       <div id="clipboard-previews" aria-label="첨부 이미지 미리보기"></div>
       <div id="input-row">
         <label id="upload-btn" title="파일 업로드">＋<input id="file-input" type="file" /></label>
         <textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea>
         <button id="send-btn" type="submit">전송</button>
+        <button id="mic-btn" type="button" title="음성 입력 시작" aria-label="음성 입력 시작" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
       </div>
     </form>
   </div>
@@ -275,6 +283,8 @@
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   syncSendButton();
   restoreSession();
+
 </script>
+<script src="/static/voice-input.js"></script>
 </body>
 </html>
