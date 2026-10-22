@@ -1,7 +1,6 @@
 """Google API tool contracts, authorization boundary, and error propagation."""
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,16 +13,16 @@ def test_google_tools_disabled_without_token_setting(monkeypatch):
     monkeypatch.delenv("GOOGLE_OAUTH_TOKEN_PATH", raising=False)
     registry = ToolRegistry()
     google.register_google_tools(registry)
-    assert not registry.names() if hasattr(registry, "names") else not registry._definitions
+    assert registry.names() == ()
 
 
 def test_google_tools_registered_when_configured(monkeypatch):
     monkeypatch.setenv("GOOGLE_OAUTH_TOKEN_PATH", "not-a-real-token.json")
     registry = ToolRegistry()
     google.register_google_tools(registry)
-    assert "google_drive_search" in registry._definitions
-    assert "google_sheets_read" in registry._definitions
-    assert "google_sheets_write" in registry._definitions
+    assert "google_drive_search" in registry.names()
+    assert "google_sheets_read" in registry.names()
+    assert "google_sheets_write" in registry.names()
 
 
 def test_missing_oauth_file_is_explicit(monkeypatch, tmp_path):
