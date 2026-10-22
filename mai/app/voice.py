@@ -31,7 +31,7 @@ class VoiceService:
     def _profile_path(self, db_id: str) -> Path:
         # Do not interpolate user-controlled db_id into a filesystem path.
         import hashlib
-        return self.root / (hashlib.sha256(db_id.encode("utf-8")).hexdigest() + ".npy")
+        return self.root / (hashlib.sha256(db_id.encode("utf-8")).hexdigest() + ".npz")
 
     def enrolled(self, db_id: str) -> bool:
         return self._profile_path(db_id).is_file()
@@ -70,22 +70,34 @@ class VoiceService:
             raise HTTPException(422, "not enough speech detected in recording")
         return processed
 
-    def enroll(self, db_id: str, recording: bytes) -> None:
+    @staticmethod
+    def _unit(vector):
         import numpy as np
+        norm = float(np.linalg.norm(vector))
+        if not np.isfinite(norm) or norm <= 0:
+            raise ValueError("invalid speaker embedding")
+        return vector / norm
+
+    @staticmethod
+    def _save_profile(path: Path, original, adapted, count: int) -> None:
+        import numpy as np
+        temporary = path.with_suffix(".tmp")
+        try:
+            with temporary.open("wb") as out:
+                np.savez(out, original=original, adapted=adapted, count=count)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def enroll(self, db_id: str, recording: bytes) -> None:
         with self._lock:
             speech = self._waveform(recording)
-            embedding = self._models().embed_utterance(speech)
+            embedding = self._unit(self._models().embed_utterance(speech))
             self.root.mkdir(parents=True, exist_ok=True)
             path = self._profile_path(db_id)
             if path.exists():
                 raise HTTPException(409, "voice profile already exists; replacement is not enabled")
-            temporary = path.with_suffix(".tmp")
-            try:
-                with temporary.open("wb") as out:
-                    np.save(out, embedding, allow_pickle=False)
-                temporary.replace(path)
-            finally:
-                temporary.unlink(missing_ok=True)
+            self._save_profile(path, embedding, embedding, 1)
 
     def transcribe_verified(self, db_id: str, recording: bytes) -> str:
         import numpy as np
@@ -94,11 +106,25 @@ class VoiceService:
             if not path.is_file():
                 raise HTTPException(409, "enroll a voice profile before using voice input")
             speech = self._waveform(recording)
-            reference = np.load(path, allow_pickle=False)
-            actual = self._models().embed_utterance(speech)
-            similarity = float(np.dot(reference, actual) / (np.linalg.norm(reference) * np.linalg.norm(actual)))
-            if not np.isfinite(similarity) or similarity < self.match_threshold:
+            actual = self._unit(self._models().embed_utterance(speech))
+            with np.load(path, allow_pickle=False) as profile:
+                original = self._unit(profile["original"])
+                adapted = self._unit(profile["adapted"])
+                count = int(profile["count"])
+
+            original_similarity = float(np.dot(original, actual))
+            adapted_similarity = float(np.dot(adapted, actual))
+            # The original enrollment remains an immutable trust anchor. A
+            # gradually adapted profile must never accept a voice radically
+            # different from that first enrolled sample.
+            if (
+                not np.isfinite(original_similarity)
+                or not np.isfinite(adapted_similarity)
+                or original_similarity < self.match_threshold - 0.03
+                or adapted_similarity < self.match_threshold
+            ):
                 raise HTTPException(403, "speaker verification failed")
+
             if self._transcriber is None:
                 from faster_whisper import WhisperModel
                 self._transcriber = WhisperModel(
@@ -110,4 +136,12 @@ class VoiceService:
             text = " ".join(segment.text.strip() for segment in segments).strip()
             if not text:
                 raise HTTPException(422, "no speech recognized")
+
+            # Update only after successful verification *and* speech
+            # recognition. Bound the weight of later samples and retain the
+            # original sample as an immutable component of the model.
+            sample_weight = 1.0 / min(count + 1, 20)
+            adjusted = self._unit((1 - sample_weight) * adapted + sample_weight * actual)
+            combined = self._unit(0.5 * original + 0.5 * adjusted)
+            self._save_profile(path, original, combined, min(count + 1, 20))
             return text
