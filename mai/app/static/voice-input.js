@@ -196,7 +196,7 @@
         }
       };
       if (mode === 'transcribe') setVoiceMode(true);
-      setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 다시 누르거나 무음 시간이 지나면 종료돼.');
+      setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 마지막 말이 끝난 뒤 설정된 시간이 지나면 종료돼.');
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
     } finally {
