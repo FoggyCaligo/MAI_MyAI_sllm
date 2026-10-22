@@ -7,6 +7,7 @@ MAI는 **사용자를 장기적으로 기억하고, 그 기억을 바탕으로 �
 세부 문서:
 
 - [`setup.md`](setup.md): Windows 비개발자용 MAI 첫 설치 전체 안내 (Git/Python/Ollama/Chromium/Tailscale)
+- [`GOOGLE_WORKSPACE_SETUP.md`](GOOGLE_WORKSPACE_SETUP.md): Google Drive 검색 및 Sheets 읽기/쓰기 OAuth 설정 (선택, Owner 전용)
 - [`MEMORY_V1.md`](MEMORY_V1.md): memory graph와 retrieval 구조
 - [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md): 현재 runtime 구현 계약
 - [`RUN_UI.md`](RUN_UI.md): Web UI, 계정, Tailscale 실행

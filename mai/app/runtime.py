@@ -35,6 +35,7 @@ from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.documents import register_document_tools
 from ..tools.external import register_external_information_tools
+from ..tools.google_workspace import register_google_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
@@ -206,6 +207,7 @@ class MAIRuntime:
             register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:
             register_local_pc_tools(registry, cwd=self.cwd)
+            register_google_tools(registry)
         elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
                 registry,
