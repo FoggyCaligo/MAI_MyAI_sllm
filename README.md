@@ -202,10 +202,11 @@ Material arithmetic은 main model 암산보다 `calculator`를 사용하도록 s
 
 ## 6. 계정: user_id / user_pw / db_id
 
-Owner와 Trial 모두 `.env`에서 `user_info` record로 정의한다.
+Owner, Family, Trial 모두 `.env`에서 `user_info` record로 정의한다. Family는 현재 Owner와 동일한 기존 도구/모델 권한을 사용하지만, 향후 Google Drive 도구는 Owner 전용으로 등록해야 한다.
 
 ```env
 OWNER_USERS=[{"user_id":"owner","user_pw":"change-me","db_id":"local-user"}]
+FAMILY_USERS=[{"user_id":"family","user_pw":"change-me-too","db_id":"family-user"}]
 TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]
 ```
 
@@ -250,6 +251,10 @@ db_id
 ### Owner
 
 Owner는 설치된 Ollama 모델 중 선택할 수 있고 전체 local mutation/terminal capability를 사용할 수 있다.
+
+### Family
+
+Family는 Owner와 동일하게 기존 파일/터미널 도구와 모델 선택을 사용할 수 있다. 다만 향후 Google Drive 및 Sheets OAuth 기능은 Family에 등록하지 않는다. **Family의 터미널 접근은 서버 파일에도 접근 가능하므로 강한 개인정보 분리·격리를 보장하지 않는다.** Google OAuth를 재도입할 경우 토큰은 별도의 OS 권한 격리 또는 실행 경계가 필요하다.
 
 ### Trial
 
