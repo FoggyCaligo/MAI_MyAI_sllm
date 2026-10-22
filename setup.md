@@ -706,3 +706,184 @@ Tailscale을 아직 설치하지 않았다면 마지막 두 명령이 실패하�
 - Tailscale Funnel CLI: https://tailscale.com/docs/reference/tailscale-cli/funnel
 - 프로젝트 `README.md`: 전체 아키텍처 및 기능
 - 프로젝트 `RUN_UI.md`: Web UI와 계정, Tailscale 상세 자료
+
+
+---
+
+## Web UI 운영 상세 — 기존 RUN_UI.md 통합
+
+아래는 기존 UI 실행 문서에서 다루던 계정, 지속 대화, 모델 선택, 업로드, 체험판 초기화, 테스트에 관한 운영 절차다. 최초 설치와 Tailscale 설정은 이 문서의 앞부분을 따른다.
+
+### Owner / Trial 권한
+
+Owner는 전체 native tool을 사용할 수 있다.
+
+Trial은 read/search 계열과 자기 upload directory 내부의 제한된 write만 사용할 수 있다.
+
+```text
+공통
+  memory_overview / memory_recall / memory_search
+  current_time / calculator
+  file_list / file_search / file_read
+  code_search / code_read / code_symbols
+  document_read
+  image_analyze          # VISION_MODEL 설정 시
+  web_search / web_fetch
+  market_data
+
+owner 추가
+  file_write / file_create / file_delete / file_move / file_copy
+  terminal_run
+
+trial 추가
+  file_write / file_create
+  └─ 자기 upload directory 내부만
+```
+
+Trial upload ownership은 `db_id` 기준이다. `user_id`를 바꿔도 같은 `db_id`를 유지하면 기존 upload directory가 이어진다.
+
+---
+
+
+### 로그인과 세션
+
+Owner/Trial 모두 ID + password로 로그인한다. 성공하면 서버가 Bearer token을 발급한다.
+
+같은 `user_id`로 새 로그인하면 기존 token을 폐기한다. 즉 **new-login-wins** 정책이다.
+
+브라우저는 마지막으로 성공 로그인한 `user_id`만 localStorage에 기억한다. Password는 저장하지 않는다.
+
+PC에서 사용하다 폰으로 같은 계정에 로그인하면 PC token이 무효화될 수 있다. PC로 돌아왔을 때 password만 다시 입력하면 된다.
+
+로그인 실패 응답은 ID가 틀렸는지 password가 틀렸는지 구분해 노출하지 않는다.
+
+---
+
+
+### Persistent chat
+
+대화 기록은 로그인 ID가 아니라 `db_id` 기준으로 `CHAT_DB_PATH`의 SQLite에 저장된다.
+
+Web UI 전용 table:
+
+```text
+web_chat_messages
+```
+
+기존 SQLite 파일 안에 다른 용도의 `chat_messages`가 있어도 함부로 변형하지 않는다.
+
+Startup migration 규칙:
+
+- `web_chat_messages`가 없고 기존 `chat_messages`가 과거 persistent-chat의 정확히 알려진 schema이면 구조적으로 이관한다.
+- 기존 `chat_messages`가 unrelated schema이면 그대로 보존하고 별도 `web_chat_messages`를 생성한다.
+- `web_chat_messages` 자체가 알 수 없는 schema이면 startup failure로 멈춘다.
+
+`SESSION_HISTORY_MESSAGES=12`이면 model에게 최근 12 messages를 전달하고, 새로 로그인하거나 페이지를 다시 열었을 때 화면에도 같은 최근 12 messages만 복원한다. 더 오래된 기록은 SQLite에 남아 있지만 현재 UI/model context에는 포함하지 않는다.
+
+Browser/device가 사라져도 server process가 살아 있으면 running resumable chat job은 계속될 수 있다. 완료된 assistant answer는 persistent chat에 저장되어 다음 접속에서 보인다.
+
+단, running job 자체는 process-memory state이므로 server process restart 이후 계산을 이어서 수행하는 durable queue는 아니다.
+
+---
+
+
+### 모델 선택과 verifier
+
+Owner:
+
+```text
+GET /models -> 설치된 Ollama models
+/chat -> 선택 가능
+```
+
+Trial:
+
+```text
+GET /models -> MAIN_MODEL 하나
+/chat -> MAIN_MODEL 고정
+```
+
+Trial client가 UI를 우회해 다른 model을 직접 보내도 server boundary에서 거부한다.
+
+Memory fact extraction은 해당 chat turn에서 실제 사용한 동일 model을 `think=False`로 사용한다. 별도 `MEMORY_MODEL`은 없다.
+
+Final answer는 사용자에게 보이기 전에 verifier를 거친다. 현재 주요 검증 축:
+
+```text
+numeric grounding
+claim/evidence grounding
+scope preservation
+temporal consistency
+action outcome verification
+task alignment
+evidence coverage
+```
+
+Evidence coverage는 이미 확보된 useful evidence를 model이 너무 조심스럽게 버리고 generic answer로 후퇴하는 것을 막기 위한 축이다. 추가 검색 가능성이나 exhaustive completeness 자체를 요구하지 않는다.
+
+Coverage correction은 최대 2회다. 이후에는 coverage 부족만으로 final을 더 붙잡지 않는다.
+
+---
+
+
+### 파일 업로드
+
+기본 upload root:
+
+```text
+./mai_uploads/
+```
+
+필요하면 `.env`에서 바꾼다.
+
+```env
+MAI_UPLOAD_ROOT=./mai_uploads
+```
+
+Owner는 upload root를 사용하고 Trial은 `db_id`에서 파생된 전용 directory를 사용한다.
+
+같은 account directory에서 같은 filename을 조용히 overwrite하지 않고 HTTP 409로 실패한다. Filename에 path separator를 허용하지 않는다.
+
+업로드된 파일의 실제 path가 input에 추가되므로 model이 `file_read`, `document_read`, `image_analyze` 등을 사용할 수 있다.
+
+---
+
+
+### Trial 초기화
+
+`.env.example`의 기본 체험 계정:
+
+```text
+ID: 체험판
+PW: 0000
+```
+
+다른 사용자에게 재사용하기 전 server를 종료하고 dry-run을 먼저 확인한다.
+
+```bash
+python reset_trial.py 체험판 --dry-run
+python reset_trial.py 체험판
+```
+
+Reset은 `user_id`로 account를 찾고 persistent ownership은 `db_id` 기준으로 제거한다.
+
+대상:
+
+- 해당 Trial memory
+- `web_chat_messages`의 해당 `db_id` conversation
+- 해당 Trial upload directory
+
+Unrelated legacy chat table은 임의 삭제하지 않는다.
+
+---
+
+
+### 테스트
+
+개발자가 변경 후 확인할 때는 전체 regression test를 실행한다.
+
+```bash
+python -m pytest -q
+```
+
+Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.
