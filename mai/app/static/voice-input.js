@@ -136,10 +136,19 @@
         enroll.hidden = true;
         setStatus('목소리 등록 완료. 마이크 버튼으로 음성 입력할 수 있어.');
       } else {
-        input.value = input.value ? input.value + '\n' + result.text : result.text;
+        const recognized = result.text.trim();
+        if (!recognized) throw new Error('음성 인식 결과가 비어 있어.');
+        const form = document.getElementById('chat-form');
+        const send = document.getElementById('send-btn');
+        if (!voiceMode || input.value.trim() || send.classList.contains('stop-mode')) {
+          setStatus('자동 전송을 건너뛰었어. 음성모드가 꺼졌거나 작성 중인 메시지 또는 진행 중인 대화가 있어.', true);
+          return;
+        }
+        input.value = recognized;
         input.dispatchEvent(new Event('input'));
-        input.focus();
-        setStatus('인식된 내용을 확인한 뒤 전송해 줘.');
+        if (send.disabled) throw new Error('전송 버튼이 비활성화되어 자동 전송할 수 없어.');
+        form.requestSubmit();
+        setStatus('인식된 메시지 전송을 요청했어.');
       }
     } catch (error) {
       setStatus(`음성 처리 실패: ${error.message}`, true);
