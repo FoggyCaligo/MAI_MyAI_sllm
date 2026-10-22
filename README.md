@@ -1,359 +1,120 @@
-# MAI MyAI sLLM
+# 개인 컴퓨터 관리용 범용 로컬 LLM 에이전트
 
-**사용법 : [setup.md](setup.md)**
+**사용법: [setup.md — 설치부터 실행까지](setup.md)**
 
-MAI는 **사용자를 장기적으로 기억하고, 그 기억을 바탕으로 대화·검색·문서 이해·로컬 PC 작업까지 이어 가는 로컬 sLLM 개인 에이전트 런타임**이다.
+MAI는 내 컴퓨터에서 실행되는 인공지능 비서야. 대화만 하는 것이 아니라, 사용자가 허용한 범위에서 웹을 검색하고, 문서를 읽고, 파일과 코드를 다루고, 터미널 명령도 실행할 수 있어. 답변 생성에는 **Ollama로 실행하는 로컬 언어 모델**을 사용해.
 
-장기기억은 모델 자체에 맡기지 않고 로컬 SQLite graph에 저장한다. 메인 모델을 바꾸더라도 memory DB는 유지되며, 모델은 필요할 때 native tool을 통해 기억과 외부 정보를 조회한다.
+> 파일 수정·삭제와 터미널 실행은 실제 컴퓨터에 영향을 줄 수 있어. 중요한 파일은 미리 백업하고, 외부 접속을 설정하기 전에는 계정과 공개 범위를 확인해 줘.
 
-세부 문서:
+## 1. 주요 기능
 
-- [`setup.md`](setup.md): Windows 비개발자용 설치 및 Web UI·계정·Tailscale 운영 통합 안내
-- [`MEMORY_V1.md`](MEMORY_V1.md): memory graph와 retrieval 구조
-- [`WORKING_CONTRACT.md`](WORKING_CONTRACT.md): 현재 runtime 구현 계약
-
----
-
-## 독립 감사 로그: `log.sqlite3`
-
-`LOG_DB_PATH` (기본 `./data/log.sqlite3`)는 사용자 요청, 모델 후보 출력,
-모델 THINK, verifier의 REJECTED 피드백과 ACCEPTED 결과, native tool 실행 결과를
-감사용으로 기록합니다. 대화 문맥은 계속 `chat.sqlite3`에서, 장기기억은
-`memory.sqlite3`에서 읽습니다. 감사 로그는 agent tool이나 memory recall에 노출되지
-않으며, 모델 프롬프트에 사용하지 않습니다.
-
-- `runs`: 실행 ID, 계정의 안정적 `db_id`, 세션, 시작/종료 시각, 완료·실패·취소 상태, 오류 유형 및 메시지
-- `steps`: 실행 ID, 자동 증가 ID 및 타임스탬프 순으로 읽는 **단일 로그 테이블**
-- `steps.role`: `user`, `model`, `model_think_step`, `verifier_step`, `tool_log`
-- `steps.content`: 사람이 바로 읽을 수 있는 원문/THINK/피드백/툴 결과
-- `steps.details_json`: native tool 이름과 호출 인자, 모델이 제시한 tool calls, verifier의 구조화된 issue 목록 등 부가 데이터
-
-예를 들어 `SELECT timestamp, round_number, role, status, content FROM steps ORDER BY id;`
-로 생성 순서대로 전체 실행 기록을 조회할 수 있습니다. 기록은 append-only로 남으며
-대화 기록 삭제와 별도로 보존됩니다. 이 로그에는 파일 내용이나 툴 출력 등 민감한
-정보가 남을 수 있으므로 파일을 외부에 공개하지 마세요.
-
----
-
-## 1. 현재 production 흐름
-
-현재 production은 pure-agent C 계열의 multi-round native-tool agent다.
-
-```text
-User
-  ↓
-Web/API authentication
-  ↓
-AccessPrincipal(user_id, db_id, role)
-  ↓
-Main Agent + Ollama native tool calls
-  ↓
-Candidate Final
-  ↓
-FinalGroundingVerifier
-  ├─ numeric grounding
-  ├─ claim / evidence grounding
-  ├─ scope preservation
-  ├─ temporal consistency
-  ├─ action outcome verification
-  ├─ task alignment
-  └─ evidence coverage
-  ↓
-Final Response
-  ↓
-Background memory extraction / admission
-```
-
-### Direct native-tool selection
-
-Production request path는 별도의 model-based tool requirement preflight를 호출하지 않는다. Main agent가 system prompt, 최근 대화, runtime context, 현재 등록된 native tool schema를 함께 보고 필요한 tool을 직접 선택한다.
-
-`OllamaToolRequirementPlanner`와 `FrozenToolRequirements` 지원 코드는 구조적 실험 및 단위 테스트를 위해 남아 있지만 현재 production composition에는 연결하지 않는다. 추가 LLM 호출의 지연을 피하기 위한 의도적인 선택이다.
-
-따라서 production에서는 required-tool gate가 final을 구조적으로 차단하지 않는다. 필요한 tool 사용은 main agent prompt와 tool schema에 의존하고, 생성된 candidate final의 근거성은 뒤의 `FinalGroundingVerifier`가 검토한다.
-
----
-
-## 2. Final verification
-
-Final verifier는 tool을 선택하거나 답을 다시 쓰는 주체가 아니다. Candidate final을 release하기 전에 user/tool evidence와 비교해 검증한다. Numeric grounding은 deterministic 검사이고, semantic review는 현재 chat에 선택된 동일 모델을 `think=False`, `tools=()`로 한 번 더 호출한다. Candidate가 거절되어 재작성되면 새 candidate마다 reviewer가 다시 호출될 수 있다.
-
-현재 검증 축은 다음과 같다.
-
-- **Numeric grounding**: material numeric value가 user/tool evidence에 존재하는지 deterministic 검사
-- **Claim grounding**: factual claim이 evidence에 실제로 지지되는지 model review
-- **Scope preservation**: 한 파일/한 화면/로컬 상태 근거를 전체/원격/전역 상태로 확장하지 않는지 검사
-- **Temporal consistency**: candidate의 시간 표현이 현재 시점 및 evidence의 날짜/타임스탬프와 모순되지 않는지 검사
-- **Action outcome**: mutation tool 호출 성공만으로 더 넓은 최종 상태 완료를 주장하지 않는지 검사
-- **Task alignment**: 사용자의 실제 요청 대신 다른 작업이나 일반론으로 빠지지 않는지 검사
-- **Evidence coverage**: 이미 확보된 유용한 evidence를 버리고 지나치게 빈약하거나 일반적인 답으로 후퇴하지 않는지 검사
-
-Coverage는 “더 검색하면 더 있을 수 있다”를 이유로 부족 판정을 내리지 않는다. **현재 user/tool evidence 안에 이미 있는 구체적이고 사용자에게 중요한 정보를 candidate가 불필요하게 버린 경우**만 대상으로 한다.
-
-Coverage correction은 별도 budget으로 최대 2번이다. 두 번 이후에는 coverage 부족만으로 final을 계속 붙잡지 않는다. Grounding, action, alignment와는 별도 축이다.
-
-Semantic reviewer의 structured output이 깨지거나 timeout/failure가 발생하면 이를 log하고 **fail-open**한다. Reviewer 장애 때문에 전체 사용자 요청을 서비스 오류로 끝내기보다 candidate final을 반환하는 가용성 우선 정책이다. 실패한 reviewer 출력을 문자열 heuristic으로 복원하지 않는다.
-
----
-
-## 3. Failure recovery
-
-Main planner/agent 실행이 fatal exception으로 끝나더라도 확보된 tool evidence가 있다면 `FailureAnswerFinalizer`가 **tool을 추가 호출하지 않고** 사용자에게 보여줄 수 있는 마지막 답변을 한 번 생성한다.
-
-Recovery final은 다음을 지켜야 한다.
-
-- 실제 실패를 숨기지 않는다.
-- 성공하지 않은 작업을 성공했다고 주장하지 않는다.
-- 확보된 결과와 실패한 부분을 구분한다.
-- 확인된 사실, 실패, 미확인 상태를 구분한다.
-- 가능한 경우 유용한 partial answer를 반환한다.
-
-Recovery finalization 자체도 실패하면 원래 exception을 다시 드러낸다.
-
----
-
-## 4. Graph Long-term Memory
-
-MAI memory의 기본 구조는 다음과 같다.
-
-```text
-User Anchor
-   └─asserted_fact→ Fact
-
-Fact ─mentions→ Concept
-
-Raw user text is preserved separately in the immutable evidence table.
-```
-
-핵심 node:
-
-- **User Anchor**: `db_id`마다 하나씩 존재하는 사용자 기준점
-- **Fact**: 발화에서 파생된 durable fact
-- **Concept**: Sentence_Breaker canonical segment로 정의되는 재사용 가능한 내부 검색 개념
-
-원문 사용자 입력은 graph Utterance node로 복제하지 않고 immutable raw evidence로 보존한다.
-
-Retrieval은 embedding/vector space를 production identity로 사용하지 않는다.
-
-```text
-memory admission
-  ↓ Sentence_Breaker
-canonical Concept nodes
-
-memory_recall query
-  ↓ whitespace chunks only
-intact query chunks
-  ↓
-Exact + SQLite FTS5 ConceptIndex
-  ↓
-internal Concept seeds
-  ↓
-Fact neighborhoods
-```
-
-현재 model-visible memory tool:
-
-- `memory_overview(limit)`
-- `memory_recall(query)`
-- `memory_search(node_id)`
-
-Recall 시 User Anchor의 전체 `spoke` one-hop을 자동으로 붙이지 않는다. Anchor 기본 context는 `asserted_fact` Fact만 bounded set으로 가져오며, 반복 관찰 횟수와 recency로 순서를 정한다.
-
-Recall query에는 Sentence_Breaker를 사용하지 않는다. 모델이 보낸 query를 공백 단위의 intact chunk로만 나누고, 각 chunk를 ConceptIndex에 독립적으로 조회한다. 각 chunk당 최고 hit 하나만 후보로 받고, 후보를 relevance 순으로 정렬한 뒤 기존 `concept_limit` 안에서 graph seed로 사용한다. Sentence_Breaker는 Fact를 Concept으로 기록하는 admission 단계에서는 계속 사용한다.
-
-`memory_recall`의 model-visible 결과는 **Anchor + Fact만** 반환한다. ConceptIndex/Concept node는 검색 진입점으로 내부에서만 사용하고, Concept 및 Utterance node는 recall payload에 노출하지 않는다. 원문 사용자 입력은 immutable `evidence` table에 그대로 보존된다.
-
-Working Graph 자체는 한 turn 안에서 누적되지만 `memory_recall`과 `memory_search`의 tool result는 매 호출에서 새로 조회·확장된 payload만 반환한다. 따라서 여러 번 조회해도 이미 본 전체 Working Graph를 매번 모델 context에 재전송하지 않는다.
-
-`memory_search`는 일반 node에 대해 one-hop 확장이다. User Anchor를 직접 확장할 때는 unbounded `spoke` traversal 대신 동일한 bounded Fact context를 반환한다. 더 깊은 탐색은 모델이 추가 tool call로 수행한다.
-
-### Post-response memory write
-
-최종 답변 이후 background task에서 같은 turn의 선택 모델을 `think=False` fact extractor로 사용한다. 별도 `MEMORY_MODEL`은 없다.
-
-새 graph Utterance node는 기록하지 않는다. FactExtractor가 durable Fact를 만들면 Anchor→Fact와 Fact→Concept만 기록하며, 원문은 immutable raw evidence에만 남긴다. Recall-only turn에서 extraction이 성공했고 새 fact가 없다면 persistent graph write를 생략한다.
-
----
-
-## 5. Native tools
-
-MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. Tool routing을 `if text contains ...` 식 문자열 규칙으로 대체하지 않는다.
-
-| 범주 | 주요 도구 |
+| 기능 | 무엇을 할 수 있나? |
 |---|---|
-| Memory | `memory_overview`, `memory_recall`, `memory_search` |
-| Time | `current_time` |
-| Calculation | `calculator` |
-| Files / Documents | `file_list`, `file_search`, `file_read`, mutation tools |
-| Code | `code_search`, `code_read`, `code_symbols` |
-| Image | `image_analyze` |
-| Web | `web_search`, `web_fetch` |
-| Market | `market_data` |
-| Terminal | `terminal_run` |
-| Tool result paging | `tool_result_read` |
+| **장기기억** | 대화에서 오래 참고할 만한 사실을 별도 저장소에 기록하고, 다음 대화에서 찾아 활용해. |
+| **문맥 유지** | 최근 대화 내용을 이어받아 후속 질문에 답해. 장기기억과는 별도로 대화 기록을 관리해. |
+| **웹 검색** | 인터넷 검색, 웹페이지 본문 읽기, 자바스크립트로 표시되는 페이지의 버튼·페이지 이동 등을 지원해. |
+| **증권정보 검색** | 증권시장 정보 조회 도구를 사용해 종목 관련 데이터를 확인할 수 있어. 조회 가능한 항목은 연결된 정보 제공처에 따라 달라져. |
+| **파일 구조 확인** | 폴더와 하위 폴더 목록, 파일 이름·크기·수정 시각, 파일 이름 검색 등을 지원해. |
+| **파일 읽기·관리** | 일반 텍스트와 주요 문서를 읽고, 파일 생성·내용 쓰기·삭제·이동·복사를 수행해. |
+| **코드 확인·관리** | 소스코드 검색, 지정한 줄 읽기, 파이썬 코드 구조 확인을 지원해. 코드 수정·생성·삭제는 파일 도구 또는 터미널을 이용해. |
+| **터미널 사용** | 프로그램 실행, 명령어 실행, 설치·검사 등 로컬 컴퓨터 작업을 수행할 수 있어. |
+| **이미지 인식** | 별도로 지정한 영상 인식 모델을 사용해 사진이나 그림을 분석해. 해당 모델을 설정하지 않으면 이용할 수 없어. |
+| **음성 대화** | 목소리 등록·화자 비교, 음성을 글로 바꾸는 기능, 음성 모드에서 답변을 소리로 읽는 기능을 제공해. 음성 답변은 브라우저의 음성 합성 기능을 사용해. |
+| **원격 파일 다운로드 링크** | 웹 화면에서 생성·제공한 파일을 내려받을 수 있는 링크를 사용할 수 있어. 접근 권한과 서버 실행 상태에 영향을 받아. |
+| **외부 접속용 사이트** | Tailscale Funnel을 설정하면 다른 기기에서도 웹주소로 접속할 수 있어. **Tailscale 설치·로그인·설정이 별도로 필요해.** |
 
-`file_read`는 일반 텍스트와 PDF, DOCX, XLSX, CSV, PPTX를 하나의 model-facing read interface로 처리한다. 구조화 문서 형식은 내부 문서 파서로 전달되며, CSV는 기본 UTF-8 BOM 호환 인코딩을 사용하고 필요하면 `cp949` 같은 인코딩을 명시할 수 있다. 모델이 `file_read`와 별도의 문서 읽기 도구 사이에서 route를 선택하게 하지 않는다.
+### 지원 파일 형식
 
-큰 tool result는 bounded page와 `result_id`로 축약될 수 있으며, 모델은 `tool_result_read`로 필요한 범위를 이어 읽는다. 다만 `web_search`는 모델이 검색 결과 pagination을 따로 따라가지 않도록 provider의 3개 result page를 한 번에 조회해 최대 15개를 기본 반환하고, title/URL/짧은 snippet만 유지한다. 실제 페이지 본문은 `web_fetch`가 담당한다.
+**문서 내용을 구조적으로 읽는 형식**은 다음과 같아.
 
-Material arithmetic은 main model 암산보다 `calculator`를 사용하도록 system contract에 명시되어 있다.
+| 확장자 | 파일 종류 | 읽기 방식 |
+|---|---|---|
+| `.pdf` | PDF 문서 | 각 페이지의 텍스트 추출 |
+| `.docx` | 워드 문서 | 문단과 표 읽기 |
+| `.xlsx` | 엑셀 문서 | 시트와 셀 값 읽기 |
+| `.csv` | 쉼표로 구분한 표 | 행과 열을 구분해 읽기 |
+| `.pptx` | 발표 자료 | 슬라이드 안의 글자 읽기 |
 
-`VISION_MODEL`이 비어 있으면 `image_analyze`는 아예 registry에 등록되지 않는다.
+**일반 텍스트로 읽고 쓰는 형식**에는 `.txt`, `.md`, `.log`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.ini`, `.cfg`, `.xml`, `.html`, `.htm`, `.css`, `.js`, `.ts`, `.py`, `.sh`, `.ps1`, `.bat`, `.sql`, `.c`, `.h`, `.cpp`, `.hpp`, `.java`, `.go`, `.rs`, `.rb` 등이 있어.
 
----
+이 목록은 **텍스트로 저장된 파일의 예시**야. 확장자가 같더라도 파일 내용이 실제로 텍스트여야 하고, 문자 인코딩·권한에 따라 읽지 못할 수 있어. 텍스트 파일은 확장자에 관계없이 읽을 수 있는 경우가 많지만, 이미지·영상·압축파일처럼 바이너리 형식인 경우 일반 텍스트 읽기로 처리하지 않아.
 
-## 6. 계정: user_id / user_pw / db_id
+파일 **관리**(생성·내용 쓰기·삭제·이동·복사)는 확장자 자체에 크게 제한받지 않지만, `.pdf`, `.docx`, `.xlsx`, `.pptx`를 **원래 문서 구조 그대로 편집하는 전용 기능**과는 구별해야 해. 구조화된 문서 수정은 문서 생성 도구나 터미널 작업 등 별도 처리가 필요할 수 있어.
 
-Owner와 Trial 모두 `.env`에서 `user_info` record로 정의한다.
+코드 검색·읽기는 여러 텍스트 기반 프로그래밍 언어에 사용할 수 있지만, **코드의 함수·클래스 구조를 자동 분석하는 전용 기능은 현재 파이썬 코드에 한정**돼.
 
-```env
-OWNER_USERS=[{"user_id":"owner","user_pw":"change-me","db_id":"local-user"}]
-TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]
-```
+## 2. 장기기억의 구조와 원리
 
-세 필드의 의미:
+MAI는 기억을 매번 긴 문장으로 모델에 집어넣지 않고, 컴퓨터 안의 **그래프 형태 저장소**에 기록해. 그래프는 **노드(점)**와 **에지(연결선)**로 이루어져 있어.
 
-```text
-user_id
-  로그인 ID
-  나중에 변경 가능
-
-user_pw
-  로그인 비밀번호
-  현재 설계에서는 local .env에 평문으로 저장
-
-db_id
-  persistent data의 stable identity
-  memory / Web chat / trial upload ownership 기준
-```
-
-따라서 로그인 ID를 바꿔도 `db_id`를 유지하면 기존 memory와 chat을 migration 없이 계속 사용할 수 있다.
-
-모든 `user_id`와 `db_id`는 계정 간 충돌하지 않아야 하며, 교차 충돌도 startup에서 거부한다.
-
-기존 `OWNER_ID`, `OWNER_MEMORY_ID`, `OWNER_ACCOUNTS`, `TRIAL_IDS`는 silent fallback으로 사용하지 않는다.
-
----
-
-## 7. 로그인 세션과 persistent chat
-
-성공 로그인 시 서버가 Bearer token을 발급한다. 같은 `user_id`로 새 로그인하면 이전 token을 폐기하는 **new-login-wins** 정책이다.
-
-브라우저는 마지막 성공 로그인한 `user_id`만 localStorage에 기억한다. 비밀번호는 저장하지 않는다. 따라서 다른 기기 로그인으로 기존 세션이 끊겨도 원래 브라우저에는 ID가 남아 있어 비밀번호만 다시 입력하면 된다.
-
-대화 기록은 `db_id` 기준으로 `CHAT_DB_PATH`의 `web_chat_messages` 테이블에 저장한다. 전체 UI history와 모델 context는 분리되어 있으며, 모델에는 최근 `SESSION_HISTORY_MESSAGES`개만 전달할 수 있다.
-
-브라우저/폰이 닫혀도 서버 process가 살아 있는 동안 running chat job은 계속될 수 있고, 완료된 assistant answer는 persistent chat에 저장된다. 단, running job 자체는 외부 queue가 아니라 process memory에 있으므로 서버 process restart를 넘겨 이어 실행되지는 않는다.
-
----
-
-## 8. Owner / Trial 권한
-
-### Owner
-
-Owner는 설치된 Ollama 모델 중 선택할 수 있고 전체 local mutation/terminal capability를 사용할 수 있다.
-
-### Trial
-
-Trial model은 `MAIN_MODEL`로 고정된다. Client가 다른 model을 직접 POST해도 서버가 거부한다.
-
-Trial은 read/search 계열과 자기 upload directory 내부의 `file_write` / `file_create`만 허용된다.
+### 그래프 구조
 
 ```text
-Trial 사용 가능
-  memory_*
-  current_time / calculator
-  file_list / file_search / file_read
-    └─ text / PDF / DOCX / XLSX / CSV / PPTX
-  code_search / code_read / code_symbols
-  image_analyze   # configured only
-  web_search / web_fetch
-  market_data
-  file_write / file_create   # own upload directory only
-
-Trial 미노출
-  file_delete / file_move / file_copy
-  terminal_run
+[사용자 기준점]
+       │ 사실을 기억함
+       ▼
+ [사실 노드] ── 관련 개념 ──▶ [개념 노드]
 ```
 
-Trial upload ownership 역시 `db_id` 기준이다.
+- **사용자 기준점 노드:** 누구에 관한 기억인지 구별하는 출발점이야.
+- **사실 노드:** 대화에서 확인한 지속적으로 참고할 만한 정보를 담아.
+- **개념 노드:** 비슷한 내용의 기억을 찾기 위한 검색 단서야.
+- **에지:** 사용자와 사실, 사실과 개념 사이의 관계를 나타내.
 
----
+대화의 **원문은 별도 근거 기록**으로 보존해. 원문 하나마다 새로운 그래프 노드를 무한히 만드는 방식은 아니야.
 
-## 9. 기본 실행
+### 기억은 어떻게 저장할까?
 
-설치:
+1. 대화가 끝난 뒤, **로컬 언어 모델이 기억할 만한 사실을 추출**해.
+2. 추출된 사실을 저장할 때 **Sentence Breaker 등의 알고리즘**으로 검색용 개념을 정리해.
+3. 사실과 개념을 그래프에 연결하고, 원래 사용자 발화는 별도 근거 기록에 남겨.
 
-```bash
-python -m pip install -e ".[dev]"
+즉, **사실 추출에는 LLM을 사용하지만 그래프 구성·개념 색인에는 별도의 알고리즘을 사용**해. 저장 과정 전체가 LLM 없이 작동하는 구조는 아니야.
+
+### 기억은 어떻게 다시 찾을까?
+
+1. 모델이 지금 필요한 기억을 질문 형태로 조회해.
+2. 검색어를 공백 기준으로 나누고, 저장된 개념 색인에서 **정확 일치 및 SQLite 전문 검색(FTS5)**으로 후보를 찾아.
+3. 연결된 사실 노드를 가져와 답변에 참고해.
+
+검색할 때마다 과거 대화를 전부 모델에 다시 넣는 방식이 아니야. **개념을 통해 필요한 사실만 골라 가져오는 구조**이고, 저장소의 주요 데이터는 `data/memory.sqlite3`에 있어. 별도의 임베딩·벡터 검색 공간을 핵심 식별 체계로 사용하지 않아.
+
+최근 대화 문맥은 `data/chat.sqlite3`, 문제 확인용 실행 기록은 `data/log.sqlite3`로 구분해 관리해.
+
+더 자세한 구조는 [기억 구조 문서](WORKING_CONTRACT.md)를 참고해.
+
+## 3. 처음 설치하는 방법
+
+**Windows 10/11**이라면 관리자 권한으로 **PowerShell**을 열고 아래 명령을 **한 번에 붙여넣어** 실행해.
+
+```powershell
+$installer = Join-Path $env:TEMP 'mai_install_windows.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/FoggyCaligo/MAI_MyAI_sllm/dev/scripts/install_windows.ps1' -OutFile $installer
+powershell -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
-`.env.example`을 `.env`로 복사한 뒤 계정과 모델 설정을 수정한다.
+이 설치 과정은 Git·Python·Ollama·C++ 빌드 도구 등의 준비 상태를 확인하고, MAI 다운로드, 가상환경과 필요한 라이브러리 설치, 웹 브라우저 실행 구성요소 설치까지 진행해. 사용자 계정 비밀번호와 사용할 모델 이름 등은 설치 도중 직접 입력해야 해.
 
-기본 예시 모델:
+**설치 명령은 인터넷에서 스크립트를 내려받아 실행하므로**, 실행 전에 [설치 스크립트 내용](scripts/install_windows.ps1)을 확인하는 걸 권장해. 기존 `.env`와 기억·대화 데이터는 덮어쓰지 않도록 구성돼 있어. 실제 Windows 환경에서는 설치된 프로그램과 설정에 따라 추가 조치가 필요할 수 있어.
 
-```env
-MAIN_MODEL=gemma4:e4b
-```
+Tailscale을 통한 외부 접속은 자동으로 공개하지 않아. 외부 접속 설정, 계정 관리, 오류 해결까지 포함한 자세한 안내는 **[setup.md](setup.md)**에서 볼 수 있어.
 
-세팅:
-```bash
-python -m pip install -e ".[dev]"
-source .venv/Scripts/activate
-```
+## 4. 이후 실행하는 방법
 
-실행:
+설치를 끝냈다면 일반 권한의 터미널을 열어 MAI 폴더에서 실행하면 돼.
 
 ```bash
 python run_server.py
 ```
 
-로컬 UI:
+Windows에서 처음 설치한 뒤에는 필요하면 먼저 프로젝트 폴더로 이동하고 가상환경을 켜 줘.
 
-```text
-http://127.0.0.1:8000
+```powershell
+cd "$env:USERPROFILE\Documents\Git\MAI_MyAI_sllm"
+.\.venv\Scripts\Activate.ps1
+python run_server.py
 ```
 
-Trial 기본 example:
+서버가 실행되면 같은 컴퓨터의 브라우저에서 **http://127.0.0.1:8000**에 접속하면 돼. 외부 접속은 Tailscale Funnel을 별도로 설정한 경우에만 가능해.
 
-```text
-ID: 체험판
-PW: 0000
-```
-
-상세 실행과 Tailscale Funnel 설정은 [`RUN_UI.md`](RUN_UI.md)를 참고한다.
-
----
-
-## 10. 실패 원칙
-
-MAI는 contract violation을 문자열 비교나 임시 fallback으로 성공처럼 숨기지 않는다.
-
-예:
-
-- invalid tool schema / arguments
-- unknown tool
-- file or permission failure
-- trial permission violation
-- terminal non-zero / timeout
-- web/network failure
-- private URL rejection
-- SQLite / FTS5 failure
-- identity collision
-- Tailscale Funnel failure
-
-실패했을 때는 실패로 드러내되, 이미 확보된 유용한 결과가 있다면 사용자에게 truthful partial answer로 전달하는 것을 우선한다.
-
-
-### JavaScript-rendered web pages (Playwright)
-
-MAI keeps lightweight `web_fetch` for static HTML. For JavaScript-rendered pages and pagination, the model can use `browser_open`, `browser_snapshot`, `browser_click`, `browser_scroll`, and `browser_close`. A browser session is isolated to one agent run and automatically closed when the run ends. Element references come from the latest snapshot (not text selectors), and each snapshot contains rendered text plus actual link URLs. Public HTTP(S) requests only; pages may not reach private network addresses. Do not treat blocked requests as successful page retrieval.
-
-Install Chromium once in the same Python environment where MAI runs:
-
-```bash
-python -m pip install -e .
-python -m playwright install chromium
-```
-
-The browser requires an installed Chromium binary. A missing browser dependency or failed navigation is reported as a tool error rather than silently falling back to static HTTP. To conserve context, snapshots cap the number of returned elements and text length; use new snapshots after interaction and use `web_fetch` for discovered static article URLs.
+문제가 발생하면 **[설치·실행·오류 해결 안내서](setup.md)**를 확인해.
