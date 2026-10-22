@@ -97,3 +97,45 @@ def test_external_bundle_exposes_web_and_market_tools():
     registry = ToolRegistry()
     register_external_information_tools(registry)
     assert set(registry.names()) == {"web_search", "web_fetch", "market_data"}
+
+
+def test_family_accounts_have_distinct_identity_and_existing_owner_capabilities():
+    from mai.app.server import _visible_models_for_principal, _selected_model_for_principal
+
+    policy = AccessPolicy.from_env_values(
+        owner_users='[{"user_id":"admin","user_pw":"owner-pw","db_id":"admin-db"}]',
+        family_users='[{"user_id":"family-a","user_pw":"family-pw","db_id":"family-db"}]',
+        trial_users='[{"user_id":"trial-a","user_pw":"trial-pw","db_id":"trial-db"}]',
+    )
+    family = policy.authenticate("family-a", "family-pw")
+    assert family.role is AccessRole.FAMILY
+    assert family.memory_user_id == "family-db"
+    assert policy.configured_principal("family-a") == family
+    assert policy.user_to_db_ids()["family-a"] == "family-db"
+    assert _visible_models_for_principal(
+        family, runtime_model="base", installed_models=("base", "alternate")
+    ) == ("base", "alternate")
+    assert _selected_model_for_principal(
+        family, runtime_model="base", requested_model="alternate"
+    ) == "alternate"
+
+
+def test_family_identity_cannot_collide_with_owner_or_trial():
+    with pytest.raises(ValueError, match="db_id must be unique"):
+        AccessPolicy.from_env_values(
+            owner_users='[{"user_id":"owner","user_pw":"o","db_id":"shared"}]',
+            family_users='[{"user_id":"family","user_pw":"f","db_id":"shared"}]',
+            trial_users=None,
+        )
+
+
+def test_family_credentials_are_not_accepted_as_owner_or_trial():
+    policy = AccessPolicy.from_env_values(
+        owner_users='[{"user_id":"owner","user_pw":"owner","db_id":"owner-db"}]',
+        family_users='[{"user_id":"family","user_pw":"family","db_id":"family-db"}]',
+        trial_users=None,
+    )
+    assert policy.authenticate("owner", "owner").role is AccessRole.OWNER
+    assert policy.authenticate("family", "family").role is AccessRole.FAMILY
+    with pytest.raises(AccessDeniedError):
+        policy.authenticate("family", "owner")
