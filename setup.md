@@ -966,3 +966,16 @@ Faster-Whisper STT의 한국어 고정값을 제거하고 음성의 언어를 �
 마이크를 눌러 음성 입력 모드를 켜면 마이크 아이콘은 빨간색으로 표시된다. 음성 녹음이 무음 종료된 뒤에도 음성 모드는 유지되어, 이후 MAI 답변이 **완료되었을 때만** 브라우저의 `speechSynthesis`로 답변을 읽는다. 마이크 버튼을 다시 눌러 음성 모드를 끄면 재생 중인 음성도 중지한다. 녹음 중 버튼을 눌러 종료하는 경우 음성 모드도 꺼진다. 이 변경은 자동으로 다음 발화를 다시 녹음하는 핸즈프리 루프를 제공하지 않는다.
 
 브라우저·OS에 설치된 음성에 따라 한국어/영어 혼합 문장의 발음과 품질이 달라지며, TTS 지원 브라우저/목소리가 필요하다. 음성 답변은 브라우저 기능으로 생성되므로 외부 서버 TTS용 별도 API 키를 요구하지 않는다.
+
+
+### 음성 등록 오류: `No module named 'pkg_resources'`
+
+기존 `webrtcvad`가 `pkg_resources`를 불러오지만, `setuptools` 82부터 이 모듈이 제거되었다. MAI는 현재 음성 라이브러리와의 호환성을 위해 `setuptools>=70,<82`를 기본 의존성으로 요구한다. 기존 가상환경에서는 `git pull origin dev` 후 `python -m pip install -e .`로 다시 설치한다.
+
+설치 확인:
+
+```powershell
+python -c "import pkg_resources, resemblyzer; print('Voice dependencies OK')"
+```
+
+`pkg_resources`는 폐기 예정 기능이므로, 향후 음성 패키지가 이를 제거하면 제약을 재검토해야 한다. `setuptools`를 임의로 82 이상으로 업데이트하면 기존 `webrtcvad`가 다시 실패할 수 있다.
