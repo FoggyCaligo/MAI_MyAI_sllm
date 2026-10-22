@@ -16,7 +16,7 @@ from fastapi import HTTPException
 
 
 class VoiceService:
-    _PROFILE_ENCODER = "speechbrain/spkrec-ecapa-voxceleb"
+    _PROFILE_ENCODER = "speakeronnx/wespeaker-resnet34"
     def __init__(self) -> None:
         self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "10"))
         self.match_threshold = float(os.environ.get("VOICE_MATCH_THRESHOLD", "0.75"))
@@ -42,19 +42,14 @@ class VoiceService:
         # Models are loaded only when voice is used. Missing
         # dependencies fail explicitly, rather than silently bypassing checks.
         if self._encoder is None:
-            from speechbrain.inference.classifiers import EncoderClassifier
-            self._encoder = EncoderClassifier.from_hparams(
-                source=self._PROFILE_ENCODER,
-                savedir=str(self.root / "models" / "speechbrain-ecapa"),
-                run_opts={"device": "cpu"},
-            )
+            from speakeronnx import SpeakerEmbedder
+            self._encoder = SpeakerEmbedder(model="wespeaker-resnet34", providers=["CPUExecutionProvider"])
         return self._encoder
 
     def _waveform(self, payload: bytes):
         import numpy as np
         from scipy.signal import resample_poly
-        from silero_vad import load_silero_vad, get_speech_timestamps
-        import torch
+        from vadonnx import load_vad
         from math import gcd
 
         if len(payload) > 20 * 1024 * 1024:
@@ -76,12 +71,12 @@ class VoiceService:
         divisor = gcd(rate, 16000)
         processed = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
         if self._vad is None:
-            self._vad = load_silero_vad()
+            self._vad = load_vad("silero")
         vad = self._vad
-        timestamps = get_speech_timestamps(torch.from_numpy(processed), vad, sampling_rate=16000)
+        timestamps = vad.get_speech_segments(processed, sample_rate=16000)
         if not timestamps:
             raise HTTPException(422, "not enough speech detected in recording")
-        speech = np.concatenate([processed[segment["start"]:segment["end"]] for segment in timestamps])
+        speech = np.concatenate([processed[int(segment.start * 16000):int(segment.end * 16000)] for segment in timestamps])
         if len(speech) < 16000 * 2:
             raise HTTPException(422, "not enough speech detected in recording")
         return speech
@@ -106,11 +101,8 @@ class VoiceService:
             temporary.unlink(missing_ok=True)
 
     def _embedding(self, speech):
-        import torch
-        with torch.inference_mode():
-            waveform = torch.from_numpy(speech).unsqueeze(0)
-            embedding = self._models().encode_batch(waveform)
-        return self._unit(embedding.squeeze().cpu().numpy())
+        embedding = self._models().embed(speech)
+        return self._unit(embedding)
 
     def enroll(self, db_id: str, recording: bytes) -> None:
         with self._lock:
