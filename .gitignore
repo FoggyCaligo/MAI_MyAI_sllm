@@ -8,3 +8,6 @@ mai_uploads/
 .coverage
 htmlcov/
 data/log.sqlite3*
+
+# Local biometric voice embeddings
+data/voice_profiles/
