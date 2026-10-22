@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 
 class VoiceService:
+    _PROFILE_ENCODER = "speechbrain/spkrec-ecapa-voxceleb"
     def __init__(self) -> None:
         self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "10"))
         self.match_threshold = float(os.environ.get("VOICE_MATCH_THRESHOLD", "0.75"))
@@ -38,12 +39,12 @@ class VoiceService:
         return self._profile_path(db_id).is_file()
 
     def _models(self):
-        # Optional packages are loaded only if voice has been used. Missing
+        # Models are loaded only when voice is used. Missing
         # dependencies fail explicitly, rather than silently bypassing checks.
         if self._encoder is None:
             from speechbrain.inference.classifiers import EncoderClassifier
             self._encoder = EncoderClassifier.from_hparams(
-                source="speechbrain/spkrec-ecapa-voxceleb",
+                source=self._PROFILE_ENCODER,
                 savedir=str(self.root / "models" / "speechbrain-ecapa"),
                 run_opts={"device": "cpu"},
             )
@@ -99,7 +100,7 @@ class VoiceService:
         temporary = path.with_suffix(".tmp")
         try:
             with temporary.open("wb") as out:
-                np.savez(out, original=original, adapted=adapted, count=count)
+                np.savez(out, original=original, adapted=adapted, count=count, encoder=VoiceService._PROFILE_ENCODER)
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
@@ -130,6 +131,8 @@ class VoiceService:
             speech = self._waveform(recording)
             actual = self._embedding(speech)
             with np.load(path, allow_pickle=False) as profile:
+                if "encoder" not in profile or str(profile["encoder"].item()) != self._PROFILE_ENCODER:
+                    raise HTTPException(409, "voice profile belongs to a different speaker model; re-enrollment is required")
                 original = self._unit(profile["original"])
                 adapted = self._unit(profile["adapted"])
                 count = int(profile["count"])
