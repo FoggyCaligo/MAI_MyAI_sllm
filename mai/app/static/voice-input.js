@@ -15,6 +15,22 @@
     if (!enabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
   }
 
+  function spokenText(markdown) {
+    if (typeof renderMarkdown !== 'function') {
+      throw new Error('TTS requires the chat Markdown renderer');
+    }
+    const container = document.createElement('div');
+    container.innerHTML = renderMarkdown(markdown);
+    // Read the displayed prose, not Markdown markup or blocks of source code.
+    container.querySelectorAll('pre, code, script, style').forEach(node => node.remove());
+    container.querySelectorAll('p, h1, h2, h3, h4, li, tr').forEach(node => node.appendChild(document.createTextNode('\n')));
+    return container.textContent
+      .replace(/[\\p{S}]/gu, ' ')
+      .replace(/[ \\t]+/g, ' ')
+      .replace(/\\n[\\s\\n]*/g, '. ')
+      .trim();
+  }
+
   document.addEventListener('mai:answer-complete', event => {
     if (!voiceMode || !event.detail?.text) return;
     if (!('speechSynthesis' in window)) {
@@ -23,7 +39,9 @@
     }
     const synthesizer = window.speechSynthesis;
     synthesizer.cancel();
-    const utterance = new SpeechSynthesisUtterance(event.detail.text);
+    const message = spokenText(event.detail.text);
+    if (!message) return;
+    const utterance = new SpeechSynthesisUtterance(message);
     utterance.lang = 'ko-KR';
     utterance.rate = 1;
     utterance.onerror = eventError => {
