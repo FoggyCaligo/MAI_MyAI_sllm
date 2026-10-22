@@ -1,3 +1,28 @@
+## Windows 빠른 설치 — 관리자 PowerShell에 한 번 붙여넣기
+
+처음 설치는 아래 명령 묶음으로 자동화할 수 있다. **GitHub에서 내려받은 스크립트를 실행하므로, 출처와 [설치 스크립트](scripts/install_windows.ps1) 내용을 확인한 뒤 실행한다.** PowerShell은 **관리자 권한**으로 열되, 설치 이후 MAI 자체는 관리자 권한 없이 실행한다.
+
+```powershell
+$installer = Join-Path $env:TEMP 'mai_install_windows.ps1'
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/FoggyCaligo/MAI_MyAI_sllm/dev/scripts/install_windows.ps1' -OutFile $installer
+powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+```
+
+설치 스크립트는 Git·Python·Ollama가 없으면 winget을 사용해 설치하고, MAI `dev` 저장소 다운로드, 가상환경, 기본 패키지(음성 포함), Playwright Chromium 설치 및 의존성 검증을 진행한다. Windows에 `winget`이 없거나 설치 후 명령이 아직 PATH에 잡히지 않는다면 **명확히 실패**하며 안내에 따라 PowerShell을 다시 열고 재실행한다. 기존 설치 디렉터리가 있다면 보존하며, 소스 코드의 Git 변경 사항을 **자동 pull/merge 하지 않는다.**
+
+신규 설치라면 Ollama 모델 이름, MAI Owner ID와 비밀번호를 입력받아 `.env`를 생성하고, **Trial 비활성화·Tailscale Funnel 비활성화**로 시작한다. 기존 `.env`, 채팅·기억 DB는 절대 덮어쓰지 않는다. 모델 다운로드 실패 등 필수 단계의 오류는 숨기지 않고 설치가 중단된다.
+
+**한 번 붙여넣어도 남는 수동 단계:** 모델 다운로드에 필요한 인터넷 연결, 설치 프롬프트에 로그인 정보 입력, 필요 시 Ollama 앱 실행, 선택적으로 Tailscale 설치·로그인·Funnel 승인, 브라우저 마이크 권한 및 목소리 등록. Tailscale Funnel은 인터넷에 MAI를 공개하므로 자동으로 켜지지 않는다. 세부 설정은 아래 단계별 안내를 따른다.
+
+설치가 완료되면 일반 권한의 터미널에서 다음과 같이 실행한다.
+
+```powershell
+cd "$env:USERPROFILE\Documents\Git\MAI_MyAI_sllm"
+.\.venv\Scripts\python.exe run_server.py
+```
+
+---
+
 # MAI 첫 설치 안내서 — 비개발자용 (Windows)
 
 이 문서는 **컴퓨터에 개발 도구가 하나도 설치되어 있지 않은 Windows 10/11 사용자**가 MAI를 처음 설치하는 방법이다. 어떤 명령을 **어디에 입력해야 하는지**, 무엇을 확인해야 하는지, 실패하면 무엇부터 검사하는지까지 순서대로 설명한다. 개발 경험이나 Git/Python 지식을 전제로 하지 않는다.
