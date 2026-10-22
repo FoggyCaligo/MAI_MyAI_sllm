@@ -18,6 +18,7 @@ dependencies = [
   "python-multipart>=0.0.20",
   "python-pptx>=1.0",
   "resemblyzer>=0.1.4",
+  "setuptools>=70,<82",
   "faster-whisper>=1.1",
   "numpy>=1.24",
   "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
