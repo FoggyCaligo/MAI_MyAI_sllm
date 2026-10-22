@@ -132,7 +132,7 @@ class VoiceService:
                     device="cpu",
                     compute_type="int8",
                 )
-            segments, _ = self._transcriber.transcribe(speech, language="ko", vad_filter=True)
+            segments, _ = self._transcriber.transcribe(speech, vad_filter=True)
             text = " ".join(segment.text.strip() for segment in segments).strip()
             if not text:
                 raise HTTPException(422, "no speech recognized")

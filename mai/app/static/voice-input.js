@@ -4,6 +4,34 @@
   const status = document.getElementById('upload-status');
   const input = document.getElementById('msg-input');
   let active = null;
+  let voiceMode = false;
+
+  function setVoiceMode(enabled) {
+    voiceMode = enabled;
+    mic.classList.toggle('active', enabled);
+    mic.setAttribute('aria-pressed', String(enabled));
+    mic.title = enabled ? '음성 모드 끄기' : '음성 입력 시작';
+    mic.setAttribute('aria-label', mic.title);
+    if (!enabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  }
+
+  document.addEventListener('mai:answer-complete', event => {
+    if (!voiceMode || !event.detail?.text) return;
+    if (!('speechSynthesis' in window)) {
+      setStatus('이 브라우저는 음성 합성(TTS)을 지원하지 않아.', true);
+      return;
+    }
+    const synthesizer = window.speechSynthesis;
+    synthesizer.cancel();
+    const utterance = new SpeechSynthesisUtterance(event.detail.text);
+    utterance.lang = 'ko-KR';
+    utterance.rate = 1;
+    utterance.onerror = eventError => {
+      if (eventError.error !== 'canceled') setStatus('TTS 재생 오류: ' + eventError.error, true);
+    };
+    synthesizer.speak(utterance);
+  });
+
 
   function setStatus(message, failed = false) {
     status.textContent = message;
@@ -47,10 +75,7 @@
     if (!active) return;
     const capture = active;
     active = null;
-    mic.classList.remove('active');
-    mic.setAttribute('aria-pressed', 'false');
-    mic.title = '음성 입력 시작';
-    mic.setAttribute('aria-label', '음성 입력 시작');
+    if (capture.mode === 'enroll') setVoiceMode(false);
     capture.processor.disconnect();
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
@@ -131,10 +156,7 @@
           void finish();
         }
       };
-      mic.classList.add('active');
-      mic.setAttribute('aria-pressed', 'true');
-      mic.title = '음성 입력 종료';
-      mic.setAttribute('aria-label', '음성 입력 종료');
+      if (mode === 'transcribe') setVoiceMode(true);
       setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 다시 누르거나 무음 시간이 지나면 종료돼.');
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
@@ -144,7 +166,8 @@
   }
 
   mic.addEventListener('click', () => {
-    if (active) { void finish(); return; }
+    if (active) { void finish(); setVoiceMode(false); return; }
+    if (voiceMode) { setVoiceMode(false); return; }
     void start('transcribe');
   });
   enroll.addEventListener('click', () => {
