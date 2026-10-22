@@ -341,6 +341,7 @@ TAILSCALE_FUNNEL=false
 
 ```dotenv
 OWNER_USERS=[{"user_id":"owner","user_pw":"여기에_본인만_아는_긴_비밀번호","db_id":"local-user"}]
+FAMILY_USERS=[{"user_id":"family","user_pw":"여기에_별도_비밀번호","db_id":"family-user"}]
 TRIAL_USERS=[{"user_id":"체험판","user_pw":"여기도_반드시_변경","db_id":"trial-default"}]
 ```
 
@@ -887,3 +888,20 @@ python -m pytest -q
 ```
 
 Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.
+
+
+---
+
+## Family 계정 설정
+
+`.env`의 `FAMILY_USERS`에 독립된 로그인 ID, 비밀번호, `db_id`를 지정한다. 비어 있는 배열 `FAMILY_USERS=[]`도 가능하다.
+
+```dotenv
+FAMILY_USERS=[{"user_id":"family1","user_pw":"실제_강력한_비밀번호","db_id":"family-db-1"}]
+```
+
+현재 Family는 Owner와 동일하게 모델 선택, 로컬 파일 읽기·수정, 터미널 등 **기존 MAI 도구를 사용**할 수 있다. Trial의 모델 잠금이나 업로드 디렉터리 쓰기 제한은 적용되지 않는다. 다만 Family에는 향후 Google Drive/Sheets OAuth 도구를 등록하지 않는 것이 정책이다. 현재 Google Drive 연동 자체는 롤백되어 없다.
+
+**보안 주의:** Family에 `terminal_run` 및 전체 로컬 파일 접근을 허용하면 일반 서버 파일도 읽을 수 있어, 같은 OS 계정이 가진 Google 토큰이나 타인의 로컬 데이터에 대한 강한 격리는 제공하지 않는다. 향후 Google Drive 재도입 시 OAuth 토큰을 별도 OS 프로세스/계정의 제한된 서비스에 보관해 터미널 실행 경계로부터 보호해야 한다.
+
+Owner/Family/Trial 사이에 `user_id`와 `db_id`가 중복되면 시작 시 명확히 오류로 처리한다.
