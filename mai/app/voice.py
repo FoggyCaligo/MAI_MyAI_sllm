@@ -18,7 +18,7 @@ from fastapi import HTTPException
 class VoiceService:
     _PROFILE_ENCODER = "speakeronnx/wespeaker-resnet34"
     def __init__(self) -> None:
-        self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "10"))
+        self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "5"))
         self.match_threshold = float(os.environ.get("VOICE_MATCH_THRESHOLD", "0.75"))
         self.min_speech_seconds = float(os.environ.get("VOICE_MIN_SPEECH_SECONDS", "0.5"))
         if not 0 < self.min_speech_seconds <= 120:
@@ -83,6 +83,38 @@ class VoiceService:
         if len(speech) < 16000 * minimum_seconds:
             raise HTTPException(422, "not enough speech detected in recording")
         return speech
+
+    def last_speech_end(self, payload: bytes) -> float | None:
+        """Find the last real speech boundary in a short recording using ONNX VAD."""
+        import numpy as np
+        from scipy.signal import resample_poly
+        from math import gcd
+        from vadonnx import load_vad
+
+        if len(payload) > 2 * 1024 * 1024:
+            raise HTTPException(413, "voice activity window exceeds 2 MB")
+        try:
+            with wave.open(io.BytesIO(payload), "rb") as file:
+                channels, width, rate, count = (
+                    file.getnchannels(), file.getsampwidth(), file.getframerate(), file.getnframes()
+                )
+                if channels != 1 or width != 2 or not 8000 <= rate <= 96000:
+                    raise ValueError("expected mono 16-bit PCM WAV, sample rate 8–96 kHz")
+                if count / rate > 10:
+                    raise ValueError("voice activity window exceeds 10 seconds")
+                pcm = np.frombuffer(file.readframes(count), dtype="<i2").astype("float32") / 32768.0
+        except (EOFError, wave.Error, ValueError) as exc:
+            raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
+
+        with self._lock:
+            if self._vad is None:
+                self._vad = load_vad("silero")
+            divisor = gcd(rate, 16000)
+            audio = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
+            segments = self._vad.get_speech_segments(audio, sample_rate=16000)
+            if not segments:
+                return None
+            return float(max(segment.end for segment in segments))
 
     @staticmethod
     def _unit(vector):

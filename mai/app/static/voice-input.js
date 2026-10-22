@@ -77,7 +77,38 @@
     return new Blob([output], {type: 'audio/wav'});
   }
 
-  async function finish() {
+  async function checkSpeechEnd(capture) {
+    capture.checking = true;
+    try {
+      const all = new Float32Array(capture.chunks.reduce((n, c) => n + c.length, 0));
+      let offset = 0;
+      for (const chunk of capture.chunks) { all.set(chunk, offset); offset += chunk.length; }
+      const recentLength = Math.min(all.length, capture.sampleRate * 8);
+      const recent = all.subarray(all.length - recentLength);
+      const windowStart = (all.length - recentLength) / capture.sampleRate;
+      const body = new FormData();
+      body.append('file', toWave(recent, capture.sampleRate), 'activity.wav');
+      const result = await request('/voice/activity', {method: 'POST', body});
+      if (active !== capture) return;
+      if (result.speech_end_seconds !== null) {
+        const end = windowStart + result.speech_end_seconds;
+        capture.lastSpeechEnd = Math.max(capture.lastSpeechEnd ?? 0, end);
+      }
+      const elapsed = capture.context.currentTime - capture.began;
+      if (capture.lastSpeechEnd !== null && elapsed - capture.lastSpeechEnd >= capture.silenceSeconds) {
+        void finish();
+      }
+    } catch (error) {
+      if (active === capture) {
+        void finish(true);
+        setStatus('발화 구간 검사 오류: ' + error.message, true);
+      }
+    } finally {
+      capture.checking = false;
+    }
+  }
+
+  async function finish(discard = false) {
     if (!active) return;
     const capture = active;
     active = null;
@@ -86,6 +117,7 @@
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
+    if (discard) return;
     if (!capture.chunks.length || capture.speechSeconds < capture.minSpeechSeconds) {
       setStatus('음성이 충분하지 않아 인식을 중단했어.', true);
       return;
@@ -141,7 +173,7 @@
       const capture = {
         mode, stream, context, source, processor, chunks: [],
         sampleRate: context.sampleRate, speechSeconds: 0,
-        lastVoice: context.currentTime, began: context.currentTime,
+        lastSpeechEnd: null, lastCheck: context.currentTime, checking: false, began: context.currentTime,
         silenceSeconds: config.silence_seconds,
         minSpeechSeconds: mode === "enroll" ? 2 : config.min_speech_seconds
       };
@@ -155,16 +187,16 @@
         for (let i = 0; i < chunk.length; i += 1) sum += chunk[i] * chunk[i];
         const speech = Math.sqrt(sum / chunk.length) > 0.012;
         const now = context.currentTime;
-        if (speech) {
-          capture.speechSeconds += chunk.length / capture.sampleRate;
-          capture.lastVoice = now;
-        }
-        if (now - capture.lastVoice >= capture.silenceSeconds || now - capture.began >= 120) {
+        if (speech) capture.speechSeconds += chunk.length / capture.sampleRate;
+        if (now - capture.began >= 120) {
           void finish();
+        } else if (now - capture.lastCheck >= 1 && !capture.checking) {
+          capture.lastCheck = now;
+          void checkSpeechEnd(capture);
         }
       };
       if (mode === 'transcribe') setVoiceMode(true);
-      setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 다시 누르거나 무음 시간이 지나면 종료돼.');
+      setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 마지막 말이 끝난 뒤 설정된 시간이 지나면 종료돼.');
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
     } finally {
