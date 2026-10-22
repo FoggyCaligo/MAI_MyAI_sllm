@@ -19,12 +19,12 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import re
-from typing import Any, Literal, Mapping, Sequence
+from typing import Annotated, Any, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
@@ -152,8 +152,8 @@ class _FinalReviewPayload(BaseModel):
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
-    coverage_reasons: list[str] = Field(max_length=6)
-    reasons: list[str] = Field(max_length=6)
+    coverage_reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
+    reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
     claims: list[_ClaimReviewPayload] = Field(max_length=12)
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
 
