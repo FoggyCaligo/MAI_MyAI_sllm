@@ -20,6 +20,7 @@ from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
 from .tailscale import TailscaleFunnel
 from .uploads import principal_upload_directory
+from .voice import VoiceService
 
 
 load_dotenv()
@@ -30,6 +31,7 @@ _access_policy: AccessPolicy | None = None
 _chat_session_store: ChatSessionStore | None = None
 _tailscale: TailscaleFunnel | None = None
 _auth_sessions: dict[str, AccessPrincipal] = {}
+_voice_service: VoiceService | None = None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -129,7 +131,8 @@ def _append_session_message(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global _runtime, _access_policy, _chat_session_store, _tailscale
+    global _runtime, _access_policy, _chat_session_store, _tailscale, _voice_service
+    _voice_service = VoiceService()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
     if _env_bool("TAILSCALE_SERVE", False):
@@ -177,6 +180,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _runtime = None
         _chat_session_store = None
         _access_policy = None
+        _voice_service = None
 
 
 app = FastAPI(title="MAI MyAI sLLM", version="0.1.0", lifespan=lifespan)
@@ -307,6 +311,47 @@ async def logout(authorization: str | None = Header(default=None)) -> dict[str, 
     token, _ = _principal_from_authorization(authorization)
     _auth_sessions.pop(token, None)
     return {"logged_out": True}
+
+
+def _voice() -> VoiceService:
+    if _voice_service is None:
+        raise RuntimeError("voice service is not initialized")
+    return _voice_service
+
+
+@app.get("/voice/config")
+async def voice_config(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    _, principal = _principal_from_authorization(authorization)
+    voice = _voice()
+    return {
+        "silence_seconds": voice.silence_seconds,
+        "enrolled": voice.enrolled(principal.db_id),
+    }
+
+
+@app.post("/voice/enroll")
+async def voice_enroll(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    _, principal = _principal_from_authorization(authorization)
+    recording = await file.read(20 * 1024 * 1024 + 1)
+    if len(recording) > 20 * 1024 * 1024:
+        raise HTTPException(413, "voice recording exceeds 20 MB")
+    _voice().enroll(principal.db_id, recording)
+    return {"enrolled": True}
+
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    _, principal = _principal_from_authorization(authorization)
+    recording = await file.read(20 * 1024 * 1024 + 1)
+    if len(recording) > 20 * 1024 * 1024:
+        raise HTTPException(413, "voice recording exceeds 20 MB")
+    return {"text": _voice().transcribe_verified(principal.db_id, recording)}
 
 
 @app.get("/models")
