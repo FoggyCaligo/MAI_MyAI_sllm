@@ -180,6 +180,7 @@ class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
     retry_summary: str = ""
+    review_details: Mapping[str, Any] | None = None
 
     def feedback_message(self) -> str:
         if self.ok:
@@ -355,8 +356,24 @@ class FinalGroundingVerifier:
             reasons=review.reasons + review.coverage_reasons,
         )
         return FinalVerificationResult(
-            ok=not issues, issues=tuple(issues),
-            retry_summary=((f"{numeric_issue.code}: {numeric_issue.message}. " if numeric_issue else "") + review.retry_summary) if issues else "",
+            ok=not issues,
+            issues=tuple(issues),
+            retry_summary=(
+                (f"{numeric_issue.code}: {numeric_issue.message}. " if numeric_issue else "")
+                + review.retry_summary
+            ) if issues else "",
+            review_details={
+                "evidence_verdict": review.evidence_verdict,
+                "alignment_verdict": review.alignment_verdict,
+                "coverage_verdict": review.coverage_verdict,
+                "action_verdict": review.action_verdict,
+                "reasons": list(review.reasons),
+                "coverage_reasons": list(review.coverage_reasons),
+                "claims": [
+                    {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect, "reason": claim.reason}
+                    for claim in review.claims
+                ],
+            },
         )
 
     def _unsupported_numeric_facts(
