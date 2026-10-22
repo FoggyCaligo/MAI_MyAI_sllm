@@ -332,6 +332,21 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
     }
 
 
+@app.post("/voice/activity")
+async def voice_activity(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> dict[str, float | None]:
+    _, principal = _principal_from_authorization(authorization)
+    if principal.role is not AccessRole.OWNER:
+        raise HTTPException(403, "voice input is restricted to the owner")
+    recording = await file.read(2 * 1024 * 1024 + 1)
+    if len(recording) > 2 * 1024 * 1024:
+        raise HTTPException(413, "voice activity window exceeds 2 MB")
+    from starlette.concurrency import run_in_threadpool
+    return {"speech_end_seconds": await run_in_threadpool(_voice().last_speech_end, recording)}
+
+
 @app.post("/voice/enroll")
 async def voice_enroll(
     file: UploadFile = File(...),
