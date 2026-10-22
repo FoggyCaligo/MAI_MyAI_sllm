@@ -141,7 +141,7 @@
       const capture = {
         mode, stream, context, source, processor, chunks: [],
         sampleRate: context.sampleRate, speechSeconds: 0,
-        lastVoice: context.currentTime, began: context.currentTime,
+        lastSpeechEnd: null, lastCheck: context.currentTime, checking: false, began: context.currentTime,
         silenceSeconds: config.silence_seconds,
         minSpeechSeconds: mode === "enroll" ? 2 : config.min_speech_seconds
       };
@@ -155,12 +155,12 @@
         for (let i = 0; i < chunk.length; i += 1) sum += chunk[i] * chunk[i];
         const speech = Math.sqrt(sum / chunk.length) > 0.012;
         const now = context.currentTime;
-        if (speech) {
-          capture.speechSeconds += chunk.length / capture.sampleRate;
-          capture.lastVoice = now;
-        }
-        if (now - capture.lastVoice >= capture.silenceSeconds || now - capture.began >= 120) {
+        if (speech) capture.speechSeconds += chunk.length / capture.sampleRate;
+        if (now - capture.began >= 120) {
           void finish();
+        } else if (now - capture.lastCheck >= 1 && !capture.checking) {
+          capture.lastCheck = now;
+          void checkSpeechEnd(capture);
         }
       };
       if (mode === 'transcribe') setVoiceMode(true);
