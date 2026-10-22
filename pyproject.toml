@@ -22,6 +22,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+voice = [
+  "resemblyzer>=0.1.4",
+  "faster-whisper>=1.1",
+  "numpy>=1.24",
+]
 dev = [
   "pytest>=8.0",
 ]
@@ -31,7 +36,7 @@ include = ["mai*"]
 exclude = ["data*", "tests*"]
 
 [tool.setuptools.package-data]
-"mai.app" = ["static/*.html"]
+"mai.app" = ["static/*.html", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
