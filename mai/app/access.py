@@ -129,7 +129,7 @@ class AccessPolicy:
         return AccessPrincipal(user_id=info.user_id, db_id=info.db_id, role=role)
 
     def user_to_db_ids(self) -> dict[str, str]:
-        return {info.user_id: info.db_id for info in [*self.owners.values(), *self.trials.values()]}
+        return {info.user_id: info.db_id for info in [*self.owners.values(), *self.families.values(), *self.trials.values()]}
 
 
 def _parse_user_infos(raw: str | None, *, env_name: str, required: bool) -> tuple[UserInfo, ...]:
