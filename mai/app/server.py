@@ -322,6 +322,8 @@ def _voice() -> VoiceService:
 @app.get("/voice/config")
 async def voice_config(authorization: str | None = Header(default=None)) -> dict[str, object]:
     _, principal = _principal_from_authorization(authorization)
+    if principal.role is not AccessRole.OWNER:
+        raise HTTPException(403, "voice input is restricted to the owner")
     voice = _voice()
     return {
         "silence_seconds": voice.silence_seconds,
@@ -335,7 +337,9 @@ async def voice_enroll(
     authorization: str | None = Header(default=None),
 ) -> dict[str, bool]:
     _, principal = _principal_from_authorization(authorization)
-    if principal.role is not AccessRole.OWNER:\n        raise HTTPException(403, "voice input is restricted to the owner")\n    recording = await file.read(20 * 1024 * 1024 + 1)
+    if principal.role is not AccessRole.OWNER:
+        raise HTTPException(403, "voice input is restricted to the owner")
+    recording = await file.read(20 * 1024 * 1024 + 1)
     if len(recording) > 20 * 1024 * 1024:
         raise HTTPException(413, "voice recording exceeds 20 MB")
     _voice().enroll(principal.db_id, recording)
@@ -348,6 +352,8 @@ async def voice_transcribe(
     authorization: str | None = Header(default=None),
 ) -> dict[str, str]:
     _, principal = _principal_from_authorization(authorization)
+    if principal.role is not AccessRole.OWNER:
+        raise HTTPException(403, "voice input is restricted to the owner")
     recording = await file.read(20 * 1024 * 1024 + 1)
     if len(recording) > 20 * 1024 * 1024:
         raise HTTPException(413, "voice recording exceeds 20 MB")
