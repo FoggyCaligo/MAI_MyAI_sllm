@@ -17,9 +17,12 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "python-multipart>=0.0.20",
   "python-pptx>=1.0",
-  "resemblyzer>=0.1.4",
+  "speechbrain>=1.0.3",
+  "silero-vad>=6.0",
+  "scipy>=1.13",
   "faster-whisper>=1.1",
   "numpy>=1.24",
+  "torch>=2.0",
   "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
   "uvicorn>=0.35.0",
 ]

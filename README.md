@@ -93,7 +93,7 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/FoggyCaligo/MAI_MyAI_s
 powershell -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
-이 설치 과정은 Git·Python·Ollama·C++ 빌드 도구 등의 준비 상태를 확인하고, MAI 다운로드, 가상환경과 필요한 라이브러리 설치, 웹 브라우저 실행 구성요소 설치까지 진행해. 사용자 계정 비밀번호와 사용할 모델 이름 등은 설치 도중 직접 입력해야 해.
+이 설치 과정은 Git·Python·Ollama 등의 설치 상태를 확인하고, MAI 다운로드, 가상환경과 필요한 라이브러리 설치, 웹 브라우저 실행 구성요소 설치까지 진행해. 사용자 계정 비밀번호와 사용할 모델 이름 등은 설치 도중 직접 입력해야 해.
 
 **설치 명령은 인터넷에서 스크립트를 내려받아 실행하므로**, 실행 전에 [설치 스크립트 내용](scripts/install_windows.ps1)을 확인하는 걸 권장해. 기존 `.env`와 기억·대화 데이터는 덮어쓰지 않도록 구성돼 있어. 실제 Windows 환경에서는 설치된 프로그램과 설정에 따라 추가 조치가 필요할 수 있어.
 

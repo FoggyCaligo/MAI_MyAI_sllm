@@ -291,7 +291,7 @@ python -m pip install -e .
 - `pip`: Python 패키지 설치 도구.
 - `-e .`: 현재 폴더의 MAI를 **편집 가능한(editable) 방식**으로 설치. 코드가 바뀌어도 패키지를 매번 복사할 필요가 없다.
 - 설치 중 GitHub에서 `sentence-breaker`를 다운로드하므로 인터넷과 Git이 필요하다.
-- 이제 기본 설치에 **Resemblyzer(화자 검증), Faster-Whisper(STT), NumPy**도 포함된다. 음성 전용 추가 설치 명령은 필요하지 않다. 음성 모델 가중치는 최초 사용 시 별도 다운로드될 수 있다.
+- 이제 기본 설치에 **SpeechBrain(화자 검증), Faster-Whisper(STT), NumPy**도 포함된다. 음성 전용 추가 설치 명령은 필요하지 않다. 음성 모델 가중치는 최초 사용 시 별도 다운로드될 수 있다.
 - 설치 중 오류가 나면 완료된 것으로 간주하면 안 된다. 마지막 오류 메시지를 확인한다.
 
 테스트용 `pytest`까지 설치하고 싶으면 기본 설치 대신 아래 명령을 사용해도 된다.
@@ -305,7 +305,7 @@ python -m pip install -e ".[dev]"
 ```powershell
 python -m pip show mai-myai-sllm
 python -m pip show playwright
-python -c "import resemblyzer, faster_whisper, numpy; print('Voice dependencies OK')"
+python -c "import speechbrain, silero_vad, faster_whisper, numpy; print('Voice dependencies OK')"
 ```
 
 패키지 정보가 출력되고 `Voice dependencies OK`가 보이면 기본 Python 패키지 및 음성 라이브러리 import까지 확인한 것이다. 그러나 **Chromium 본체는 아직 없다.** 다음 단계가 필요하다.
@@ -928,10 +928,10 @@ Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 
 
 ```powershell
 python -m pip install -e .
-python -c "import resemblyzer, faster_whisper, numpy; print('Voice dependencies OK')"
+python -c "import speechbrain, silero_vad, faster_whisper, numpy; print('Voice dependencies OK')"
 ```
 
-Resemblyzer는 화자 특징 추출, Faster-Whisper는 로컬 음성인식(STT), NumPy는 음성 수치 연산을 담당한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
+SpeechBrain ECAPA-TDNN은 화자 특징 추출, Faster-Whisper는 로컬 음성인식(STT), NumPy는 음성 수치 연산을 담당한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
 
 ### 환경 변수
 
@@ -966,3 +966,17 @@ Faster-Whisper STT의 한국어 고정값을 제거하고 음성의 언어를 �
 마이크를 눌러 음성 입력 모드를 켜면 마이크 아이콘은 빨간색으로 표시된다. 음성 녹음이 무음 종료된 뒤에도 음성 모드는 유지되어, 이후 MAI 답변이 **완료되었을 때만** 브라우저의 `speechSynthesis`로 답변을 읽는다. 마이크 버튼을 다시 눌러 음성 모드를 끄면 재생 중인 음성도 중지한다. 녹음 중 버튼을 눌러 종료하는 경우 음성 모드도 꺼진다. 이 변경은 자동으로 다음 발화를 다시 녹음하는 핸즈프리 루프를 제공하지 않는다.
 
 브라우저·OS에 설치된 음성에 따라 한국어/영어 혼합 문장의 발음과 품질이 달라지며, TTS 지원 브라우저/목소리가 필요하다. 음성 답변은 브라우저 기능으로 생성되므로 외부 서버 TTS용 별도 API 키를 요구하지 않는다.
+
+
+### 음성 인식 엔진 변경 (SpeechBrain + Silero VAD)
+
+기존 화자 검증 엔진과 `webrtcvad`는 제거하고 **Silero VAD(사람 목소리가 있는 부분 탐지)**와 **SpeechBrain ECAPA-TDNN(화자 특징 추출)**으로 변경했다. Faster-Whisper는 받아쓰기에 그대로 사용한다. `python -m pip install -e .`에서 설치한다. C++ Build Tools는 이 음성 기능을 위해 설치할 필요가 없다. 최초 사용 시 SpeechBrain의 화자 모델을 인터넷에서 내려받을 수 있다.
+
+이전 Resemblyzer와 새 SpeechBrain이 생성하는 특징 벡터는 호환되지 않는다. 이전 음성 프로필이 있다면 자동 변환하지 않으며, 새 방식으로 다시 등록해야 한다. **기존 프로필 파일을 무조건 삭제하지 않으며**, 프로필 변환은 지원하지 않는다. 이번 전환에서는 등록된 프로필이 없는 환경을 전제로 한다.
+
+```powershell
+python -m pip install -e .
+python -c "import speechbrain, silero_vad, faster_whisper; from speechbrain.inference.classifiers import EncoderClassifier; from silero_vad import load_silero_vad, get_speech_timestamps; print('Voice dependencies OK')"
+```
+
+**주의:** 기존 `VOICE_MATCH_THRESHOLD=0.75`는 Resemblyzer 결과로 설정된 값이므로 SpeechBrain의 유사도 분포에 대해 보정된 안전 기준이 아니다. 음성 검증의 통과/차단 결과를 실제 목소리 샘플로 확인하고 적정 기준을 별도로 검증해야 한다. 무작정 임계값을 낮추지 않는다. 서버와 브라우저의 인증은 계속 필수다.
