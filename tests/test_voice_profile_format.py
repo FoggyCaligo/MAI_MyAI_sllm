@@ -42,3 +42,22 @@ def test_speaker_mismatch_reports_structured_error_without_transcribing(tmp_path
     assert exc.value.status_code == 403
     assert exc.value.detail["code"] == "speaker_mismatch"
     assert voice._transcriber is None
+
+
+
+def test_short_recording_reports_structured_insufficient_speech(tmp_path, monkeypatch):
+    import io
+    import wave
+
+    monkeypatch.setenv("VOICE_PROFILE_DIR", str(tmp_path))
+    voice = VoiceService()
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(bytes(16000))
+    with pytest.raises(HTTPException) as exc:
+        voice._waveform(wav.getvalue(), minimum_seconds=0.5)
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "insufficient_speech"

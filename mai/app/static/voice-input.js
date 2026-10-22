@@ -174,7 +174,8 @@
     await capture.context.close();
     if (discard || (capture.mode === 'transcribe' && !voiceMode)) return;
     if (!capture.chunks.length || capture.speechSeconds < capture.minSpeechSeconds) {
-      setStatus('음성이 충분하지 않아 인식을 중단했어.', true);
+      setStatus('음성이 충분하지 않아 이번 녹음을 건너뛰고 다시 듣는 중…', true);
+      if (capture.mode === 'transcribe' && voiceMode) await start('transcribe');
       return;
     }
     const data = new Float32Array(capture.chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -182,7 +183,7 @@
     for (const chunk of capture.chunks) { data.set(chunk, offset); offset += chunk.length; }
     const body = new FormData();
     body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
-    let retryAfterMismatch = false;
+    let retryAfterRecoverableVoiceFailure = false;
     try {
       setStatus(capture.mode === 'enroll' ? '목소리 특징 등록 중…' : '화자 확인 및 음성 인식 중…');
       const path = capture.mode === 'enroll' ? '/voice/enroll' : '/voice/transcribe';
@@ -207,18 +208,15 @@
       }
     } catch (error) {
       setStatus(`음성 처리 실패: ${error.message}`, true);
-      retryAfterMismatch = capture.mode === 'transcribe' &&
-        error.status === 403 && error.code === 'speaker_mismatch';
+      retryAfterRecoverableVoiceFailure = capture.mode === 'transcribe' &&
+        ((error.status === 403 && error.code === 'speaker_mismatch') ||
+         (error.status === 422 && error.code === 'insufficient_speech'));
     } finally {
       mic.disabled = false;
     }
-    if (retryAfterMismatch) {
-      if (voiceMode) {
-        setStatus('화자 검증 실패. 다시 듣기 시작하는 중…', true);
-        await start('transcribe');
-      } else {
-        setStatus('화자 검증에 실패했고 음성모드가 종료되어 재녹음하지 않았어.', true);
-      }
+    if (retryAfterRecoverableVoiceFailure && voiceMode) {
+      setStatus('이번 음성은 처리하지 않았어. 다시 듣는 중…', true);
+      await start('transcribe');
     }
   }
 
