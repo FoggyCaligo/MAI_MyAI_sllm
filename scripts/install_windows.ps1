@@ -33,6 +33,40 @@ function Ensure-Command {
     }
 }
 
+
+function Get-MsvcInstallation {
+    $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path -LiteralPath $vswhere)) { return $null }
+    $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if ($LASTEXITCODE -ne 0) { throw "vswhere failed with exit code $LASTEXITCODE" }
+    if (-not $installation) { return $null }
+    return ($installation | Select-Object -First 1)
+}
+
+function Ensure-MsvcBuildTools {
+    if (Get-MsvcInstallation) {
+        Write-Host 'Microsoft C++ compiler toolset already installed.'
+        return
+    }
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw 'winget is required to install Microsoft C++ Build Tools.'
+    }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Microsoft C++ Build Tools installation requires an administrator PowerShell.'
+    }
+    Write-Host 'Installing Microsoft Visual Studio Build Tools with Desktop C++ workload...'
+    Run-Command 'winget' @(
+        'install', '--id', 'Microsoft.VisualStudio.BuildTools', '--exact',
+        '--accept-source-agreements', '--accept-package-agreements',
+        '--override', '--passive --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+    )
+    if (-not (Get-MsvcInstallation)) {
+        throw 'Microsoft C++ Build Tools did not register the VC compiler. Verify the Visual Studio Installer workload and rerun.'
+    }
+}
+
 function Read-RequiredValue {
     param([string]$Prompt)
     $value = Read-Host $Prompt
@@ -47,6 +81,7 @@ Write-Host 'MAI first-run setup - existing .env and databases will be preserved.
 Ensure-Command 'git' 'Git.Git'
 Ensure-Command 'python' 'Python.Python.3.12'
 Ensure-Command 'ollama' 'Ollama.Ollama'
+Ensure-MsvcBuildTools
 
 $parent = Split-Path -Parent $InstallPath
 New-Item -ItemType Directory -Force -Path $parent | Out-Null
