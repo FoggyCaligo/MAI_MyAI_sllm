@@ -86,7 +86,7 @@
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
-    if (!capture.chunks.length || capture.speechSeconds < 2) {
+    if (!capture.chunks.length || capture.speechSeconds < capture.minSpeechSeconds) {
       setStatus('음성이 충분하지 않아 인식을 중단했어.', true);
       return;
     }
@@ -142,7 +142,8 @@
         mode, stream, context, source, processor, chunks: [],
         sampleRate: context.sampleRate, speechSeconds: 0,
         lastVoice: context.currentTime, began: context.currentTime,
-        silenceSeconds: config.silence_seconds
+        silenceSeconds: config.silence_seconds,
+        minSpeechSeconds: mode === "enroll" ? 2 : config.min_speech_seconds
       };
       active = capture;
       processor.onaudioprocess = event => {

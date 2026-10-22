@@ -937,10 +937,13 @@ speakeronnx는 ONNX 화자 특징 추출, Faster-Whisper는 로컬 음성인식(
 
 ```dotenv
 VOICE_SILENCE_SECONDS=10
+VOICE_MIN_SPEECH_SECONDS=0.5
 VOICE_MATCH_THRESHOLD=0.75
 VOICE_WHISPER_MODEL=small
 VOICE_PROFILE_DIR=./data/voice_profiles
 ```
+
+일반 음성 입력의 최소 감지 발화 시간은 `VOICE_MIN_SPEECH_SECONDS`로 설정한다(기본 0.5초). 목소리 **최초 등록**은 기존의 더 긴 녹음 기준을 유지한다. 매우 짧은 발화는 화자 검증 및 받아쓰기 정확도가 떨어질 수 있어, 시간을 충족해도 검증 또는 음성 인식이 실패할 수 있다. 설정 변경 뒤에는 서버를 재시작한다.
 
 무음이 `VOICE_SILENCE_SECONDS`만큼 지속되거나 다시 마이크를 누르면 녹음이 종료된다. 최대 120초까지 녹음할 수 있다. `VOICE_MATCH_THRESHOLD`는 유사도 판정 기준값으로서 환경·마이크·목소리 변화에 따른 오인식 가능성이 있다. 기준을 낮추면 다른 사람을 통과시킬 위험이 증가한다.
 

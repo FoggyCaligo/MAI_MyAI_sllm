@@ -23,7 +23,7 @@ def test_old_profile_rejected_before_speaker_comparison(tmp_path, monkeypatch):
     voice = VoiceService()
     old = voice._profile_path("owner")
     np.savez(old, original=np.array([1.0, 0.0]), adapted=np.array([1.0, 0.0]), count=1)
-    monkeypatch.setattr(voice, "_waveform", lambda recording: np.ones(32000, dtype=np.float32))
+    monkeypatch.setattr(voice, "_waveform", lambda recording, *, minimum_seconds: np.ones(32000, dtype=np.float32))
     monkeypatch.setattr(voice, "_embedding", lambda speech: np.array([1.0, 0.0]))
     with pytest.raises(HTTPException) as exc:
         voice.transcribe_verified("owner", b"recording")
