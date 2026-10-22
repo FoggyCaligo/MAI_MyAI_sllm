@@ -429,6 +429,7 @@
         } else if (typeof addMessage === 'function') {
           addMessage('mai', data.answer || '');
         }
+        document.dispatchEvent(new CustomEvent('mai:answer-complete', {detail: {text: data.answer || ''}}));
         renderedHistorySignature = null;
       } else if (pending) {
         pending.bubble.classList.add('error');
