@@ -204,7 +204,7 @@ class MAIRuntime:
         register_document_tools(registry, cwd=self.cwd)
         if self.vision_model is not None:
             register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
-        if principal.role is AccessRole.OWNER:
+        if principal.role in (AccessRole.OWNER, AccessRole.FAMILY):
             register_local_pc_tools(registry, cwd=self.cwd)
         elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
