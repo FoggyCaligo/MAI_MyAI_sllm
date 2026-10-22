@@ -8,9 +8,3 @@ mai_uploads/
 .coverage
 htmlcov/
 data/log.sqlite3*
-
-# Google OAuth desktop client and authorized-user tokens
-*client_secret*.json
-*credentials*.json
-*oauth_token*.json
-*google_token*.json
