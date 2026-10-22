@@ -706,3 +706,9 @@ Tailscale을 아직 설치하지 않았다면 마지막 두 명령이 실패하�
 - Tailscale Funnel CLI: https://tailscale.com/docs/reference/tailscale-cli/funnel
 - 프로젝트 `README.md`: 전체 아키텍처 및 기능
 - 프로젝트 `RUN_UI.md`: Web UI와 계정, Tailscale 상세 자료
+
+---
+
+## 선택 기능: Google Drive / Google Sheets 연동
+
+Owner 계정이 Google Drive 파일을 찾아 Google Sheets 데이터를 읽거나 수정하려면, [GOOGLE_WORKSPACE_SETUP.md](GOOGLE_WORKSPACE_SETUP.md) 절차를 따른다. 이 기능은 별도의 Google Cloud 프로젝트 및 최초 OAuth 브라우저 인증이 필요하다. Trial 계정에는 공개되지 않는다.
