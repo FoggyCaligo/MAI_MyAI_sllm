@@ -28,3 +28,17 @@ def test_old_profile_rejected_before_speaker_comparison(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         voice.transcribe_verified("owner", b"recording")
     assert exc.value.status_code == 409
+
+
+def test_speaker_mismatch_reports_structured_error_without_transcribing(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOICE_PROFILE_DIR", str(tmp_path))
+    voice = VoiceService()
+    original = np.array([1.0, 0.0], dtype=np.float32)
+    voice._save_profile(voice._profile_path("owner"), original, original, 1)
+    monkeypatch.setattr(voice, "_waveform", lambda recording, *, minimum_seconds: np.ones(32000, dtype=np.float32))
+    monkeypatch.setattr(voice, "_embedding", lambda speech: np.array([0.0, 1.0], dtype=np.float32))
+    with pytest.raises(HTTPException) as exc:
+        voice.transcribe_verified("owner", b"recording")
+    assert exc.value.status_code == 403
+    assert exc.value.detail["code"] == "speaker_mismatch"
+    assert voice._transcriber is None
