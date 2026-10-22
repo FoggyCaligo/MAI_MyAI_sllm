@@ -291,7 +291,7 @@ python -m pip install -e .
 - `pip`: Python 패키지 설치 도구.
 - `-e .`: 현재 폴더의 MAI를 **편집 가능한(editable) 방식**으로 설치. 코드가 바뀌어도 패키지를 매번 복사할 필요가 없다.
 - 설치 중 GitHub에서 `sentence-breaker`를 다운로드하므로 인터넷과 Git이 필요하다.
-- 이제 기본 설치에 **SpeechBrain(화자 검증), Faster-Whisper(STT), NumPy**도 포함된다. 음성 전용 추가 설치 명령은 필요하지 않다. 음성 모델 가중치는 최초 사용 시 별도 다운로드될 수 있다.
+- 이제 기본 설치에 **ONNX 화자 모델(화자 검증), Faster-Whisper(STT), NumPy**도 포함된다. 음성 전용 추가 설치 명령은 필요하지 않다. 음성 모델 가중치는 최초 사용 시 별도 다운로드될 수 있다.
 - 설치 중 오류가 나면 완료된 것으로 간주하면 안 된다. 마지막 오류 메시지를 확인한다.
 
 테스트용 `pytest`까지 설치하고 싶으면 기본 설치 대신 아래 명령을 사용해도 된다.
@@ -305,7 +305,7 @@ python -m pip install -e ".[dev]"
 ```powershell
 python -m pip show mai-myai-sllm
 python -m pip show playwright
-python -c "import speechbrain, silero_vad, faster_whisper, numpy; print('Voice dependencies OK')"
+python -c "import speakeronnx, vadonnx, faster_whisper, numpy; print('Voice dependencies OK')"
 ```
 
 패키지 정보가 출력되고 `Voice dependencies OK`가 보이면 기본 Python 패키지 및 음성 라이브러리 import까지 확인한 것이다. 그러나 **Chromium 본체는 아직 없다.** 다음 단계가 필요하다.
@@ -928,10 +928,10 @@ Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 
 
 ```powershell
 python -m pip install -e .
-python -c "import speechbrain, silero_vad, faster_whisper, numpy; print('Voice dependencies OK')"
+python -c "import speakeronnx, vadonnx, faster_whisper, numpy; print('Voice dependencies OK')"
 ```
 
-SpeechBrain ECAPA-TDNN은 화자 특징 추출, Faster-Whisper는 로컬 음성인식(STT), NumPy는 음성 수치 연산을 담당한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
+speakeronnx는 ONNX 화자 특징 추출, Faster-Whisper는 로컬 음성인식(STT), NumPy는 음성 수치 연산을 담당한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
 
 ### 환경 변수
 
@@ -968,15 +968,24 @@ Faster-Whisper STT의 한국어 고정값을 제거하고 음성의 언어를 �
 브라우저·OS에 설치된 음성에 따라 한국어/영어 혼합 문장의 발음과 품질이 달라지며, TTS 지원 브라우저/목소리가 필요하다. 음성 답변은 브라우저 기능으로 생성되므로 외부 서버 TTS용 별도 API 키를 요구하지 않는다.
 
 
-### 음성 인식 엔진 변경 (SpeechBrain + Silero VAD)
 
-기존 화자 검증 엔진과 `webrtcvad`는 제거하고 **Silero VAD(사람 목소리가 있는 부분 탐지)**와 **SpeechBrain ECAPA-TDNN(화자 특징 추출)**으로 변경했다. Faster-Whisper는 받아쓰기에 그대로 사용한다. `python -m pip install -e .`에서 설치한다. C++ Build Tools는 이 음성 기능을 위해 설치할 필요가 없다. 최초 사용 시 SpeechBrain의 화자 모델을 인터넷에서 내려받을 수 있다.
+### Windows 코드 무결성 정책을 위한 ONNX 음성 엔진
 
-이전 Resemblyzer와 새 SpeechBrain이 생성하는 특징 벡터는 호환되지 않는다. 이전 음성 프로필이 있다면 자동 변환하지 않으며, 새 방식으로 다시 등록해야 한다. **기존 프로필 파일을 무조건 삭제하지 않으며**, 프로필 변환은 지원하지 않는다. 이번 전환에서는 등록된 프로필이 없는 환경을 전제로 한다.
+Windows 스마트 앱 컨트롤이 PyTorch `shm.dll`을 차단한 환경을 위해, 화자 검증과 음성 구간 검출에서 PyTorch 의존성을 제거했다.
+
+- **vadonnx**: ONNX Runtime 기반으로 녹음에서 발화 구간 검출. Silero 모델을 내장해 제공한다.
+- **speakeronnx**: ONNX Runtime 기반으로 화자 특징 추출. 최초 사용 시 WeSpeaker ResNet34 ONNX 모델 다운로드가 필요할 수 있다.
+- **Faster-Whisper**: 검증에 성공한 음성의 텍스트 변환. 기존처럼 CPU로 실행한다.
+
+기본 설치: `python -m pip install -e .`. 검증:
 
 ```powershell
-python -m pip install -e .
-python -c "import speechbrain, silero_vad, faster_whisper; from speechbrain.inference.classifiers import EncoderClassifier; from silero_vad import load_silero_vad, get_speech_timestamps; print('Voice dependencies OK')"
+python -c "import speakeronnx, vadonnx, faster_whisper; from speakeronnx import SpeakerEmbedder; from vadonnx import load_vad; print('Voice dependencies OK')"
+python -m pip check
 ```
 
-**주의:** 기존 `VOICE_MATCH_THRESHOLD=0.75`는 Resemblyzer 결과로 설정된 값이므로 SpeechBrain의 유사도 분포에 대해 보정된 안전 기준이 아니다. 음성 검증의 통과/차단 결과를 실제 목소리 샘플로 확인하고 적정 기준을 별도로 검증해야 한다. 무작정 임계값을 낮추지 않는다. 서버와 브라우저의 인증은 계속 필수다.
+기존 SpeechBrain·Resemblyzer 음성 특징 벡터는 새 방식과 호환되지 않는다. 기존 프로필을 무조건 삭제하지 않고 엔진 종류가 다르면 명시적인 오류를 반환한다. 아직 등록된 화자가 없다면 새 모델로 그대로 등록한다.
+
+기존 `VOICE_MATCH_THRESHOLD` 값은 **새 화자 모델에서 검증된 수치가 아니다**. 음성 검증을 보안 인증 수단으로 취급하면 안 된다. 실제 사용자의 다양한 녹음과 다른 화자의 녹음으로 임계값을 검증해야 한다. Tailscale/웹 로그인 인증은 그대로 유지한다.
+
+기존 가상환경에 남은 `torch`, `speechbrain`, `silero-vad`는 `pip install -e .`만으로 자동 삭제되지 않는다. 그러나 이번 MAI 음성 경로에서는 해당 모듈을 불러오지 않는다. 다른 기능에서 사용하지 않는 것이 확인되기 전에는 강제로 삭제하지 않는다.
