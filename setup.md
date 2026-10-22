@@ -8,7 +8,7 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/FoggyCaligo/MAI_MyAI_s
 powershell -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
 
-설치 스크립트는 Git·Python·Ollama가 없으면 winget을 사용해 설치하고, MAI `dev` 저장소 다운로드, 가상환경, 기본 패키지(음성 포함), Playwright Chromium 설치 및 의존성 검증을 진행한다. Windows에 `winget`이 없거나 설치 후 명령이 아직 PATH에 잡히지 않는다면 **명확히 실패**하며 안내에 따라 PowerShell을 다시 열고 재실행한다. 기존 설치 디렉터리가 있다면 보존하며, 소스 코드의 Git 변경 사항을 **자동 pull/merge 하지 않는다.**
+설치 스크립트는 Git·Python·Ollama가 없으면 winget을 사용해 설치하며, **Microsoft Visual Studio Build Tools의 C++ 워크로드도 설치·검사**한 뒤, MAI `dev` 저장소 다운로드, 가상환경, 기본 패키지(음성 포함), Playwright Chromium 설치 및 의존성 검증을 진행한다. Windows에 `winget`이 없거나 설치 후 명령이 아직 PATH에 잡히지 않는다면 **명확히 실패**하며 안내에 따라 PowerShell을 다시 열고 재실행한다. 기존 설치 디렉터리가 있다면 보존하며, 소스 코드의 Git 변경 사항을 **자동 pull/merge 하지 않는다.**
 
 신규 설치라면 Ollama 모델 이름, MAI Owner ID와 비밀번호를 입력받아 `.env`를 생성하고, **Trial 비활성화·Tailscale Funnel 비활성화**로 시작한다. 기존 `.env`, 채팅·기억 DB는 절대 덮어쓰지 않는다. 모델 다운로드 실패 등 필수 단계의 오류는 숨기지 않고 설치가 중단된다.
 
@@ -276,6 +276,22 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 PowerShell 앞에 `(.venv)`가 보이면 활성화됐다. `python -c "import sys; print(sys.executable)"`을 입력했을 때 프로젝트 내부 `.venv\Scripts\python.exe`가 출력되는지도 확인한다.
 
 > 이후 문서의 `python`은 별도 설명이 없으면 **활성화한 가상환경의 Python**이다. 새로운 PowerShell을 열 때마다 이 활성화 단계가 필요하다.
+
+---
+
+## 5-1. Microsoft C++ Build Tools 설치 (Windows, 필수)
+
+음성 화자 검증 라이브러리 `resemblyzer`의 하위 패키지 `webrtcvad`는 현재 Windows/Python 환경에서 C 확장 모듈을 직접 빌드할 수 있다. **Microsoft Visual C++ Build Tools와 C++ 워크로드**가 없으면 `Microsoft Visual C++ 14.0 or greater is required` 오류로 `pip install -e .`가 실패한다.
+
+관리자 PowerShell에서 다음을 실행한다. 위 **빠른 설치 스크립트**를 사용했다면 이미 이 단계를 수행했으므로 반복할 필요가 없다.
+
+```powershell
+winget install --id Microsoft.VisualStudio.BuildTools --exact --accept-source-agreements --accept-package-agreements --override "--passive --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+설치 후 새 터미널을 열어 `python -m pip install -e .`를 다시 실행한다. 이미 Visual Studio Build Tools가 설치되어 있는데 C++ 워크로드가 빠진 경우, winget이 기존 설치를 자동 수정하지 않을 수 있다. 그때는 **Visual Studio Installer → 수정(Modify) → C++를 사용한 데스크톱 개발(Desktop development with C++)**을 선택한다. 설치 실패를 무시하거나 `--no-deps`로 넘어가지 않는다.
+
+Microsoft 공식 문서: https://learn.microsoft.com/en-us/cpp/overview/acquire-msvc
 
 ---
 
