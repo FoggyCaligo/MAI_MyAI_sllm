@@ -72,6 +72,7 @@ Keep feedback concise and actionable: one language (English), no translations or
 - reasons: concrete blocking defects only
 - claims: material factual claims from the candidate that matter to the user's request
 - action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+- retry_summary: one concise English correction instruction (maximum 800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. Keep full details in reasons and claims; never omit actual findings to shorten this summary.
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
@@ -156,6 +157,7 @@ class _FinalReviewPayload(BaseModel):
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
+    retry_summary: str = Field(max_length=800)
 
 
 class _NumericReviewPayload(BaseModel):
@@ -177,27 +179,20 @@ class VerificationIssue:
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
+    retry_summary: str = ""
 
     def feedback_message(self) -> str:
         if self.ok:
             return ""
-        # The full issues tuple remains authoritative for auditing and diagnostics.
-        # Retry guidance summarizes issue categories without string-based semantic
-        # classification or truncation of the original evidence.
-        grouped: dict[str, list[VerificationIssue]] = {}
-        for issue in self.issues:
-            grouped.setdefault(issue.code, []).append(issue)
+        # Full individual issues remain in the verification result and audit log.
+        # The reviewer authors a separate bounded correction instruction.
+        if not self.retry_summary.strip():
+            raise ValueError("rejected final verification is missing retry_summary")
         lines = [
-            "Rejected final answer. Correct material defects and provide the full answer.",
-            "Preserve supported findings; obtain evidence or narrow unsupported claims.",
+            "Rejected final answer. Correct the defects below and provide the full answer.",
+            "Preserve supported findings. Do not invent evidence.",
+            self.retry_summary.strip(),
         ]
-        for code, issues in grouped.items():
-            sample = issues[0].message
-            # This is a representative detail, not an attempt to replace all
-            # original issues (which remain available in the audit log).
-            lines.append(f"- {code} ({len(issues)}): {sample}")
-        if len(self.issues) > len(grouped):
-            lines.append("This is a category summary; full individual rejection details are retained in the audit log.")
         return "\n".join(lines)
 
 
@@ -218,6 +213,7 @@ class FinalReview:
     reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
+    retry_summary: str = ""
 
 
 class FinalGroundingVerifier:
@@ -295,7 +291,7 @@ class FinalGroundingVerifier:
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+            return FinalVerificationResult(ok=not issues, issues=tuple(issues), retry_summary=review.retry_summary if issues else "")
 
         review = await self._review_final(
             candidate=candidate,
@@ -503,6 +499,7 @@ class FinalGroundingVerifier:
                 reasons=reasons,
                 claims=claims,
                 action_verdict=parsed.action_verdict,
+                retry_summary=parsed.retry_summary,
             )
         except TimeoutError as exc:
             _LOG.warning("MAI final verification reviewer timed out")
