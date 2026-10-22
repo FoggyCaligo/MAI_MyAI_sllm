@@ -70,7 +70,10 @@
     }
     const payload = await response.json();
     if (!response.ok) {
-      throw new Error(`Voice API HTTP ${response.status}: ${JSON.stringify(payload)}`);
+      const error = new Error(`Voice API HTTP ${response.status}: ${JSON.stringify(payload)}`);
+      error.status = response.status;
+      error.code = payload?.detail?.code ?? null;
+      throw error;
     }
     return payload;
   }
@@ -152,6 +155,7 @@
     const body = new FormData();
     body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
     mic.disabled = true;
+    let retryAfterMismatch = false;
     try {
       setStatus(capture.mode === 'enroll' ? '목소리 특징 등록 중…' : '화자 확인 및 음성 인식 중…');
       const path = capture.mode === 'enroll' ? '/voice/enroll' : '/voice/transcribe';
@@ -176,8 +180,13 @@
       }
     } catch (error) {
       setStatus(`음성 처리 실패: ${error.message}`, true);
+      retryAfterMismatch = capture.mode === 'transcribe' &&
+        error.status === 403 && error.code === 'speaker_mismatch';
     } finally {
       mic.disabled = false;
+    }
+    if (retryAfterMismatch && voiceMode) {
+      void start('transcribe');
     }
   }
 
