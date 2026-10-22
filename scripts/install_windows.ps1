@@ -66,7 +66,7 @@ try {
     Run-Command $venvPython @('-m', 'pip', 'install', '--upgrade', 'pip')
     Run-Command $venvPython @('-m', 'pip', 'install', '-e', '.')
     Run-Command $venvPython @('-m', 'playwright', 'install', 'chromium')
-    Run-Command $venvPython @('-c', 'import speechbrain, silero_vad, faster_whisper, numpy; from speechbrain.inference.classifiers import EncoderClassifier; from silero_vad import load_silero_vad, get_speech_timestamps; print("Voice dependencies OK")')
+    Run-Command $venvPython @('-c', 'import speakeronnx, vadonnx, faster_whisper, numpy; from speakeronnx import SpeakerEmbedder; from vadonnx import load_vad; print("Voice dependencies OK")')
 
     $envPath = Join-Path $InstallPath '.env'
     if (-not (Test-Path -LiteralPath $envPath)) {
