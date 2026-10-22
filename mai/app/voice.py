@@ -25,6 +25,7 @@ class VoiceService:
             raise ValueError("VOICE_MATCH_THRESHOLD must be between 0 and 1")
         self.root = Path(os.environ.get("VOICE_PROFILE_DIR", "./data/voice_profiles")).expanduser().resolve()
         self._encoder = None
+        self._vad = None
         self._transcriber = None
         self._lock = Lock()
 
@@ -40,14 +41,20 @@ class VoiceService:
         # Optional packages are loaded only if voice has been used. Missing
         # dependencies fail explicitly, rather than silently bypassing checks.
         if self._encoder is None:
-            from resemblyzer import VoiceEncoder
-            self._encoder = VoiceEncoder("cpu")
+            from speechbrain.inference.speaker import EncoderClassifier
+            self._encoder = EncoderClassifier.from_hparams(
+                source="speechbrain/spkrec-ecapa-voxceleb",
+                savedir=str(self.root / "models" / "speechbrain-ecapa"),
+                run_opts={"device": "cpu"},
+            )
         return self._encoder
 
-    @staticmethod
-    def _waveform(payload: bytes):
+    def _waveform(self, payload: bytes):
         import numpy as np
-        from resemblyzer import preprocess_wav
+        from scipy.signal import resample_poly
+        from silero_vad import load_silero_vad, get_speech_timestamps
+        import torch
+        from math import gcd
 
         if len(payload) > 20 * 1024 * 1024:
             raise HTTPException(413, "voice recording exceeds 20 MB")
@@ -65,10 +72,18 @@ class VoiceService:
             raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
         if count / rate < 3:
             raise HTTPException(422, "at least 3 seconds of recording is required")
-        processed = preprocess_wav(pcm, source_sr=rate)
-        if len(processed) < 16000 * 2:
+        divisor = gcd(rate, 16000)
+        processed = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
+        if self._vad is None:
+            self._vad = load_silero_vad()
+        vad = self._vad
+        timestamps = get_speech_timestamps(torch.from_numpy(processed), vad, sampling_rate=16000)
+        if not timestamps:
             raise HTTPException(422, "not enough speech detected in recording")
-        return processed
+        speech = np.concatenate([processed[segment["start"]:segment["end"]] for segment in timestamps])
+        if len(speech) < 16000 * 2:
+            raise HTTPException(422, "not enough speech detected in recording")
+        return speech
 
     @staticmethod
     def _unit(vector):
@@ -89,10 +104,17 @@ class VoiceService:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def _embedding(self, speech):
+        import torch
+        with torch.inference_mode():
+            waveform = torch.from_numpy(speech).unsqueeze(0)
+            embedding = self._models().encode_batch(waveform)
+        return self._unit(embedding.squeeze().cpu().numpy())
+
     def enroll(self, db_id: str, recording: bytes) -> None:
         with self._lock:
             speech = self._waveform(recording)
-            embedding = self._unit(self._models().embed_utterance(speech))
+            embedding = self._embedding(speech)
             self.root.mkdir(parents=True, exist_ok=True)
             path = self._profile_path(db_id)
             if path.exists():
@@ -106,7 +128,7 @@ class VoiceService:
             if not path.is_file():
                 raise HTTPException(409, "enroll a voice profile before using voice input")
             speech = self._waveform(recording)
-            actual = self._unit(self._models().embed_utterance(speech))
+            actual = self._embedding(speech)
             with np.load(path, allow_pickle=False) as profile:
                 original = self._unit(profile["original"])
                 adapted = self._unit(profile["adapted"])
