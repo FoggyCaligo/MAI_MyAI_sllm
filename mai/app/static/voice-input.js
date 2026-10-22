@@ -25,9 +25,9 @@
     container.querySelectorAll('pre, code, script, style').forEach(node => node.remove());
     container.querySelectorAll('p, h1, h2, h3, h4, li, tr').forEach(node => node.appendChild(document.createTextNode('\n')));
     return container.textContent
-      .replace(/[\\p{S}]/gu, ' ')
-      .replace(/[ \\t]+/g, ' ')
-      .replace(/\\n[\\s\\n]*/g, '. ')
+      .replace(/[\p{S}]/gu, ' ')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n[\s\n]*/g, '. ')
       .trim();
   }
 
