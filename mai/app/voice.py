@@ -1,0 +1,113 @@
+"""Local speaker enrollment, verification and transcription.
+
+Voice matching is a convenience filter, not an authentication boundary. HTTP
+session authentication remains mandatory and voice recordings are never sent to
+a hosted speech service.
+"""
+from __future__ import annotations
+
+import io
+import os
+from pathlib import Path
+from threading import Lock
+import wave
+
+from fastapi import HTTPException
+
+
+class VoiceService:
+    def __init__(self) -> None:
+        self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "10"))
+        self.match_threshold = float(os.environ.get("VOICE_MATCH_THRESHOLD", "0.75"))
+        if not 1 <= self.silence_seconds <= 120:
+            raise ValueError("VOICE_SILENCE_SECONDS must be between 1 and 120")
+        if not 0 < self.match_threshold < 1:
+            raise ValueError("VOICE_MATCH_THRESHOLD must be between 0 and 1")
+        self.root = Path(os.environ.get("VOICE_PROFILE_DIR", "./data/voice_profiles")).expanduser().resolve()
+        self._encoder = None
+        self._transcriber = None
+        self._lock = Lock()
+
+    def _profile_path(self, db_id: str) -> Path:
+        # Do not interpolate user-controlled db_id into a filesystem path.
+        import hashlib
+        return self.root / (hashlib.sha256(db_id.encode("utf-8")).hexdigest() + ".npy")
+
+    def enrolled(self, db_id: str) -> bool:
+        return self._profile_path(db_id).is_file()
+
+    def _models(self):
+        # Optional packages are loaded only if voice has been used. Missing
+        # dependencies fail explicitly, rather than silently bypassing checks.
+        if self._encoder is None:
+            from resemblyzer import VoiceEncoder
+            self._encoder = VoiceEncoder("cpu")
+        return self._encoder
+
+    @staticmethod
+    def _waveform(payload: bytes):
+        import numpy as np
+        from resemblyzer import preprocess_wav
+
+        if len(payload) > 20 * 1024 * 1024:
+            raise HTTPException(413, "voice recording exceeds 20 MB")
+        try:
+            with wave.open(io.BytesIO(payload), "rb") as file:
+                channels, width, rate, count = (
+                    file.getnchannels(), file.getsampwidth(), file.getframerate(), file.getnframes()
+                )
+                if channels != 1 or width != 2 or rate < 8000 or rate > 96000:
+                    raise ValueError("expected mono 16-bit PCM WAV, sample rate 8–96 kHz")
+                if count / rate > 120:
+                    raise ValueError("voice recording must not exceed 120 seconds")
+                pcm = np.frombuffer(file.readframes(count), dtype="<i2").astype("float32") / 32768.0
+        except (EOFError, wave.Error, ValueError) as exc:
+            raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
+        if count / rate < 3:
+            raise HTTPException(422, "at least 3 seconds of recording is required")
+        processed = preprocess_wav(pcm, source_sr=rate)
+        if len(processed) < 16000 * 2:
+            raise HTTPException(422, "not enough speech detected in recording")
+        return processed
+
+    def enroll(self, db_id: str, recording: bytes) -> None:
+        import numpy as np
+        with self._lock:
+            speech = self._waveform(recording)
+            embedding = self._models().embed_utterance(speech)
+            self.root.mkdir(parents=True, exist_ok=True)
+            path = self._profile_path(db_id)
+            if path.exists():
+                raise HTTPException(409, "voice profile already exists; replacement is not enabled")
+            temporary = path.with_suffix(".tmp")
+            try:
+                with temporary.open("wb") as out:
+                    np.save(out, embedding, allow_pickle=False)
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def transcribe_verified(self, db_id: str, recording: bytes) -> str:
+        import numpy as np
+        with self._lock:
+            path = self._profile_path(db_id)
+            if not path.is_file():
+                raise HTTPException(409, "enroll a voice profile before using voice input")
+            speech = self._waveform(recording)
+            reference = np.load(path, allow_pickle=False)
+            actual = self._models().embed_utterance(speech)
+            similarity = float(np.dot(reference, actual) / (np.linalg.norm(reference) * np.linalg.norm(actual)))
+            if not np.isfinite(similarity) or similarity < self.match_threshold:
+                raise HTTPException(403, "speaker verification failed")
+            if self._transcriber is None:
+                from faster_whisper import WhisperModel
+                self._transcriber = WhisperModel(
+                    os.environ.get("VOICE_WHISPER_MODEL", "small"),
+                    device="cpu",
+                    compute_type="int8",
+                )
+            segments, _ = self._transcriber.transcribe(speech, language="ko", vad_filter=True)
+            text = " ".join(segment.text.strip() for segment in segments).strip()
+            if not text:
+                raise HTTPException(422, "no speech recognized")
+            return text
