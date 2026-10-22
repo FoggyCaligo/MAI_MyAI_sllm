@@ -31,6 +31,11 @@
       .trim();
   }
 
+  function resumeAfterAnswer() {
+    if (!voiceMode || active || mic.disabled) return;
+    void start('transcribe');
+  }
+
   document.addEventListener('mai:answer-complete', event => {
     if (!voiceMode || !event.detail?.text) return;
     if (!('speechSynthesis' in window)) {
@@ -40,10 +45,11 @@
     const synthesizer = window.speechSynthesis;
     synthesizer.cancel();
     const message = spokenText(event.detail.text);
-    if (!message) return;
+    if (!message) { resumeAfterAnswer(); return; }
     const utterance = new SpeechSynthesisUtterance(message);
     utterance.lang = 'ko-KR';
     utterance.rate = 1;
+    utterance.onend = () => resumeAfterAnswer();
     utterance.onerror = eventError => {
       if (eventError.error !== 'canceled') setStatus('TTS 재생 오류: ' + eventError.error, true);
     };
