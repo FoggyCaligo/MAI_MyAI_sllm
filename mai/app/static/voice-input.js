@@ -9,6 +9,7 @@
   let ttsEnabled = true;
   let currentUtterance = null;
   let starting = false;
+  let modeRevision = 0;
 
   function stopTts() {
     currentUtterance = null;
@@ -21,7 +22,7 @@
     mic.setAttribute('aria-pressed', String(enabled));
     mic.title = enabled ? '음성 모드 끄기' : '음성 입력 시작';
     mic.setAttribute('aria-label', mic.title);
-    if (!enabled) stopTts();
+    if (!enabled) { modeRevision += 1; stopTts(); }
   }
 
   function spokenText(markdown) {
@@ -222,7 +223,8 @@
   }
 
   async function start(mode) {
-    if (starting || active || !voiceMode && mode === 'transcribe' && mic.classList.contains('active')) return;
+    if (starting || active || (mode === 'transcribe' && !voiceMode)) return;
+    const revision = modeRevision;
     starting = true;
     try {
       const config = await request('/voice/config');
@@ -236,6 +238,10 @@
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
+      if (mode === 'transcribe' && (!voiceMode || revision !== modeRevision)) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
       const context = new AudioContext();
       const source = context.createMediaStreamSource(stream);
       const processor = context.createScriptProcessor(4096, 1, 1);
@@ -269,7 +275,6 @@
           void checkSpeechEnd(capture);
         }
       };
-      if (mode === 'transcribe') setVoiceMode(true);
       setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 마지막 말이 끝난 뒤 설정된 시간이 지나면 종료돼.');
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
