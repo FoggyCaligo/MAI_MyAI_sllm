@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 
 JsonObject = dict[str, Any]
@@ -76,3 +76,4 @@ class ChatRequest:
     think: ThinkSetting | None = None
     options: Mapping[str, Any] | None = None
     response_format: Mapping[str, Any] | str | None = None
+    on_thinking_chunk: Callable[[str], None] | None = None
