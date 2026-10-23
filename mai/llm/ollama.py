@@ -96,7 +96,10 @@ class OllamaAdapter:
             request_id, self.config.model, time.perf_counter() - started,
             " ".join(f"{key}={_read_field(response, key)}" for key in _OLLAMA_TIMING_FIELDS),
         )
-        return _normalize_response(response)
+        turn = _normalize_response(response)
+        if turn.thinking:
+            _LOG.info("MAI Ollama thinking id=%s model=%s chars=%d content=%s", request_id, self.config.model, len(turn.thinking), turn.thinking)
+        return turn
 
 
 def _normalize_response(response: Any) -> ModelTurn:
