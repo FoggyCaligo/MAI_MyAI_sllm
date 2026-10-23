@@ -14,7 +14,7 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(request)
-        if len(self.requests) == 1 or (not self.cited and len(self.requests) <= 3):
+        if len(self.requests) == 1:
             if self.coverage == "insufficient":
                 data = {"coverage_verdict": "insufficient", "coverage_reason": "Missing requested result", "claims": []}
             else:
@@ -26,9 +26,9 @@ class Reviewer:
                 }
         else:
             data = {
-                "evidence_verdict": "supported", "alignment_verdict": "aligned",
-                "reasons": [], "claims": [{"claim": "The animal is a cat", "verdict": "supported",
-                                           "defect": "none", "reason": "file_read:0"}],
+                "evidence_verdict": "supported" if self.cited else "unsupported", "alignment_verdict": "aligned",
+                "reasons": [], "claims": [{"claim": "The animal is a cat", "verdict": "supported" if self.cited else "unsupported",
+                                           "defect": "none" if self.cited else "missing_evidence", "reason": "file_read:0" if self.cited else "Invalid quotation"}],
                 "action_verdict": "not_applicable", "retry_summary": "No correction needed.",
             }
         body = json.dumps(data)
@@ -63,39 +63,30 @@ def test_prepared_excerpt_and_release_approval():
     assert "tool_results_in_execution_order" not in release_input
 
 
-def test_fabricated_quote_raises_instead_of_approving():
+def test_invalid_citation_is_annotated_and_rejected_by_release():
     reviewer = Reviewer(cited=False)
-    try:
-        verify(reviewer)
-    except Exception as exc:
-        assert "quotation" in str(exc) or "quotation" in str(exc.__cause__)
-    else:
-        raise AssertionError("fabricated source quote was accepted")
+    result = verify(reviewer)
+    assert not result.ok
+    assert len(reviewer.requests) == 2
+    stage3 = json.loads(reviewer.requests[1].messages[1]["content"])
+    citation = stage3["prepared_evidence"]["claims"][0]
+    assert citation["citation_status"] == "invalid_citation"
+    assert citation["source_start"] is None
+    assert citation["source_end"] is None
 
 
-class RecoveringCitationReviewer(Reviewer):
-    async def chat(self, request):
-        if len(self.requests) == 0:
-            self.cited = False
-        elif len(self.requests) == 1:
-            self.cited = True
-        return await super().chat(request)
-
-
-def test_citation_error_is_retried_then_released():
-    reviewer = RecoveringCitationReviewer()
+def test_valid_citation_has_source_offsets():
+    reviewer = Reviewer(cited=True)
     result = verify(reviewer)
     assert result.ok
-    assert len(reviewer.requests) == 3
-    assert "violated the source citation contract" in reviewer.requests[1].messages[-1]["content"]
+    citation = json.loads(reviewer.requests[1].messages[1]["content"])["prepared_evidence"]["claims"][0]
+    assert citation["citation_status"] == "valid"
+    assert citation["source_start"] >= 0
+    assert citation["source_end"] > citation["source_start"]
 
 
-def test_unfixed_fabricated_quote_fails_after_three_preparations():
+def test_unlocated_claim_is_forwarded():
     reviewer = Reviewer(cited=False)
-    try:
-        verify(reviewer)
-    except Exception as exc:
-        assert "quotation" in str(exc) or "quotation" in str(exc.__cause__)
-    else:
-        raise AssertionError("fabricated quote was accepted")
-    assert len(reviewer.requests) == 3
+    result = verify(reviewer)
+    assert not result.ok
+
