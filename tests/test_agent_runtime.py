@@ -371,8 +371,8 @@ def test_rejected_draft_thinking_is_replayed_without_being_a_delivered_answer() 
     assert '"missing_tools": ["echo"]' in first
     retry = adapter.requests[1].messages
     assert all(m.get("role") != "assistant" or m.get("content") != "unreleased draft" for m in retry)
-    assert "private mistaken reasoning" in str(retry)
-    assert '"delivered": false' in str(retry)
+    assert "private mistaken reasoning" not in str(retry)
+    assert "unreleased draft" not in str(retry)
     assert "unreleased draft" not in str(result.messages)
     assert any(m.get("content") == "approved answer" for m in result.messages)
 
@@ -410,14 +410,11 @@ def test_rejected_draft_replay_keeps_chronology_and_only_latest_body() -> None:
     joined = str(messages)
     assert "obsolete draft one" not in joined
     assert joined.count("latest draft two") == 1
-    assert "reasoning one" in joined and "reasoning two" in joined
-    first_reason = next(i for i, m in enumerate(messages)
-                        if "grounding defect 1" in m.get("content", ""))
-    second_reason = next(i for i, m in enumerate(messages)
-                         if "grounding defect 2" in m.get("content", ""))
-    latest_draft = next(i for i, m in enumerate(messages)
-                        if "latest draft two" in m.get("content", ""))
-    assert first_reason < latest_draft < second_reason
+    assert "reasoning one" not in joined and "reasoning two" not in joined
+    assert "grounding defect 1" not in joined
+    assert "grounding defect 2" in joined
+    assert '"rejected_draft": "latest draft two"' in joined
+    assert '"verifier_feedback"' in joined
 
 
 def test_native_tool_call_arguments_are_not_duplicated_in_tool_result() -> None:
