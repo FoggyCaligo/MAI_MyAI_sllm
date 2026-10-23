@@ -561,56 +561,92 @@ class FinalGroundingVerifier:
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
-        prepare_request = ChatRequest(
-            messages=(
-                {"role": "system", "content": _EVIDENCE_PREPARATION_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ),
-            tools=(),
-            think=False,
-            response_format=_EvidencePreparationPayload.model_json_schema(),
-        )
-        prepared = await self._request_structured_review(
-            prepare_request, _EvidencePreparationPayload, label="evidence_preparation"
-        )
-        if prepared.coverage_verdict == "insufficient":
-            if not prepared.coverage_reason.strip():
-                raise OllamaProtocolError("coverage rejected without an actionable reason")
-            if prepared.claims:
-                raise OllamaProtocolError("coverage rejection must not contain extracted claims")
-            return FinalReview(
-                evidence_verdict="uncertain",
-                alignment_verdict="uncertain",
-                coverage_verdict="insufficient",
-                coverage_reasons=(prepared.coverage_reason.strip(),),
-                reasons=(),
-                claims=(),
-                action_verdict="not_applicable",
-                retry_summary=prepared.coverage_reason.strip(),
-            )
-        if prepared.coverage_reason.strip():
-            raise OllamaProtocolError("non-rejected coverage must not contain rejection reason")
-
         selected = {index: (name, content) for index, (name, ok, _error, content)
                     in enumerate(tool_results) if ok}
         user_messages = [str(message["content"]) for message in messages
                          if message.get("role") == "user" and isinstance(message.get("content"), str)]
-        for claim in prepared.claims:
-            if claim.source_index is None:
-                if claim.tool is not None or claim.excerpt is not None:
-                    raise OllamaProtocolError("unlocated claim has an invalid citation")
-                continue
-            if claim.tool == "user_input":
-                if claim.source_index < 0 or claim.source_index >= len(user_messages):
-                    raise OllamaProtocolError("user citation index out of bounds")
-                source = user_messages[claim.source_index]
-            else:
-                chosen = selected.get(claim.source_index)
-                if chosen is None or claim.tool != chosen[0]:
-                    raise OllamaProtocolError("claim citation does not name an observed successful tool")
-                source = chosen[1]
-            if not claim.excerpt or claim.excerpt not in source:
-                raise OllamaProtocolError("claim quotation does not occur in cited source")
+
+        # A malformed citation is a stage-two output-contract failure, not a
+        # factual refutation. Give that stage a bounded chance to repair its
+        # quotation. Never silently drop the citation or approve it.
+        correction: dict[str, Any] | None = None
+        for preparation_attempt in range(1, 4):
+            preparation_input: dict[str, Any] = dict(payload)
+            if correction is not None:
+                preparation_input["citation_correction"] = correction
+            prepare_request = ChatRequest(
+                messages=(
+                    {"role": "system", "content": _EVIDENCE_PREPARATION_SYSTEM},
+                    {"role": "user", "content": json.dumps(preparation_input, ensure_ascii=False)},
+                ),
+                tools=(),
+                think=False,
+                response_format=_EvidencePreparationPayload.model_json_schema(),
+            )
+            prepared = await self._request_structured_review(
+                prepare_request, _EvidencePreparationPayload, label="evidence_preparation"
+            )
+            if prepared.coverage_verdict == "insufficient":
+                if not prepared.coverage_reason.strip():
+                    raise OllamaProtocolError("coverage rejected without an actionable reason")
+                if prepared.claims:
+                    raise OllamaProtocolError("coverage rejection must not contain extracted claims")
+                return FinalReview(
+                    evidence_verdict="uncertain",
+                    alignment_verdict="uncertain",
+                    coverage_verdict="insufficient",
+                    coverage_reasons=(prepared.coverage_reason.strip(),),
+                    reasons=(),
+                    claims=(),
+                    action_verdict="not_applicable",
+                    retry_summary=prepared.coverage_reason.strip(),
+                )
+            if prepared.coverage_reason.strip():
+                raise OllamaProtocolError("non-rejected coverage must not contain rejection reason")
+
+            citation_defects: list[dict[str, Any]] = []
+            for claim_index, claim in enumerate(prepared.claims):
+                error_code: str | None = None
+                if claim.source_index is None:
+                    if claim.tool is not None or claim.excerpt is not None:
+                        error_code = "unlocated_claim_has_citation"
+                elif claim.tool == "user_input":
+                    if claim.source_index < 0 or claim.source_index >= len(user_messages):
+                        error_code = "user_source_out_of_bounds"
+                    elif not claim.excerpt or claim.excerpt not in user_messages[claim.source_index]:
+                        error_code = "quote_not_in_source"
+                else:
+                    chosen = selected.get(claim.source_index)
+                    if chosen is None or claim.tool != chosen[0]:
+                        error_code = "invalid_tool_source"
+                    elif not claim.excerpt or claim.excerpt not in chosen[1]:
+                        error_code = "quote_not_in_source"
+                if error_code is not None:
+                    citation_defects.append({
+                        "claim_index": claim_index,
+                        "error_code": error_code,
+                        "source_index": claim.source_index,
+                        "tool": claim.tool,
+                    })
+            if not citation_defects:
+                break
+            _LOG.warning(
+                "MAI verifier stage2 citation contract failed attempt=%d/3 defects=%s",
+                preparation_attempt, citation_defects,
+            )
+            if preparation_attempt == 3:
+                raise OllamaProtocolError(
+                    "evidence preparation citation contract failed after 3 attempts"
+                )
+            correction = {
+                "instruction": (
+                    "Your previous citation output violated the source quotation contract. "
+                    "Repair only the identified claims. Quote a contiguous exact substring of "
+                    "the cited successful tool result or user_input; if no exact quote exists, "
+                    "use null source_index, tool and excerpt. Do not fabricate or paraphrase citations."
+                ),
+                "defects": citation_defects,
+            }
 
         _LOG.info(
             "MAI verifier stage2 coverage=%s claims=%d grounded_excerpts=%d source_chars=%d excerpt_chars=%d",
