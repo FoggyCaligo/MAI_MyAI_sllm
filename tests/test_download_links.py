@@ -17,6 +17,7 @@ def test_download_link_can_target_arbitrary_local_file(tmp_path: Path) -> None:
     result = links.create(str(target), base_url="https://mai.example.test/")
 
     assert result["url"].startswith("https://mai.example.test/download/")
+    assert result["markdown_link"] == f"[파일 다운로드]({result['url']})"
     token = str(result["url"]).rsplit("/", 1)[-1]
     assert links.resolve(token) == target
     assert links.resolve("missing") is None
