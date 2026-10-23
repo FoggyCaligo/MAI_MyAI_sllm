@@ -209,6 +209,34 @@
   function markInterrupted(pending){if(!pending)return;pending.bubble.classList.remove('error');pending.bubble.innerHTML='<div class="interrupted">중단됨 · 새 메시지로 전환</div>';}
   function renderToolLog(wrap,tools,rounds,model){const diag=document.createElement('div');diag.className='diagnostics';diag.textContent=`${model} · rounds: ${rounds}`;wrap.appendChild(diag);if(!tools.length)return;const details=document.createElement('details');details.className='tool-log';const summary=document.createElement('summary');summary.textContent=`tool log · ${tools.length} call${tools.length===1?'':'s'}`;details.appendChild(summary);const entries=document.createElement('div');entries.className='tool-log-entries';tools.forEach(tool=>{const entry=document.createElement('details');entry.className='tool-entry';const head=document.createElement('summary');head.className='tool-head';const name=document.createElement('span');name.textContent=tool.name;const status=document.createElement('span');status.textContent=tool.ok?'ok':(tool.error_type||'failed');if(!tool.ok)status.className='tool-failed';head.append(name,status);const args=document.createElement('div');args.className='tool-args';args.textContent=JSON.stringify(tool.arguments,null,2);entry.append(head,args);if(tool.result){const result=document.createElement('div');result.className='tool-result';result.textContent=tool.result;entry.appendChild(result);}entries.appendChild(entry);});details.appendChild(entries);wrap.appendChild(details);scrollToBottom();}
 
+  function renderVerificationRejections(wrap, rejections) {
+    if (!Array.isArray(rejections) || !rejections.length) return;
+    const details = document.createElement('details');
+    details.className = 'tool-log';
+    const summary = document.createElement('summary');
+    summary.textContent = `verifier · ${rejections.length} rejected rounds`;
+    details.appendChild(summary);
+    for (const rejection of rejections) {
+      const entry = document.createElement('details');
+      entry.className = 'tool-entry';
+      const head = document.createElement('summary');
+      head.className = 'tool-head';
+      head.textContent = `REJECTED · round ${rejection.model_round}`;
+      const candidateLabel = document.createElement('div');
+      candidateLabel.textContent = '거절된 답변 원문';
+      const candidate = document.createElement('div');
+      candidate.className = 'tool-result';
+      candidate.textContent = rejection.candidate;
+      const feedbackLabel = document.createElement('div');
+      feedbackLabel.textContent = 'Verifier 피드백';
+      const feedback = document.createElement('div');
+      feedback.className = 'tool-result';
+      feedback.textContent = rejection.feedback;
+      entry.append(head, candidateLabel, candidate, feedbackLabel, feedback);
+      details.appendChild(entry);
+    }
+    wrap.appendChild(details);
+  }
   async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');$connection.textContent=data.tailscale_funnel?'Tailscale':'Local';}
   async function loadModels(){const res=await fetch('/models',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'모델 목록 조회 실패');$model.innerHTML='';data.models.forEach(name=>{const option=document.createElement('option');option.value=name;option.textContent=name;option.selected=name===data.current;$model.appendChild(option);});if(!data.models.length)$model.innerHTML='<option value="">설치된 모델 없음</option>';}
   function showApp(){ $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='연결 실패';$connection.title=err.message;}); syncSendButton(); $input.focus(); }
@@ -282,7 +310,7 @@
       uploadingClipboardImages = false;
     }
   }
-  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
+  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
   $input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=`${Math.min($input.scrollHeight,150)}px`;syncSendButton();});
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   syncSendButton();
