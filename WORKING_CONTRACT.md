@@ -30,19 +30,19 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 ## 2. Direct native-tool selection
 
-현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent가 system prompt, recent dialogue, authoritative runtime context, 등록된 native tool schema를 보고 필요한 tool을 직접 선택한다.
+현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent에는 등록된 도구의 **이름/카테고리 카탈로그**와 `tool_manual`의 native schema만 먼저 노출된다. Main agent가 필요한 툴 이름을 `tool_manual(tools=[...])`로 지정해 활성화하면, **다음 model round부터** 활성화한 툴의 전체 native schema가 노출된다. 한 번 활성화된 툴은 해당 run 동안 유지된다.
 
-이 선택은 preflight LLM 호출의 지연을 제거하기 위한 의도적인 production 정책이다.
+이 선택은 별도 preflight LLM 호출을 요구하지 않으면서 초기 native tool schema 비용을 줄이기 위한 production 정책이다. 실제 툴이 필요하면 활성화 라운드가 추가된다.
 
 `OllamaToolRequirementPlanner`, `FrozenToolRequirements`, missing-requirement correction support는 코드와 단위 테스트에 남아 있을 수 있지만, production `MAIRuntime.run_user_message()`는 planner를 호출하거나 frozen requirements를 전달하지 않는다.
 
-따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 main agent prompt와 schema가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
+따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 카탈로그 및 main agent prompt가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다. 선택적으로 활성화하는 frozen requirements 검증에서는 누락된 필수 툴 schema만 correction round에 임시 제공할 수 있다.
 
 ---
 
 ## 3. Native tool contract
 
-MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다.
+MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. `tool_manual`은 AgentLoop가 제공하는 run-local native activation tool이다. 상세 인자 계약은 활성화 이후 native schema로 전달되며, 독자적인 JSON 텍스트 실행 프로토콜을 도입하지 않는다.
 
 `OllamaAdapter`는 protocol translation만 담당한다. Tool call을 임의 텍스트 JSON으로 복원하거나 `<think>` 문자열을 파싱해 의미를 추정하지 않는다.
 
@@ -52,7 +52,7 @@ Tool schema/protocol 위반은 자동 보정하지 않고 명확하게 실패한
 
 ## 4. ToolRegistry
 
-모든 model-visible capability는 `ToolRegistry`의 `ToolDefinition`으로 등록한다.
+실행 가능한 도구는 `ToolRegistry`의 `ToolDefinition`으로 등록한다. 예외적으로 `tool_manual`은 AgentLoop에서 직접 제공하는 활성화 전용 native tool이며, Registry의 도구를 추가하거나 외부 동작을 수행하지 않고 해당 run의 노출 schema 집합만 갱신한다.
 
 ```text
 name
@@ -63,7 +63,7 @@ timeout
 category
 ```
 
-Registry는 tool 이름의 의미를 문자열로 해석하지 않는다. Validation error, unknown tool, handler exception, timeout은 구조화된 실패로 반환한다.
+Registry와 AgentLoop는 tool 이름의 의미를 문자열로 해석하지 않는다. `tool_manual`은 카탈로그에서 정확히 일치하는 등록 이름만 허용하며, 미등록 도구/계약 위반은 명시적 실패로 반환한다. 일반적인 validation error, unknown tool, handler exception, timeout도 구조화된 실패로 반환한다.
 
 큰 tool output은 `ToolResultStore`가 bounded model view로 축약할 수 있다. 원본의 추가 범위가 필요하면 model은 `tool_result_read(result_id, offset, limit)`를 사용한다.
 
