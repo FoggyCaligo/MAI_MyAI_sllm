@@ -121,3 +121,28 @@ def test_document_edit_is_owner_only(tmp_path: Path) -> None:
     trial = ToolRegistry()
     register_readonly_local_tools(trial, cwd=tmp_path, upload_root=tmp_path / "uploads")
     assert "document_edit" not in trial.names()
+
+
+def test_registry_invocation_preserves_discriminated_action(tmp_path: Path) -> None:
+    import asyncio
+    from mai.llm.models import NativeToolCall
+
+    source = tmp_path / "registry.csv"
+    source.write_text("x,y\\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_local_pc_tools(registry, cwd=tmp_path)
+    result = asyncio.run(registry.invoke(NativeToolCall(
+        name="document_edit",
+        arguments={
+            "path": "registry.csv",
+            "encoding": "utf-8",
+            "action": {
+                "operation": "csv_set_cell",
+                "row": 1,
+                "column": 2,
+                "value": "changed",
+            },
+        },
+    )))
+    assert result["operation"] == "csv_set_cell"
+    assert source.read_text(encoding="utf-8") == "x,changed\\n"
