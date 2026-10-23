@@ -154,11 +154,11 @@ _GROUNDING_RELEASE_SYSTEM = """
 You are stage 3 of a three-stage verifier. You cannot call tools or rewrite the answer.
 Read the stage-2 JSON containing the coverage decision and claim-to-source excerpts, then
 the candidate and the user's request. Verify whether the cited source actually supports
-each candidate claim in meaning, numbers, time, and scope. An excerpt proves only what
+each candidate claim in meaning, numbers, time, and scope. An evidence ref proves only what
 it says; absence of evidence is not a contradiction. Preserve translation and numerical
 equivalence. Treat user statements as reported user statements, not universal facts.
 Judge task alignment and requested external-action outcomes against provided observations.
-Treat citation_status=invalid_citation and unlocated as NO VERIFIED SOURCE; never cite those excerpts as evidence. If no other valid evidence exists, do not mark the claim supported. Invalid quotations are not proof of contradiction. Do not add requirements. Return one verdict per claim. Only rejected claims need an
+Treat citation_status=invalid_reference and unlocated as NO VERIFIED SOURCE; never cite those entries as evidence. A valid ref only means the value exists in the observed source; it does not prove factual support. If no other valid evidence exists, do not mark the claim supported. Invalid quotations are not proof of contradiction. Do not add requirements. Return one verdict per claim. Only rejected claims need an
 actionable concise reason; supported claims may use a short source reference.
 State defects succinctly; never recap the entire answer.
 """.strip()
@@ -601,7 +601,8 @@ class FinalGroundingVerifier:
                          if message.get("role") == "user" and isinstance(message.get("content"), str)]
         evidence_entries, evidence_lookup = _structured_evidence_index(tool_results, user_messages)
         preparation_payload = {
-            **payload,
+            **{key: value for key, value in payload.items()
+               if key not in ("tool_results_in_execution_order", "user_input_sources")},
             "evidence_entries": evidence_entries,
         }
         prepare_request = ChatRequest(
@@ -654,17 +655,15 @@ class FinalGroundingVerifier:
         validated_preparation = prepared.model_dump()
         validated_preparation["claims"] = validated_claims
         _LOG.info(
-            "MAI verifier citations valid=%d invalid=%d unlocated=%d",
-            sum(c["citation_status"] == "valid" for c in validated_claims),
-            sum(c["citation_status"] == "invalid_citation" for c in validated_claims),
-            sum(c["citation_status"] == "unlocated" for c in validated_claims),
-        )
-        _LOG.info(
-            "MAI verifier stage2 coverage=%s claims=%d grounded_excerpts=%d source_chars=%d excerpt_chars=%d",
-            prepared.coverage_verdict, len(prepared.claims),
-            sum(claim.excerpt is not None for claim in prepared.claims),
-            sum(len(content) for name, ok, error, content in tool_results if ok),
-            sum(len(claim.excerpt or "") for claim in prepared.claims),
+            "MAI verifier stage2 coverage=%s claims=%d evidence_entries=%d "
+            "selected_refs=%d valid_refs=%d invalid_refs=%d unlocated_claims=%d",
+            prepared.coverage_verdict, len(prepared.claims), len(evidence_entries),
+            sum(len(claim.evidence_refs) for claim in prepared.claims),
+            sum(item["citation_status"] == "valid" for claim in validated_claims
+                for item in claim["evidence"]),
+            sum(item["citation_status"] == "invalid_reference" for claim in validated_claims
+                for item in claim["evidence"]),
+            sum(not claim["evidence"] for claim in validated_claims),
         )
         release_request = ChatRequest(
             messages=(
