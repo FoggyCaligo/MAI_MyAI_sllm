@@ -101,9 +101,8 @@ def register_calculator_tools(
     registry.add(
         name="calculator",
         description=(
-            "Evaluate arithmetic deterministically. Use this instead of mental arithmetic for sums, differences, "
-            "products, divisions, percentages, returns, aggregates, and other numeric calculations. Supports only "
-            "numbers, parentheses, +, -, *, /, %, and **."
+            "Evaluate arithmetic deterministically. Supports numbers, parentheses, "
+            "+, -, *, /, %, and **."
         ),
         input_model=CalculatorInput,
         handler=calculator,

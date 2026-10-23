@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import re
-from typing import Annotated, Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
@@ -64,7 +64,7 @@ You are a judgment-only final-answer release reviewer. You cannot call tools, ch
 Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
 
 Your response is constrained by the supplied structured-output schema. Populate every required field.
-Keep feedback concise and actionable: one language (English), no translations or bilingual repetition, no restatement of the user question or full candidate answer. Report only independent blocking defects. Each reason must fit within 240 characters; each claim within 240 characters. Use at most 6 reasons, 6 coverage reasons, and 12 material claims. Preserve precise evidence references needed to correct each defect; do not omit a distinct material defect to meet the limits.
+Keep full, precise, independent material findings in the detailed review fields without arbitrary count or character limits. Write the separate retry_summary in concise English, avoiding translations, repeated claims and filler.
 - evidence_verdict: "supported", "unsupported", or "uncertain"
 - alignment_verdict: "aligned", "misaligned", or "uncertain"
 - coverage_verdict: "sufficient", "insufficient", or "uncertain"
@@ -72,6 +72,7 @@ Keep feedback concise and actionable: one language (English), no translations or
 - reasons: concrete blocking defects only
 - claims: material factual claims from the candidate that matter to the user's request
 - action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+- retry_summary: for a rejected candidate, one concise English correction instruction (1–800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. For an accepted candidate, set this field to "No correction needed." Keep full details in reasons and claims; never omit actual findings to shorten this summary.
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
@@ -132,7 +133,7 @@ Overall verdicts:
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim: str = Field(max_length=240)
+    claim: str
     verdict: Literal["supported", "unsupported", "uncertain"]
     defect: Literal[
         "none",
@@ -141,7 +142,7 @@ class _ClaimReviewPayload(BaseModel):
         "unsupported_inference",
         "missing_evidence",
     ]
-    reason: str = Field(max_length=240)
+    reason: str
 
 
 class _FinalReviewPayload(BaseModel):
@@ -152,10 +153,11 @@ class _FinalReviewPayload(BaseModel):
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
-    coverage_reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
-    reasons: list[Annotated[str, Field(max_length=240)]] = Field(max_length=6)
-    claims: list[_ClaimReviewPayload] = Field(max_length=12)
+    coverage_reasons: list[str]
+    reasons: list[str]
+    claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
+    retry_summary: str = Field(min_length=1, max_length=800)
 
 
 class _NumericReviewPayload(BaseModel):
@@ -177,22 +179,27 @@ class VerificationIssue:
 class FinalVerificationResult:
     ok: bool
     issues: tuple[VerificationIssue, ...] = ()
+    retry_summary: str = ""
+    review_details: Mapping[str, Any] | None = None
 
     def feedback_message(self) -> str:
         if self.ok:
             return ""
+        # Full individual issues remain in the verification result and audit log.
+        # The reviewer authors a separate bounded correction instruction.
+        if not self.retry_summary.strip():
+            raise ValueError("rejected final verification is missing retry_summary")
+        codes: dict[str, int] = {}
+        for issue in self.issues:
+            codes[issue.code] = codes.get(issue.code, 0) + 1
         lines = [
-            "Rejected final answer. Correct the listed defects and provide the full answer.",
-            "Keep supported findings; do not invent evidence or assert unverified outcomes.",
+            "Rejected final answer. Correct material defects and provide the full answer.",
+            "Preserve supported findings; do not invent evidence.",
+            "Defect categories: " + ", ".join(
+                f"{code} ({count})" for code, count in codes.items()
+            ),
+            self.retry_summary.strip(),
         ]
-        lines.extend(f"- {issue.code}: {issue.message}" for issue in self.issues)
-        if any(issue.code == "evidence_coverage_insufficient" for issue in self.issues):
-            lines.append("Include only material facts already present in evidence.")
-        if any(issue.code in {
-            "evidence_grounding_failed", "claim_grounding_failed", "evidence_scope_expansion",
-            "action_outcome_unverified", "action_outcome_contradicted",
-        } for issue in self.issues):
-            lines.append("For unsupported claims, obtain new tool evidence or remove/narrow the claim; state uncertainty.")
         return "\n".join(lines)
 
 
@@ -213,6 +220,7 @@ class FinalReview:
     reasons: tuple[str, ...] = ()
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
+    retry_summary: str = ""
 
 
 class FinalGroundingVerifier:
@@ -290,7 +298,7 @@ class FinalGroundingVerifier:
                 action="skipped",
                 reasons=reason,
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+            return FinalVerificationResult(ok=not issues, issues=tuple(issues), retry_summary=f"{numeric_issue.code}: {numeric_issue.message}" if numeric_issue else "")
 
         review = await self._review_final(
             candidate=candidate,
@@ -353,7 +361,26 @@ class FinalGroundingVerifier:
             action=review.action_verdict if allow_evidence_review else "skipped",
             reasons=review.reasons + review.coverage_reasons,
         )
-        return FinalVerificationResult(ok=not issues, issues=tuple(issues))
+        return FinalVerificationResult(
+            ok=not issues,
+            issues=tuple(issues),
+            retry_summary=(
+                (f"{numeric_issue.code}: {numeric_issue.message}. " if numeric_issue else "")
+                + review.retry_summary
+            ) if issues else "",
+            review_details={
+                "evidence_verdict": review.evidence_verdict,
+                "alignment_verdict": review.alignment_verdict,
+                "coverage_verdict": review.coverage_verdict,
+                "action_verdict": review.action_verdict,
+                "reasons": list(review.reasons),
+                "coverage_reasons": list(review.coverage_reasons),
+                "claims": [
+                    {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect, "reason": claim.reason}
+                    for claim in review.claims
+                ],
+            },
+        )
 
     def _unsupported_numeric_facts(
         self,
@@ -498,6 +525,7 @@ class FinalGroundingVerifier:
                 reasons=reasons,
                 claims=claims,
                 action_verdict=parsed.action_verdict,
+                retry_summary=parsed.retry_summary,
             )
         except TimeoutError as exc:
             _LOG.warning("MAI final verification reviewer timed out")

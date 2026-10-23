@@ -499,10 +499,13 @@ async def chat(
         audit.append(
             run_id, "verifier_step", verification.feedback_message(),
             round_number=round_number, status="REJECTED",
-            details={"issues": [
-                {"code": issue.code, "message": issue.message}
-                for issue in verification.issues
-            ]},
+            details={
+                "issues": [
+                    {"code": issue.code, "message": issue.message}
+                    for issue in verification.issues
+                ],
+                "review_details": verification.review_details,
+            },
         )
 
     try:

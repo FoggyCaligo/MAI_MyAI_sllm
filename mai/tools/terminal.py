@@ -149,18 +149,11 @@ def register_terminal_tools(
     registry.add(
         name="terminal_run",
         description=(
-            "Run a shell command on the local PC with the same OS permissions as the MAI process. "
-            f"This host executes commands through {shell_description}; use syntax compatible with this actual host shell "
-            "and do not assume the shell used to launch MAI. "
-            "If you are unsure about a command, option, shell syntax, OS-specific behavior, or tool availability, "
-            "verify it using available documentation or web search before executing rather than guessing. "
-            f"The runtime already starts commands in this working directory: {register_default_cwd}. "
-            "Use that current working directory by default; do not guess or prepend a project path with cd. "
-            "Set the cwd argument only when the task explicitly requires running in a different directory. "
-            "Command timeout is controlled by the runtime and is not a model-supplied argument. "
-            "Do not suppress command errors merely to make execution appear successful; preserve meaningful stderr, "
-            "exit codes, permission failures, and timeouts so they can be used for recovery. "
-            "A non-zero return code or timeout is a real tool failure. Paths outside the repository are allowed."
+            "Run a shell command on the local PC with MAI process permissions. "
+            "Use the actual shell and default_cwd from the authoritative runtime context; "
+            "set cwd only when needed. The runtime controls timeouts. Preserve non-zero exits, "
+            "stderr, permission failures and timeouts as real failures. "
+            "Paths outside the repository are allowed."
         ),
         input_model=TerminalRunInput,
         handler=handler,
