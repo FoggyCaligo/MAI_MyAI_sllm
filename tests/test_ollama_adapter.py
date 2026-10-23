@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -132,3 +133,38 @@ def test_missing_message_fails_visibly() -> None:
 
     with pytest.raises(OllamaProtocolError):
         run(adapter.chat(ChatRequest(messages=[])))
+
+
+def test_ollama_turn_logs_request_size_and_provider_timings(caplog) -> None:
+    client = FakeClient({
+        "message": {"role": "assistant", "content": "done"},
+        "total_duration": 2100000000,
+        "load_duration": 10000000,
+        "prompt_eval_duration": 1000000000,
+        "eval_duration": 1090000000,
+        "prompt_eval_count": 1024,
+        "eval_count": 20,
+    })
+    adapter = OllamaAdapter(ModelConfig(model="test-model"), client=client)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
+
+    records = [r.message for r in caplog.records if r.name == "uvicorn.error"]
+    assert any("MAI Ollama request start" in msg and "input_chars_approx=" in msg for msg in records)
+    assert any("MAI Ollama request complete" in msg and "prompt_eval_count=1024" in msg and "load_duration=10000000" in msg for msg in records)
+
+
+def test_ollama_turn_timeout_logs_duration_and_preserves_error(caplog) -> None:
+    class SlowClient:
+        async def chat(self, **kwargs):
+            await asyncio.sleep(0.1)
+
+    from mai.llm.ollama import OllamaChatTimeoutError
+
+    adapter = OllamaAdapter(ModelConfig(model="test-model", request_timeout_seconds=0.001), client=SlowClient())
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        with pytest.raises(OllamaChatTimeoutError):
+            run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
+
+    assert any("MAI Ollama request timeout" in r.message for r in caplog.records)
