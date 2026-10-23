@@ -55,7 +55,7 @@ def test_runtime_removes_temporary_file_after_successful_final_answer(tmp_path: 
     register_filesystem_tools(registry, cwd=tmp_path)
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(
-            name="file_create",
+            name="file_write",
             arguments={"path": "scratch.py", "content": "print('x')", "lifecycle": "temporary"},
         ),)),
         assistant_turn(content="done"),
@@ -67,7 +67,7 @@ def test_runtime_removes_temporary_file_after_successful_final_answer(tmp_path: 
     assert not (tmp_path / "scratch.py").exists()
 
 
-def test_file_create_defaults_to_persistent_and_survives_final_answer(tmp_path: Path) -> None:
+def test_file_write_defaults_to_persistent_and_survives_final_answer(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
     adapter = FakeAdapter([
