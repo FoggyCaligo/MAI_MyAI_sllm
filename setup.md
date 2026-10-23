@@ -805,7 +805,7 @@ Startup migration 규칙:
 - 기존 `chat_messages`가 unrelated schema이면 그대로 보존하고 별도 `web_chat_messages`를 생성한다.
 - `web_chat_messages` 자체가 알 수 없는 schema이면 startup failure로 멈춘다.
 
-`SESSION_HISTORY_MESSAGES=12`이면 model에게 최근 12 messages를 전달하고, 새로 로그인하거나 페이지를 다시 열었을 때 화면에도 같은 최근 12 messages만 복원한다. 더 오래된 기록은 SQLite에 남아 있지만 현재 UI/model context에는 포함하지 않는다.
+`SESSION_HISTORY_MESSAGES=10`이면 model에게 최근 10 messages를 전달하고, 새로 로그인하거나 페이지를 다시 열었을 때 화면에도 같은 최근 10 messages만 복원한다. 더 오래된 기록은 SQLite에 남아 있지만 현재 UI/model context에는 포함하지 않는다.
 
 Browser/device가 사라져도 server process가 살아 있으면 running resumable chat job은 계속될 수 있다. 완료된 assistant answer는 persistent chat에 저장되어 다음 접속에서 보인다.
 
