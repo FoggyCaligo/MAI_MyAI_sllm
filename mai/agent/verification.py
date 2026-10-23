@@ -133,73 +133,28 @@ Overall verdicts:
 """.strip()
 
 
-_EVIDENCE_PREPARATION_SYSTEM = """
-You are stage 2 of a three-stage verifier. You cannot call tools or write the final answer.
-First judge only whether the candidate fulfills the essential coverage of the user's request.
-A representative answer to an open-ended summary is sufficient. Do not require every observed
-memory, optional details, stylistic preferences, or more research. Coverage is insufficient
-only if a specifically requested essential item is missing or the omission defeats the task.
-If insufficient, return coverage_verdict=insufficient, one concise actionable coverage_reason,
-and an empty claims list. For sufficient or uncertain coverage, return empty coverage_reason. The caller will reject immediately, without a stage 3 call.
-Otherwise extract only distinct, objectively checkable factual claims. Exclude opinions,
-speculation, greetings and commentary. Match each claim to evidence entries using their
-exact ref identifiers from the supplied evidence_entries; output evidence_refs as a list
-of those identifiers. Choose multiple refs where needed and an empty list if none
-applies. Never invent identifiers or write quotations, positions, or source paths.
-A reference is a location, not proof that the source supports the claim.
-Return only the structured schema.
+_PREPARE_SYSTEM = """Stage 2 verifier. Inspect candidate, current request and observed evidence entries.
+Decide coverage first. A representative summary satisfies an open-ended summary request;
+do not demand optional or exhaustive details. If a specifically requested essential
+outcome is missing, return insufficient with one short actionable coverage_reason
+and claims=[]; downstream review will be skipped.
+Otherwise return sufficient (or uncertain) with coverage_reason="" and identify distinct
+objective factual claims (not opinions or speculation). Assign to each claim the refs
+of relevant evidence entries; no matching evidence means evidence_refs=[].
+Refs are identifiers only. Do not invent refs, generate quotations, or calculate offsets.
+Do not adjudicate the claims' truth; stage 3 will do that.
 """.strip()
 
-_GROUNDING_RELEASE_SYSTEM = """
-You are stage 3 of a three-stage verifier. You cannot call tools or rewrite the answer.
-Read the stage-2 JSON containing the coverage decision and claim-to-source excerpts, then
-the candidate and the user's request. Verify whether the cited source actually supports
-each candidate claim in meaning, numbers, time, and scope. An evidence ref proves only what
-it says; absence of evidence is not a contradiction. Preserve translation and numerical
-equivalence. Treat user statements as reported user statements, not universal facts.
-Judge task alignment and requested external-action outcomes against provided observations.
-Treat citation_status=invalid_reference and unlocated as NO VERIFIED SOURCE; never cite those entries as evidence. A valid ref only means the value exists in the observed source; it does not prove factual support. If no other valid evidence exists, do not mark the claim supported. Invalid quotations are not proof of contradiction. Do not add requirements. Return one verdict per claim. Only rejected claims need an
-actionable concise reason; supported claims may use a short source reference.
-State defects succinctly; never recap the entire answer.
+_RELEASE_SYSTEM = """Stage 3 verifier. Use provided prepared claims, their actual source values,
+the candidate, current user request and context. Decide claim-by-claim whether evidence
+actually supports the meaning, scope, date and precision of each claim. Valid reference
+means the source exists, not that it supports the claim. Invalid/missing refs cannot
+establish support. Absence of evidence is not proof of contradiction. Evaluate alignment
+with the requested outcome and resulting state of claimed external actions. Do not
+demand optional background or exhaustive listing. Return concise actionable reasons
+only for material defects; preserve a truthful partial answer. Every prepared claim
+requires an individual verdict and the exact same claim text. Do not call tools.
 """.strip()
-
-
-def _structured_evidence_index(
-    tool_results: Sequence[ToolVerificationResult],
-    user_messages: Sequence[str],
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Index actual JSON leaves; preserve non-JSON strings whole."""
-    entries: list[dict[str, Any]] = []
-    lookup: dict[str, dict[str, Any]] = {}
-
-    def register(tool: str, source_index: int, path: list[str | int], value: Any) -> None:
-        ref = f"e{len(entries)}"
-        entry = {"ref": ref, "tool": tool, "source_index": source_index,
-                 "path": path, "value": value}
-        entries.append(entry)
-        lookup[ref] = entry
-
-    def walk(tool: str, index: int, value: Any, path: list[str | int]) -> None:
-        if isinstance(value, dict):
-            for key, child in value.items():
-                walk(tool, index, child, [*path, key])
-        elif isinstance(value, list):
-            for offset, child in enumerate(value):
-                walk(tool, index, child, [*path, offset])
-        else:
-            register(tool, index, path, value)
-
-    for index, (tool, ok, _error, content) in enumerate(tool_results):
-        if not ok:
-            continue
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            data = content
-        walk(tool, index, data, [])
-    for index, content in enumerate(user_messages):
-        walk("user_input", index, content, [])
-    return entries, lookup
 
 
 class _PreparedClaim(BaseModel):
@@ -208,14 +163,14 @@ class _PreparedClaim(BaseModel):
     evidence_refs: list[str]
 
 
-class _EvidencePreparationPayload(BaseModel):
+class _PreparationPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reason: str = Field(max_length=360)
     claims: list[_PreparedClaim]
 
 
-class _GroundingReleasePayload(BaseModel):
+class _ReleasePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
@@ -223,6 +178,39 @@ class _GroundingReleasePayload(BaseModel):
     claims: list["_ClaimReviewPayload"]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
+
+
+def _evidence_entries(
+    tool_results: Sequence[ToolVerificationResult], user_messages: Sequence[str],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    entries: list[dict[str, Any]] = []
+    lookup: dict[str, dict[str, Any]] = {}
+
+    def walk(tool: str, source_index: int, value: Any, path: list[str | int]) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                walk(tool, source_index, child, [*path, key])
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                walk(tool, source_index, child, [*path, index])
+        else:
+            ref = f"e{len(entries)}"
+            item = {"ref": ref, "tool": tool, "source_index": source_index,
+                    "path": path, "value": value}
+            entries.append(item)
+            lookup[ref] = item
+
+    for index, (tool, success, _error, content) in enumerate(tool_results):
+        if not success:
+            continue
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = content
+        walk(tool, index, parsed, [])
+    for index, content in enumerate(user_messages):
+        walk("user_input", index, content, [])
+    return entries, lookup
 
 
 class _ClaimReviewPayload(BaseModel):
@@ -590,141 +578,106 @@ class FinalGroundingVerifier:
             raise RuntimeError("numeric reviewer failed; release was not verified") from exc
 
     async def _review_final(
-        self,
-        *,
-        candidate: str,
-        messages: Sequence[Mapping[str, Any]],
+        self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
         user_messages = [str(message["content"]) for message in messages
                          if message.get("role") == "user" and isinstance(message.get("content"), str)]
-        evidence_entries, evidence_lookup = _structured_evidence_index(tool_results, user_messages)
-        preparation_payload = {
+        entries, lookup = _evidence_entries(tool_results, user_messages)
+        prepare_input = {
             **{key: value for key, value in payload.items()
-               if key not in ("tool_results_in_execution_order", "user_input_sources")},
-            "evidence_entries": evidence_entries,
+               if key != "tool_results_in_execution_order"},
+            "evidence_entries": entries,
         }
-        prepare_request = ChatRequest(
+        request = ChatRequest(
             messages=(
-                {"role": "system", "content": _EVIDENCE_PREPARATION_SYSTEM},
-                {"role": "user", "content": json.dumps(preparation_payload, ensure_ascii=False)},
-            ),
-            tools=(),
-            think=False,
-            response_format=_EvidencePreparationPayload.model_json_schema(),
+                {"role": "system", "content": _PREPARE_SYSTEM},
+                {"role": "user", "content": json.dumps(prepare_input, ensure_ascii=False)},
+            ), tools=(), think=False, response_format=_PreparationPayload.model_json_schema(),
         )
-        prepared = await self._request_structured_review(
-            prepare_request, _EvidencePreparationPayload, label="evidence_preparation"
-        )
+        prepared = await self._request_structured_review(request, _PreparationPayload)
         if prepared.coverage_verdict == "insufficient":
-            if not prepared.coverage_reason.strip():
-                raise OllamaProtocolError("coverage rejected without an actionable reason")
-            if prepared.claims:
-                raise OllamaProtocolError("coverage rejection must not contain extracted claims")
+            if not prepared.coverage_reason.strip() or prepared.claims:
+                raise OllamaProtocolError("coverage rejection must contain a reason and no claims")
             return FinalReview(
-                evidence_verdict="uncertain",
-                alignment_verdict="uncertain",
+                evidence_verdict="uncertain", alignment_verdict="uncertain",
                 coverage_verdict="insufficient",
                 coverage_reasons=(prepared.coverage_reason.strip(),),
-                reasons=(),
-                claims=(),
-                action_verdict="not_applicable",
+                reasons=(), claims=(), action_verdict="not_applicable",
                 retry_summary=prepared.coverage_reason.strip(),
             )
         if prepared.coverage_reason.strip():
-            raise OllamaProtocolError("non-rejected coverage must not contain rejection reason")
+            raise OllamaProtocolError("coverage reason must be empty unless rejected")
 
-        validated_claims: list[dict[str, Any]] = []
+        resolved: list[dict[str, Any]] = []
         for claim in prepared.claims:
-            resolved: list[dict[str, Any]] = []
+            selected: list[dict[str, Any]] = []
             for ref in claim.evidence_refs:
-                entry = evidence_lookup.get(ref)
-                if entry is None:
-                    resolved.append({"ref": ref, "citation_status": "invalid_reference",
-                                     "tool": None, "source_index": None, "path": None, "value": None})
-                else:
-                    resolved.append({**entry, "citation_status": "valid"})
-            validated_claims.append({
-                "claim": claim.claim,
-                "evidence": resolved,
-                "citation_status": ("unlocated" if not resolved else
-                                    "invalid_reference" if any(item["citation_status"] != "valid" for item in resolved)
-                                    else "valid"),
+                item = lookup.get(ref)
+                selected.append(({**item, "citation_status": "valid"} if item is not None
+                                 else {"ref": ref, "citation_status": "invalid_reference"}))
+            resolved.append({
+                "claim": claim.claim, "evidence": selected,
+                "citation_status": ("unlocated" if not selected else
+                                    "invalid_reference" if any(
+                                        item["citation_status"] != "valid" for item in selected
+                                    ) else "valid"),
             })
-        validated_preparation = prepared.model_dump()
-        validated_preparation["claims"] = validated_claims
         _LOG.info(
-            "MAI verifier stage2 coverage=%s claims=%d evidence_entries=%d "
-            "selected_refs=%d valid_refs=%d invalid_refs=%d unlocated_claims=%d",
-            prepared.coverage_verdict, len(prepared.claims), len(evidence_entries),
-            sum(len(claim.evidence_refs) for claim in prepared.claims),
-            sum(item["citation_status"] == "valid" for claim in validated_claims
-                for item in claim["evidence"]),
-            sum(item["citation_status"] == "invalid_reference" for claim in validated_claims
-                for item in claim["evidence"]),
-            sum(not claim["evidence"] for claim in validated_claims),
+            "MAI verifier indexed evidence entries=%d claims=%d selected_refs=%d",
+            len(entries), len(resolved), sum(len(item["evidence"]) for item in resolved),
         )
+        release_input = {
+            "current_user_request": payload["current_user_request"],
+            "conversation_context": payload["conversation_context"],
+            "authoritative_current_time": payload["authoritative_current_time"],
+            "candidate_final": candidate, "prepared_claims": resolved,
+        }
         release_request = ChatRequest(
             messages=(
-                {"role": "system", "content": _GROUNDING_RELEASE_SYSTEM},
-                {"role": "user", "content": json.dumps({
-                    "current_user_request": payload["current_user_request"],
-                    "conversation_context": payload["conversation_context"],
-                    "candidate_final": candidate,
-                    "prepared_evidence": validated_preparation,
-                }, ensure_ascii=False)},
-            ),
-            tools=(),
-            think=False,
-            response_format=_GroundingReleasePayload.model_json_schema(),
+                {"role": "system", "content": _RELEASE_SYSTEM},
+                {"role": "user", "content": json.dumps(release_input, ensure_ascii=False)},
+            ), tools=(), think=False, response_format=_ReleasePayload.model_json_schema(),
         )
-        parsed = await self._request_structured_review(
-            release_request, _GroundingReleasePayload, label="grounding_release"
-        )
-        expected = [claim.claim for claim in prepared.claims]
-        returned = [claim.claim for claim in parsed.claims]
-        if len(set(expected)) != len(expected) or len(set(returned)) != len(returned) or set(expected) != set(returned):
-            raise OllamaProtocolError("grounding release claims do not match prepared evidence claims")
-        for claim, checked in zip(parsed.claims, validated_claims):
-            if claim.claim != checked["claim"]:
-                raise OllamaProtocolError("release verdict order differs from validated claim index")
-            if checked["citation_status"] != "valid" and claim.verdict == "supported":
-                raise OllamaProtocolError("release reviewer approved a claim without a valid citation")
-        reasons = tuple(dict.fromkeys(reason.strip() for reason in parsed.reasons if reason.strip()))
+        released = await self._request_structured_review(release_request, _ReleasePayload)
+        if [claim.claim for claim in released.claims] != [claim.claim for claim in prepared.claims]:
+            raise OllamaProtocolError("stage 3 claim verdicts do not match prepared claims")
+        for verdict, item in zip(released.claims, resolved):
+            if verdict.verdict == "supported" and not any(
+                evidence["citation_status"] == "valid" for evidence in item["evidence"]
+            ):
+                raise OllamaProtocolError("claim approved without a valid evidence reference")
         claims = tuple(ClaimReview(
-            claim=item.claim.strip(), verdict=item.verdict,
-            defect=item.defect, reason=item.reason.strip(),
-        ) for item in parsed.claims)
-        evidence_verdict = ("unsupported" if any(item.verdict == "unsupported" for item in claims)
-                            else parsed.evidence_verdict)
+            claim=claim.claim, verdict=claim.verdict,
+            defect=claim.defect, reason=claim.reason,
+        ) for claim in released.claims)
         return FinalReview(
-            evidence_verdict=evidence_verdict,
-            alignment_verdict=parsed.alignment_verdict,
-            coverage_verdict=prepared.coverage_verdict,
-            coverage_reasons=(),
-            reasons=reasons,
-            claims=claims,
-            action_verdict=parsed.action_verdict,
-            retry_summary=parsed.retry_summary,
+            evidence_verdict=("unsupported" if any(c.verdict == "unsupported" for c in claims)
+                              else released.evidence_verdict),
+            alignment_verdict=released.alignment_verdict,
+            coverage_verdict=prepared.coverage_verdict, coverage_reasons=(),
+            reasons=tuple(dict.fromkeys(reason.strip() for reason in released.reasons if reason.strip())),
+            claims=claims, action_verdict=released.action_verdict,
+            retry_summary=released.retry_summary,
         )
 
     async def _request_structured_review(
-        self, request: ChatRequest, schema: type[BaseModel], *, label: str,
+        self, request: ChatRequest, schema: type[BaseModel],
     ) -> BaseModel:
         for attempt in range(1, 4):
             try:
-                response = await asyncio.wait_for(
-                    self.reviewer_adapter.chat(request), timeout=self.reviewer_timeout_seconds,
+                result = await asyncio.wait_for(
+                    self.reviewer_adapter.chat(request), timeout=self.reviewer_timeout_seconds
                 )
-                return schema.model_validate_json(response.content, strict=True)
-            except (TimeoutError, OllamaChatTimeoutError, OllamaProtocolError, ValidationError,
-                    httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
-                _LOG.warning("MAI %s retry attempt=%d/3 error=%s", label, attempt, type(exc).__name__)
+                return schema.model_validate_json(result.content, strict=True)
+            except (TimeoutError, OllamaChatTimeoutError, OllamaProtocolError,
+                    ValidationError, httpx.NetworkError, httpx.TimeoutException,
+                    httpx.RemoteProtocolError):
                 if attempt == 3:
                     raise
                 await asyncio.sleep(0.25 * attempt)
-        raise RuntimeError("unreachable verifier review retry state")
+        raise AssertionError("unreachable reviewer retry state")
 
     async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
         payload = await self._request_structured_review(request, _FinalReviewPayload, label="final")
