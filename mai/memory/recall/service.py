@@ -46,7 +46,6 @@ class RecallService:
                     continue
                 path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
                 if path is not None:
-                    recalled.merge(compact, mark_expanded=False)
                     recalled.merge(self._facts_only(path), mark_expanded=False)
         return recalled
 
