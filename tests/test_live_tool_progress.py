@@ -65,7 +65,7 @@ def test_completed_tool_executions_are_published_in_order() -> None:
         handler=lambda text: text.upper(),
     )
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "denied"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),)),
         assistant_turn(calls=(
             NativeToolCall(name="echo", arguments={"text": "first"}, index=0),
             NativeToolCall(name="echo", arguments={"text": "second"}, index=1),
@@ -97,7 +97,7 @@ def test_failed_tool_execution_is_published_without_hiding_failure() -> None:
         handler=denied,
     )
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "denied"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["denied"]}),)),
         assistant_turn(calls=(NativeToolCall(name="denied", arguments={"text": "blocked"}),)),
         assistant_turn(content="could not complete"),
     ])
@@ -123,7 +123,7 @@ def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
         handler=lambda text: text,
     )
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "denied"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),)),
         assistant_turn(
             thinking="I should inspect the tool result first.",
             calls=(NativeToolCall(name="echo", arguments={"text": "value"}),),
