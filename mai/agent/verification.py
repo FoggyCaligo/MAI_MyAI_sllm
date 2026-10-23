@@ -17,6 +17,7 @@ import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
+import os
 import logging
 import re
 from typing import Any, Literal, Mapping, Sequence
@@ -59,21 +60,12 @@ Judge only numeric/date grounding for the flagged values. Do not decide overall 
 - Preserve units and measurement types: characters, bytes, file size and tokens are not interchangeable. A missing size measurement is lack of evidence, not proof of a different size.
 """.strip()
 
-_FINAL_REVIEW_SYSTEM = """
-You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
-
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
-
-Your response is constrained by the supplied structured-output schema. Populate every required field.
-Keep full, precise, independent material findings in the detailed review fields without arbitrary count or character limits. Write the separate retry_summary in concise English, avoiding translations, repeated claims and filler.
-- evidence_verdict: "supported", "unsupported", or "uncertain"
-- alignment_verdict: "aligned", "misaligned", or "uncertain"
-- coverage_verdict: "sufficient", "insufficient", or "uncertain"
-- coverage_reasons: concrete material omissions from already supplied evidence only
-- reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
-- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
-- retry_summary: for a rejected candidate, one concise English correction instruction (1–800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. For an accepted candidate, set this field to "No correction needed." Keep full details in reasons and claims; never omit actual findings to shorten this summary.
+_FACTUAL_REVIEW_SYSTEM = """
+You are the factual grounding reviewer for a provisional answer. Do not call tools,
+rewrite the answer, assess answer completeness or demand optional details.
+Use the original current user request, conversation context and observed tool evidence.
+Return claim-level grounding, action-outcome evidence and blocking factual reasons.
+Do not judge coverage or task alignment. Reject unsupported factual expansion.
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
@@ -100,14 +92,6 @@ Evidence scope preservation:
 - Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
-Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
-- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
-- Prefer concrete supported results over replacing them with generic advice to check another source later.
-- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
-- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
-- coverage_reasons must identify the concrete already-observed information that the candidate should have used. Never require inclusion of a claim marked unsupported or inferred solely from a rejected draft. If coverage is sufficient or uncertain, coverage_reasons should be empty.
-
 Action outcome verification:
 - Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
 - If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
@@ -117,6 +101,29 @@ Action outcome verification:
 - Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
+Set evidence_verdict=supported only when no material factual claim is unsupported.
+If no requested external state change is claimed, action_verdict=not_applicable.
+Return the required structured schema. retry_summary is concise, actionable English.
+""".strip()
+
+_QUALITY_REVIEW_SYSTEM = """
+You are an answer-quality reviewer, not a factual grounding reviewer.
+The factual grounding stage has already accepted this provisional answer.
+Do not re-evaluate grounded factual claims or demand new research.
+Judge whether the answer meets the user's actual request, preserves a truthful
+partial answer when appropriate, and covers material already-established findings.
+Use the factual review summary to understand what has been established.
+No tool use, no answer rewriting; return the structured schema.
+
+Evidence coverage:
+- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
+- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
+- Prefer concrete supported results over replacing them with generic advice to check another source later.
+- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
+- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
+- coverage_reasons must identify the concrete already-observed information that the candidate should have used. Never require inclusion of a claim marked unsupported or inferred solely from a rejected draft. If coverage is sufficient or uncertain, coverage_reasons should be empty.
+
+
 Task alignment and partial-answer policy:
 - Identify the user's current request from the latest user message, resolving references from conversational context when needed.
 - Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
@@ -125,92 +132,9 @@ Task alignment and partial-answer policy:
 - Do reject a candidate that hides a material failure and presents an unverified result as completed.
 - Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
 
-Overall verdicts:
-- evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
-- evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
-- evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
+For accepted quality verdicts return concise reasons=[] and retry_summary="No correction needed.".
+For rejected verdicts provide actionable reasons without proposing unsupported new facts.
 """.strip()
-
-
-_PREPARE_SYSTEM = """Stage 2 verifier. Inspect candidate, current request and observed evidence entries.
-Decide coverage first. A representative summary satisfies an open-ended summary request;
-do not demand optional or exhaustive details. If a specifically requested essential
-outcome is missing, return insufficient with one short actionable coverage_reason
-and claims=[]; downstream review will be skipped.
-Otherwise return sufficient (or uncertain); coverage_reason is non-blocking commentary\nand is not a rejection instruction. Identify distinct
-objective factual claims (not opinions or speculation). Assign to each claim the refs
-of relevant evidence entries; no matching evidence means evidence_refs=[].
-Refs are identifiers only. Do not invent refs, generate quotations, or calculate offsets.
-Do not adjudicate the claims' truth; stage 3 will do that.
-""".strip()
-
-_RELEASE_SYSTEM = """Stage 3 verifier. Use provided prepared claims, their actual source values,
-the candidate, current user request and context. Decide claim-by-claim whether evidence
-actually supports the meaning, scope, date and precision of each claim. Valid reference
-means the source exists, not that it supports the claim. Invalid/missing refs cannot
-establish support. Absence of evidence is not proof of contradiction. Evaluate alignment
-with the requested outcome and resulting state of claimed external actions. Do not
-demand optional background or exhaustive listing. Return concise actionable reasons
-only for material defects; preserve a truthful partial answer. Every prepared claim
-requires an individual verdict and the exact same claim text. Do not call tools.
-""".strip()
-
-
-class _PreparedClaim(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    claim: str
-    evidence_refs: list[str]
-
-
-class _PreparationPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
-    coverage_reason: str = Field(max_length=360)
-    claims: list[_PreparedClaim]
-
-
-class _ReleasePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    evidence_verdict: Literal["supported", "unsupported", "uncertain"]
-    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
-    reasons: list[str]
-    claims: list["_ClaimReviewPayload"]
-    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
-    retry_summary: str = Field(min_length=1, max_length=800)
-
-
-def _evidence_entries(
-    tool_results: Sequence[ToolVerificationResult], user_messages: Sequence[str],
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    entries: list[dict[str, Any]] = []
-    lookup: dict[str, dict[str, Any]] = {}
-
-    def walk(tool: str, source_index: int, value: Any, path: list[str | int]) -> None:
-        if isinstance(value, dict):
-            for key, child in value.items():
-                walk(tool, source_index, child, [*path, key])
-        elif isinstance(value, list):
-            for index, child in enumerate(value):
-                walk(tool, source_index, child, [*path, index])
-        else:
-            ref = f"e{len(entries)}"
-            item = {"ref": ref, "tool": tool, "source_index": source_index,
-                    "path": path, "value": value}
-            entries.append(item)
-            lookup[ref] = item
-
-    for index, (tool, success, _error, content) in enumerate(tool_results):
-        if not success:
-            continue
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            parsed = content
-        walk(tool, index, parsed, [])
-    for index, content in enumerate(user_messages):
-        walk("user_input", index, content, [])
-    return entries, lookup
 
 
 class _ClaimReviewPayload(BaseModel):
@@ -228,18 +152,21 @@ class _ClaimReviewPayload(BaseModel):
     reason: str
 
 
-class _FinalReviewPayload(BaseModel):
-    """Strict provider-structured reviewer response."""
-
+class _FactualReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
+    reasons: list[str]
+    claims: list[_ClaimReviewPayload]
+    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
+    retry_summary: str = Field(min_length=1, max_length=800)
+
+
+class _QualityReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     reasons: list[str]
-    claims: list[_ClaimReviewPayload]
-    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
 
 
@@ -345,11 +272,18 @@ class FinalGroundingVerifier:
         reviewer_adapter: OllamaAdapter | None = None,
         *,
         reviewer_timeout_seconds: float | None = None,
+        quality_review_enabled: bool | None = None,
     ) -> None:
         if reviewer_timeout_seconds is not None and reviewer_timeout_seconds <= 0:
             raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
+        if quality_review_enabled is None:
+            raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "true").lower()
+            if raw not in {"true", "false"}:
+                raise ValueError("MAI_ANSWER_QUALITY_REVIEW must be true or false")
+            quality_review_enabled = raw == "true"
+        self.quality_review_enabled = quality_review_enabled
 
     async def verify(
         self,
@@ -418,6 +352,10 @@ class FinalGroundingVerifier:
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
+            run_quality_review=(
+                self.quality_review_enabled and numeric_issue is None
+                and allow_evidence_review and allow_semantic_review and allow_coverage_review
+            ),
         )
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
@@ -579,92 +517,77 @@ class FinalGroundingVerifier:
 
     async def _review_final(
         self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult],
+        tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
-        user_messages = [str(message["content"]) for message in messages
-                         if message.get("role") == "user" and isinstance(message.get("content"), str)]
-        entries, lookup = _evidence_entries(tool_results, user_messages)
-        prepare_input = {
-            **{key: value for key, value in payload.items()
-               if key != "tool_results_in_execution_order"},
-            "evidence_entries": entries,
-        }
-        request = ChatRequest(
+        fact_request = ChatRequest(
             messages=(
-                {"role": "system", "content": _PREPARE_SYSTEM},
-                {"role": "user", "content": json.dumps(prepare_input, ensure_ascii=False)},
-            ), tools=(), think=False, response_format=_PreparationPayload.model_json_schema(),
+                {"role": "system", "content": _FACTUAL_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(), think=False, response_format=_FactualReviewPayload.model_json_schema(),
         )
-        prepared = await self._request_structured_review(request, _PreparationPayload, label="preparation")
-        if prepared.coverage_verdict == "insufficient":
-            if not prepared.coverage_reason.strip() or prepared.claims:
-                raise OllamaProtocolError("coverage rejection must contain a reason and no claims")
+        facts = await self._request_structured_review(
+            fact_request, _FactualReviewPayload, label="factual"
+        )
+        claims = tuple(ClaimReview(
+            claim=item.claim.strip(), verdict=item.verdict,
+            defect=item.defect, reason=item.reason.strip(),
+        ) for item in facts.claims)
+        evidence_verdict = (
+            "unsupported" if any(item.verdict == "unsupported" for item in claims)
+            else facts.evidence_verdict
+        )
+        factual_reasons = tuple(dict.fromkeys(
+            reason.strip() for reason in facts.reasons if reason.strip()
+        ))
+        # Quality is a separate, optional gate. Never run it on a rejected factual
+        # candidate; the next agent turn must re-run factual verification.
+        factual_pass = evidence_verdict == "supported" and facts.action_verdict in (
+            "not_applicable", "verified"
+        )
+        if not (run_quality_review and factual_pass):
             return FinalReview(
-                evidence_verdict="uncertain", alignment_verdict="uncertain",
-                coverage_verdict="insufficient",
-                coverage_reasons=(prepared.coverage_reason.strip(),),
-                reasons=(), claims=(), action_verdict="not_applicable",
-                retry_summary=prepared.coverage_reason.strip(),
+                evidence_verdict=evidence_verdict, alignment_verdict="aligned",
+                coverage_verdict="sufficient", coverage_reasons=(),
+                reasons=factual_reasons, claims=claims,
+                action_verdict=facts.action_verdict,
+                retry_summary=facts.retry_summary,
             )
 
-        resolved: list[dict[str, Any]] = []
-        for claim in prepared.claims:
-            selected: list[dict[str, Any]] = []
-            for ref in claim.evidence_refs:
-                item = lookup.get(ref)
-                selected.append(({**item, "citation_status": "valid"} if item is not None
-                                 else {"ref": ref, "citation_status": "invalid_reference"}))
-            resolved.append({
-                "claim": claim.claim, "evidence": selected,
-                "citation_status": ("unlocated" if not selected else
-                                    "invalid_reference" if any(
-                                        item["citation_status"] != "valid" for item in selected
-                                    ) else "valid"),
-            })
-        _LOG.info(
-            "MAI verifier indexed evidence entries=%d claims=%d selected_refs=%d",
-            len(entries), len(resolved), sum(len(item["evidence"]) for item in resolved),
-        )
-        release_input = {
+        quality_input = {
             "current_user_request": payload["current_user_request"],
             "conversation_context": payload["conversation_context"],
-            "authoritative_current_time": payload["authoritative_current_time"],
-            "candidate_final": candidate, "prepared_claims": resolved,
+            "candidate_final": candidate,
+            "factual_review": {
+                "evidence_verdict": evidence_verdict,
+                "action_verdict": facts.action_verdict,
+                "claims": [item.model_dump() for item in facts.claims],
+            },
         }
-        release_request = ChatRequest(
+        quality_request = ChatRequest(
             messages=(
-                {"role": "system", "content": _RELEASE_SYSTEM},
-                {"role": "user", "content": json.dumps(release_input, ensure_ascii=False)},
-            ), tools=(), think=False, response_format=_ReleasePayload.model_json_schema(),
+                {"role": "system", "content": _QUALITY_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps(quality_input, ensure_ascii=False)},
+            ),
+            tools=(), think=False, response_format=_QualityReviewPayload.model_json_schema(),
         )
-        released = await self._request_structured_review(release_request, _ReleasePayload, label="release")
-        if [claim.claim for claim in released.claims] != [claim.claim for claim in prepared.claims]:
-            raise OllamaProtocolError("stage 3 claim verdicts do not match prepared claims")
-        for verdict, item in zip(released.claims, resolved):
-            if verdict.verdict == "supported" and not any(
-                evidence["citation_status"] == "valid" for evidence in item["evidence"]
-            ):
-                raise OllamaProtocolError("claim approved without a valid evidence reference")
-        claims = tuple(ClaimReview(
-            claim=claim.claim, verdict=claim.verdict,
-            defect=claim.defect, reason=claim.reason,
-        ) for claim in released.claims)
+        quality = await self._request_structured_review(
+            quality_request, _QualityReviewPayload, label="quality"
+        )
         return FinalReview(
-            evidence_verdict=("unsupported" if any(c.verdict == "unsupported" for c in claims)
-                              else released.evidence_verdict),
-            alignment_verdict=released.alignment_verdict,
-            coverage_verdict=prepared.coverage_verdict, coverage_reasons=(),
-            reasons=tuple(dict.fromkeys(reason.strip() for reason in released.reasons if reason.strip())),
-            claims=claims, action_verdict=released.action_verdict,
-            retry_summary=released.retry_summary,
+            evidence_verdict=evidence_verdict,
+            alignment_verdict=quality.alignment_verdict,
+            coverage_verdict=quality.coverage_verdict,
+            coverage_reasons=tuple(dict.fromkeys(
+                reason.strip() for reason in quality.coverage_reasons if reason.strip()
+            )),
+            reasons=factual_reasons + tuple(dict.fromkeys(
+                reason.strip() for reason in quality.reasons if reason.strip()
+            )),
+            claims=claims, action_verdict=facts.action_verdict,
+            retry_summary=quality.retry_summary,
         )
-
-    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
-        payload = await self._request_structured_review(request, _FinalReviewPayload, label="final")
-        if not isinstance(payload, _FinalReviewPayload):
-            raise AssertionError("unexpected final reviewer payload type")
-        return payload
 
     async def _request_numeric_review(self, request: ChatRequest) -> _NumericReviewPayload:
         payload = await self._request_structured_review(request, _NumericReviewPayload, label="numeric")
