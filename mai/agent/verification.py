@@ -30,33 +30,33 @@ _LOG = logging.getLogger("uvicorn.error")
 
 _FINAL_REVIEW_SYSTEM = """
 You are the sole final-answer evidence reviewer. Do not call tools, rewrite the answer or add requirements.
-Read the deduplicated lightweight_evidence corpus first, then follow each claim_index reference by evidence_id and exact offsets. The same excerpt may support multiple claims. Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict. Supported claims need only a concise reason (for example, a source location); detailed reasons are required only for unsupported claims. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
+Read the deduplicated lightweight_evidence corpus first, then follow each claim_index reference by evidence_id and exact offsets. The same excerpt may support multiple claims. Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict. Supported claims require only a short source reference. For unsupported or uncertain claims, give a short actionable reason and cite a source reference when present. Do not write long explanations or repeat entire excerpts. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
 - Support factual claims only when observed evidence supports their actual meaning and scope; distinguish absence of evidence from direct contradiction. Do not fabricate counterfacts or causal explanations.
 - An unsuccessful phrase search means only that no match was located in the selected tool-result scope. It cannot prove global absence or falsity. State uncertainty when the available excerpts are insufficient.
 - For translations, summaries and rewrites, judge fidelity to the source meaning, not literal wording. Retaining target-language text and proper names is valid.
 - Treat numerically equivalent expressions as supported, including comma/date formatting, meaningful approximations (e.g. about 1,000 for 1,037), sensible rounding, and mathematically equivalent unit conversions. Reject misleading precision or approximation. Do not confuse characters, bytes, file size, and tokens.
 - Distinguish local and remote state, partial and exhaustive sets, source reports and confirmed facts, claims and conjectures, and current timestamps from historical ones.
 - Past assistant messages and rejected drafts provide context, not evidence. The user and successful observed tool results may provide evidence. Web search snippets support what a result states, not automatically the underlying truth.
-- On rejection, explain each defective claim with tool name, result index and source offsets where available. Never invent evidence offsets. Reasons must distinguish missing evidence, contradiction, unsupported inference and scope expansion.
+- On rejection, state only the defect and the relevant tool name, result index and source offsets where available, concisely. Never invent evidence offsets. Reasons must distinguish missing evidence, contradiction, unsupported inference and scope expansion.
 Return the structured evidence verdict, claims, and reasons. Use unsupported for asserted claims lacking support, uncertain for reviewer uncertainty; do not conflate the two.
 """.strip()
 
 _TASK_REVIEW_SYSTEM = """You are stage A: task-alignment, evidence-coverage, and action-outcome reviewer.
 Use the latest user request, prior conversation for context, candidate answer, and observed successful tool results.
 - Determine only whether essential requested outcomes are answered. Do not reject accurate, useful answers for optional details, style, or preferences not requested. A truthful partial result or failure report is acceptable.
-- Mark coverage insufficient only if a specific, already-observed, essential user-relevant fact is omitted AND the omission prevents a useful answer. Describe the exact observed fact; do not require exhaustive enumeration, unsupported claims, or extra research.
+- Coverage is sufficient for a representative summary that fulfills an open-ended request. Do NOT require enumeration of every observed fact, even when it is personal or important. Mark insufficient ONLY when a specifically requested essential item is omitted or an omission makes the requested outcome unusable. Identify that specific requirement and omission.
 - Verify external-action completion from actual resulting state. Successful invocation alone does not establish a broader outcome.
 - Distinguish missing evidence from contradicted facts. Do not invent evidence or demand contents of a rejected draft.
-- Provide concrete blocking reasons for alignment, coverage, or action failures.
+- Output only actionable defects. On acceptance return empty reasons arrays. On rejection use one short reason per failed axis, stating the missing requirement or unverified action. Never recap supported facts, praise the answer, or repeat the whole assessment.
 - Do not extract or adjudicate individual factual claims; a separate stage B does that.
 Return the required structured fields."""
 
-_CLAIM_EXTRACTION_SYSTEM = """You are stage B, dedicated to extraction only. Read the candidate answer and extract every material factual assertion, quantitative or date claim, source-dependent detail, and reported completion assertion as individual claims. Preserve the candidate's meaning. Produce distinctive literal search terms and possible source-language equivalents. Do not judge accuracy, user alignment, coverage, completion, or support; never invent quotations or evidence. Return only the required claims schema."""
+_CLAIM_EXTRACTION_SYSTEM = """You are stage B, dedicated to extraction only. Read only the candidate answer. Extract concise, distinct, objectively checkable factual assertions: concrete identities, attributes, amounts, dates, external facts, and claimed completed actions. Exclude opinions, politeness, recommendations, rhetorical phrasing, user requests, speculative language, and meta-commentary about the answer. Merge repeated assertions of the same fact without dropping independently checkable facts. Preserve the candidate's meaning. For each fact produce 1 to 5 distinctive search terms, preferably exact proper names, numbers and source-language equivalents. Avoid verbose variants and repeated terms. Do not judge accuracy, user alignment, coverage, completion, or support; never invent quotations or evidence. Return only the required claims schema."""
 
 class _ClaimSearch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     claim: str
-    queries: list[str]
+    queries: list[str] = Field(min_length=1, max_length=5)
 
 class _TaskReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -222,7 +222,7 @@ class _ClaimReviewPayload(BaseModel):
         "unsupported_inference",
         "missing_evidence",
     ]
-    reason: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=280)
 
 
 class _FinalReviewPayload(BaseModel):
@@ -233,7 +233,7 @@ class _FinalReviewPayload(BaseModel):
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
-    retry_summary: str = Field(min_length=1, max_length=800)
+    retry_summary: str = Field(min_length=1, max_length=280)
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +500,14 @@ class FinalGroundingVerifier:
             raise OllamaProtocolError("claim extractor returned unexpected schema")
         payload = {}
         payload.update(_retrieve_claim_evidence(extracted.claims, corpus, locations))
+        lightweight_chars = sum(len(item["text"]) for item in payload["lightweight_evidence"])
+        indexed_matches = sum(len(item["references"]) for item in payload["claim_index"])
+        _LOG.info(
+            "MAI verifier evidence metrics original_chars=%d lightweight_chars=%d saved_chars=%d snippets=%d claims=%d matched_claims=%d matches=%d",
+            len(corpus), lightweight_chars, len(corpus) - lightweight_chars,
+            len(payload["lightweight_evidence"]), len(extracted.claims),
+            sum(bool(item["references"]) for item in payload["claim_index"]), indexed_matches,
+        )
         payload["evidence_scope"] = {
             "indexed_sources": len(locations),
             "corpus_chars": len(corpus),
