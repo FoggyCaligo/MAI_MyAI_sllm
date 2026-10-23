@@ -7,12 +7,18 @@ Ollama's native chat protocol.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
+from uuid import uuid4
 from collections.abc import Mapping
 from typing import Any, Protocol
 
 from ollama import AsyncClient, ResponseError
 
 from .models import ChatRequest, ModelConfig, ModelTurn, NativeToolCall
+
+_LOG = logging.getLogger("uvicorn.error")
+_OLLAMA_TIMING_FIELDS = ("total_duration", "load_duration", "prompt_eval_duration", "eval_duration", "prompt_eval_count", "eval_count")
 
 
 class OllamaAdapterError(RuntimeError):
@@ -64,18 +70,32 @@ class OllamaAdapter:
                 else request.response_format
             )
 
+        request_id = uuid4().hex[:12]
+        started = time.perf_counter()
+        _LOG.info(
+            "MAI Ollama request start id=%s model=%s messages=%d tools=%d input_chars=%d timeout_seconds=%g",
+            request_id, self.config.model, len(payload["messages"]), len(payload["tools"]),
+            sum(len(str(message)) for message in payload["messages"]), self.config.request_timeout_seconds,
+        )
         try:
             response = await asyncio.wait_for(
                 self._client.chat(**payload),
                 timeout=self.config.request_timeout_seconds,
             )
         except asyncio.TimeoutError as exc:
+            _LOG.error("MAI Ollama request timeout id=%s model=%s elapsed_seconds=%.3f", request_id, self.config.model, time.perf_counter() - started)
             raise OllamaChatTimeoutError(
                 f"Ollama chat request exceeded {self.config.request_timeout_seconds:g} seconds"
             ) from exc
         except ResponseError as exc:
+            _LOG.error("MAI Ollama request rejected id=%s model=%s elapsed_seconds=%.3f", request_id, self.config.model, time.perf_counter() - started)
             raise OllamaRequestError("Ollama chat request failed") from exc
 
+        _LOG.info(
+            "MAI Ollama request complete id=%s model=%s elapsed_seconds=%.3f %s",
+            request_id, self.config.model, time.perf_counter() - started,
+            " ".join(f"{key}={_read_field(response, key)}" for key in _OLLAMA_TIMING_FIELDS),
+        )
         return _normalize_response(response)
 
 
