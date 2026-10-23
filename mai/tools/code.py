@@ -7,6 +7,7 @@ file filters, parser choice, and bounds are explicit tool arguments.
 from __future__ import annotations
 
 import ast
+import importlib
 import os
 import re
 from pathlib import Path
@@ -44,7 +45,7 @@ class CodeReadInput(_StrictModel):
 
 class CodeSymbolsInput(_StrictModel):
     path: str
-    parser: Literal["python"]
+    parser: Literal["python", "javascript", "typescript", "tsx", "c", "cpp", "java", "go", "rust", "ruby"]
     encoding: str = "utf-8"
 
 
@@ -212,7 +213,127 @@ class _PythonSymbolVisitor(ast.NodeVisitor):
         self.symbols.append({"name": node.name, "qualified_name": qualified, "kind": kind, "line": node.lineno, "end_line": getattr(node, "end_lineno", node.lineno)})
 
 
-def code_symbols(*, path: str, parser: Literal["python"], encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
+
+# Explicit language grammars and syntax-node contracts. No file-extension inference.
+_TREE_SITTER_GRAMMARS: dict[str, tuple[str, str]] = {
+    "javascript": ("tree_sitter_javascript", "language"),
+    "typescript": ("tree_sitter_typescript", "language_typescript"),
+    "tsx": ("tree_sitter_typescript", "language_tsx"),
+    "c": ("tree_sitter_c", "language"),
+    "cpp": ("tree_sitter_cpp", "language"),
+    "java": ("tree_sitter_java", "language"),
+    "go": ("tree_sitter_go", "language"),
+    "rust": ("tree_sitter_rust", "language"),
+    "ruby": ("tree_sitter_ruby", "language"),
+}
+
+# Keys are grammar-defined node types, not text-matching guesses.
+_SYMBOL_NODES: dict[str, dict[str, str]] = {
+    "javascript": {
+        "class_declaration": "class",
+        "function_declaration": "function",
+        "generator_function_declaration": "function",
+        "method_definition": "method",
+    },
+    "typescript": {
+        "class_declaration": "class",
+        "abstract_class_declaration": "class",
+        "interface_declaration": "interface",
+        "function_declaration": "function",
+        "generator_function_declaration": "function",
+        "method_definition": "method",
+        "method_signature": "method",
+    },
+    "tsx": {
+        "class_declaration": "class",
+        "abstract_class_declaration": "class",
+        "interface_declaration": "interface",
+        "function_declaration": "function",
+        "generator_function_declaration": "function",
+        "method_definition": "method",
+        "method_signature": "method",
+    },
+    "c": {"function_definition": "function", "struct_specifier": "struct", "enum_specifier": "enum"},
+    "cpp": {
+        "function_definition": "function",
+        "class_specifier": "class",
+        "struct_specifier": "struct",
+        "namespace_definition": "namespace",
+    },
+    "java": {
+        "class_declaration": "class",
+        "interface_declaration": "interface",
+        "enum_declaration": "enum",
+        "method_declaration": "method",
+        "constructor_declaration": "constructor",
+    },
+    "go": {
+        "function_declaration": "function",
+        "method_declaration": "method",
+        "type_spec": "type",
+    },
+    "rust": {
+        "function_item": "function",
+        "struct_item": "struct",
+        "enum_item": "enum",
+        "trait_item": "trait",
+        "impl_item": "impl",
+        "mod_item": "module",
+    },
+    "ruby": {"class": "class", "module": "module", "method": "method", "singleton_method": "method"},
+}
+
+_SCOPE_KINDS = frozenset({"class", "interface", "enum", "struct", "trait", "module", "namespace", "impl", "type"})
+
+
+def _tree_sitter_symbols(source: str, language: str, filename: str) -> list[dict[str, Any]]:
+    from tree_sitter import Language, Parser
+
+    module_name, factory_name = _TREE_SITTER_GRAMMARS[language]
+    grammar = importlib.import_module(module_name)
+    parser = Parser(Language(getattr(grammar, factory_name)()))
+    encoded = source.encode("utf-8")
+    tree = parser.parse(encoded)
+    if tree.root_node.has_error:
+        raise SyntaxError(f"invalid {language} syntax in {filename}")
+
+    symbols: list[dict[str, Any]] = []
+    node_types = _SYMBOL_NODES[language]
+
+    def visit(node: Any, scopes: tuple[str, ...]) -> None:
+        kind = node_types.get(node.type)
+        next_scopes = scopes
+        if kind is not None:
+            name_node = node.child_by_field_name("name")
+            if name_node is None and node.type == "function_definition" and language in {"c", "cpp"}:
+                declarator = node.child_by_field_name("declarator")
+                while declarator is not None:
+                    nested = declarator.child_by_field_name("declarator")
+                    if nested is None:
+                        name_node = declarator
+                        break
+                    declarator = nested
+            if name_node is not None:
+                name = encoded[name_node.start_byte:name_node.end_byte].decode("utf-8")
+                qualified = ".".join((*scopes, name))
+                symbols.append({
+                    "name": name,
+                    "qualified_name": qualified,
+                    "kind": "method" if kind == "function" and scopes and language == "rust" else kind,
+                    "line": node.start_point.row + 1,
+                    "end_line": node.end_point.row + 1,
+                })
+                if kind in _SCOPE_KINDS:
+                    next_scopes = (*scopes, name)
+
+        for child in node.named_children:
+            visit(child, next_scopes)
+
+    visit(tree.root_node, ())
+    return symbols
+
+
+def code_symbols(*, path: str, parser: Literal["python", "javascript", "typescript", "tsx", "c", "cpp", "java", "go", "rust", "ruby"], encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
     """Return parser-derived symbols without regex/name-shape guessing."""
 
     target = _resolve(path, cwd)
@@ -222,12 +343,14 @@ def code_symbols(*, path: str, parser: Literal["python"], encoding: str = "utf-8
         raise IsADirectoryError(str(target))
 
     source = target.read_text(encoding=encoding)
-    if parser != "python":
-        raise ValueError(f"unsupported code symbol parser: {parser}")
-    tree = ast.parse(source, filename=str(target))
-    visitor = _PythonSymbolVisitor()
-    visitor.visit(tree)
-    return {"path": str(target), "parser": parser, "symbols": visitor.symbols}
+    if parser == "python":
+        tree = ast.parse(source, filename=str(target))
+        visitor = _PythonSymbolVisitor()
+        visitor.visit(tree)
+        symbols = visitor.symbols
+    else:
+        symbols = _tree_sitter_symbols(source, parser, str(target))
+    return {"path": str(target), "parser": parser, "symbols": symbols}
 
 
 def register_code_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = 60) -> None:
@@ -253,4 +376,4 @@ def register_code_tools(registry: ToolRegistry, *, cwd: str | Path | None = None
         category="code",
     )
     registry.add(name="code_read", description="Read an inclusive line range from a local text/code file with stable line numbers.", input_model=CodeReadInput, handler=read_handler, timeout_seconds=timeout_seconds, category="code")
-    registry.add(name="code_symbols", description="Parse a source file with an explicit supported parser and return structural symbols. Currently supports Python via the standard AST parser; unsupported languages are not guessed.", input_model=CodeSymbolsInput, handler=symbols_handler, timeout_seconds=timeout_seconds, category="code")
+    registry.add(name="code_symbols", description="Parse a source file with an explicit supported parser and return structural symbols. Python uses standard AST; JavaScript, TypeScript, TSX, C, C++, Java, Go, Rust, and Ruby use Tree-sitter grammars. The parser must be selected explicitly.", input_model=CodeSymbolsInput, handler=symbols_handler, timeout_seconds=timeout_seconds, category="code")
