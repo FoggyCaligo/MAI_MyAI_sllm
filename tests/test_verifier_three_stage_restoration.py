@@ -14,7 +14,7 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(request)
-        if len(self.requests) == 1:
+        if len(self.requests) == 1 or (not self.cited and len(self.requests) <= 3):
             if self.coverage == "insufficient":
                 data = {"coverage_verdict": "insufficient", "coverage_reason": "Missing requested result", "claims": []}
             else:
@@ -71,3 +71,31 @@ def test_fabricated_quote_raises_instead_of_approving():
         assert "quotation" in str(exc) or "quotation" in str(exc.__cause__)
     else:
         raise AssertionError("fabricated source quote was accepted")
+
+
+class RecoveringCitationReviewer(Reviewer):
+    async def chat(self, request):
+        if len(self.requests) == 0:
+            self.cited = False
+        elif len(self.requests) == 1:
+            self.cited = True
+        return await super().chat(request)
+
+
+def test_citation_error_is_retried_then_released():
+    reviewer = RecoveringCitationReviewer()
+    result = verify(reviewer)
+    assert result.ok
+    assert len(reviewer.requests) == 3
+    assert "violated the source citation contract" in reviewer.requests[1].messages[-1]["content"]
+
+
+def test_unfixed_fabricated_quote_fails_after_three_preparations():
+    reviewer = Reviewer(cited=False)
+    try:
+        verify(reviewer)
+    except Exception as exc:
+        assert "quotation" in str(exc) or "quotation" in str(exc.__cause__)
+    else:
+        raise AssertionError("fabricated quote was accepted")
+    assert len(reviewer.requests) == 3
