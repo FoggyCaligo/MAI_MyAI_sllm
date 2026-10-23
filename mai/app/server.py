@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -403,6 +403,17 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
         installed_models=installed,
     )
     return {"models": visible, "current": runtime.model, "locked": False}
+
+
+@app.get("/download/{token}")
+async def download_file(token: str) -> FileResponse:
+    """Serve an owner-issued bearer link without restricting local file paths."""
+    target = _get_runtime().download_links.resolve(token)
+    if target is None:
+        raise HTTPException(status_code=404, detail="download link not found or expired")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="download file no longer exists")
+    return FileResponse(path=target, filename=target.name)
 
 
 @app.post("/upload")
