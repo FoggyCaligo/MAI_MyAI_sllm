@@ -142,12 +142,12 @@ only if a specifically requested essential item is missing or the omission defea
 If insufficient, return coverage_verdict=insufficient, one concise actionable coverage_reason,
 and an empty claims list. For sufficient or uncertain coverage, return empty coverage_reason. The caller will reject immediately, without a stage 3 call.
 Otherwise, extract distinct, objectively checkable factual claims (not opinions, speculation,
-or commentary) and pair each with an actual short excerpt from the observed successful tool
-result or user's message. Use source_index as the original index into the ordered
+or commentary) and pair each with a character span in a successful tool result or user message. Use source_index as the original index into the ordered
 tool_results_in_execution_order entries, or the index into user_input_sources
-when tool="user_input". Keep each excerpt minimal. Quote exactly, without paraphrasing
-or fabricating. Include the source index and tool name; use null where no observed source
-supports a claim. Do not decide claim truth from keyword overlap. Return only the schema.
+when tool="user_input". Supply start and end as zero-based Unicode character offsets
+(start inclusive, end exclusive) in the original source content, not JSON-escaped text.
+The runtime extracts the quotation: never write it yourself. Use null coordinates
+when no observed source supports a claim. Do not decide claim truth from keyword overlap. Return only the schema.
 """.strip()
 
 _GROUNDING_RELEASE_SYSTEM = """
@@ -169,7 +169,8 @@ class _PreparedClaim(BaseModel):
     claim: str
     source_index: int | None
     tool: str | None
-    excerpt: str | None = Field(max_length=1100)
+    start: int | None
+    end: int | None
 
 
 class _EvidencePreparationPayload(BaseModel):
@@ -599,12 +600,13 @@ class FinalGroundingVerifier:
         for claim in prepared.claims:
             item = claim.model_dump()
             item["citation_status"] = "unlocated"
+            item["excerpt"] = None
             item["source_start"] = None
             item["source_end"] = None
-            source = None
-            if claim.source_index is None and claim.tool is None and claim.excerpt is None:
+            if all(value is None for value in (claim.source_index, claim.tool, claim.start, claim.end)):
                 validated_claims.append(item)
                 continue
+            source = None
             if claim.tool == "user_input" and claim.source_index is not None:
                 if 0 <= claim.source_index < len(user_messages):
                     source = user_messages[claim.source_index]
@@ -612,14 +614,12 @@ class FinalGroundingVerifier:
                 observed = selected.get(claim.source_index)
                 if observed is not None and observed[0] == claim.tool:
                     source = observed[1]
-            if source is not None and claim.excerpt:
-                offset = source.find(claim.excerpt)
-                if offset >= 0:
-                    item["citation_status"] = "valid"
-                    item["source_start"] = offset
-                    item["source_end"] = offset + len(claim.excerpt)
-                else:
-                    item["citation_status"] = "invalid_citation"
+            if (source is not None and isinstance(claim.start, int)
+                    and isinstance(claim.end, int) and 0 <= claim.start < claim.end <= len(source)):
+                item["citation_status"] = "valid"
+                item["source_start"] = claim.start
+                item["source_end"] = claim.end
+                item["excerpt"] = source[claim.start:claim.end]
             else:
                 item["citation_status"] = "invalid_citation"
             validated_claims.append(item)
