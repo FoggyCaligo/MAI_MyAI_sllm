@@ -38,8 +38,10 @@ from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
+from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
+from .downloads import DownloadLinkStore
 from .uploads import principal_upload_directory
 
 
@@ -96,6 +98,11 @@ class MAIRunResult:
     tools: tuple[dict[str, object], ...]
 
 
+class FileDownloadLinkInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+
+
 class MAIRuntime:
     """Long-lived local runtime where the model chooses native tool use directly."""
 
@@ -120,6 +127,7 @@ class MAIRuntime:
             enable_tool_requirement_verifier = _env_bool("TOOL_REQUIREMENT_VERIFIER", False)
         if max_inline_tool_result_chars < 1024:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
+        self.download_links = DownloadLinkStore()
         self.cwd = cwd
         self.ollama_host = ollama_host
         self.model = model
@@ -205,6 +213,13 @@ class MAIRuntime:
             register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:
             register_local_pc_tools(registry, cwd=self.cwd)
+            registry.add(
+                name="file_download_link",
+                description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server.",
+                input_model=FileDownloadLinkInput,
+                handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
+                category="filesystem",
+            )
         elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
                 registry,
