@@ -65,6 +65,22 @@ def test_agent_runtime_injects_declared_tool_context_as_system_message() -> None
     first_message = adapter.requests[0].messages[0]
     assert first_message["role"] == "system"
     _, payload = first_message["content"].split("\n", 1)
-    assert json.loads(payload) == [
+    context = json.loads(payload)
+    assert context["tool_contexts"] == [
         {"tool": "probe", "context": {"mode": "exact-runtime-mode"}}
     ]
+    clock = context["authoritative_current_time"]
+    assert clock["date"] == clock["local_iso"][:10]
+    assert clock["utc_iso"]
+    assert clock["utc_offset_seconds"] is not None
+
+
+def test_agent_runtime_provides_current_clock_without_registered_tool_context() -> None:
+    adapter = FakeAdapter()
+    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message("hello"))
+    assert result.content == "done"
+    first = adapter.requests[0].messages[0]
+    _, payload = first["content"].split("\n", 1)
+    context = json.loads(payload)
+    assert context["tool_contexts"] == []
+    assert context["authoritative_current_time"]["date"]
