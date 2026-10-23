@@ -51,6 +51,15 @@ _TOOL_MANUAL_SCHEMA = {
 }
 
 
+def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
+    """Build the activation schema from this run's registered tool names."""
+    schema = json.loads(json.dumps(_TOOL_MANUAL_SCHEMA))
+    schema["function"]["parameters"]["properties"]["tools"]["items"] = {
+        "type": "string", "enum": list(available_names),
+    }
+    return schema
+
+
 
 class AgentRuntimeError(RuntimeError):
     """Base class for Agent Runtime failures."""
@@ -161,7 +170,8 @@ class AgentLoop:
         if self.registry.has("tool_manual"):
             raise ValueError("tool_manual is reserved for native lazy tool activation")
         activated_tool_names: set[str] = set()
-        active_tools = (_TOOL_MANUAL_SCHEMA,)
+        manual_schema = _tool_manual_schema(self.registry.names())
+        active_tools = (manual_schema,)
         active_tool_names = frozenset({"tool_manual"})
         requirement_correction_active = False
         guard = AgentGuard(self.guard_config)
@@ -247,7 +257,7 @@ class AgentLoop:
                         name for name in self.registry.names()
                         if name in activated_tool_names
                     ]
-                    active_tools = (_TOOL_MANUAL_SCHEMA, *self.registry.native_schemas(activated_order))
+                    active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
                     active_tool_names = frozenset({"tool_manual", *activated_order})
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
@@ -497,7 +507,7 @@ class AgentLoop:
                     else:
                         requirement_correction_active = False
                         # Normal lazy activation resumes at the top of the next round.
-                        active_tools = (_TOOL_MANUAL_SCHEMA,)
+                        active_tools = (manual_schema,)
                         active_tool_names = frozenset({"tool_manual"})
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
@@ -549,7 +559,26 @@ class AgentLoop:
                 requested = request.tools
                 unknown = sorted(set(requested) - frozenset(self.registry.names()))
                 if unknown:
-                    raise UnknownToolError(f"tool_manual requested unknown tools: {unknown}")
+                    exc = UnknownToolError(f"tool_manual requested unknown tools: {unknown}")
+                    payload = {
+                        "ok": False,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                        "unknown_tools": unknown,
+                        "available_tools": list(self.registry.names()),
+                    }
+                    source_content = _serialize_tool_content(payload)
+                    model_content, compact_content = self._model_contents(source_content)
+                    return ToolExecution(
+                        name=call.name,
+                        arguments=dict(call.arguments),
+                        ok=False,
+                        content=model_content,
+                        error_type=type(exc).__name__,
+                        handler_started=False,
+                        source_content_fingerprint=content_fingerprint(source_content),
+                        compact_history_content=compact_content,
+                    )
                 activated_tool_names.update(requested)
                 value = {"activated_tools": requested, "available_next_round": True}
             else:

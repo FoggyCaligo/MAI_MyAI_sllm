@@ -105,3 +105,47 @@ def test_manual_rejects_invalid_contract_without_partial_activation():
     result = run(adapter, registry)
     assert result.tool_executions[0].error_type == "ToolArgumentsError"
     assert names(adapter.requests[1]) == ["tool_manual"]
+
+
+
+def test_manual_schema_uses_registered_names_as_enum():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo content", input_model=EchoInput, handler=lambda text: text)
+    registry.add(name="other", description="Another tool", input_model=EchoInput, handler=lambda text: text)
+    adapter = Adapter([turn(content="done")])
+
+    run(adapter, registry)
+    properties = adapter.requests[0].tools[0]["function"]["parameters"]["properties"]
+    assert properties["tools"]["items"]["enum"] == ["echo", "other"]
+
+
+def test_manual_success_does_not_disclose_available_tools():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo content", input_model=EchoInput, handler=lambda text: text)
+    adapter = Adapter([
+        turn(calls=[NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]})]),
+        turn(content="done"),
+    ])
+
+    result = run(adapter, registry)
+    payload = json.loads(result.tool_executions[0].content)
+    assert payload == {"activated_tools": ["echo"], "available_next_round": True}
+    assert "available_tools" not in payload
+
+
+def test_unknown_manual_returns_registry_names_without_partial_activation():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo content", input_model=EchoInput, handler=lambda text: text)
+    adapter = Adapter([
+        turn(calls=[NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "invented"]})]),
+        turn(content="done"),
+    ])
+
+    result = run(adapter, registry)
+    payload = json.loads(result.tool_executions[0].content)
+    assert payload["ok"] is False
+    assert payload["error_type"] == "UnknownToolError"
+    assert payload["unknown_tools"] == ["invented"]
+    assert payload["available_tools"] == ["echo"]
+    assert names(adapter.requests[1]) == ["tool_manual"]
+    assert "echo" not in names(adapter.requests[1])
