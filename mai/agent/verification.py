@@ -345,7 +345,12 @@ class FinalGroundingVerifier:
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
         base = _review_payload(candidate=candidate, messages=messages, tool_results=())
-        corpus, locations = _indexed_evidence(tool_results)
+        user_evidence = tuple(
+            ("user_input", True, None, message["content"])
+            for message in messages
+            if message.get("role") == "user" and isinstance(message.get("content"), str)
+        )
+        corpus, locations = _indexed_evidence((*tool_results, *user_evidence))
         task_request = ChatRequest(
             messages=(
                 {"role": "system", "content": _TASK_REVIEW_SYSTEM},
@@ -405,7 +410,7 @@ class FinalGroundingVerifier:
         payload = {}
         payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
         payload["evidence_scope"] = {
-            "successful_tool_results": len(locations),
+            "indexed_sources": len(locations),
             "corpus_chars": len(corpus),
             "note": "Search matches are excerpts, not exhaustive evidence; not_located is not contradiction.",
         }
