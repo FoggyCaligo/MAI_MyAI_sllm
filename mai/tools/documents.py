@@ -77,14 +77,14 @@ def _read_pptx(path: Path) -> dict[str, Any]:
     return {"kind": "pptx", "slides": slides}
 
 
-def read_structured_document(
+def document_read(
     *,
     path: str,
     max_chars: int = 50000,
     encoding: str = "utf-8-sig",
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Parse supported structured document content for file_read."""
+    """Internal structured document parser used by file_read (not a native tool)."""
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))

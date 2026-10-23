@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .artifacts import discard_temporary_artifact, move_temporary_artifact, register_temporary_artifact
-from .documents import read_structured_document
+from .documents import document_read
 from .registry import ToolRegistry
 
 
@@ -149,7 +149,7 @@ def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None =
         raise IsADirectoryError(str(target))
 
     if target.suffix.lower() in {".pdf", ".docx", ".xlsx", ".csv", ".pptx"}:
-        result = read_structured_document(
+        result = document_read(
             path=str(target),
             max_chars=50000 if max_chars is None else max_chars,
             encoding=encoding,
