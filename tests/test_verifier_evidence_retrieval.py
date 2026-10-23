@@ -37,3 +37,16 @@ def test_not_found_is_only_scoped_search_status():
         "matches": [],
         "search_status": "not_located_in_selected_scope",
     }]
+
+
+def test_results_from_different_tools_keep_distinct_provenance():
+    corpus, locations = _indexed_evidence((
+        ("file_read", True, None, "Ёлик — человек."),
+        ("web_fetch", True, None, "Unrelated page."),
+    ))
+    result = _retrieve_claim_evidence(
+        [_ClaimSearch(claim="He is human", queries=["Ёлик"])], corpus, locations,
+    )
+    assert result[0]["matches"][0]["tool"] == "file_read"
+    assert result[0]["matches"][0]["tool_result_index"] == 0
+    assert locations[1]["tool"] == "web_fetch"
