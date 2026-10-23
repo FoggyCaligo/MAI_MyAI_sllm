@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ollama import AsyncClient
 
@@ -238,6 +238,7 @@ class MAIRuntime:
         model: str | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_thinking_chunk: Callable[[int, str], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> MAIRunResult:
         if not prompt.strip():
@@ -272,6 +273,7 @@ class MAIRuntime:
                 prior_messages=messages,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
+                on_thinking_chunk=on_thinking_chunk,
                 on_verification_rejection=on_verification_rejection,
             )
         finally:

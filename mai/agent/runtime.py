@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
@@ -65,6 +65,7 @@ class AgentRuntime:
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_thinking_chunk: Callable[[int, str], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         runtime_context = {"tool_contexts": self.loop.registry.model_context(), "authoritative_current_time": current_time()}
@@ -82,6 +83,7 @@ class AgentRuntime:
                 requirements=requirements,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
+                on_thinking_chunk=on_thinking_chunk,
                 on_verification_rejection=on_verification_rejection,
             )
             artifacts.cleanup()
@@ -97,6 +99,7 @@ class AgentRuntime:
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_thinking_chunk: Callable[[int, str], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         if not content.strip():
@@ -128,5 +131,6 @@ class AgentRuntime:
             requirements=effective_requirements,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_thinking_chunk=on_thinking_chunk,
             on_verification_rejection=on_verification_rejection,
         )

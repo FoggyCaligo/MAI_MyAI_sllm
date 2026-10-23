@@ -59,7 +59,7 @@ class OllamaAdapter:
             "messages": [dict(message) for message in request.messages],
             "tools": [dict(tool) for tool in request.tools],
             "think": think,
-            "stream": False,
+            "stream": bool(think),
         }
         if options:
             payload["options"] = options
@@ -78,10 +78,16 @@ class OllamaAdapter:
             sum(len(str(message)) for message in payload["messages"]), self.config.request_timeout_seconds,
         )
         try:
-            response = await asyncio.wait_for(
-                self._client.chat(**payload),
-                timeout=self.config.request_timeout_seconds,
-            )
+            if payload["stream"]:
+                response = await asyncio.wait_for(
+                    self._consume_stream(payload, request_id, request.on_thinking_chunk),
+                    timeout=self.config.request_timeout_seconds,
+                )
+            else:
+                response = await asyncio.wait_for(
+                    self._client.chat(**payload),
+                    timeout=self.config.request_timeout_seconds,
+                )
         except asyncio.TimeoutError as exc:
             _LOG.error("MAI Ollama request timeout id=%s model=%s elapsed_seconds=%.3f", request_id, self.config.model, time.perf_counter() - started)
             raise OllamaChatTimeoutError(
@@ -97,9 +103,64 @@ class OllamaAdapter:
             " ".join(f"{key}={_read_field(response, key)}" for key in _OLLAMA_TIMING_FIELDS),
         )
         turn = _normalize_response(response)
-        if turn.thinking:
+        if turn.thinking and not payload["stream"]:
             _LOG.info("MAI Ollama thinking id=%s model=%s chars=%d content=%s", request_id, self.config.model, len(turn.thinking), turn.thinking)
         return turn
+
+
+    async def _consume_stream(
+        self, payload: dict[str, Any], request_id: str,
+        on_thinking_chunk: Any,
+    ) -> dict[str, Any]:
+        stream = await self._client.chat(**payload)
+        thinking_parts: list[str] = []
+        content_parts: list[str] = []
+        tool_calls: list[Any] = []
+        completed: Any = None
+        async for part in stream:
+            message = _read_field(part, "message")
+            if message is None:
+                raise OllamaProtocolError("Ollama stream chunk is missing message")
+            role = _read_field(message, "role")
+            if role is not None and role != "assistant":
+                raise OllamaProtocolError("Ollama stream chunk role must be assistant")
+            thinking = _read_field(message, "thinking")
+            content = _read_field(message, "content")
+            raw_calls = _read_field(message, "tool_calls")
+            if thinking is not None and not isinstance(thinking, str):
+                raise OllamaProtocolError("Ollama stream thinking must be a string")
+            if content is not None and not isinstance(content, str):
+                raise OllamaProtocolError("Ollama stream content must be a string")
+            if raw_calls is not None and not isinstance(raw_calls, (list, tuple)):
+                raise OllamaProtocolError("Ollama stream tool_calls must be a sequence")
+            if thinking:
+                thinking_parts.append(thinking)
+                _LOG.info("MAI Ollama thinking chunk id=%s chars=%d content=%s", request_id, len(thinking), thinking)
+                if on_thinking_chunk is not None:
+                    on_thinking_chunk(thinking)
+            if content:
+                content_parts.append(content)
+            if raw_calls:
+                tool_calls.extend(raw_calls)
+            done = _read_field(part, "done")
+            if done is True:
+                completed = part
+                break
+            if done is not False and done is not None:
+                raise OllamaProtocolError("Ollama stream done field must be boolean")
+        if completed is None:
+            raise OllamaProtocolError("Ollama stream ended without done=true")
+        result: dict[str, Any] = {
+            "message": {
+                "role": "assistant",
+                "content": "".join(content_parts),
+                "thinking": "".join(thinking_parts),
+                "tool_calls": tool_calls,
+            },
+        }
+        for field in _OLLAMA_TIMING_FIELDS:
+            result[field] = _read_field(completed, field)
+        return result
 
 
 def _normalize_response(response: Any) -> ModelTurn:
