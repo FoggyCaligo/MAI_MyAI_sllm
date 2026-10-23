@@ -50,3 +50,32 @@ class WorkingGraph:
             ],
             "expanded_node_ids": sorted(self.expanded_node_ids),
         }
+
+    def model_snapshot(self) -> dict[str, object]:
+        """Return content-bearing memories only, keeping graph internals private.
+
+        IDs allow further memory_search expansion. Provenance is drawn from
+        direct incoming evidence/ownership edges, never lexical heuristics.
+        The complete node/edge graph remains in the WorkingGraph.
+        """
+        provenance_by_node: dict[int, list[str]] = {}
+        for edge in self.edges.values():
+            if edge.relation not in {"spoke", "asserted_fact", "derived_fact"}:
+                continue
+            sources = provenance_by_node.setdefault(edge.to_node_id, [])
+            if edge.provenance not in sources:
+                sources.append(edge.provenance)
+        return {
+            "nodes": [
+                {
+                    "node_id": node.id,
+                    "node_type": node.node_type,
+                    "data": node.canonical_text,
+                    "created_at": node.created_at,
+                    "provenance": provenance_by_node.get(node.id, []),
+                    "evidence_id": node.payload.get("evidence_id"),
+                }
+                for node in self.nodes.values()
+                if node.node_type in {"fact", "utterance"}
+            ],
+        }
