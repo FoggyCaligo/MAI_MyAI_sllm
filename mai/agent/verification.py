@@ -15,10 +15,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 import json
 import logging
-import re
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
@@ -33,13 +31,6 @@ from ..tools.time import current_time
 
 ToolVerificationResult = tuple[str, bool, str | None, str]
 
-_DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
-_NUMBER_RE = re.compile(
-    r"(?<![A-Za-z0-9_.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?(?![A-Za-z0-9_.])"
-)
-_KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
-_LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
-_REVIEW_TOOL_RESULT_LIMIT = 20
 _LOG = logging.getLogger("uvicorn.error")
 
 _FINAL_REVIEW_SYSTEM = """
@@ -552,17 +543,7 @@ def _review_payload(
         if message.get("role") in {"user", "assistant"}
         and isinstance(message.get("content"), str)
     ][-10:]
-    tool_evidence = [
-        {
-            "index": index,
-            "tool": name,
-            "ok": ok,
-            "error_type": error_type,
-            "result": _clip_text(content, 3500),
-            **_tool_evidence_metadata(name=name, ok=ok),
-        }
-        for index, (name, ok, error_type, content) in _select_review_tool_results(tool_results)
-    ]
+    tool_evidence: list[dict[str, Any]] = []
     return {
         "authoritative_current_time": current_time(),
         "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
@@ -572,103 +553,3 @@ def _review_payload(
     }
 
 
-def _select_review_tool_results(
-    tool_results: Sequence[ToolVerificationResult],
-    *,
-    limit: int = _REVIEW_TOOL_RESULT_LIMIT,
-) -> tuple[tuple[int, ToolVerificationResult], ...]:
-    if limit <= 0:
-        raise ValueError("limit must be positive")
-    indexed = tuple(enumerate(tool_results))
-    selected: dict[int, ToolVerificationResult] = {}
-    for index, result in reversed(indexed):
-        _, ok, _, _ = result
-        if ok:
-            selected[index] = result
-            if len(selected) >= limit:
-                break
-    return tuple((index, selected[index]) for index in sorted(selected))
-
-
-def _tool_evidence_metadata(*, name: str, ok: bool) -> dict[str, str]:
-    if name == "web_search" and ok:
-        return {
-            "evidence_note": (
-                "Successful web_search output is observed search evidence. Ranked result titles, URLs, and snippets "
-                "can support claims that those visible search results stated the details, especially when the result "
-                "identifies an official source or account."
-            ),
-        }
-    return {}
-
-
-def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = False) -> set[str]:
-    cleaned = _LIST_ORDINAL_RE.sub("", text)
-    facts: set[str] = set()
-    occupied: list[tuple[int, int]] = []
-
-    for match in _DATE_RE.finditer(cleaned):
-        year, month, day = match.groups()
-        month_i = int(month)
-        day_i = int(day)
-        facts.add(f"date:{int(year):04d}-{month_i:02d}-{day_i:02d}")
-        if include_date_aliases:
-            facts.add(f"monthday:{month_i:02d}-{day_i:02d}")
-        occupied.append(match.span())
-
-    for match in _KOREAN_UNIT_RE.finditer(cleaned):
-        raw, unit = match.groups()
-        multiplier = Decimal("10000") if unit == "만" else Decimal("100000000")
-        try:
-            value = Decimal(raw) * multiplier
-        except InvalidOperation:
-            continue
-        facts.add(_decimal_key(value))
-        occupied.append(match.span())
-
-    for match in _NUMBER_RE.finditer(cleaned):
-        if any(start <= match.start() and match.end() <= end for start, end in occupied):
-            continue
-        token = match.group(0)
-        is_percent = token.endswith("%")
-        raw = token[:-1] if is_percent else token
-        raw = raw.replace(",", "").lstrip("+")
-        try:
-            value = Decimal(raw)
-        except InvalidOperation:
-            continue
-
-        is_decimal = "." in raw
-        is_comma_grouped = "," in token
-        if not is_percent and not is_decimal and not is_comma_grouped and abs(value) < 100:
-            continue
-        key = _decimal_key(value)
-        facts.add(f"percent:{key}" if is_percent else key)
-    return facts
-
-
-def _supported_as_month_day_alias(fact: str, evidence: set[str]) -> bool:
-    """Allow a bare M.D candidate only when evidence contains that exact calendar month/day.
-
-    Vision/OCR output often preserves a full date such as 2026.08.27 while the
-    answering model shortens it to 8.27. Treat that as the same grounded date,
-    but only when a matching full date was actually present in evidence.
-    """
-    if fact.startswith(("date:", "monthday:", "percent:")):
-        return False
-    if "." not in fact:
-        return False
-    whole, fractional = fact.split(".", 1)
-    if not whole.isdigit() or not fractional.isdigit():
-        return False
-    month = int(whole)
-    day = int(fractional)
-    if not (1 <= month <= 12 and 1 <= day <= 31):
-        return False
-    return f"monthday:{month:02d}-{day:02d}" in evidence
-
-
-def _decimal_key(value: Decimal) -> str:
-    if value == value.to_integral():
-        return format(value.quantize(Decimal("1")), "f")
-    return format(value.normalize(), "f")
