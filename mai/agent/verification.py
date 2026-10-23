@@ -158,7 +158,7 @@ each candidate claim in meaning, numbers, time, and scope. An excerpt proves onl
 it says; absence of evidence is not a contradiction. Preserve translation and numerical
 equivalence. Treat user statements as reported user statements, not universal facts.
 Judge task alignment and requested external-action outcomes against provided observations.
-Do not add requirements. Return one verdict per claim. Only rejected claims need an
+Treat citation_status=invalid_citation and unlocated as NO VERIFIED SOURCE; never cite those excerpts as evidence. If no other valid evidence exists, do not mark the claim supported. Invalid quotations are not proof of contradiction. Do not add requirements. Return one verdict per claim. Only rejected claims need an
 actionable concise reason; supported claims may use a short source reference.
 State defects succinctly; never recap the entire answer.
 """.strip()
@@ -591,57 +591,46 @@ class FinalGroundingVerifier:
         if prepared.coverage_reason.strip():
             raise OllamaProtocolError("non-rejected coverage must not contain rejection reason")
 
-        for citation_attempt in range(1, 4):
-            try:
-                selected = {index: (name, content) for index, (name, ok, _error, content)
-                            in enumerate(tool_results) if ok}
-                user_messages = [str(message["content"]) for message in messages
-                                 if message.get("role") == "user" and isinstance(message.get("content"), str)]
-                for claim in prepared.claims:
-                    if claim.source_index is None:
-                        if claim.tool is not None or claim.excerpt is not None:
-                            raise OllamaProtocolError("unlocated claim has an invalid citation")
-                        continue
-                    if claim.tool == "user_input":
-                        if claim.source_index < 0 or claim.source_index >= len(user_messages):
-                            raise OllamaProtocolError("user citation index out of bounds")
-                        source = user_messages[claim.source_index]
-                    else:
-                        chosen = selected.get(claim.source_index)
-                        if chosen is None or claim.tool != chosen[0]:
-                            raise OllamaProtocolError("claim citation does not name an observed successful tool")
-                        source = chosen[1]
-                    if not claim.excerpt or claim.excerpt not in source:
-                        raise OllamaProtocolError("claim quotation does not occur in cited source")
-                break
-            except OllamaProtocolError as exc:
-                _LOG.warning(
-                    "MAI verifier stage2 citation contract failed attempt=%d/3 error=%s",
-                    citation_attempt, str(exc),
-                )
-                if citation_attempt == 3:
-                    raise
-                repair_request = ChatRequest(
-                    messages=(
-                        {"role": "system", "content": _EVIDENCE_PREPARATION_SYSTEM},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                        {"role": "system", "content": (
-                            "The previous structured output violated the source citation contract: "
-                            + str(exc)
-                            + ". Recheck every source index, tool name and literal excerpt against "
-                              "the provided source. Do not fabricate or paraphrase excerpts; use "
-                              "null source fields when the claim has no exact observed quotation."
-                        )},
-                    ),
-                    tools=(),
-                    think=False,
-                    response_format=_EvidencePreparationPayload.model_json_schema(),
-                )
-                prepared = await self._request_structured_review(
-                    repair_request, _EvidencePreparationPayload, label="evidence_preparation_citation_retry"
-                )
-                if prepared.coverage_verdict == "insufficient":
-                    raise OllamaProtocolError("citation repair changed coverage verdict; release not verified")
+        selected = {index: (name, content) for index, (name, ok, _error, content)
+                    in enumerate(tool_results) if ok}
+        user_messages = [str(message["content"]) for message in messages
+                         if message.get("role") == "user" and isinstance(message.get("content"), str)]
+        validated_claims: list[dict[str, Any]] = []
+        for claim in prepared.claims:
+            item = claim.model_dump()
+            item["citation_status"] = "unlocated"
+            item["source_start"] = None
+            item["source_end"] = None
+            source = None
+            if claim.source_index is None and claim.tool is None and claim.excerpt is None:
+                validated_claims.append(item)
+                continue
+            if claim.tool == "user_input" and claim.source_index is not None:
+                if 0 <= claim.source_index < len(user_messages):
+                    source = user_messages[claim.source_index]
+            elif claim.source_index is not None:
+                observed = selected.get(claim.source_index)
+                if observed is not None and observed[0] == claim.tool:
+                    source = observed[1]
+            if source is not None and claim.excerpt:
+                offset = source.find(claim.excerpt)
+                if offset >= 0:
+                    item["citation_status"] = "valid"
+                    item["source_start"] = offset
+                    item["source_end"] = offset + len(claim.excerpt)
+                else:
+                    item["citation_status"] = "invalid_citation"
+            else:
+                item["citation_status"] = "invalid_citation"
+            validated_claims.append(item)
+        validated_preparation = prepared.model_dump()
+        validated_preparation["claims"] = validated_claims
+        _LOG.info(
+            "MAI verifier citations valid=%d invalid=%d unlocated=%d",
+            sum(c["citation_status"] == "valid" for c in validated_claims),
+            sum(c["citation_status"] == "invalid_citation" for c in validated_claims),
+            sum(c["citation_status"] == "unlocated" for c in validated_claims),
+        )
         _LOG.info(
             "MAI verifier stage2 coverage=%s claims=%d grounded_excerpts=%d source_chars=%d excerpt_chars=%d",
             prepared.coverage_verdict, len(prepared.claims),
@@ -656,7 +645,7 @@ class FinalGroundingVerifier:
                     "current_user_request": payload["current_user_request"],
                     "conversation_context": payload["conversation_context"],
                     "candidate_final": candidate,
-                    "prepared_evidence": prepared.model_dump(),
+                    "prepared_evidence": validated_preparation,
                 }, ensure_ascii=False)},
             ),
             tools=(),
