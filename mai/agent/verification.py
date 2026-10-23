@@ -28,20 +28,26 @@ _LOG = logging.getLogger("uvicorn.error")
 
 _FINAL_REVIEW_SYSTEM = """
 You are the sole final-answer evidence reviewer. Do not call tools, rewrite the answer or add requirements.
-Use the current user request, candidate, extracted claims and indexed excerpts. Every extracted claim must receive a verdict and a specific reason.
+Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict and a specific reason. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
 - Support factual claims only when observed evidence supports their actual meaning and scope; distinguish absence of evidence from direct contradiction. Do not fabricate counterfacts or causal explanations.
 - An unsuccessful phrase search means only that no match was located in the selected tool-result scope. It cannot prove global absence or falsity. State uncertainty when the available excerpts are insufficient.
 - For translations, summaries and rewrites, judge fidelity to the source meaning, not literal wording. Retaining target-language text and proper names is valid.
 - Treat numerically equivalent expressions as supported, including comma/date formatting, meaningful approximations (e.g. about 1,000 for 1,037), sensible rounding, and mathematically equivalent unit conversions. Reject misleading precision or approximation. Do not confuse characters, bytes, file size, and tokens.
 - Distinguish local and remote state, partial and exhaustive sets, source reports and confirmed facts, claims and conjectures, and current timestamps from historical ones.
 - Past assistant messages and rejected drafts provide context, not evidence. The user and successful observed tool results may provide evidence. Web search snippets support what a result states, not automatically the underlying truth.
-- Coverage requires only material user-relevant facts already observed; never demand unsupported statements, optional details or additional research. Honest partial answers and reported failures are acceptable.
-- Align to the user's actual essential request. Verify claimed external changes only using evidence establishing the resulting state, not merely attempted tool calls.
 - On rejection, explain each defective claim with tool name, result index and source offsets where available. Never invent evidence offsets. Reasons must distinguish missing evidence, contradiction, unsupported inference and scope expansion.
-Return the required structured verdicts and claims. Use 'unsupported' for an asserted claim lacking support, 'uncertain' for reviewer uncertainty; do not conflate the two. Keep all blocking findings in the detailed reasons and concise retry_summary.
+Return the structured evidence verdict, claims, and reasons. Use unsupported for asserted claims lacking support, uncertain for reviewer uncertainty; do not conflate the two.
 """.strip()
 
-_CLAIM_EXTRACTION_SYSTEM = """Extract material factual claims requiring grounding from the current user request and candidate final. Return each claim verbatim from the candidate, with several distinctive search phrases (including plausible original-language expressions for translated claims). Do not judge support, invent evidence, or treat search misses as proof of absence."""
+_CLAIM_EXTRACTION_SYSTEM = """You are stage A: task-alignment, evidence-coverage, and action-outcome reviewer, and factual claim extractor.
+Use the latest user request, prior conversation for context, candidate answer, and observed successful tool results.
+- Determine whether essential requested outcomes are answered. A truthful partial result or failure report is acceptable; never add optional requirements.
+- Mark coverage insufficient only for material user-relevant facts already observed but omitted; never demand unsupported claims or extra research.
+- Verify external-action completion from actual resulting state. Successful invocation alone does not establish a broader outcome.
+- Distinguish missing evidence from contradicted facts. Do not invent evidence or demand contents of a rejected draft.
+- Provide concrete blocking reasons for alignment, coverage, or action failures.
+- Extract each material factual claim verbatim and propose distinctive search queries including source-language expressions. Do not judge claim truth here.
+Return the required structured fields."""
 
 class _ClaimSearch(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -51,6 +57,11 @@ class _ClaimSearch(BaseModel):
 class _ClaimExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     claims: list[_ClaimSearch]
+    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
+    coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
+    coverage_reasons: list[str]
+    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
+    reasons: list[str]
 
 def _indexed_evidence(tool_results: Sequence[ToolVerificationResult]) -> tuple[str, list[dict[str, Any]]]:
     """Retain complete successful outputs with exact offsets."""
@@ -124,12 +135,8 @@ class _FinalReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
-    alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
-    coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
-    coverage_reasons: list[str]
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
-    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
 
 
@@ -339,7 +346,12 @@ class FinalGroundingVerifier:
                 {"role": "system", "content": _CLAIM_EXTRACTION_SYSTEM},
                 {"role": "user", "content": json.dumps({
                     "current_user_request": base["current_user_request"],
+                    "conversation_context": base["conversation_context"],
                     "candidate_final": candidate,
+                    "observed_tool_results": [
+                        {"tool": name, "index": index, "content": _clip_text(content, 1800)}
+                        for index, (name, ok, _error, content) in enumerate(tool_results) if ok
+                    ],
                 }, ensure_ascii=False)},
             ),
             tools=(),
@@ -349,9 +361,8 @@ class FinalGroundingVerifier:
         extracted = await self._request_structured_review(extraction_request, _ClaimExtraction, label="claims")
         if not isinstance(extracted, _ClaimExtraction):
             raise OllamaProtocolError("claim extractor returned unexpected schema")
-        payload = dict(base)
+        payload = {}
         payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
-        payload["evidence_sources"] = locations
         payload["evidence_scope"] = {
             "successful_tool_results": len(locations),
             "corpus_chars": len(corpus),
@@ -383,8 +394,8 @@ class FinalGroundingVerifier:
                 raise OllamaProtocolError("final reviewer returned duplicate claims")
             if not set(expected_claims).issubset(set(returned_claims)):
                 raise OllamaProtocolError("final reviewer omitted extracted claims")
-            reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
-            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
+            reasons = tuple(dict.fromkeys(item.strip() for item in (*extracted.reasons, *parsed.reasons) if item.strip()))
+            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in extracted.coverage_reasons if item.strip()))
             claims = tuple(
                 ClaimReview(
                     claim=item.claim.strip(),
@@ -396,8 +407,8 @@ class FinalGroundingVerifier:
                 if item.claim.strip()
             )
             evidence_verdict = parsed.evidence_verdict
-            alignment_verdict = parsed.alignment_verdict
-            coverage_verdict = parsed.coverage_verdict
+            alignment_verdict = extracted.alignment_verdict
+            coverage_verdict = extracted.coverage_verdict
             unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
             if unsupported_claims:
                 evidence_verdict = "unsupported"
@@ -414,7 +425,7 @@ class FinalGroundingVerifier:
                 coverage_reasons=coverage_reasons,
                 reasons=reasons,
                 claims=claims,
-                action_verdict=parsed.action_verdict,
+                action_verdict=extracted.action_verdict,
                 retry_summary=parsed.retry_summary,
             )
         except TimeoutError as exc:
