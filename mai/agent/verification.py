@@ -596,7 +596,7 @@ class FinalGroundingVerifier:
                 {"role": "user", "content": json.dumps(prepare_input, ensure_ascii=False)},
             ), tools=(), think=False, response_format=_PreparationPayload.model_json_schema(),
         )
-        prepared = await self._request_structured_review(request, _PreparationPayload)
+        prepared = await self._request_structured_review(request, _PreparationPayload, label="preparation")
         if prepared.coverage_verdict == "insufficient":
             if not prepared.coverage_reason.strip() or prepared.claims:
                 raise OllamaProtocolError("coverage rejection must contain a reason and no claims")
@@ -640,7 +640,7 @@ class FinalGroundingVerifier:
                 {"role": "user", "content": json.dumps(release_input, ensure_ascii=False)},
             ), tools=(), think=False, response_format=_ReleasePayload.model_json_schema(),
         )
-        released = await self._request_structured_review(release_request, _ReleasePayload)
+        released = await self._request_structured_review(release_request, _ReleasePayload, label="release")
         if [claim.claim for claim in released.claims] != [claim.claim for claim in prepared.claims]:
             raise OllamaProtocolError("stage 3 claim verdicts do not match prepared claims")
         for verdict, item in zip(released.claims, resolved):
@@ -661,23 +661,6 @@ class FinalGroundingVerifier:
             claims=claims, action_verdict=released.action_verdict,
             retry_summary=released.retry_summary,
         )
-
-    async def _request_structured_review(
-        self, request: ChatRequest, schema: type[BaseModel],
-    ) -> BaseModel:
-        for attempt in range(1, 4):
-            try:
-                result = await asyncio.wait_for(
-                    self.reviewer_adapter.chat(request), timeout=self.reviewer_timeout_seconds
-                )
-                return schema.model_validate_json(result.content, strict=True)
-            except (TimeoutError, OllamaChatTimeoutError, OllamaProtocolError,
-                    ValidationError, httpx.NetworkError, httpx.TimeoutException,
-                    httpx.RemoteProtocolError):
-                if attempt == 3:
-                    raise
-                await asyncio.sleep(0.25 * attempt)
-        raise AssertionError("unreachable reviewer retry state")
 
     async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
         payload = await self._request_structured_review(request, _FinalReviewPayload, label="final")
