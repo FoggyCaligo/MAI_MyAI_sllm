@@ -124,11 +124,11 @@ def test_file_write_replaces_existing_file(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
 
-    with pytest.raises(FileExistsError):
-        run(registry.invoke(NativeToolCall(
-            name="file_create",
-            arguments={"path": "a.txt", "content": "overwrite"},
-        )))
+    run(registry.invoke(NativeToolCall(
+        name="file_write",
+        arguments={"path": "a.txt", "content": "overwrite"},
+    )))
+    assert (tmp_path / "a.txt").read_text() == "overwrite"
 
 
 def test_file_write_creates_missing_file(tmp_path: Path) -> None:
