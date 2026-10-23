@@ -168,3 +168,32 @@ def test_ollama_turn_timeout_logs_duration_and_preserves_error(caplog) -> None:
             run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
 
     assert any("MAI Ollama request timeout" in r.message for r in caplog.records)
+
+
+def test_ollama_thinking_logged_with_request_id(caplog) -> None:
+    import logging
+
+    client = FakeClient({"message": {"role": "assistant", "content": "done", "thinking": "Considered the available tools."}})
+    adapter = OllamaAdapter(ModelConfig(model="test-model"), client=client)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
+
+    messages = [record.message for record in caplog.records if record.name == "uvicorn.error"]
+    request_start = next(msg for msg in messages if "MAI Ollama request start" in msg)
+    thinking_log = next(msg for msg in messages if "MAI Ollama thinking" in msg)
+    request_id = request_start.split(" id=", 1)[1].split(" ", 1)[0]
+    assert f"id={request_id}" in thinking_log
+    assert "Considered the available tools." in thinking_log
+
+
+def test_ollama_empty_thinking_is_not_logged(caplog) -> None:
+    import logging
+
+    client = FakeClient({"message": {"role": "assistant", "content": "done"}})
+    adapter = OllamaAdapter(ModelConfig(model="test-model"), client=client)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
+
+    assert not any("MAI Ollama thinking" in record.message for record in caplog.records)
