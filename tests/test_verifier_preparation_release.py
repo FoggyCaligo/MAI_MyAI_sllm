@@ -9,9 +9,10 @@ from mai.llm.models import ModelTurn
 
 
 class Reviewer:
-    def __init__(self, coverage="sufficient", refs=None, approve=True):
+    def __init__(self, coverage="sufficient", refs=None, approve=True, coverage_reason=""):
         self.calls = []
         self.coverage = coverage
+        self.coverage_reason = coverage_reason
         self.refs = ["e0"] if refs is None else refs
         self.approve = approve
 
@@ -22,7 +23,7 @@ class Reviewer:
                 payload = {"coverage_verdict": "insufficient",
                            "coverage_reason": "The requested item is missing", "claims": []}
             else:
-                payload = {"coverage_verdict": "sufficient", "coverage_reason": "",
+                payload = {"coverage_verdict": self.coverage, "coverage_reason": self.coverage_reason,
                            "claims": [{"claim": "A cat was observed", "evidence_refs": self.refs}]}
         else:
             payload = {"evidence_verdict": "supported" if self.approve else "unsupported",
@@ -79,3 +80,11 @@ def test_failed_results_excluded_and_plain_text_preserved():
     ], ["user entry"])
     assert [entry["value"] for entry in entries] == ["first line\\nsecond line", "record", "user entry"]
     assert lookup["e1"]["path"] == ["nodes", 0, "data"]
+
+
+@pytest.mark.parametrize("verdict", ["sufficient", "uncertain"])
+def test_nonblocking_coverage_comment_does_not_abort(verdict):
+    reviewer = Reviewer(coverage=verdict, coverage_reason="Additional optional detail may exist.")
+    result = execute(reviewer)
+    assert result.ok
+    assert len(reviewer.calls) == 2
