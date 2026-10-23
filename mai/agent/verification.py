@@ -1,15 +1,8 @@
-"""Final-answer grounding verification for MAI.
+"""Claim-targeted final-answer verification for MAI.
 
-This module deliberately separates five concerns:
-- deterministic numeric grounding against user/tool evidence, with model-based
-  equivalence review for exact-match misses,
-- model-based claim-level evidence and scope review,
-- model-based evidence-coverage review,
-- model-based action-outcome verification,
-- model-based task-alignment review.
-
-It does not decide whether a tool should have been used and does not perform
-string-marker heuristics for causal, semantic, action, or coverage relations.
+One claim extraction pass, indexed source retrieval and one integrated semantic
+adjudication pass cover numeric equivalence, evidence, scope, coverage, action,
+and alignment. Literal search locates excerpts but never determines truth.
 """
 from __future__ import annotations
 
@@ -226,7 +219,7 @@ class FinalReview:
 
 
 class FinalGroundingVerifier:
-    """Combine numeric grounding with claim, coverage, action, and alignment review."""
+    """Verify claims against retrieved evidence with one integrated semantic review."""
 
     def __init__(
         self,
@@ -317,9 +310,7 @@ class FinalGroundingVerifier:
         return FinalVerificationResult(
             ok=not issues,
             issues=tuple(issues),
-            retry_summary=(
-                review.retry_summary
-            ) if issues else "",
+            retry_summary=review.retry_summary if issues else "",
             review_details={
                 "evidence_verdict": review.evidence_verdict,
                 "alignment_verdict": review.alignment_verdict,
@@ -543,12 +534,10 @@ def _review_payload(
         if message.get("role") in {"user", "assistant"}
         and isinstance(message.get("content"), str)
     ][-10:]
-    tool_evidence: list[dict[str, Any]] = []
     return {
         "authoritative_current_time": current_time(),
         "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
         "conversation_context": context_messages,
-        "tool_results_in_execution_order": tool_evidence,
         "candidate_final": _clip_text(candidate, 6000),
     }
 
