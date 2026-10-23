@@ -52,8 +52,8 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
     )
 
     if include_recall_entry:
-        async def memory_recall(query: str) -> dict[str, object]:
-            recalled = memory.explicit_recall(user_id=user_id, query=query)
+        async def memory_recall(query: str, limit: int | None = None) -> dict[str, object]:
+            recalled = memory.explicit_recall(user_id=user_id, query=query, limit=limit)
             working.merge_working(recalled)
             return recalled.model_snapshot()
 
