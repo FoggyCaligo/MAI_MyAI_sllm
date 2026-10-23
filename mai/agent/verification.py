@@ -593,26 +593,26 @@ class FinalGroundingVerifier:
 
         for citation_attempt in range(1, 4):
             try:
-            selected = {index: (name, content) for index, (name, ok, _error, content)
-                        in enumerate(tool_results) if ok}
-            user_messages = [str(message["content"]) for message in messages
-                             if message.get("role") == "user" and isinstance(message.get("content"), str)]
-            for claim in prepared.claims:
-                if claim.source_index is None:
-                    if claim.tool is not None or claim.excerpt is not None:
-                        raise OllamaProtocolError("unlocated claim has an invalid citation")
-                    continue
-                if claim.tool == "user_input":
-                    if claim.source_index < 0 or claim.source_index >= len(user_messages):
-                        raise OllamaProtocolError("user citation index out of bounds")
-                    source = user_messages[claim.source_index]
-                else:
-                    chosen = selected.get(claim.source_index)
-                    if chosen is None or claim.tool != chosen[0]:
-                        raise OllamaProtocolError("claim citation does not name an observed successful tool")
-                    source = chosen[1]
-                if not claim.excerpt or claim.excerpt not in source:
-                    raise OllamaProtocolError("claim quotation does not occur in cited source")
+                selected = {index: (name, content) for index, (name, ok, _error, content)
+                            in enumerate(tool_results) if ok}
+                user_messages = [str(message["content"]) for message in messages
+                                 if message.get("role") == "user" and isinstance(message.get("content"), str)]
+                for claim in prepared.claims:
+                    if claim.source_index is None:
+                        if claim.tool is not None or claim.excerpt is not None:
+                            raise OllamaProtocolError("unlocated claim has an invalid citation")
+                        continue
+                    if claim.tool == "user_input":
+                        if claim.source_index < 0 or claim.source_index >= len(user_messages):
+                            raise OllamaProtocolError("user citation index out of bounds")
+                        source = user_messages[claim.source_index]
+                    else:
+                        chosen = selected.get(claim.source_index)
+                        if chosen is None or claim.tool != chosen[0]:
+                            raise OllamaProtocolError("claim citation does not name an observed successful tool")
+                        source = chosen[1]
+                    if not claim.excerpt or claim.excerpt not in source:
+                        raise OllamaProtocolError("claim quotation does not occur in cited source")
                 break
             except OllamaProtocolError as exc:
                 _LOG.warning(
