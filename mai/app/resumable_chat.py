@@ -203,7 +203,6 @@ def install() -> None:
     _INSTALLED = True
 
     app = server.app
-    app.router.routes[:] = [route for route in app.router.routes if getattr(route, "path", None) != "/"]
 
     @app.get("/", include_in_schema=False)
     async def resumable_root() -> HTMLResponse:

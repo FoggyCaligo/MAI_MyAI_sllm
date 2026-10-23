@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,7 +47,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _history_limit() -> int:
-    value = int(os.environ.get("SESSION_HISTORY_MESSAGES", "24"))
+    value = int(os.environ.get("SESSION_HISTORY_MESSAGES", "10"))
     if value < 0:
         raise ValueError("SESSION_HISTORY_MESSAGES must be >= 0")
     return value
@@ -264,11 +264,6 @@ def _tool_payload(execution: object) -> dict[str, object]:
         "error_type": getattr(execution, "error_type"),
         "result": getattr(execution, "content"),
     }
-
-
-@app.get("/", include_in_schema=False)
-async def root() -> FileResponse:
-    return FileResponse(_STATIC_DIR / "index.html")
 
 
 @app.get("/health")
