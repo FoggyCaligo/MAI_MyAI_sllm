@@ -39,29 +39,34 @@ Use only extracted claims and indexed source excerpts. Every extracted claim mus
 Return the structured evidence verdict, claims, and reasons. Use unsupported for asserted claims lacking support, uncertain for reviewer uncertainty; do not conflate the two.
 """.strip()
 
-_CLAIM_EXTRACTION_SYSTEM = """You are stage A: task-alignment, evidence-coverage, and action-outcome reviewer, and factual claim extractor.
+_TASK_REVIEW_SYSTEM = """You are stage A: task-alignment, evidence-coverage, and action-outcome reviewer.
 Use the latest user request, prior conversation for context, candidate answer, and observed successful tool results.
 - Determine whether essential requested outcomes are answered. A truthful partial result or failure report is acceptable; never add optional requirements.
 - Mark coverage insufficient only for material user-relevant facts already observed but omitted; never demand unsupported claims or extra research.
 - Verify external-action completion from actual resulting state. Successful invocation alone does not establish a broader outcome.
 - Distinguish missing evidence from contradicted facts. Do not invent evidence or demand contents of a rejected draft.
 - Provide concrete blocking reasons for alignment, coverage, or action failures.
-- Extract each material factual claim verbatim and propose distinctive search queries including source-language expressions. Do not judge claim truth here.
+- Do not extract or adjudicate individual factual claims; a separate stage B does that.
 Return the required structured fields."""
+
+_CLAIM_EXTRACTION_SYSTEM = """You are stage B, dedicated to extraction only. Read the candidate answer and extract every material factual assertion, quantitative or date claim, source-dependent detail, and reported completion assertion as individual claims. Preserve the candidate's meaning. Produce distinctive literal search terms and possible source-language equivalents. Do not judge accuracy, user alignment, coverage, completion, or support; never invent quotations or evidence. Return only the required claims schema."""
 
 class _ClaimSearch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     claim: str
     queries: list[str]
 
-class _ClaimExtraction(BaseModel):
+class _TaskReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    claims: list[_ClaimSearch]
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     reasons: list[str]
+
+class _ClaimExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claims: list[_ClaimSearch]
 
 def _indexed_evidence(tool_results: Sequence[ToolVerificationResult]) -> tuple[str, list[dict[str, Any]]]:
     """Retain complete successful outputs with exact offsets."""
@@ -341,9 +346,9 @@ class FinalGroundingVerifier:
     ) -> FinalReview:
         base = _review_payload(candidate=candidate, messages=messages, tool_results=())
         corpus, locations = _indexed_evidence(tool_results)
-        extraction_request = ChatRequest(
+        task_request = ChatRequest(
             messages=(
-                {"role": "system", "content": _CLAIM_EXTRACTION_SYSTEM},
+                {"role": "system", "content": _TASK_REVIEW_SYSTEM},
                 {"role": "user", "content": json.dumps({
                     "current_user_request": base["current_user_request"],
                     "conversation_context": base["conversation_context"],
@@ -356,35 +361,47 @@ class FinalGroundingVerifier:
             ),
             tools=(),
             think=False,
+            response_format=_TaskReview.model_json_schema(),
+        )
+        task_review = await self._request_structured_review(task_request, _TaskReview, label="task")
+        if not isinstance(task_review, _TaskReview):
+            raise OllamaProtocolError("task reviewer returned unexpected schema")
+        stage_a_rejected = (
+            task_review.alignment_verdict == "misaligned"
+            or task_review.coverage_verdict == "insufficient"
+            or task_review.action_verdict in ("unverified", "contradicted")
+        )
+        if stage_a_rejected:
+            if task_review.alignment_verdict == "misaligned" and not task_review.reasons:
+                raise OllamaProtocolError("stage A rejected alignment without a reason")
+            if task_review.coverage_verdict == "insufficient" and not task_review.coverage_reasons:
+                raise OllamaProtocolError("stage A rejected coverage without a reason")
+            if task_review.action_verdict in ("unverified", "contradicted") and not task_review.reasons:
+                raise OllamaProtocolError("stage A rejected action outcome without a reason")
+            reasons = tuple(dict.fromkeys(reason.strip() for reason in task_review.reasons if reason.strip()))
+            coverage_reasons = tuple(dict.fromkeys(reason.strip() for reason in task_review.coverage_reasons if reason.strip()))
+            return FinalReview(
+                evidence_verdict="uncertain",
+                alignment_verdict=task_review.alignment_verdict,
+                coverage_verdict=task_review.coverage_verdict,
+                coverage_reasons=coverage_reasons,
+                reasons=reasons,
+                claims=(),
+                action_verdict=task_review.action_verdict,
+                retry_summary="; ".join((*reasons, *coverage_reasons))[:800],
+            )
+        extraction_request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _CLAIM_EXTRACTION_SYSTEM},
+                {"role": "user", "content": json.dumps({"candidate_final": candidate}, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
             response_format=_ClaimExtraction.model_json_schema(),
         )
         extracted = await self._request_structured_review(extraction_request, _ClaimExtraction, label="claims")
         if not isinstance(extracted, _ClaimExtraction):
             raise OllamaProtocolError("claim extractor returned unexpected schema")
-        stage_a_rejected = (
-            extracted.alignment_verdict == "misaligned"
-            or extracted.coverage_verdict == "insufficient"
-            or extracted.action_verdict in ("unverified", "contradicted")
-        )
-        if stage_a_rejected:
-            if extracted.alignment_verdict == "misaligned" and not extracted.reasons:
-                raise OllamaProtocolError("stage A rejected alignment without a reason")
-            if extracted.coverage_verdict == "insufficient" and not extracted.coverage_reasons:
-                raise OllamaProtocolError("stage A rejected coverage without a reason")
-            if extracted.action_verdict in ("unverified", "contradicted") and not extracted.reasons:
-                raise OllamaProtocolError("stage A rejected action outcome without a reason")
-            reasons = tuple(dict.fromkeys(reason.strip() for reason in extracted.reasons if reason.strip()))
-            coverage_reasons = tuple(dict.fromkeys(reason.strip() for reason in extracted.coverage_reasons if reason.strip()))
-            return FinalReview(
-                evidence_verdict="uncertain",
-                alignment_verdict=extracted.alignment_verdict,
-                coverage_verdict=extracted.coverage_verdict,
-                coverage_reasons=coverage_reasons,
-                reasons=reasons,
-                claims=(),
-                action_verdict=extracted.action_verdict,
-                retry_summary="; ".join((*reasons, *coverage_reasons))[:800],
-            )
         payload = {}
         payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
         payload["evidence_scope"] = {
@@ -404,7 +421,7 @@ class FinalGroundingVerifier:
         _LOG.info(
             "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
-            len(payload["conversation_context"]),
+            len(extracted.claims),
             len(payload["claims_and_evidence"]),
             len(candidate),
         )
@@ -418,8 +435,8 @@ class FinalGroundingVerifier:
                 raise OllamaProtocolError("final reviewer returned duplicate claims")
             if not set(expected_claims).issubset(set(returned_claims)):
                 raise OllamaProtocolError("final reviewer omitted extracted claims")
-            reasons = tuple(dict.fromkeys(item.strip() for item in (*extracted.reasons, *parsed.reasons) if item.strip()))
-            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in extracted.coverage_reasons if item.strip()))
+            reasons = tuple(dict.fromkeys(item.strip() for item in (*task_review.reasons, *parsed.reasons) if item.strip()))
+            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in task_review.coverage_reasons if item.strip()))
             claims = tuple(
                 ClaimReview(
                     claim=item.claim.strip(),
@@ -431,8 +448,8 @@ class FinalGroundingVerifier:
                 if item.claim.strip()
             )
             evidence_verdict = parsed.evidence_verdict
-            alignment_verdict = extracted.alignment_verdict
-            coverage_verdict = extracted.coverage_verdict
+            alignment_verdict = task_review.alignment_verdict
+            coverage_verdict = task_review.coverage_verdict
             unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
             if unsupported_claims:
                 evidence_verdict = "unsupported"
@@ -449,7 +466,7 @@ class FinalGroundingVerifier:
                 coverage_reasons=coverage_reasons,
                 reasons=reasons,
                 claims=claims,
-                action_verdict=extracted.action_verdict,
+                action_verdict=task_review.action_verdict,
                 retry_summary=parsed.retry_summary,
             )
         except TimeoutError as exc:
