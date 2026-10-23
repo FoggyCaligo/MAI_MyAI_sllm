@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from mai.tools.filesystem import file_write, register_upload_scoped_write_tools
+from mai.tools.filesystem import file_write, register_trial_file_write
 from mai.tools.registry import ToolRegistry
 
 
