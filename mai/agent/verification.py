@@ -354,7 +354,7 @@ class FinalGroundingVerifier:
                     "conversation_context": base["conversation_context"],
                     "candidate_final": candidate,
                     "observed_tool_results": [
-                        {"tool": name, "index": index, "content": _clip_text(content, 1800)}
+                        {"tool": name, "index": index, "content": content}
                         for index, (name, ok, _error, content) in enumerate(tool_results) if ok
                     ],
                 }, ensure_ascii=False)},
