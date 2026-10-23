@@ -73,7 +73,7 @@ class OllamaAdapter:
         request_id = uuid4().hex[:12]
         started = time.perf_counter()
         _LOG.info(
-            "MAI Ollama request start id=%s model=%s messages=%d tools=%d input_chars=%d timeout_seconds=%g",
+            "MAI Ollama request start id=%s model=%s messages=%d tools=%d input_chars_approx=%d timeout_seconds=%g",
             request_id, self.config.model, len(payload["messages"]), len(payload["tools"]),
             sum(len(str(message)) for message in payload["messages"]), self.config.request_timeout_seconds,
         )
