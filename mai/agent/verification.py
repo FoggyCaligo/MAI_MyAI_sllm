@@ -72,7 +72,7 @@ Keep full, precise, independent material findings in the detailed review fields 
 - reasons: concrete blocking defects only
 - claims: material factual claims from the candidate that matter to the user's request
 - action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
-- retry_summary: one concise English correction instruction (maximum 800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. Keep full details in reasons and claims; never omit actual findings to shorten this summary.
+- retry_summary: for a rejected candidate, one concise English correction instruction (1–800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. For an accepted candidate, set this field to "No correction needed." Keep full details in reasons and claims; never omit actual findings to shorten this summary.
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
