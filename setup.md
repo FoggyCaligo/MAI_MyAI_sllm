@@ -312,6 +312,18 @@ python -c "import speakeronnx, vadonnx, faster_whisper, numpy; print('Voice depe
 
 ---
 
+### 구조화 문서 편집 기능 확인
+
+`document_edit`는 기존 프로젝트 의존성인 `python-docx`, `openpyxl`, `python-pptx`, `pypdf`를 재사용하므로 별도 패키지 설치가 필요하지 않음. 기본 설치 명령 `python -m pip install -e .`에 포함됨.
+
+설치 여부 확인:
+
+```powershell
+python -c "import docx, openpyxl, pptx, pypdf; print('Document edit dependencies OK')"
+```
+
+실패하면 가상환경을 확인하고 프로젝트 폴더에서 `python -m pip install -e .`을 다시 실행함. `document_edit`는 소유자 전용이며 기존 DOCX, XLSX, PPTX, CSV 문서 내용의 지정 위치 수정 및 PDF 페이지 회전·삭제를 지원함. PDF 텍스트 직접 수정은 지원하지 않음.
+
 ## 7. Playwright Chromium 브라우저 설치 (중요)
 
 MAI의 `browser_open` 등은 실제 브라우저에서 JavaScript를 실행한다. `pip install`은 브라우저 제어용 Python 라이브러리만 설치한다. **Chromium 바이너리는 별도로 설치해야 한다.**

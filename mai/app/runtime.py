@@ -83,7 +83,7 @@ Keep the meaning and scope of each source field, metric, screen, and time range 
 
 For arithmetic that materially affects the answer, activate and use the calculator tool instead of mental arithmetic. This includes sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step numeric comparisons.
 
-The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through file_read; there are no separate file_create or document_read native tools.
+The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through file_read. The owner can use document_edit for explicit supported edits to existing structured files, including PDF page operations; arbitrary PDF text edits are not supported. There are no separate file_create or model-visible document_read native tools.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 """.strip()
