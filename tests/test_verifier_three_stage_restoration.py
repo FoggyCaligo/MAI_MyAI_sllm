@@ -22,7 +22,7 @@ class Reviewer:
                     "coverage_verdict": "sufficient", "coverage_reason": "",
                     "claims": [{"claim": "The animal is a cat", "source_index": 0,
                                 "tool": "file_read",
-                                "excerpt": "the animal is a cat" if self.cited else "invented excerpt"}],
+                                "start": 13 if self.cited else 999, "end": 32 if self.cited else 1020}],
                 }
         else:
             data = {
@@ -63,7 +63,7 @@ def test_prepared_excerpt_and_release_approval():
     assert "tool_results_in_execution_order" not in release_input
 
 
-def test_invalid_citation_is_annotated_and_rejected_by_release():
+def test_out_of_range_coordinates_are_annotated_and_rejected_by_release():
     reviewer = Reviewer(cited=False)
     result = verify(reviewer)
     assert not result.ok
