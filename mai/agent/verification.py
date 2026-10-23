@@ -138,7 +138,7 @@ Decide coverage first. A representative summary satisfies an open-ended summary 
 do not demand optional or exhaustive details. If a specifically requested essential
 outcome is missing, return insufficient with one short actionable coverage_reason
 and claims=[]; downstream review will be skipped.
-Otherwise return sufficient (or uncertain) with coverage_reason="" and identify distinct
+Otherwise return sufficient (or uncertain); coverage_reason is non-blocking commentary\nand is not a rejection instruction. Identify distinct
 objective factual claims (not opinions or speculation). Assign to each claim the refs
 of relevant evidence entries; no matching evidence means evidence_refs=[].
 Refs are identifiers only. Do not invent refs, generate quotations, or calculate offsets.
@@ -607,8 +607,6 @@ class FinalGroundingVerifier:
                 reasons=(), claims=(), action_verdict="not_applicable",
                 retry_summary=prepared.coverage_reason.strip(),
             )
-        if prepared.coverage_reason.strip():
-            raise OllamaProtocolError("coverage reason must be empty unless rejected")
 
         resolved: list[dict[str, Any]] = []
         for claim in prepared.claims:
