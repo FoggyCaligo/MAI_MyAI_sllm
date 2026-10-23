@@ -10,6 +10,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
+import os
 import re
 from typing import Any, Literal, Mapping, Sequence
 
@@ -85,10 +86,34 @@ def _indexed_evidence(tool_results: Sequence[ToolVerificationResult]) -> tuple[s
         position += 1
     return "".join(fragments), locations
 
+def _sentence_window(text: str, match_start: int, match_end: int, neighbors: int) -> tuple[int, int]:
+    """Span covering matched sentence(s) and neighboring sentence units."""
+    boundaries = [0]
+    for separator in re.finditer(r"(?<=[.!?。！？])\\s+|\\n+", text):
+        boundaries.append(separator.end())
+    boundaries.append(len(text))
+    spans = [(left, right) for left, right in zip(boundaries, boundaries[1:]) if right > left]
+    first = next((i for i, (_, right) in enumerate(spans) if right > match_start), 0)
+    last = next((i for i, (_, right) in enumerate(spans) if right >= match_end), len(spans) - 1)
+    return spans[max(0, first - neighbors)][0], spans[min(len(spans) - 1, last + neighbors)][1]
+
+
+def _evidence_sentence_neighbors() -> int:
+    raw = os.getenv("VERIFIER_EVIDENCE_CONTEXT_SENTENCES", "2")
+    try:
+        count = int(raw)
+    except ValueError as exc:
+        raise ValueError("VERIFIER_EVIDENCE_CONTEXT_SENTENCES must be a nonnegative integer") from exc
+    if count < 0:
+        raise ValueError("VERIFIER_EVIDENCE_CONTEXT_SENTENCES must be a nonnegative integer")
+    return count
+
+
 def _retrieve_claim_evidence(
     claims: Sequence[_ClaimSearch], corpus: str, locations: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     """Retrieve bounded source snippets; searching never determines truth."""
+    neighbors = _evidence_sentence_neighbors()
     found: list[dict[str, Any]] = []
     for claim in claims:
         matches: list[dict[str, Any]] = []
@@ -97,9 +122,7 @@ def _retrieve_claim_evidence(
         for source in locations:
             start, end = int(source["start"]), int(source["end"])
             source_text = corpus[start:end]
-            heading = next((line.strip() for line in source_text.splitlines()
-                            if line.lstrip().startswith("#")), None)
-            title = heading or next((line.strip() for line in source_text.splitlines() if line.strip()), "")
+            # Use an explicit Markdown heading preceding the match, not an assumed first line.
             candidates: list[tuple[int, int, str]] = []
             # First prefer exact phrase matches, then case-insensitive matches.
             for query in queries:
@@ -137,8 +160,11 @@ def _retrieve_claim_evidence(
                                                max(m.end() for m in nearby), "token_proximity"))
                             break
             for local_at, local_end, strategy in candidates:
-                left = max(start, start + local_at - 500)
-                right = min(end, start + local_end + 500)
+                window_start, window_end = _sentence_window(source_text, local_at, local_end, neighbors)
+                left, right = start + window_start, start + window_end
+                headings = [line.strip() for line in source_text[:local_at].splitlines()
+                            if re.match(r"^#{1,6}\\s", line.strip())]
+                title = headings[-1] if headings else None
                 key = (int(source["index"]), left, right)
                 if key in seen:
                     continue
