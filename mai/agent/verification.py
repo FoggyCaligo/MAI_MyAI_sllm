@@ -10,6 +10,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
+import re
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
@@ -28,7 +29,7 @@ _LOG = logging.getLogger("uvicorn.error")
 
 _FINAL_REVIEW_SYSTEM = """
 You are the sole final-answer evidence reviewer. Do not call tools, rewrite the answer or add requirements.
-Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict and a specific reason. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
+Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict. Supported claims need only a concise reason (for example, a source location); detailed reasons are required only for unsupported claims. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
 - Support factual claims only when observed evidence supports their actual meaning and scope; distinguish absence of evidence from direct contradiction. Do not fabricate counterfacts or causal explanations.
 - An unsuccessful phrase search means only that no match was located in the selected tool-result scope. It cannot prove global absence or falsity. State uncertainty when the available excerpts are insufficient.
 - For translations, summaries and rewrites, judge fidelity to the source meaning, not literal wording. Retaining target-language text and proper names is valid.
@@ -41,8 +42,8 @@ Return the structured evidence verdict, claims, and reasons. Use unsupported for
 
 _TASK_REVIEW_SYSTEM = """You are stage A: task-alignment, evidence-coverage, and action-outcome reviewer.
 Use the latest user request, prior conversation for context, candidate answer, and observed successful tool results.
-- Determine whether essential requested outcomes are answered. A truthful partial result or failure report is acceptable; never add optional requirements.
-- Mark coverage insufficient only for material user-relevant facts already observed but omitted; never demand unsupported claims or extra research.
+- Determine only whether essential requested outcomes are answered. Do not reject accurate, useful answers for optional details, style, or preferences not requested. A truthful partial result or failure report is acceptable.
+- Mark coverage insufficient only if a specific, already-observed, essential user-relevant fact is omitted AND the omission prevents a useful answer. Describe the exact observed fact; do not require exhaustive enumeration, unsupported claims, or extra research.
 - Verify external-action completion from actual resulting state. Successful invocation alone does not establish a broader outcome.
 - Distinguish missing evidence from contradicted facts. Do not invent evidence or demand contents of a rejected draft.
 - Provide concrete blocking reasons for alignment, coverage, or action failures.
@@ -87,37 +88,76 @@ def _indexed_evidence(tool_results: Sequence[ToolVerificationResult]) -> tuple[s
 def _retrieve_claim_evidence(
     claims: Sequence[_ClaimSearch], corpus: str, locations: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Search literal source spans only; semantic support is an LLM decision."""
+    """Retrieve bounded source snippets; searching never determines truth."""
     found: list[dict[str, Any]] = []
     for claim in claims:
         matches: list[dict[str, Any]] = []
-        seen: set[tuple[int, int]] = set()
-        for query in claim.queries:
-            if not query:
-                continue
-            for source in locations:
-                cursor = int(source["start"])
-                end = int(source["end"])
-                while len(matches) < 3:
-                    at = corpus.find(query, cursor, end)
-                    if at < 0:
+        seen: set[tuple[int, int, int]] = set()
+        queries = [query.strip() for query in claim.queries if query.strip()]
+        for source in locations:
+            start, end = int(source["start"]), int(source["end"])
+            source_text = corpus[start:end]
+            heading = next((line.strip() for line in source_text.splitlines()
+                            if line.lstrip().startswith("#")), None)
+            title = heading or next((line.strip() for line in source_text.splitlines() if line.strip()), "")
+            candidates: list[tuple[int, int, str]] = []
+            # First prefer exact phrase matches, then case-insensitive matches.
+            for query in queries:
+                cursor = 0
+                while query:
+                    position = source_text.find(query, cursor)
+                    if position < 0:
                         break
-                    left = max(int(source["start"]), at - 900)
-                    right = min(end, at + len(query) + 900)
-                    if (left, right) not in seen:
-                        seen.add((left, right))
-                        matches.append({
-                            "tool_result_index": source["index"], "tool": source["tool"],
-                            "start": left, "end": right, "context": corpus[left:right],
-                        })
-                    cursor = at + max(1, len(query))
+                    candidates.append((position, position + len(query), "exact"))
+                    cursor = position + max(1, len(query))
+                for match in re.finditer(re.escape(query), source_text, flags=re.IGNORECASE):
+                    candidates.append((match.start(), match.end(), "case_insensitive"))
+            if not candidates:
+                # A retrieval-only second pass: locate multiple query tokens within
+                # a 1000-character window; do not infer evidentiary support.
+                for query in queries:
+                    tokens = query.split()
+                    if len(tokens) < 2:
+                        continue
+                    token_hits = [
+                        list(re.finditer(re.escape(token), source_text, flags=re.IGNORECASE))
+                        for token in tokens
+                    ]
+                    if any(not hits for hits in token_hits):
+                        continue
+                    for first in token_hits[0]:
+                        nearby = [first]
+                        for hits in token_hits[1:]:
+                            match = next((hit for hit in hits if abs(hit.start() - first.start()) <= 500), None)
+                            if match is None:
+                                break
+                            nearby.append(match)
+                        if len(nearby) == len(tokens):
+                            candidates.append((min(m.start() for m in nearby),
+                                               max(m.end() for m in nearby), "token_proximity"))
+                            break
+            for local_at, local_end, strategy in candidates:
+                left = max(start, start + local_at - 500)
+                right = min(end, start + local_end + 500)
+                key = (int(source["index"]), left, right)
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append({
+                    "tool_result_index": source["index"], "tool": source["tool"],
+                    "start": left, "end": right, "title": title,
+                    "context": corpus[left:right], "retrieval_strategy": strategy,
+                })
                 if len(matches) >= 3:
                     break
             if len(matches) >= 3:
                 break
-        found.append({"claim": claim.claim, "matches": matches,
-                      "search_status": "located" if matches else "not_located_in_selected_scope"})
+        found.append({
+            "claim": claim.claim, "matches": matches,
+            "search_status": "located" if matches else "not_located_in_selected_scope",
+        })
     return found
+
 
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
