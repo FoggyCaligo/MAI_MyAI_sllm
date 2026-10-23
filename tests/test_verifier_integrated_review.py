@@ -14,13 +14,10 @@ class FakeReviewer:
     async def chat(self, request):
         self.requests.append(request)
         if len(self.requests) == 1:
-            data = {"claims": [{"claim": "소설은 약 1,000자이다", "queries": ["1037"]}]}
+            data = {"claims": [{"claim": "소설은 약 1,000자이다", "queries": ["1037"]}], "alignment_verdict": "aligned", "coverage_verdict": "sufficient", "coverage_reasons": [], "action_verdict": "not_applicable", "reasons": []}
         else:
             data = {
                 "evidence_verdict": "supported" if self.supported else "unsupported",
-                "alignment_verdict": "aligned",
-                "coverage_verdict": "sufficient",
-                "coverage_reasons": [],
                 "reasons": [] if self.supported else ["Unverified length"],
                 "claims": [{
                     "claim": "소설은 약 1,000자이다",
@@ -28,7 +25,6 @@ class FakeReviewer:
                     "defect": "none" if self.supported else "missing_evidence",
                     "reason": "Numerically approximate" if self.supported else "No evidence for count",
                 }],
-                "action_verdict": "not_applicable",
                 "retry_summary": "No correction needed." if self.supported else "Remove unsupported count.",
             }
         return ModelTurn(content=json.dumps(data), thinking="", tool_calls=(), assistant_message={"role":"assistant","content":json.dumps(data)})
@@ -60,3 +56,38 @@ def test_rejection_reason_is_preserved_without_second_numeric_review():
     assert len(fake.requests) == 2
     assert result.issues[0].code == "claim_grounding_failed"
     assert "No evidence for count" in result.feedback_message()
+
+
+class StageARejectReviewer:
+    def __init__(self, verdict):
+        self.requests = []
+        self.verdict = verdict
+
+    async def chat(self, request):
+        self.requests.append(request)
+        data = {
+            "claims": [],
+            "alignment_verdict": "misaligned" if self.verdict == "alignment" else "aligned",
+            "coverage_verdict": "insufficient" if self.verdict == "coverage" else "sufficient",
+            "coverage_reasons": ["Missing already observed detail"] if self.verdict == "coverage" else [],
+            "action_verdict": "unverified" if self.verdict == "action" else "not_applicable",
+            "reasons": ["Required request not answered"] if self.verdict == "alignment" else (
+                ["Resulting state was not established"] if self.verdict == "action" else []
+            ),
+        }
+        payload = json.dumps(data)
+        return ModelTurn(content=payload, thinking="", tool_calls=(), assistant_message={"role":"assistant","content":payload})
+
+
+def test_stage_a_rejection_skips_stage_b_for_each_axis():
+    for axis, issue_code in (
+        ("alignment", "task_alignment_failed"),
+        ("coverage", "evidence_coverage_insufficient"),
+        ("action", "action_outcome_unverified"),
+    ):
+        fake = StageARejectReviewer(axis)
+        result = _verify(fake)
+        assert not result.ok
+        assert len(fake.requests) == 1
+        assert any(issue.code == issue_code for issue in result.issues)
+        assert result.retry_summary
