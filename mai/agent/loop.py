@@ -340,7 +340,7 @@ class AgentLoop:
                             messages=[message for index, message in enumerate(history) if index not in rejected_final_indices],
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
-                                for execution in executions[tool_start_by_round[max(1, round_number - 2)]:]
+                                for execution in executions[tool_start_by_round[max((n for n, start in tool_start_by_round.items() if start < len(executions)), default=round_number)]:]
                             ),
                         )
                         if not verification.ok:
