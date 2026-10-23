@@ -22,6 +22,10 @@ _MEMORY_MODEL_CONTEXT = {
 class MemoryRecallInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, description="Lexical query for recalling this user's persistent memory")
+    limit: int | None = Field(
+        default=None, ge=1,
+        description="Optional maximum number of relevant Fact nodes to return, ranked by matching Concept score. Omit to return all matching facts; use a smaller limit for focused queries to reduce context.",
+    )
 
 
 class MemoryOverviewInput(BaseModel):
@@ -60,7 +64,9 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         registry.add(
             name="memory_recall",
             description=(
-                "Search this user's persistent memory from a specific free-text query. The default result is "
+                "Search this user's persistent memory from a specific free-text query. Optionally set limit "
+                "to return only the highest-ranked matching Fact nodes; omit limit to return all matches. "
+                "The default result is "
                 "query-matched Fact memories with node IDs, not a recent-memory overview. An empty or "
                 "weak result means that this search did not locate evidence, not that the memory is absent. Rephrase the query or use memory_search on related nodes for more evidence. Use recall when the answer depends on a "
                 "particular remembered topic, preference, decision, person, project, or past event."
