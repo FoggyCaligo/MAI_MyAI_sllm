@@ -80,7 +80,8 @@ Claim-level evidence grounding:
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
-- Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
+- Verify each claim against the actual source statement, not merely shared names or keywords.
+- For each rejected claim, give a specific reason and cite the tool result index and offsets when found. A search miss is not proof of global absence. A feature description does not establish a different mechanism or product identity.
 - For translation, summarization or rewriting, judge fidelity to the source meaning, not literal wording. Unchanged target-language text or proper names are valid; invented details and unsupported counts are not.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
 - The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
@@ -132,6 +133,69 @@ Overall verdicts:
 - reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
 """.strip()
 
+
+
+_CLAIM_EXTRACTION_SYSTEM = """Extract material factual claims requiring grounding from the user's request and candidate answer. Supply literal search phrases in the source language likely to occur in tool evidence. Do not judge support or invent quotations."""
+
+class _ClaimSearch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claim: str
+    queries: list[str]
+
+class _ClaimExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    claims: list[_ClaimSearch]
+
+def _indexed_evidence(tool_results: Sequence[ToolVerificationResult]) -> tuple[str, list[dict[str, Any]]]:
+    """Retain complete successful outputs with exact offsets."""
+    fragments: list[str] = []
+    locations: list[dict[str, Any]] = []
+    position = 0
+    for index, (name, ok, _error, content) in enumerate(tool_results):
+        if not ok:
+            continue
+        start = position
+        fragments.append(content)
+        position += len(content)
+        locations.append({"index": index, "tool": name, "start": start, "end": position})
+        fragments.append("\n")
+        position += 1
+    return "".join(fragments), locations
+
+def _retrieve_claim_evidence(
+    claims: Sequence[_ClaimSearch], corpus: str, locations: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Search literal source spans only; semantic support is an LLM decision."""
+    found: list[dict[str, Any]] = []
+    for claim in claims:
+        matches: list[dict[str, Any]] = []
+        seen: set[tuple[int, int]] = set()
+        for query in claim.queries:
+            if not query:
+                continue
+            for source in locations:
+                cursor = int(source["start"])
+                end = int(source["end"])
+                while len(matches) < 3:
+                    at = corpus.find(query, cursor, end)
+                    if at < 0:
+                        break
+                    left = max(int(source["start"]), at - 900)
+                    right = min(end, at + len(query) + 900)
+                    if (left, right) not in seen:
+                        seen.add((left, right))
+                        matches.append({
+                            "tool_result_index": source["index"], "tool": source["tool"],
+                            "start": left, "end": right, "context": corpus[left:right],
+                        })
+                    cursor = at + max(1, len(query))
+                if len(matches) >= 3:
+                    break
+            if len(matches) >= 3:
+                break
+        found.append({"claim": claim.claim, "matches": matches,
+                      "search_status": "located" if matches else "not_located_in_selected_scope"})
+    return found
 
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -504,11 +568,30 @@ class FinalGroundingVerifier:
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
-        payload = _review_payload(
-            candidate=candidate,
-            messages=messages,
-            tool_results=tool_results,
+        base = _review_payload(candidate=candidate, messages=messages, tool_results=())
+        corpus, locations = _indexed_evidence(tool_results)
+        extraction_request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _CLAIM_EXTRACTION_SYSTEM},
+                {"role": "user", "content": json.dumps({
+                    "current_user_request": base["current_user_request"],
+                    "candidate_final": candidate,
+                }, ensure_ascii=False)},
+            ),
+            tools=(),
+            think=False,
+            response_format=_ClaimExtraction.model_json_schema(),
         )
+        extracted = await self._request_structured_review(extraction_request, _ClaimExtraction, label="claims")
+        if not isinstance(extracted, _ClaimExtraction):
+            raise OllamaProtocolError("claim extractor returned unexpected schema")
+        payload = dict(base)
+        payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
+        payload["evidence_scope"] = {
+            "successful_tool_results": len(locations),
+            "corpus_chars": len(corpus),
+            "note": "Search matches are excerpts, not exhaustive evidence; not_located is not contradiction.",
+        }
         request = ChatRequest(
             messages=(
                 {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
@@ -522,7 +605,7 @@ class FinalGroundingVerifier:
             "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
             len(payload["conversation_context"]),
-            len(payload["tool_results_in_execution_order"]),
+            len(payload["claims_and_evidence"]),
             len(candidate),
         )
         try:
