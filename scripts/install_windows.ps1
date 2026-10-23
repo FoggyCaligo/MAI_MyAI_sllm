@@ -70,8 +70,21 @@ try {
 
     $envPath = Join-Path $InstallPath '.env'
     if (-not (Test-Path -LiteralPath $envPath)) {
-        $model = Read-RequiredValue 'Ollama model name to download (e.g. gemma3:4b)'
+        $source = Get-Content '.env.example' -Raw -Encoding UTF8
+        $mainModelSetting = @($source -split "\r?\n" | Where-Object { $_ -match '^MAIN_MODEL=' })
+        $visionModelSetting = @($source -split "\r?\n" | Where-Object { $_ -match '^VISION_MODEL=' })
+        if ($mainModelSetting.Count -ne 1 -or $visionModelSetting.Count -ne 1) {
+            throw '.env.example must contain exactly one MAIN_MODEL and VISION_MODEL setting'
+        }
+        $defaultModel = ($mainModelSetting[0] -split '=', 2)[1].Trim()
+        $visionModel = ($visionModelSetting[0] -split '=', 2)[1].Trim()
+        if (-not $defaultModel -or -not $visionModel) {
+            throw 'MAIN_MODEL and VISION_MODEL in .env.example must be non-empty'
+        }
+        $model = Read-Host "Main Ollama model [$defaultModel] (press Enter for default)"
+        if ([string]::IsNullOrWhiteSpace($model)) { $model = $defaultModel }
         Run-Command 'ollama' @('pull', $model)
+        Run-Command 'ollama' @('pull', $visionModel)
         $userId = Read-RequiredValue 'Owner login ID'
         $secure = Read-Host 'Owner password' -AsSecureString
         $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
@@ -87,19 +100,18 @@ try {
         finally {
             [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
         }
-        $source = Get-Content '.env.example' -Raw -Encoding UTF8
         $lines = @(
             $source -split "\r?\n" | ForEach-Object {
                 if ($_ -match '^MAIN_MODEL=') { 'MAIN_MODEL=' + $model }
                 elseif ($_ -match '^OWNER_USERS=') { 'OWNER_USERS=' + $ownerJson }
                 elseif ($_ -match '^TRIAL_USERS=') { 'TRIAL_USERS=[]' }
                 elseif ($_ -match '^TAILSCALE_FUNNEL=') { 'TAILSCALE_FUNNEL=false' }
-                elseif ($_ -match '^VISION_MODEL=') { 'VISION_MODEL=' }
+                elseif ($_ -match '^VISION_MODEL=') { 'VISION_MODEL=' + $visionModel }
                 else { $_ }
             }
         )
         [System.IO.File]::WriteAllText($envPath, ($lines -join [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host 'Created .env: local-only, Trial disabled, Funnel disabled.'
+        Write-Host 'Created .env: local-only, Trial disabled, Funnel disabled, vision enabled.'
     }
     else {
         Write-Host 'Existing .env preserved; no login, model, or Funnel settings changed.'
