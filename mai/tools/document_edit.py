@@ -137,12 +137,16 @@ def document_edit(
     elif expected_extension == ".xlsx":
         from openpyxl import load_workbook
         workbook = load_workbook(source)
-        if not isinstance(action, XlsxSetCell):
-            raise TypeError("invalid XLSX action")
-        if action.sheet not in workbook.sheetnames:
-            raise KeyError(f"worksheet not found: {action.sheet}")
-        worksheet = workbook[action.sheet]
-        worksheet[action.cell].value = action.value
+        try:
+            if not isinstance(action, XlsxSetCell):
+                raise TypeError("invalid XLSX action")
+            if action.sheet not in workbook.sheetnames:
+                raise KeyError(f"worksheet not found: {action.sheet}")
+            worksheet = workbook[action.sheet]
+            worksheet[action.cell].value = action.value
+        except BaseException:
+            workbook.close()
+            raise
         save = workbook.save
     elif expected_extension == ".pptx":
         from pptx import Presentation
