@@ -46,14 +46,10 @@
 
   function renderLiveThinking(thinking, verificationRejections = []) {
     if (!liveProgressWrap) return;
-    const bubble = liveProgressWrap.querySelector('.bubble');
-    if (!bubble) return;
-
-    let placeholder = bubble.querySelector('[data-live-thinking="true"]');
+    let panel = liveProgressWrap.querySelector('[data-live-thinking="true"]');
     const sections = [];
     const text = typeof thinking === 'string' ? thinking.trim() : '';
     if (text) sections.push(text);
-
     if (Array.isArray(verificationRejections)) {
       verificationRejections.forEach(rejection => {
         const feedback = typeof rejection?.feedback === 'string' ? rejection.feedback.trim() : '';
@@ -62,26 +58,35 @@
         sections.push(`REJECTED${round}\n${feedback}`);
       });
     }
-
     if (!sections.length) {
-      placeholder?.remove();
+      panel?.remove();
       return;
     }
-
-    if (!placeholder) {
-      placeholder = document.createElement('div');
-      placeholder.dataset.liveThinking = 'true';
-      placeholder.style.marginTop = '8px';
-      placeholder.style.color = 'var(--text-dim)';
-      placeholder.style.opacity = '0.78';
-      placeholder.style.fontSize = '13px';
-      placeholder.style.lineHeight = '1.55';
-      placeholder.style.whiteSpace = 'pre-wrap';
-      placeholder.style.overflowWrap = 'anywhere';
-      bubble.appendChild(placeholder);
+    if (!panel) {
+      panel = document.createElement('details');
+      panel.className = 'tool-log';
+      panel.dataset.liveThinking = 'true';
+      panel.open = true;
+      const summary = document.createElement('summary');
+      summary.textContent = 'Think · 진행 중';
+      const body = document.createElement('div');
+      body.className = 'tool-result';
+      body.style.whiteSpace = 'pre-wrap';
+      body.style.overflowWrap = 'anywhere';
+      panel.append(summary, body);
+      liveProgressWrap.appendChild(panel);
     }
-    placeholder.textContent = sections.join('\n\n');
+    panel.querySelector('.tool-result').textContent = sections.join('\n\n');
     if (typeof scrollToBottom === 'function') scrollToBottom();
+  }
+
+  function preserveFailedThinking() {
+    if (!liveProgressWrap) return;
+    const panel = liveProgressWrap.querySelector('[data-live-thinking="true"]');
+    if (!panel) return;
+    delete panel.dataset.liveThinking;
+    panel.querySelector('summary').textContent = 'Think · 오류 전 기록';
+    panel.open = false;
   }
 
   function renderLiveToolProgress(tools) {
@@ -296,6 +301,7 @@
         return jsonResponse(data.response || {}, 200);
       }
       if (data.status === 'failed') {
+        preserveFailedThinking();
         localStorage.removeItem(storageKey);
         const payload = data.response || {detail: data.error || '대화 작업 실패'};
         return jsonResponse(payload, Number(payload.status_code) || 500);
