@@ -216,6 +216,7 @@ class ToolExecutionResponse(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    verification_rejections: list[dict[str, object]] = Field(default_factory=list)
     answer: str
     model: str
     model_rounds: int
@@ -468,10 +469,13 @@ async def chat(
     run_id = secrets.token_urlsafe(18)
     audit.start(run_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
     current_round: int | None = None
+    candidate_by_round: dict[int, str] = {}
+    verification_rejections: list[dict[str, object]] = []
 
     def publish_model_turn(round_number: int, turn: object) -> None:
         nonlocal current_round
         current_round = round_number
+        candidate_by_round[round_number] = getattr(turn, "content")
         thinking = getattr(turn, "thinking")
         if thinking:
             audit.append(run_id, "model_think_step", thinking, round_number=round_number)
@@ -496,6 +500,10 @@ async def chat(
         )
 
     def publish_verification_rejection(round_number: int, verification: object) -> None:
+        if round_number not in candidate_by_round:
+            raise RuntimeError(f"missing model candidate for rejected round {round_number}")
+        rejection = {"model_round": round_number, "candidate": candidate_by_round[round_number], "feedback": verification.feedback_message()}
+        verification_rejections.append(rejection)
         audit.append(
             run_id, "verifier_step", verification.feedback_message(),
             round_number=round_number, status="REJECTED",
@@ -505,6 +513,7 @@ async def chat(
                     for issue in verification.issues
                 ],
                 "review_details": verification.review_details,
+                "rejected_candidate": rejection["candidate"],
             },
         )
 
@@ -535,6 +544,7 @@ async def chat(
                 "detail": exc.error_message,
                 "model": selected_model or runtime.model,
                 "model_rounds": exc.context.model_rounds,
+                "verification_rejections": verification_rejections,
                 "tools": [_tool_payload(execution) for execution in exc.context.tool_executions],
             },
         )
@@ -547,11 +557,13 @@ async def chat(
                 "detail": str(exc),
                 "model": selected_model or runtime.model,
                 "model_rounds": 0,
+                "verification_rejections": verification_rejections,
                 "tools": [],
             },
         )
 
     return ChatResponse(
+        verification_rejections=verification_rejections,
         answer=result.answer,
         model=result.model,
         model_rounds=result.model_rounds,
