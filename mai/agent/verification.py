@@ -140,10 +140,12 @@ A representative answer to an open-ended summary is sufficient. Do not require e
 memory, optional details, stylistic preferences, or more research. Coverage is insufficient
 only if a specifically requested essential item is missing or the omission defeats the task.
 If insufficient, return coverage_verdict=insufficient, one concise actionable coverage_reason,
-and an empty claims list. The caller will reject immediately, without a stage 3 call.
+and an empty claims list. For sufficient or uncertain coverage, return empty coverage_reason. The caller will reject immediately, without a stage 3 call.
 Otherwise, extract distinct, objectively checkable factual claims (not opinions, speculation,
 or commentary) and pair each with an actual short excerpt from the observed successful tool
-result or user's message. Keep each excerpt minimal. Quote exactly, without paraphrasing
+result or user's message. Use source_index as the original index into the ordered
+tool_results_in_execution_order entries, or the index into user_input_sources
+when tool="user_input". Keep each excerpt minimal. Quote exactly, without paraphrasing
 or fabricating. Include the source index and tool name; use null where no observed source
 supports a claim. Do not decide claim truth from keyword overlap. Return only the schema.
 """.strip()
