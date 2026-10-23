@@ -1,7 +1,7 @@
 """Native tool implementations and registry."""
 
 from .calculator import CalculatorError, CalculatorInput, calculator, register_calculator_tools
-from .code import code_read, code_search, code_symbols, register_code_tools
+from .code import code_edit, code_read, code_search, code_symbols, register_code_edit_tool, register_code_tools
 from .external import register_external_information_tools
 from .filesystem import (
     register_filesystem_read_tools,
@@ -48,6 +48,7 @@ __all__ = [
     "WebFetchError",
     "WebSearchError",
     "calculator",
+    "code_edit",
     "code_read",
     "code_search",
     "code_symbols",
@@ -61,6 +62,7 @@ __all__ = [
     "file_copy",
     "market_data",
     "register_calculator_tools",
+    "register_code_edit_tool",
     "register_code_tools",
     "register_external_information_tools",
     "register_filesystem_read_tools",
