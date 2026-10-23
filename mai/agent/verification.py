@@ -182,6 +182,25 @@ class FinalVerificationResult:
     retry_summary: str = ""
     review_details: Mapping[str, Any] | None = None
 
+    def correction_contract(self) -> dict[str, Any]:
+        """Return all verifier findings as structured retry input, without truncation."""
+        if self.ok:
+            return {"issues": [], "unsupported_claims": []}
+        details = self.review_details or {}
+        claims = details.get("claims", ())
+        return {
+            "issues": [{"code": issue.code, "message": issue.message} for issue in self.issues],
+            "unsupported_claims": [
+                {
+                    "claim": claim["claim"],
+                    "defect": claim["defect"],
+                    "reason": claim["reason"],
+                }
+                for claim in claims
+                if claim["verdict"] == "unsupported"
+            ],
+        }
+
     def feedback_message(self) -> str:
         if self.ok:
             return ""

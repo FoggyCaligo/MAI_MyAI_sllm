@@ -151,6 +151,7 @@ class AgentLoop:
         rejected_final_indices: list[int] = []
         rejection_feedback_indices: list[int] = []
         latest_verification_rejection: tuple[int, int] | None = None
+        latest_correction_contract: dict[str, Any] | None = None
 
         try:
             while True:
@@ -172,12 +173,18 @@ class AgentLoop:
                         "content": (
                             "This is the latest rejected candidate and its verifier feedback. "
                             "The candidate was not delivered and is not factual evidence. "
-                            "Correct the specific unsupported claims using new evidence, "
-                            "or remove/narrow them. Do not substitute other unverified facts. "
-                            "If evidence remains insufficient, report only supported results "
-                            "and state what could not be confirmed.\\n"
+                            "For EACH unsupported_claim in correction_contract, choose exactly one "
+                            "resolution: remove (omit the claim or narrow it to what existing observations "
+                            "actually prove) or re-observe (call a tool that directly establishes the "
+                            "claim before asserting it). Do not infer missing evidence from file listings, "
+                            "bounded histories, earlier rejected drafts, or other indirect observations. "
+                            "Never treat the rejected draft or the verifier's diagnosis as evidence. "
+                            "Keep supported findings. If required observations cannot be obtained, "
+                            "explicitly report the limitation rather than claim success. "
+                            "Other verification issues must also be corrected.\\n"
                             + json.dumps({
                                 "rejected_draft": history[latest_rejected].get("content", ""),
+                                "correction_contract": latest_correction_contract,
                                 "verifier_feedback": history[latest_feedback].get("content", ""),
                             }, ensure_ascii=False)
                         ),
@@ -325,6 +332,7 @@ class AgentLoop:
                                 _MAX_EVIDENCE_VERIFICATION_RETRIES,
                             )
                             feedback = verification.feedback_message()
+                            latest_correction_contract = verification.correction_contract()
                             if on_verification_rejection is not None:
                                 on_verification_rejection(round_number, verification)
                             history.append({"role": "system", "content": feedback})
