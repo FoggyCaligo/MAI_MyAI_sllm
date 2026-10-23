@@ -16,14 +16,6 @@ class FakeClient:
 
     async def chat(self, **kwargs):
         self.calls.append(kwargs)
-        if kwargs["stream"]:
-            async def chunks():
-                if isinstance(self.response, list):
-                    for chunk in self.response:
-                        yield chunk
-                else:
-                    yield {**self.response, "done": True}
-            return chunks()
         return self.response
 
 
@@ -99,7 +91,7 @@ def test_adapter_passes_native_tools_thinking_options_and_response_format() -> N
     payload = client.calls[0]
     assert payload["model"] == "ornith-1.5:9b"
     assert payload["think"] is True
-    assert payload["stream"] is True
+    assert payload["stream"] is False
     assert payload["tools"][0]["function"]["name"] == "file_read"
     assert payload["options"] == {"temperature": 0.2, "num_ctx": 32768}
     assert payload["format"] == response_format
@@ -205,50 +197,3 @@ def test_ollama_empty_thinking_is_not_logged(caplog) -> None:
         run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
 
     assert not any("MAI Ollama thinking" in record.message for record in caplog.records)
-
-
-def test_streamed_thinking_and_tool_calls_are_accumulated() -> None:
-    client = FakeClient([
-        {"message": {"role": "assistant", "thinking": "First "}, "done": False},
-        {"message": {"role": "assistant", "thinking": "second", "content": "Answer "}, "done": False},
-        {"message": {"role": "assistant", "content": "done", "tool_calls": [
-            {"function": {"name": "file_read", "arguments": {"path": "/test"}}}
-        ]}, "done": False},
-        {"message": {"role": "assistant"}, "done": True, "eval_count": 7},
-    ])
-    chunks = []
-    adapter = OllamaAdapter(ModelConfig(model="test"), client=client)
-    turn = run(adapter.chat(ChatRequest(messages=[], on_thinking_chunk=chunks.append)))
-    assert chunks == ["First ", "second"]
-    assert turn.thinking == "First second"
-    assert turn.content == "Answer done"
-    assert turn.assistant_message["thinking"] == "First second"
-    assert turn.tool_calls[0].name == "file_read"
-
-
-def test_stream_without_completion_marker_is_protocol_error() -> None:
-    client = FakeClient([{"message": {"role": "assistant", "thinking": "partial"}, "done": False}])
-    adapter = OllamaAdapter(ModelConfig(model="test"), client=client)
-    chunks = []
-    with pytest.raises(OllamaProtocolError, match="done=true"):
-        run(adapter.chat(ChatRequest(messages=[], on_thinking_chunk=chunks.append)))
-    assert chunks == ["partial"]
-
-
-def test_stream_timeout_preserves_partial_thinking() -> None:
-    class StreamingClient:
-        async def chat(self, **kwargs):
-            async def chunks():
-                yield {"message": {"role": "assistant", "thinking": "received"}, "done": False}
-                await asyncio.sleep(0.1)
-                yield {"message": {"role": "assistant"}, "done": True}
-            return chunks()
-
-    from mai.llm.ollama import OllamaChatTimeoutError
-    chunks = []
-    adapter = OllamaAdapter(
-        ModelConfig(model="test", request_timeout_seconds=0.01), client=StreamingClient(),
-    )
-    with pytest.raises(OllamaChatTimeoutError):
-        run(adapter.chat(ChatRequest(messages=[], on_thinking_chunk=chunks.append)))
-    assert chunks == ["received"]
