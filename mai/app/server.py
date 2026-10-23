@@ -46,6 +46,20 @@ def _env_bool(name: str, default: bool = False) -> bool:
     raise ValueError(f"{name} must be a boolean value")
 
 
+# Keep database path defaults in one place. Paths supplied by the
+# environment retain their existing semantics (relative to the process CWD).
+_DB_PATH_DEFAULTS = {
+    "MEMORY_DB_PATH": "./data/memory.sqlite3",
+    "SENTENCE_BREAKER_DB_PATH": "./data/sentence_breaker.sqlite3",
+    "CHAT_DB_PATH": "./data/chat.sqlite3",
+    "LOG_DB_PATH": "./data/log.sqlite3",
+}
+
+
+def _db_path(name: str) -> str:
+    return os.environ.get(name, _DB_PATH_DEFAULTS[name])
+
+
 def _history_limit() -> int:
     value = int(os.environ.get("SESSION_HISTORY_MESSAGES", "10"))
     if value < 0:
@@ -144,7 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         owner_users=os.environ.get("OWNER_USERS"),
         trial_users=os.environ.get("TRIAL_USERS"),
     )
-    _chat_session_store = ChatSessionStore(os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3"))
+    _chat_session_store = ChatSessionStore(_db_path("CHAT_DB_PATH"))
     # PR #134 initially keyed persisted chat rows by login ID. Move those rows
     # to the stable db_id when the two differ so changing user_id does not lose
     # an already-created conversation.
@@ -154,8 +168,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        memory_db_path=os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3"),
-        sentence_breaker_db_path=os.environ.get("SENTENCE_BREAKER_DB_PATH", "./data/sentence_breaker.sqlite3"),
+        memory_db_path=_db_path("MEMORY_DB_PATH"),
+        sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
         vision_model=os.environ.get("VISION_MODEL") or None,
         upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
@@ -460,7 +474,7 @@ async def chat(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    audit = AuditLogStore(os.environ.get("LOG_DB_PATH", "./data/log.sqlite3"))
+    audit = AuditLogStore(_db_path("LOG_DB_PATH"))
     run_id = secrets.token_urlsafe(18)
     audit.start(run_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
     current_round: int | None = None

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 from pathlib import Path
 
 from fastapi import Header
@@ -94,7 +93,7 @@ async def _execute_chat(
 async def _run_job(*, job_id: str, request: server.ChatRequest, principal: object) -> None:
     audit: AuditLogStore | None = None
     try:
-        audit = AuditLogStore(os.environ.get("LOG_DB_PATH", "./data/log.sqlite3"))
+        audit = AuditLogStore(server._db_path("LOG_DB_PATH"))
         audit.start(job_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
         async with chat_job_store.lock_for(principal.user_id):
             chat_job_store.mark_running(job_id)
