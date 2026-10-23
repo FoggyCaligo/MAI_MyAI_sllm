@@ -76,7 +76,7 @@ class RecallService:
             if path is not None:
                 delta.merge(path, mark_expanded=False)
         working.merge_working(delta)
-        return delta.snapshot()
+        return delta.model_snapshot()
 
     def _select_query_seeds(self, query: str) -> tuple[ConceptHit, ...]:
         """Select bounded Concept seeds from intact whitespace query chunks.
