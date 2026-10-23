@@ -131,6 +131,7 @@ def test_agent_observer_and_next_round_receive_same_bounded_scope() -> None:
     store = ToolResultStore(max_inline_chars=1024)
     register_tool_result_tools(registry, store)
     adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),)),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": source}),)),
         assistant_turn(content="done"),
     ])
@@ -139,19 +140,19 @@ def test_agent_observer_and_next_round_receive_same_bounded_scope() -> None:
     result = run(AgentRuntime(adapter, registry, tool_result_store=store).run_user_message("return a large result", on_tool_execution=observed.append))
 
     assert result.content == "done"
-    assert len(observed) == 1
-    assert len(observed[0].content) <= 1024
-    assert observed[0].content != source
-    tool_message = adapter.requests[1].messages[-1]
+    assert len(observed) == 2
+    assert len(observed[1].content) <= 1024
+    assert observed[1].content != source
+    tool_message = adapter.requests[2].messages[-1]
     assert tool_message["role"] == "tool"
-    assert tool_message["content"] == observed[0].content
-    metadata, visible_content = split_page(observed[0].content)
+    assert tool_message["content"] == observed[1].content
+    metadata, visible_content = split_page(observed[1].content)
     assert metadata["total_chars"] == len(source)
     assert metadata["pagination"]["page"] == 1
     assert metadata["pagination"]["has_more"] is True
     assert visible_content == source[: len(visible_content)]
 
-    stored_tool_message = next(message for message in result.messages if message.get("role") == "tool")
+    stored_tool_message = next(message for message in result.messages if message.get("role") == "tool" and message.get("tool_name") == "echo")
     compact = json.loads(stored_tool_message["content"])
     assert compact["result_id"] == metadata["result_id"]
     assert compact["content_compacted"] is True
@@ -164,6 +165,7 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
     store = ToolResultStore(max_inline_chars=1024)
     register_tool_result_tools(registry, store)
     adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),)),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": source}),)),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "small"}),)),
         assistant_turn(content="done"),
@@ -172,10 +174,10 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
     result = run(AgentRuntime(adapter, registry, tool_result_store=store).run_user_message("use two tool rounds"))
 
     assert result.content == "done"
-    first_round_tool = [message for message in adapter.requests[1].messages if message.get("role") == "tool"][0]
+    first_round_tool = [message for message in adapter.requests[2].messages if message.get("tool_name") == "echo"][0]
     first_metadata, _ = split_page(first_round_tool["content"])
 
-    third_request_tools = [message for message in adapter.requests[2].messages if message.get("role") == "tool"]
+    third_request_tools = [message for message in adapter.requests[3].messages if message.get("tool_name") == "echo"]
     assert len(third_request_tools) == 2
     compact = json.loads(third_request_tools[0]["content"])
     assert compact["result_id"] == first_metadata["result_id"]
