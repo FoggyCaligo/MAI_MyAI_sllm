@@ -131,5 +131,6 @@ class AgentRuntime:
             requirements=effective_requirements,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_thinking_chunk=on_thinking_chunk,
             on_verification_rejection=on_verification_rejection,
         )
