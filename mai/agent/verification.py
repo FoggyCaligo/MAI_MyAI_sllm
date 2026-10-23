@@ -709,7 +709,7 @@ def _review_payload(
             "tool": name,
             "ok": ok,
             "error_type": error_type,
-            "result": _clip_text(content, 3500),
+            "result": content,
             **_tool_evidence_metadata(name=name, ok=ok),
         }
         for index, (name, ok, error_type, content) in _select_review_tool_results(tool_results)
