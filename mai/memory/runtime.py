@@ -33,9 +33,9 @@ class MemoryRuntime:
         self.ensure_user(user_id)
         return self.recall.auto_recall(user_id=user_id, user_text=user_text)
 
-    def explicit_recall(self, *, user_id: str, query: str) -> WorkingGraph:
+    def explicit_recall(self, *, user_id: str, query: str, limit: int | None = None) -> WorkingGraph:
         self.ensure_user(user_id)
-        return self.recall.recall_query(user_id=user_id, query=query)
+        return self.recall.recall_query(user_id=user_id, query=query, limit=limit)
 
     def memory_overview(self, *, user_id: str, limit: int) -> dict[str, object]:
         """Return recent user-grounded memories without lexical matching."""
