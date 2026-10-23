@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
 from .guards import (
@@ -27,6 +29,27 @@ _TOOL_ARGS_LOG_LIMIT = 800
 _MAX_NUMERIC_VERIFICATION_RETRIES = 2
 _MAX_COVERAGE_VERIFICATION_RETRIES = 2
 _MAX_EVIDENCE_VERIFICATION_RETRIES = 5
+
+
+class ToolManualInput(BaseModel):
+    """Request activation of one or more registered native tools in this run."""
+    model_config = ConfigDict(extra="forbid")
+    tools: list[str] = Field(min_length=1)
+
+
+_TOOL_MANUAL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "tool_manual",
+        "description": (
+            "Activate one or more tools from the tool catalog in the system message. "
+            "The next model round will expose their full native schemas. "
+            "Activated tools stay available for this run; call this tool again to activate more."
+        ),
+        "parameters": ToolManualInput.model_json_schema(),
+    },
+}
+
 
 
 class AgentRuntimeError(RuntimeError):
@@ -135,10 +158,12 @@ class AgentLoop:
         executions: list[ToolExecution] = []
         requirement_observed_tools: set[str] = set()
         frozen_requirements = requirements or FrozenToolRequirements(frozenset())
-        all_tools = self.registry.native_schemas()
+        if self.registry.has("tool_manual"):
+            raise ValueError("tool_manual is reserved for native lazy tool activation")
         all_tool_names = frozenset(self.registry.names())
-        active_tools = all_tools
-        active_tool_names = all_tool_names
+        activated_tool_names: set[str] = set()
+        active_tools = (_TOOL_MANUAL_SCHEMA,)
+        active_tool_names = frozenset({"tool_manual"})
         requirement_correction_active = False
         guard = AgentGuard(self.guard_config)
         round_number = 1
@@ -194,6 +219,33 @@ class AgentLoop:
                         "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\n"
                         + json.dumps({"required_tools": sorted(frozen_requirements.required_tools),
                                       "missing_tools": sorted(frozen_requirements.missing_from(requirement_observed_tools))})})
+                # Catalog names and categories are structural registry metadata.
+                # Full parameter schemas are available after explicit activation.
+                model_history.insert(0, {
+                    "role": "system",
+                    "content": (
+                        "Native tool activation contract: the tool catalog below lists tools "
+                        "available in this run, but their parameter schemas are not initially exposed. "
+                        "Call tool_manual with exact tool names to activate them. "
+                        "On the next round, the activated native tools can be called directly. "
+                        "Activated tools remain available throughout this run. "
+                        "Do not call an unactivated tool or invent its arguments. "
+                        "You may activate multiple tools in one tool_manual call. "
+                        "If tools are unnecessary, answer normally. "
+                        "Tool catalog (JSON): "
+                        + json.dumps([
+                            {"name": definition.name, "category": definition.category}
+                            for definition in self.registry.definitions()
+                        ], ensure_ascii=False, separators=(",", ":"))
+                    ),
+                })
+                if not requirement_correction_active:
+                    activated_order = [
+                        name for name in self.registry.names()
+                        if name in activated_tool_names
+                    ]
+                    active_tools = (_TOOL_MANUAL_SCHEMA, *self.registry.native_schemas(activated_order))
+                    active_tool_names = frozenset({"tool_manual", *activated_order})
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -380,6 +432,7 @@ class AgentLoop:
                         execution = await self._execute_tool(
                             call,
                             available_tool_names=active_tool_names,
+                            activated_tool_names=activated_tool_names,
                         )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
@@ -440,8 +493,9 @@ class AgentLoop:
                         active_tool_names = frozenset(missing_after_names)
                     else:
                         requirement_correction_active = False
-                        active_tools = all_tools
-                        active_tool_names = all_tool_names
+                        # Normal lazy activation resumes at the top of the next round.
+                        active_tools = (_TOOL_MANUAL_SCHEMA,)
+                        active_tool_names = frozenset({"tool_manual"})
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})
@@ -464,6 +518,7 @@ class AgentLoop:
         call: NativeToolCall,
         *,
         available_tool_names: frozenset[str],
+        activated_tool_names: set[str],
     ) -> ToolExecution:
         if call.name not in available_tool_names and self.registry.has(call.name):
             exc = ToolUnavailableInRoundError(
@@ -483,7 +538,16 @@ class AgentLoop:
                 compact_history_content=compact_content,
             )
         try:
-            value = await self.registry.invoke(call)
+            if call.name == "tool_manual":
+                request = ToolManualInput.model_validate(call.arguments, strict=True)
+                requested = request.tools
+                unknown = sorted(set(requested) - frozenset(self.registry.names()))
+                if unknown:
+                    raise UnknownToolError(f"tool_manual requested unknown tools: {unknown}")
+                activated_tool_names.update(requested)
+                value = {"activated_tools": requested, "available_next_round": True}
+            else:
+                value = await self.registry.invoke(call)
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
             source_content = _serialize_tool_content(payload)
