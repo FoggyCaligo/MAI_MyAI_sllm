@@ -361,6 +361,30 @@ class FinalGroundingVerifier:
         extracted = await self._request_structured_review(extraction_request, _ClaimExtraction, label="claims")
         if not isinstance(extracted, _ClaimExtraction):
             raise OllamaProtocolError("claim extractor returned unexpected schema")
+        stage_a_rejected = (
+            extracted.alignment_verdict == "misaligned"
+            or extracted.coverage_verdict == "insufficient"
+            or extracted.action_verdict in ("unverified", "contradicted")
+        )
+        if stage_a_rejected:
+            if extracted.alignment_verdict == "misaligned" and not extracted.reasons:
+                raise OllamaProtocolError("stage A rejected alignment without a reason")
+            if extracted.coverage_verdict == "insufficient" and not extracted.coverage_reasons:
+                raise OllamaProtocolError("stage A rejected coverage without a reason")
+            if extracted.action_verdict in ("unverified", "contradicted") and not extracted.reasons:
+                raise OllamaProtocolError("stage A rejected action outcome without a reason")
+            reasons = tuple(dict.fromkeys(reason.strip() for reason in extracted.reasons if reason.strip()))
+            coverage_reasons = tuple(dict.fromkeys(reason.strip() for reason in extracted.coverage_reasons if reason.strip()))
+            return FinalReview(
+                evidence_verdict="uncertain",
+                alignment_verdict=extracted.alignment_verdict,
+                coverage_verdict=extracted.coverage_verdict,
+                coverage_reasons=coverage_reasons,
+                reasons=reasons,
+                claims=(),
+                action_verdict=extracted.action_verdict,
+                retry_summary="; ".join((*reasons, *coverage_reasons))[:800],
+            )
         payload = {}
         payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
         payload["evidence_scope"] = {
