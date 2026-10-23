@@ -126,3 +126,23 @@ def test_code_tools_are_native_registry_tools(tmp_path):
         )
     )
     assert result["results"][0]["relative_path"] == "sample.py"
+
+
+@pytest.mark.parametrize(
+    ("parser", "source", "expected"),
+    [
+        ("javascript", "class Demo { run() { return 1; } }", ("Demo.run", "method")),
+        ("typescript", "interface User { name: string }\\nfunction load(): void {}", ("load", "function")),
+        ("c", "int calculate(void) { return 1; }", ("calculate", "function")),
+        ("cpp", "class Engine { public: void start() {} };", ("Engine", "class")),
+        ("java", "class Engine { void start() {} }", ("Engine.start", "method")),
+        ("go", "package main\\nfunc run() {}", ("run", "function")),
+        ("rust", "fn run() {}\\nstruct Engine {}", ("run", "function")),
+        ("ruby", "class Engine\\n def start; end\\nend", ("Engine.start", "method")),
+    ],
+)
+def test_code_symbols_multiple_languages(tmp_path, parser, source, expected):
+    path = tmp_path / "sample.src"
+    path.write_text(source.replace("\\\\n", "\\n"), encoding="utf-8")
+    result = code_symbols(path=str(path), parser=parser)
+    assert expected in {(item["qualified_name"], item["kind"]) for item in result["symbols"]}
