@@ -43,6 +43,13 @@ class CodeReadInput(_StrictModel):
     encoding: str = "utf-8"
 
 
+class CodeEditInput(_StrictModel):
+    path: str = Field(min_length=1)
+    old_text: str = Field(min_length=1)
+    new_text: str
+    encoding: str = "utf-8"
+
+
 class CodeSymbolsInput(_StrictModel):
     path: str
     parser: Literal["python", "javascript", "typescript", "tsx", "c", "cpp", "java", "go", "rust", "ruby"]
@@ -351,6 +358,43 @@ def code_symbols(*, path: str, parser: Literal["python", "javascript", "typescri
     else:
         symbols = _tree_sitter_symbols(source, parser, str(target))
     return {"path": str(target), "parser": parser, "symbols": symbols}
+
+
+def code_edit(*, path: str, old_text: str, new_text: str, encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
+    """Replace exactly one existing literal span; fail on absent or ambiguous matches."""
+    target = _resolve(path, cwd)
+    if not target.is_file():
+        if not target.exists():
+            raise FileNotFoundError(str(target))
+        raise IsADirectoryError(str(target))
+    if not old_text:
+        raise ValueError("old_text must not be empty")
+    with target.open("r", encoding=encoding, newline="") as handle:
+        source = handle.read()
+    count = source.count(old_text)
+    if count != 1:
+        raise ValueError(f"code_edit requires exactly one match, found {count}")
+    updated = source.replace(old_text, new_text, 1)
+    # Existing files are never created by code_edit; file_write owns creation.
+    if updated == source:
+        raise ValueError("code_edit replacement has no effect")
+    with target.open("w", encoding=encoding, newline="") as handle:
+        handle.write(updated)
+    return {"path": str(target), "replacements": 1, "bytes": target.stat().st_size}
+
+
+def register_code_edit_tool(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = 60) -> None:
+    def handler(**kwargs: Any) -> dict[str, Any]:
+        return code_edit(cwd=cwd, **kwargs)
+
+    registry.add(
+        name="code_edit",
+        description="Replace exactly one occurrence of old_text in an existing local source file with new_text. This is literal, case-sensitive and exact; no fuzzy matching. If absent or repeated, fail without changes. Use code_read/code_search to get the exact old_text first; use file_write to create new files.",
+        input_model=CodeEditInput,
+        handler=handler,
+        timeout_seconds=timeout_seconds,
+        category="code",
+    )
 
 
 def register_code_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = 60) -> None:
