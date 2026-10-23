@@ -2,6 +2,7 @@
 
 from .calculator import CalculatorError, CalculatorInput, calculator, register_calculator_tools
 from .code import code_edit, code_read, code_search, code_symbols, register_code_edit_tool, register_code_tools
+from .document_edit import document_edit, register_document_edit_tool
 from .external import register_external_information_tools
 from .filesystem import (
     register_filesystem_read_tools,
@@ -52,6 +53,7 @@ __all__ = [
     "code_read",
     "code_search",
     "code_symbols",
+    "document_edit",
     "current_time",
     "file_list",
     "file_search",
@@ -64,6 +66,7 @@ __all__ = [
     "register_calculator_tools",
     "register_code_edit_tool",
     "register_code_tools",
+    "register_document_edit_tool",
     "register_external_information_tools",
     "register_filesystem_read_tools",
     "register_filesystem_tools",
