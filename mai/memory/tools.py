@@ -55,13 +55,13 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         async def memory_recall(query: str) -> dict[str, object]:
             recalled = memory.explicit_recall(user_id=user_id, query=query)
             working.merge_working(recalled)
-            return recalled.snapshot()
+            return recalled.model_snapshot()
 
         registry.add(
             name="memory_recall",
             description=(
                 "Search this user's persistent memory from a specific free-text query. The default result is "
-                "compact Concept/Fact context and may omit raw Utterance nodes; use memory_search when exact "
+                "compact content-bearing Fact memories with node IDs; use memory_search when exact "
                 "source wording or neighboring evidence is needed. Use recall when the answer depends on a "
                 "particular remembered topic, preference, decision, person, project, or past event."
             ),
@@ -92,7 +92,7 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         name="memory_search",
         description=(
             "Expand one persistent-memory node and merge the result into the current Working Graph. "
-            "Regular nodes expand by one graph hop; the current user's anchor returns only its bounded "
+            "Regular nodes expand by one graph hop and return content-bearing Fact/Utterance nodes only; the current user's anchor returns bounded "
             "structured Fact context. Preserve available paths back to this user's anchor."
         ),
         input_model=MemorySearchInput,
