@@ -26,8 +26,10 @@ class DownloadLinkStore:
         with self._lock:
             self._links[token] = (target, expires_at)
         relative_url = "/download/" + quote(token, safe="")
+        url = base_url.rstrip("/") + relative_url if base_url else relative_url
         return {
-            "url": base_url.rstrip("/") + relative_url if base_url else relative_url,
+            "url": url,
+            "markdown_link": f"[파일 다운로드]({url})",
             "path": str(target),
             "expires_at_unix": expires_at,
         }
