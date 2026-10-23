@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
@@ -83,7 +83,6 @@ class AgentRuntime:
                 requirements=requirements,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
-            on_thinking_chunk=on_thinking_chunk,
                 on_thinking_chunk=on_thinking_chunk,
                 on_verification_rejection=on_verification_rejection,
             )
