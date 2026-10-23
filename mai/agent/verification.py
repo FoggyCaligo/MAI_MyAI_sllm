@@ -659,6 +659,11 @@ class FinalGroundingVerifier:
         returned = [claim.claim for claim in parsed.claims]
         if len(set(expected)) != len(expected) or len(set(returned)) != len(returned) or set(expected) != set(returned):
             raise OllamaProtocolError("grounding release claims do not match prepared evidence claims")
+        for claim, checked in zip(parsed.claims, validated_claims):
+            if claim.claim != checked["claim"]:
+                raise OllamaProtocolError("release verdict order differs from validated claim index")
+            if checked["citation_status"] != "valid" and claim.verdict == "supported":
+                raise OllamaProtocolError("release reviewer approved a claim without a valid citation")
         reasons = tuple(dict.fromkeys(reason.strip() for reason in parsed.reasons if reason.strip()))
         claims = tuple(ClaimReview(
             claim=item.claim.strip(), verdict=item.verdict,
