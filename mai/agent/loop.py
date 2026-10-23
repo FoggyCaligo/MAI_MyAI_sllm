@@ -220,7 +220,11 @@ class AgentLoop:
                                       "missing_tools": sorted(frozen_requirements.missing_from(requirement_observed_tools))})})
                 # Catalog names and categories are structural registry metadata.
                 # Full parameter schemas are available after explicit activation.
-                model_history.insert(0, {
+                catalog_position = next(
+                    (index for index, message in enumerate(model_history) if message.get("role") != "system"),
+                    len(model_history),
+                )
+                model_history.insert(catalog_position, {
                     "role": "system",
                     "content": (
                         "Native tool activation contract: the tool catalog below lists tools "
