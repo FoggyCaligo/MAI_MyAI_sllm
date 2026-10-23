@@ -756,7 +756,7 @@ def test_evidence_coverage_rejects_generic_answer_that_omits_available_results()
     assert result.ok is False
     assert result.issues[0].code == "evidence_coverage_insufficient"
     feedback = result.feedback_message()
-    assert "Correct the listed material defects" in feedback
+    assert "Correct the specific defects" in feedback
     assert "concrete upcoming VTuber event" in result.issues[0].message
 
 
@@ -941,7 +941,7 @@ def test_evidence_correction_feedback_blocks_paraphrase_and_allows_new_tool_evid
     ))
 
     feedback = result.feedback_message()
-    assert "Correct the listed material defects" in feedback
+    assert "Correct the specific defects" in feedback
     assert "No supplied evidence establishes corrosion properties." in result.issues[0].message
 
 def test_evidence_verification_allows_five_corrections_before_exhaustion() -> None:
@@ -1000,9 +1000,37 @@ def test_twenty_review_findings_are_preserved_without_expanding_retry_prompt() -
     assert len(result.review_details["claims"]) == 20
     assert all(f"Unsupported assertion {i}" in result.issues[0].message for i in range(20))
     assert "claim_grounding_failed" in result.feedback_message()
-    assert "Remove the unsupported assertions" in result.feedback_message()
+    assert "Unsupported assertion 0" in result.feedback_message()
+    assert "No tool evidence for assertion 0" in result.feedback_message()
     assert "Unsupported assertion 19" not in result.feedback_message()
     assert len(result.feedback_message()) < 1100
     schema = reviewer.requests[0].response_format
     assert "maxItems" not in schema["properties"]["claims"]
     assert schema["properties"]["retry_summary"]["maxLength"] == 800
+
+
+def test_rejected_feedback_never_uses_misleading_no_correction_needed() -> None:
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "unsupported",
+        "alignment_verdict": "aligned",
+        "reasons": [],
+        "claims": [{
+            "claim": "The page states a confirmed date.",
+            "verdict": "unsupported",
+            "defect": "missing_evidence",
+            "reason": "Only a JavaScript shell was fetched; no article text was observed.",
+        }],
+        "action_verdict": "not_applicable",
+        "retry_summary": "No correction needed.",
+    }])
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="The page states a confirmed date.",
+        messages=({"role": "user", "content": "Check the article."},),
+        tool_results=(),
+    ))
+    assert not result.ok
+    feedback = result.feedback_message()
+    assert "The page states a confirmed date." in feedback
+    assert "Only a JavaScript shell was fetched" in feedback
+    assert "No correction needed." not in feedback
+    assert result.review_details["claims"][0]["reason"].startswith("Only a JavaScript")
