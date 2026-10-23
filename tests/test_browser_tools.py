@@ -6,6 +6,8 @@ from pydantic import ValidationError
 
 from mai.tools.browser import (
     BrowserClickInput,
+    BrowserInputText,
+    BrowserPressKey,
     BrowserNavigationError,
     BrowserOpenInput,
     BrowserScrollInput,
@@ -20,7 +22,7 @@ def test_browser_contract_registered_as_distinct_tools():
     manager = BrowserSessionManager()
     register_browser_tools(registry, manager)
     assert set(registry.names()) == {
-        "browser_open", "browser_snapshot", "browser_click", "browser_scroll", "browser_close"
+        "browser_open", "browser_snapshot", "browser_click", "browser_input_text", "browser_press_key", "browser_scroll", "browser_close"
     }
     assert registry.get("browser_click").input_model is BrowserClickInput
 
@@ -30,6 +32,10 @@ def test_browser_inputs_are_structurally_validated():
         BrowserOpenInput.model_validate({"url": ""})
     with pytest.raises(ValidationError):
         BrowserClickInput.model_validate({"session_id": "abc", "element_ref": ""})
+    with pytest.raises(ValidationError):
+        BrowserInputText.model_validate({"session_id": "abc", "element_ref": "", "text": "hello"})
+    with pytest.raises(ValidationError):
+        BrowserPressKey.model_validate({"session_id": "abc", "key": ""})
     with pytest.raises(ValidationError):
         BrowserScrollInput.model_validate({"session_id": "abc", "pixels": 10001})
     with pytest.raises(ValidationError):
