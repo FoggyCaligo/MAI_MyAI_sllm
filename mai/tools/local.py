@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .code import register_code_tools
+from .code import register_code_edit_tool, register_code_tools
 from .filesystem import (
     register_filesystem_read_tools,
     register_filesystem_tools,
@@ -43,4 +43,5 @@ def register_local_pc_tools(
     """Register all currently implemented PC-wide tools into one registry."""
     register_filesystem_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
     register_code_tools(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
+    register_code_edit_tool(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
     register_terminal_tools(registry, cwd=cwd, timeout_seconds=terminal_timeout_seconds)
