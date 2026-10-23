@@ -67,7 +67,7 @@ class AgentRuntime:
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
-        runtime_context = {**self.loop.registry.model_context(), "authoritative_current_time": current_time()}
+        runtime_context = {"tool_contexts": self.loop.registry.model_context(), "authoritative_current_time": current_time()}
         effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
         if runtime_context:
             effective_messages.insert(0, {
