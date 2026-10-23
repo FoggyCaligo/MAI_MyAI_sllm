@@ -651,7 +651,7 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
     assert "evidence_scope_expansion" in correction
     assert "action_outcome_unverified" in correction
     assert "Preserve supported findings" in correction
-    assert "do not invent evidence" in correction
+    assert "obtain evidence or narrow unsupported claims" in correction
 
 
 def test_claim_level_unsupported_inference_is_reported_with_claim_text() -> None:
