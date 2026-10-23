@@ -181,6 +181,7 @@ class AgentLoop:
         numeric_verification_retries = 0
         coverage_verification_retries = 0
         empty_final_retries = 0
+        tool_start_by_round: dict[int, int] = {}
         pending_history_compactions: dict[int, str] = {}
         rejected_final_indices: list[int] = []
         rejection_feedback_indices: list[int] = []
@@ -190,6 +191,7 @@ class AgentLoop:
         try:
             while True:
                 _LOG.info("MAI model round start round=%d", round_number)
+                tool_start_by_round[round_number] = len(executions)
                 # Keep the latest rejected draft and its corresponding verifier
                 # feedback together. Older rejected drafts, reasoning, and
                 # feedback remain in the audit trail, not the model prompt.
@@ -338,7 +340,7 @@ class AgentLoop:
                             messages=[message for index, message in enumerate(history) if index not in rejected_final_indices],
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
-                                for execution in executions
+                                for execution in executions[tool_start_by_round[max(1, round_number - 2)]:]
                             ),
                         )
                         if not verification.ok:
