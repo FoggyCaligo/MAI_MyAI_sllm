@@ -207,7 +207,7 @@ class AgentLoop:
                     model_history.append({
                         "role": "system",
                         "content": (
-                            "This is the latest rejected candidate and its verifier feedback. "
+                            "This is the latest rejected provisional answer and its verifier feedback. "
                             "The candidate was not delivered and is not factual evidence. "
                             "For EACH unsupported_claim in correction_contract, choose exactly one "
                             "resolution: remove (omit the claim or narrow it to what existing observations "
@@ -215,7 +215,10 @@ class AgentLoop:
                             "claim before asserting it). Do not infer missing evidence from file listings, "
                             "bounded histories, earlier rejected drafts, or other indirect observations. "
                             "Never treat the rejected draft or the verifier's diagnosis as evidence. "
-                            "Keep supported findings. If required observations cannot be obtained, "
+                            "Keep supported findings and use the available tools to re-read or re-search sources "
+                            "when evidence is missing from the current verification scope. "
+                            "After tool observations, submit a revised provisional answer for verification. "
+                            "If required observations cannot be obtained, "
                             "explicitly report the limitation rather than claim success. "
                             "Other verification issues must also be corrected.\\n"
                             + json.dumps({
@@ -407,7 +410,7 @@ class AgentLoop:
                             latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
                             round_number += 1
                             continue
-                    _LOG.info("MAI final accepted round=%d", round_number)
+                    _LOG.info("MAI provisional answer verified round=%d", round_number)
                     for history_index in reversed(rejected_final_indices):
                         del history[history_index]
                     return AgentRunResult(
@@ -453,6 +456,13 @@ class AgentLoop:
                     executions.append(execution)
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
+                    if execution.ok and latest_verification_rejection is not None:
+                        # New successful observations are genuine evidence progress:
+                        # the next provisional answer receives a fresh correction budget.
+                        semantic_verification_retries = 0
+                        evidence_verification_retries = 0
+                        numeric_verification_retries = 0
+                        coverage_verification_retries = 0
                     if execution.handler_started:
                         was_missing = execution.name in frozen_requirements.missing_from(requirement_observed_tools)
                         requirement_observed_tools.add(execution.name)
