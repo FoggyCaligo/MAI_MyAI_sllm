@@ -149,35 +149,39 @@ class AgentLoop:
         empty_final_retries = 0
         pending_history_compactions: dict[int, str] = {}
         rejected_final_indices: list[int] = []
+        rejection_feedback_indices: list[int] = []
 
         try:
             while True:
                 _LOG.info("MAI model round start round=%d", round_number)
-                # Preserve the chronological THINK/tool/feedback stream. Earlier
-                # rejected answer bodies are not replayed, but their THINK and
-                # verifier feedback remain at their original positions.
+                # Keep the latest rejected draft and its corresponding verifier
+                # feedback together. Older rejected drafts, reasoning, and
+                # feedback remain in the audit trail, not the model prompt.
                 latest_rejected = rejected_final_indices[-1] if rejected_final_indices else None
+                latest_feedback = rejection_feedback_indices[-1] if rejection_feedback_indices else None
                 model_history = []
                 for index, message in enumerate(history):
-                    if index in rejected_final_indices:
-                        thinking = message.get("thinking")
-                        if thinking:
-                            model_history.append({"role": "assistant", "content": "", "thinking": thinking})
-                        if index == latest_rejected:
-                            model_history.append({
-                                "role": "system",
-                                "content": (
-                                    "This JSON is the latest rejected draft, not a delivered "
-                                    "answer or factual evidence. Correct it using the subsequent "
-                                    "verifier feedback.\\n"
-                                    + json.dumps({"rejected_draft": {
-                                        "content": message.get("content", ""),
-                                        "delivered": False,
-                                    }}, ensure_ascii=False)
-                                ),
-                            })
+                    if index in rejected_final_indices or index in rejection_feedback_indices:
                         continue
                     model_history.append(dict(message))
+                if latest_rejected is not None:
+                    if latest_feedback is None:
+                        raise RuntimeError("rejected draft is missing its verifier feedback")
+                    model_history.append({
+                        "role": "system",
+                        "content": (
+                            "This is the latest rejected candidate and its verifier feedback. "
+                            "The candidate was not delivered and is not factual evidence. "
+                            "Correct the specific unsupported claims using new evidence, "
+                            "or remove/narrow them. Do not substitute other unverified facts. "
+                            "If evidence remains insufficient, report only supported results "
+                            "and state what could not be confirmed.\\n"
+                            + json.dumps({
+                                "rejected_draft": history[latest_rejected].get("content", ""),
+                                "verifier_feedback": history[latest_feedback].get("content", ""),
+                            }, ensure_ascii=False)
+                        ),
+                    })
                 if frozen_requirements.required_tools:
                     model_history.insert(0, {"role": "system", "content":
                         "The following JSON is the frozen tool execution contract. Call missing tools before finishing.\n"
@@ -324,6 +328,7 @@ class AgentLoop:
                             if on_verification_rejection is not None:
                                 on_verification_rejection(round_number, verification)
                             history.append({"role": "system", "content": feedback})
+                            rejection_feedback_indices.append(len(history) - 1)
                             round_number += 1
                             continue
                     _LOG.info("MAI final accepted round=%d", round_number)
