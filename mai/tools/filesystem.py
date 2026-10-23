@@ -26,6 +26,7 @@ class _StrictModel(BaseModel):
 class FileListInput(_StrictModel):
     path: str = "."
     recursive: bool = False
+    directories_only: bool = False
     max_items: int = Field(default=500, ge=1, le=10000)
 
 
@@ -90,7 +91,7 @@ def _collection_window(*, returned_count: int, truncated: bool) -> dict[str, Any
     }
 
 
-def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500, cwd: str | Path | None = None) -> dict[str, Any]:
+def file_list(*, path: str = ".", recursive: bool = False, directories_only: bool = False, max_items: int = 500, cwd: str | Path | None = None) -> dict[str, Any]:
     root = _resolve(path, cwd)
     if not root.exists():
         raise FileNotFoundError(str(root))
@@ -100,11 +101,14 @@ def file_list(*, path: str = ".", recursive: bool = False, max_items: int = 500,
     items: list[dict[str, Any]] = []
     truncated = False
     for entry in iterator:
+        is_dir = entry.is_dir()
+        if directories_only and not is_dir:
+            continue
         if len(items) >= max_items:
             truncated = True
             break
         stat = entry.stat()
-        items.append({"path": str(entry), "name": entry.name, "type": "directory" if entry.is_dir() else "file", "size": None if entry.is_dir() else stat.st_size, "modified_ns": stat.st_mtime_ns})
+        items.append({"path": str(entry), "name": entry.name, "type": "directory" if is_dir else "file", "size": None if is_dir else stat.st_size, "modified_ns": stat.st_mtime_ns})
     return {
         "root": str(root),
         "items": items,
@@ -223,7 +227,7 @@ def file_copy(*, source: str, destination: str, create_parents: bool = False, cw
 
 
 _READ_BINDINGS = (
-    ("file_list", "List files and directories at a local path. Absolute paths and paths outside the current repository are allowed. collection.complete=false means the returned items are only a partial collection.", FileListInput, file_list),
+    ("file_list", "List files and directories at a local path. Use directories_only=true with recursive=false to discover project folders without listing files or exhausting max_items on files; narrow path to descend. Absolute paths and paths outside the current repository are allowed. collection.complete=false means the returned items are only a partial collection.", FileListInput, file_list),
     ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root. collection.complete=false means more matches may exist beyond the returned results.", FileSearchInput, file_search),
     ("file_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
 )
