@@ -169,7 +169,7 @@ ollama run ornith-1.5:9b
 MAI가 사진이나 스크린샷을 별도 비전 모델로 분석하도록 하려면, `.env`의 `VISION_MODEL`과 **실제로 설치한 비전 모델 이름**을 일치시킨다.
 
 ```powershell
-ollama pull gemma4:12b
+ollama pull gemma4:e4b
 ```
 
 이 명령이 실패하거나 PC에 부담이 되면 이미지 분석은 건너뛰고 나중에 `VISION_MODEL=`을 **빈 값**으로 설정해도 된다. 빈 값일 때는 MAI의 `image_analyze` 도구가 등록되지 않는다.
