@@ -157,7 +157,7 @@ class _FinalReviewPayload(BaseModel):
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
-    retry_summary: str = Field(max_length=800)
+    retry_summary: str = Field(min_length=1, max_length=800)
 
 
 class _NumericReviewPayload(BaseModel):
