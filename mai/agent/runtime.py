@@ -6,6 +6,7 @@ from typing import Any, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
+from ..tools.time import current_time
 from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
@@ -66,7 +67,7 @@ class AgentRuntime:
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
-        runtime_context = self.loop.registry.model_context()
+        runtime_context = {**self.loop.registry.model_context(), "authoritative_current_time": current_time()}
         effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
         if runtime_context:
             effective_messages.insert(0, {
