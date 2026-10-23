@@ -36,6 +36,14 @@ class BrowserScrollInput(BrowserSessionInput):
     pixels: int = Field(ge=-10000, le=10000)
 
 
+class BrowserInputText(BrowserClickInput):
+    text: str
+
+
+class BrowserPressKey(BrowserSessionInput):
+    key: str = Field(min_length=1)
+
+
 @dataclass
 class _Session:
     browser: Browser
@@ -165,6 +173,21 @@ class BrowserSessionManager:
         await session.page.wait_for_timeout(500)
         return await self.snapshot(session_id)
 
+    async def input_text(self, session_id: str, element_ref: str, text: str) -> dict[str, Any]:
+        session = self._get(session_id)
+        if element_ref not in session.element_refs:
+            raise BrowserNavigationError("Unknown or stale element reference: take a new snapshot")
+        target = session.page.locator(f'[data-mai-ref="{element_ref}"]')
+        if await target.count() != 1:
+            raise BrowserNavigationError("Element not present or not unique in current page")
+        await target.fill(text, timeout=15000)
+        return await self.snapshot(session_id)
+
+    async def press_key(self, session_id: str, key: str) -> dict[str, Any]:
+        session = self._get(session_id)
+        await session.page.keyboard.press(key)
+        return await self.snapshot(session_id)
+
     async def scroll(self, session_id: str, pixels: int) -> dict[str, Any]:
         session = self._get(session_id)
         await session.page.mouse.wheel(0, pixels)
@@ -193,5 +216,7 @@ def register_browser_tools(registry: ToolRegistry, manager: BrowserSessionManage
     registry.add(name="browser_open", description="Open a public HTTP(S) URL in isolated Chromium, execute JavaScript and return rendered text, actual links, and interactive element refs. Returns session_id. For static pages, use faster web_fetch. Never guess URLs.", input_model=BrowserOpenInput, handler=manager.open, timeout_seconds=60, category="web")
     registry.add(name="browser_snapshot", description="Refresh the rendered DOM, visible text, absolute link URLs, and click element refs for an open browser session. Use after dynamic loading.", input_model=BrowserSessionInput, handler=manager.snapshot, timeout_seconds=30, category="web")
     registry.add(name="browser_click", description="Click an exact element_ref returned by the most recent browser snapshot in this session; never use text guessing. Returns updated snapshot.", input_model=BrowserClickInput, handler=manager.click, timeout_seconds=40, category="web")
+    registry.add(name="browser_input_text", description="Fill a text-capable element identified by a fresh browser snapshot ref. Replaces its current value; do not guess refs. Returns updated snapshot.", input_model=BrowserInputText, handler=manager.input_text, timeout_seconds=40, category="web")
+    registry.add(name="browser_press_key", description="Press a Playwright keyboard key or key combination in the current browser session, for example Enter, Tab, or Control+A. Returns updated snapshot.", input_model=BrowserPressKey, handler=manager.press_key, timeout_seconds=30, category="web")
     registry.add(name="browser_scroll", description="Scroll a browser page by signed pixels and return an updated DOM snapshot for infinite-scroll content.", input_model=BrowserScrollInput, handler=manager.scroll, timeout_seconds=30, category="web")
     registry.add(name="browser_close", description="Explicitly close a browser session. Every remaining session is also cleaned at the end of the agent run.", input_model=BrowserSessionInput, handler=manager.close, timeout_seconds=20, category="web")

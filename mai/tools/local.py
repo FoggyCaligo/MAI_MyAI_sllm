@@ -7,7 +7,7 @@ from .code import register_code_tools
 from .filesystem import (
     register_filesystem_read_tools,
     register_filesystem_tools,
-    register_upload_scoped_write_tools,
+    register_trial_file_write,
 )
 from .registry import ToolRegistry
 from .terminal import register_terminal_tools
@@ -21,10 +21,10 @@ def register_readonly_local_tools(
     filesystem_timeout_seconds: float | None = 60,
     code_timeout_seconds: float | None = 60,
 ) -> None:
-    """Register trial-safe local capabilities, optionally including upload-scoped writes."""
+    """Register read-only local capabilities plus optional trial upload-scoped file_write."""
     register_filesystem_read_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
     if upload_root is not None:
-        register_upload_scoped_write_tools(
+        register_trial_file_write(
             registry,
             upload_root=upload_root,
             timeout_seconds=filesystem_timeout_seconds,

@@ -33,7 +33,6 @@ from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
-from ..tools.documents import register_document_tools
 from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
@@ -84,7 +83,7 @@ Keep the meaning and scope of each source field, metric, screen, and time range 
 
 For arithmetic that materially affects the answer, use the calculator tool instead of mental arithmetic. This includes sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step numeric comparisons.
 
-Trial accounts may receive file_write and file_create, but those handlers are structurally restricted to the MAI upload directory. Do not claim that such tools can modify arbitrary local paths.
+The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through file_read; there are no separate file_create or document_read native tools.
 
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 """.strip()
@@ -208,7 +207,6 @@ class MAIRuntime:
         register_calculator_tools(registry)
         register_external_information_tools(registry)
         register_browser_tools(registry, browser_manager)
-        register_document_tools(registry, cwd=self.cwd)
         if self.vision_model is not None:
             register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:

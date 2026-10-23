@@ -3,7 +3,7 @@ from __future__ import annotations
 from docx import Document
 from openpyxl import Workbook
 
-from mai.tools.documents import document_read, register_document_tools
+from mai.tools.documents import read_structured_document
 from mai.tools.filesystem import file_read, register_filesystem_read_tools
 from mai.tools.images import register_image_tools
 from mai.tools.registry import ToolRegistry
@@ -43,17 +43,16 @@ def test_file_read_csv_accepts_explicit_encoding(tmp_path):
     assert "테스트\t10" in result["content"]
 
 
-def test_document_read_remains_available_for_internal_callers(tmp_path):
+def test_structured_document_parser_remains_available_for_file_read(tmp_path):
     csv_path = tmp_path / "sample.csv"
     csv_path.write_text("name,value\nalpha,10\n", encoding="utf-8-sig")
-    result = document_read(path=str(csv_path))
+    result = read_structured_document(path=str(csv_path))
     assert result["extension"] == ".csv"
     assert "alpha\t10" in result["text"]
 
 
 def test_registry_exposes_one_file_read_interface_for_documents(tmp_path):
     registry = ToolRegistry()
-    register_document_tools(registry, cwd=tmp_path)
     register_filesystem_read_tools(registry, cwd=tmp_path)
     register_image_tools(registry, model="vision-test", host="http://127.0.0.1:11434", cwd=tmp_path)
     names = set(registry.names())

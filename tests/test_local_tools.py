@@ -31,7 +31,6 @@ def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> N
         "file_search",
         "file_read",
         "file_write",
-        "file_create",
         "file_delete",
         "file_move",
         "file_copy",
@@ -53,7 +52,7 @@ def test_trial_bundle_can_write_only_inside_upload_root(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_readonly_local_tools(registry, cwd=tmp_path, upload_root=upload_root)
     assert "file_write" in registry.names()
-    assert "file_create" in registry.names()
+    assert "file_create" not in registry.names()
     assert "file_delete" not in registry.names()
     assert "terminal_run" not in registry.names()
 
@@ -65,7 +64,7 @@ def test_trial_bundle_can_write_only_inside_upload_root(tmp_path: Path) -> None:
 
     created = upload_root / "created.txt"
     run(registry.invoke(NativeToolCall(
-        name="file_create",
+        name="file_write",
         arguments={"path": str(created), "content": "new"},
     )))
     assert created.read_text() == "new"
@@ -83,7 +82,7 @@ def test_filesystem_tools_support_create_read_write_copy_move_delete(tmp_path: P
     register_filesystem_tools(registry, cwd=tmp_path)
 
     created = run(registry.invoke(NativeToolCall(
-        name="file_create",
+        name="file_write",
         arguments={"path": "a.txt", "content": "hello"},
     )))
     assert Path(created["path"]).read_text() == "hello"
@@ -120,27 +119,27 @@ def test_filesystem_tools_support_create_read_write_copy_move_delete(tmp_path: P
     assert not (tmp_path / "c.txt").exists()
 
 
-def test_file_create_refuses_existing_file(tmp_path: Path) -> None:
+def test_file_write_replaces_existing_file(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("existing")
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
 
-    with pytest.raises(FileExistsError):
-        run(registry.invoke(NativeToolCall(
-            name="file_create",
-            arguments={"path": "a.txt", "content": "overwrite"},
-        )))
+    run(registry.invoke(NativeToolCall(
+        name="file_write",
+        arguments={"path": "a.txt", "content": "overwrite"},
+    )))
+    assert (tmp_path / "a.txt").read_text() == "overwrite"
 
 
-def test_file_write_refuses_missing_file(tmp_path: Path) -> None:
+def test_file_write_creates_missing_file(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
 
-    with pytest.raises(FileNotFoundError):
-        run(registry.invoke(NativeToolCall(
-            name="file_write",
-            arguments={"path": "missing.txt", "content": "x"},
-        )))
+    run(registry.invoke(NativeToolCall(
+        name="file_write",
+        arguments={"path": "missing.txt", "content": "x"},
+    )))
+    assert (tmp_path / "missing.txt").read_text() == "x"
 
 
 def test_file_search_and_list_return_structured_results(tmp_path: Path) -> None:

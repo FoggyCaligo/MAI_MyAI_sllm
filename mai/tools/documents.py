@@ -6,22 +6,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from .registry import ToolRegistry
-
-
-class DocumentReadInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    path: str = Field(min_length=1)
-    max_chars: int = Field(default=50000, ge=1, le=500000)
-    encoding: str = Field(
-        default="utf-8-sig",
-        min_length=1,
-        description="Text encoding used for CSV files. Ignored for other document formats.",
-    )
-
-
 def _resolve(path: str, cwd: str | Path | None) -> Path:
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
@@ -93,18 +77,14 @@ def _read_pptx(path: Path) -> dict[str, Any]:
     return {"kind": "pptx", "slides": slides}
 
 
-def document_read(
+def read_structured_document(
     *,
     path: str,
     max_chars: int = 50000,
     encoding: str = "utf-8-sig",
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Parse a supported structured document for internal callers.
-
-    This function remains import-compatible, but it is no longer registered as
-    a model-visible native tool. The agent-facing entrypoint is file_read.
-    """
+    """Parse supported structured document content for file_read."""
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))
@@ -165,15 +145,3 @@ def document_read(
     }
 
 
-def register_document_tools(
-    registry: ToolRegistry,
-    *,
-    cwd: str | Path | None = None,
-    timeout_seconds: float | None = 60,
-) -> None:
-    """Compatibility registration hook.
-
-    Structured documents are intentionally exposed through file_read only, so
-    this hook no longer adds a separate document_read tool to the registry.
-    """
-    del registry, cwd, timeout_seconds

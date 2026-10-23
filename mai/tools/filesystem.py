@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .artifacts import discard_temporary_artifact, move_temporary_artifact, register_temporary_artifact
-from .documents import document_read
+from .documents import read_structured_document
 from .registry import ToolRegistry
 
 
@@ -44,14 +44,6 @@ class FileReadInput(_StrictModel):
 class FileWriteInput(_StrictModel):
     path: str
     content: str
-    encoding: str = "utf-8"
-    create_parents: bool = False
-    lifecycle: Literal["persistent", "temporary"] = "persistent"
-
-
-class FileCreateInput(_StrictModel):
-    path: str
-    content: str = ""
     encoding: str = "utf-8"
     create_parents: bool = False
     lifecycle: Literal["persistent", "temporary"] = "persistent"
@@ -157,7 +149,7 @@ def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None =
         raise IsADirectoryError(str(target))
 
     if target.suffix.lower() in {".pdf", ".docx", ".xlsx", ".csv", ".pptx"}:
-        result = document_read(
+        result = read_structured_document(
             path=str(target),
             max_chars=50000 if max_chars is None else max_chars,
             encoding=encoding,
@@ -190,19 +182,6 @@ def file_write(*, path: str, content: str, encoding: str = "utf-8", create_paren
     if not existed and lifecycle == "temporary":
         register_temporary_artifact(target)
     return {"path": str(target), "bytes": target.stat().st_size, "created": not existed, "lifecycle": lifecycle if not existed else "existing"}
-
-
-def file_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent", cwd: str | Path | None = None) -> dict[str, Any]:
-    target = _resolve(path, cwd)
-    if target.exists():
-        raise FileExistsError(str(target))
-    if create_parents:
-        target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("x", encoding=encoding) as handle:
-        handle.write(content)
-    if lifecycle == "temporary":
-        register_temporary_artifact(target)
-    return {"path": str(target), "bytes": target.stat().st_size, "lifecycle": lifecycle}
 
 
 def file_delete(*, path: str, recursive: bool = False, cwd: str | Path | None = None) -> dict[str, Any]:
@@ -272,13 +251,22 @@ def register_filesystem_write_tools(registry: ToolRegistry, *, cwd: str | Path |
     _register_bindings(registry, _WRITE_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
 
 
-def register_upload_scoped_write_tools(registry: ToolRegistry, *, upload_root: str | Path, timeout_seconds: float | None = None) -> None:
-    """Backward-compatible registration entry point; no upload-root restriction.
+def register_trial_file_write(registry: ToolRegistry, *, upload_root: str | Path, timeout_seconds: float | None = None) -> None:
+    """Register only upload-root-scoped file_write for trial users."""
+    root = Path(upload_root).expanduser().resolve(strict=False)
 
-    Existing runtime callers still use this name. All writes now resolve
-    against the process working directory, not against upload_root.
-    """
-    register_filesystem_write_tools(registry, timeout_seconds=timeout_seconds)
+    def trial_write(*, path: str, content: str, encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent") -> dict[str, Any]:
+        target = _require_within_root(path, root=root)
+        return file_write(path=str(target), content=content, encoding=encoding, create_parents=create_parents, lifecycle=lifecycle)
+
+    registry.add(
+        name="file_write",
+        description="Create or replace a text file only inside this trial account's upload directory.",
+        input_model=FileWriteInput,
+        handler=trial_write,
+        timeout_seconds=timeout_seconds,
+        category="filesystem",
+    )
 
 
 def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
