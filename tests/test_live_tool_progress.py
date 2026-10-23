@@ -65,6 +65,7 @@ def test_completed_tool_executions_are_published_in_order() -> None:
         handler=lambda text: text.upper(),
     )
     adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "denied"]}),)),
         assistant_turn(calls=(
             NativeToolCall(name="echo", arguments={"text": "first"}, index=0),
             NativeToolCall(name="echo", arguments={"text": "second"}, index=1),
@@ -79,7 +80,7 @@ def test_completed_tool_executions_are_published_in_order() -> None:
     ))
 
     assert result.content == "done"
-    assert [execution.content for execution in observed] == ["FIRST", "SECOND"]
+    assert [execution.content for execution in observed if execution.name == "echo"] == ["FIRST", "SECOND"]
     assert tuple(observed) == result.tool_executions
 
 
@@ -96,6 +97,7 @@ def test_failed_tool_execution_is_published_without_hiding_failure() -> None:
         handler=denied,
     )
     adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "denied"]}),)),
         assistant_turn(calls=(NativeToolCall(name="denied", arguments={"text": "blocked"}),)),
         assistant_turn(content="could not complete"),
     ])
@@ -106,10 +108,10 @@ def test_failed_tool_execution_is_published_without_hiding_failure() -> None:
         on_tool_execution=observed.append,
     ))
 
-    assert len(observed) == 1
-    assert observed[0].ok is False
-    assert observed[0].error_type == "PermissionError"
-    assert "blocked" in observed[0].content
+    assert len(observed) == 2
+    assert observed[1].ok is False
+    assert observed[1].error_type == "PermissionError"
+    assert "blocked" in observed[1].content
 
 
 def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
@@ -121,6 +123,7 @@ def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
         handler=lambda text: text,
     )
     adapter = FakeAdapter([
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo", "denied"]}),)),
         assistant_turn(
             thinking="I should inspect the tool result first.",
             calls=(NativeToolCall(name="echo", arguments={"text": "value"}),),
@@ -136,6 +139,7 @@ def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
 
     assert result.content == "done"
     assert observed == [
-        (1, "I should inspect the tool result first."),
-        (2, ""),
+        (1, ""),
+        (2, "I should inspect the tool result first."),
+        (3, ""),
     ]
