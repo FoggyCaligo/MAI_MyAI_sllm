@@ -150,6 +150,7 @@ class AgentLoop:
         pending_history_compactions: dict[int, str] = {}
         rejected_final_indices: list[int] = []
         rejection_feedback_indices: list[int] = []
+        latest_verification_rejection: tuple[int, int] | None = None
 
         try:
             while True:
@@ -157,8 +158,7 @@ class AgentLoop:
                 # Keep the latest rejected draft and its corresponding verifier
                 # feedback together. Older rejected drafts, reasoning, and
                 # feedback remain in the audit trail, not the model prompt.
-                latest_rejected = rejected_final_indices[-1] if rejected_final_indices else None
-                latest_feedback = rejection_feedback_indices[-1] if rejection_feedback_indices else None
+                latest_rejected, latest_feedback = latest_verification_rejection if latest_verification_rejection is not None else (None, None)
                 model_history = []
                 for index, message in enumerate(history):
                     if index in rejected_final_indices or index in rejection_feedback_indices:
@@ -329,6 +329,7 @@ class AgentLoop:
                                 on_verification_rejection(round_number, verification)
                             history.append({"role": "system", "content": feedback})
                             rejection_feedback_indices.append(len(history) - 1)
+                            latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
                             round_number += 1
                             continue
                     _LOG.info("MAI final accepted round=%d", round_number)
