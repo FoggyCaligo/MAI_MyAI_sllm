@@ -60,3 +60,12 @@ def test_verifier_does_not_truncate_selected_tool_evidence():
         tool_results=[("memory_recall", True, None, long_result)],
     )
     assert payload["tool_results_in_execution_order"][0]["result"] == long_result
+
+
+def test_recall_tool_schema_exposes_optional_limit_to_model():
+    from mai.memory.tools import MemoryRecallInput
+    schema = MemoryRecallInput.model_json_schema()
+    assert "limit" in schema["properties"]
+    assert "limit" not in schema.get("required", [])
+    assert "highest" in schema["properties"]["limit"]["description"] or "ranked" in schema["properties"]["limit"]["description"]
+    assert "Omit" in schema["properties"]["limit"]["description"]
