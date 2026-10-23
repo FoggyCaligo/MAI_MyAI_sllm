@@ -14,7 +14,13 @@ _MEMORY_MODEL_CONTEXT = {
     "instruction": (
         "Information recalled from persistent memory describes past conversations or past known state. "
         "Use recalled memory only as supporting context. The user's current message and current tool results "
-        "take precedence whenever they differ from, update, or supersede recalled memory."
+        "take precedence whenever they differ from, update, or supersede recalled memory. "
+        "When retrieved Fact nodes make incompatible claims about the same subject, property, and time scope, "
+        "treat the Fact node with the latest created_at as authoritative for that conflict. "
+        "Do not use retrieval rank, tool-call order, occurrence_count, or last_seen_at in place of created_at. "
+        "Preserve facts about different historical periods; later recording alone does not erase historical facts. "
+        "If conflicting nodes have indistinguishable created_at timestamps or incompatible provenance that "
+        "prevents a reliable chronological resolution, state the conflict instead of inventing certainty."
     ),
 }
 
