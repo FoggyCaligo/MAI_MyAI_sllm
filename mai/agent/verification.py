@@ -81,7 +81,8 @@ Claim-level evidence grounding:
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
 - Verify each claim against the actual source statement, not merely shared names or keywords.
-- For each rejected claim, give a specific reason and cite the tool result index and offsets when found. A search miss is not proof of global absence. A feature description does not establish a different mechanism or product identity.
+- For each rejected claim, write a concrete reason based on observed evidence. Cite the tool name, result index and character offsets when available. A search miss only establishes that a phrase was not located in the selected evidence scope; it is not proof of contradiction or global absence.
+- For each extracted claim, return a claim-level verdict and reason. Do not silently omit a claim. A feature description does not establish a different mechanism or product identity.
 - For translation, summarization or rewriting, judge fidelity to the source meaning, not literal wording. Unchanged target-language text or proper names are valid; invented details and unsupported counts are not.
 - Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
 - The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
@@ -135,7 +136,7 @@ Overall verdicts:
 
 
 
-_CLAIM_EXTRACTION_SYSTEM = """Extract material factual claims requiring grounding from the user's request and candidate answer. Supply literal search phrases in the source language likely to occur in tool evidence. Do not judge support or invent quotations."""
+_CLAIM_EXTRACTION_SYSTEM = """Extract material factual claims requiring grounding from the current user request and candidate final. Return each claim verbatim from the candidate, with several distinctive search phrases (including plausible original-language expressions for translated claims). Do not judge support, invent evidence, or treat search misses as proof of absence."""
 
 class _ClaimSearch(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -209,7 +210,7 @@ class _ClaimReviewPayload(BaseModel):
         "unsupported_inference",
         "missing_evidence",
     ]
-    reason: str
+    reason: str = Field(min_length=1)
 
 
 class _FinalReviewPayload(BaseModel):
@@ -587,6 +588,7 @@ class FinalGroundingVerifier:
             raise OllamaProtocolError("claim extractor returned unexpected schema")
         payload = dict(base)
         payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
+        payload["evidence_sources"] = locations
         payload["evidence_scope"] = {
             "successful_tool_results": len(locations),
             "corpus_chars": len(corpus),
@@ -610,6 +612,14 @@ class FinalGroundingVerifier:
         )
         try:
             parsed = await self._request_review(request)
+            expected_claims = [item.claim for item in extracted.claims]
+            returned_claims = [item.claim for item in parsed.claims]
+            if len(set(expected_claims)) != len(expected_claims):
+                raise OllamaProtocolError("claim extractor returned duplicate claims")
+            if len(set(returned_claims)) != len(returned_claims):
+                raise OllamaProtocolError("final reviewer returned duplicate claims")
+            if not set(expected_claims).issubset(set(returned_claims)):
+                raise OllamaProtocolError("final reviewer omitted extracted claims")
             reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
             coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
             claims = tuple(
