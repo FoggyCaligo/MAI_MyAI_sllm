@@ -650,8 +650,8 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
     correction = main.requests[1].messages[-1]["content"]
     assert "evidence_scope_expansion" in correction
     assert "action_outcome_unverified" in correction
-    assert "Preserve every supported result" in correction
-    assert "truthful partial answer" in correction
+    assert "Preserve supported findings" in correction
+    assert "do not invent evidence" in correction
 
 
 def test_claim_level_unsupported_inference_is_reported_with_claim_text() -> None:
@@ -970,3 +970,39 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
     assert result.model_rounds == 6
     assert len(reviewer.requests) == 6
 
+
+
+def test_twenty_review_findings_are_preserved_without_expanding_retry_prompt() -> None:
+    claims = [
+        {
+            "claim": f"Unsupported assertion {index}",
+            "verdict": "unsupported",
+            "defect": "missing_evidence",
+            "reason": f"No tool evidence for assertion {index}",
+        }
+        for index in range(20)
+    ]
+    reviewer = StructuredReviewerAdapter([{
+        "evidence_verdict": "unsupported",
+        "alignment_verdict": "aligned",
+        "reasons": ["The candidate makes unsupported assertions."],
+        "claims": claims,
+        "action_verdict": "not_applicable",
+        "retry_summary": "Remove the unsupported assertions or collect evidence for them.",
+    }])
+    result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+        candidate="Unsupported assertions numbered 0 to 19.",
+        messages=({"role": "user", "content": "Check every assertion."},),
+        tool_results=(),
+    ))
+    assert result.ok is False
+    assert result.review_details is not None
+    assert len(result.review_details["claims"]) == 20
+    assert all(f"Unsupported assertion {i}" in result.issues[0].message for i in range(20))
+    assert "claim_grounding_failed" in result.feedback_message()
+    assert "Remove the unsupported assertions" in result.feedback_message()
+    assert "Unsupported assertion 19" not in result.feedback_message()
+    assert len(result.feedback_message()) < 1100
+    schema = reviewer.requests[0].response_format
+    assert "maxItems" not in schema["properties"]["claims"]
+    assert schema["properties"]["retry_summary"]["maxLength"] == 800
