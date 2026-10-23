@@ -72,7 +72,7 @@ def test_file_write_defaults_to_persistent_and_survives_final_answer(tmp_path: P
     register_filesystem_tools(registry, cwd=tmp_path)
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(
-            name="file_create",
+            name="file_write",
             arguments={"path": "output.txt", "content": "keep me"},
         ),)),
         assistant_turn(content="created"),
@@ -88,7 +88,7 @@ def test_moved_temporary_file_is_cleaned_at_destination(tmp_path: Path) -> None:
     register_filesystem_tools(registry, cwd=tmp_path)
     adapter = FakeAdapter([
         assistant_turn(calls=(NativeToolCall(
-            name="file_create",
+            name="file_write",
             arguments={"path": "scratch.txt", "content": "x", "lifecycle": "temporary"},
         ),)),
         assistant_turn(calls=(NativeToolCall(
