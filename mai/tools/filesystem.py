@@ -45,6 +45,8 @@ class FileWriteInput(_StrictModel):
     path: str
     content: str
     encoding: str = "utf-8"
+    create_parents: bool = False
+    lifecycle: Literal["persistent", "temporary"] = "persistent"
 
 
 class FileCreateInput(_StrictModel):
@@ -176,14 +178,18 @@ def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None =
     return {"path": str(target), "content": text, "truncated": truncated, "encoding": encoding}
 
 
-def file_write(*, path: str, content: str, encoding: str = "utf-8", cwd: str | Path | None = None) -> dict[str, Any]:
+def file_write(*, path: str, content: str, encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent", cwd: str | Path | None = None) -> dict[str, Any]:
+    """Create a text file when absent, or replace its contents when present."""
     target = _resolve(path, cwd)
-    if not target.exists():
-        raise FileNotFoundError(str(target))
-    if not target.is_file():
+    if create_parents:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    existed = target.exists()
+    if existed and not target.is_file():
         raise IsADirectoryError(str(target))
     target.write_text(content, encoding=encoding)
-    return {"path": str(target), "bytes": target.stat().st_size}
+    if not existed and lifecycle == "temporary":
+        register_temporary_artifact(target)
+    return {"path": str(target), "bytes": target.stat().st_size, "created": not existed, "lifecycle": lifecycle if not existed else "existing"}
 
 
 def file_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent", cwd: str | Path | None = None) -> dict[str, Any]:
@@ -243,8 +249,7 @@ _READ_BINDINGS = (
     ("file_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
 )
 _WRITE_BINDINGS = (
-    ("file_write", "Replace the contents of an existing local text file.", FileWriteInput, file_write),
-    ("file_create", "Create a new local text file and fail if it already exists. Use lifecycle=temporary for scratch files created only to inspect, verify, or complete the current request; temporary files are removed automatically after the final answer is approved. Use the default lifecycle=persistent for files the user asked to keep.", FileCreateInput, file_create),
+    ("file_write", "Write text to any accessible local file. Create the file if absent or replace it if present. Set create_parents=true to create missing parent directories; lifecycle=temporary registers a newly created scratch file for cleanup after the final answer is approved.", FileWriteInput, file_write),
     ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
     ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
     ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
@@ -262,19 +267,18 @@ def register_filesystem_read_tools(registry: ToolRegistry, *, cwd: str | Path | 
     _register_bindings(registry, _READ_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
 
 
+def register_filesystem_write_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
+    """Register unscoped filesystem writes, subject only to OS permissions."""
+    _register_bindings(registry, _WRITE_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
+
+
 def register_upload_scoped_write_tools(registry: ToolRegistry, *, upload_root: str | Path, timeout_seconds: float | None = None) -> None:
-    root = Path(upload_root).expanduser().resolve(strict=False)
+    """Backward-compatible registration entry point; no upload-root restriction.
 
-    def scoped_write(*, path: str, content: str, encoding: str = "utf-8") -> dict[str, Any]:
-        target = _require_within_root(path, root=root)
-        return file_write(path=str(target), content=content, encoding=encoding)
-
-    def scoped_create(*, path: str, content: str = "", encoding: str = "utf-8", create_parents: bool = False, lifecycle: Literal["persistent", "temporary"] = "persistent") -> dict[str, Any]:
-        target = _require_within_root(path, root=root)
-        return file_create(path=str(target), content=content, encoding=encoding, create_parents=create_parents, lifecycle=lifecycle)
-
-    registry.add(name="file_write", description="Replace an existing text file only when it is inside the MAI upload directory.", input_model=FileWriteInput, handler=scoped_write, timeout_seconds=timeout_seconds, category="filesystem")
-    registry.add(name="file_create", description="Create a new text file only inside the MAI upload directory. Use lifecycle=temporary only for current-request scratch files; use persistent for user-requested output.", input_model=FileCreateInput, handler=scoped_create, timeout_seconds=timeout_seconds, category="filesystem")
+    Existing runtime callers still use this name. All writes now resolve
+    against the process working directory, not against upload_root.
+    """
+    register_filesystem_write_tools(registry, timeout_seconds=timeout_seconds)
 
 
 def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
