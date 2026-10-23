@@ -185,21 +185,33 @@ class FinalVerificationResult:
     def feedback_message(self) -> str:
         if self.ok:
             return ""
-        # Full individual issues remain in the verification result and audit log.
-        # The reviewer authors a separate bounded correction instruction.
-        if not self.retry_summary.strip():
-            raise ValueError("rejected final verification is missing retry_summary")
-        codes: dict[str, int] = {}
-        for issue in self.issues:
-            codes[issue.code] = codes.get(issue.code, 0) + 1
+        # Derive retry feedback from verified, structured defect details rather
+        # than trusting the reviewer's separate prose summary (which can say
+        # "No correction needed" even when the verdict is rejection).
         lines = [
-            "Rejected final answer. Correct material defects and provide the full answer.",
-            "Preserve supported findings; do not invent evidence.",
-            "Defect categories: " + ", ".join(
-                f"{code} ({count})" for code, count in codes.items()
-            ),
-            self.retry_summary.strip(),
+            "Rejected final answer. Correct the specific defects below and provide the full answer.",
+            "Keep supported findings; obtain evidence or narrow unsupported claims.",
         ]
+        claims = () if self.review_details is None else self.review_details.get("claims", ())
+        unsupported = [
+            claim for claim in claims if claim["verdict"] == "unsupported"
+        ]
+        claim_codes = {"claim_grounding_failed", "evidence_scope_expansion"}
+        for issue in self.issues:
+            if issue.code in claim_codes and unsupported:
+                related = [
+                    claim for claim in unsupported
+                    if (claim["defect"] == "scope_expansion") == (issue.code == "evidence_scope_expansion")
+                ]
+                if not related:
+                    lines.append(f"- {issue.code}: {issue.message}")
+                    continue
+                for claim in related[:3]:
+                    lines.append(f"- {issue.code}: {claim['claim']} — {claim['reason']}")
+                if len(related) > 3:
+                    lines.append(f"- {issue.code}: {len(related) - 3} further detailed findings retained in the audit log.")
+            else:
+                lines.append(f"- {issue.code}: {issue.message}")
         return "\n".join(lines)
 
 
