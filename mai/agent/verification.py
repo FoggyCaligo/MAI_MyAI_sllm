@@ -42,99 +42,20 @@ _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _REVIEW_TOOL_RESULT_LIMIT = 20
 _LOG = logging.getLogger("uvicorn.error")
 
-_NUMERIC_REVIEW_SYSTEM = """
-You are a judgment-only numeric and date equivalence reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
-
-A deterministic checker flagged numeric/date values from a candidate final answer because the exact normalized tokens were not found in the supplied user or tool evidence.
-
-Decide whether every flagged numeric/date value is nevertheless semantically established by the supplied evidence.
-
-Return "supported" only when all flagged values are the same factual values as the evidence despite formatting differences, aliases, or equivalent phrasing. Examples include comma grouping differences, Korean date phrasing for an explicit ISO-like date, a month/day alias for a full date with the same month/day, and equivalent range endpoints.
-
-Return "unsupported" when any flagged value is absent, contradicted, materially broader than the evidence, or only inferable from unsupported assumptions.
-
-Return "uncertain" when the evidence may support the value but you cannot confidently establish equivalence.
-
-Judge only numeric/date grounding for the flagged values. Do not decide overall answer quality, task alignment, optional completeness, or non-numeric factual claims.
-- Preserve units and measurement types: characters, bytes, file size and tokens are not interchangeable. A missing size measurement is lack of evidence, not proof of a different size.
-""".strip()
-
 _FINAL_REVIEW_SYSTEM = """
-You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
-
-Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
-
-Your response is constrained by the supplied structured-output schema. Populate every required field.
-Keep full, precise, independent material findings in the detailed review fields without arbitrary count or character limits. Write the separate retry_summary in concise English, avoiding translations, repeated claims and filler.
-- evidence_verdict: "supported", "unsupported", or "uncertain"
-- alignment_verdict: "aligned", "misaligned", or "uncertain"
-- coverage_verdict: "sufficient", "insufficient", or "uncertain"
-- coverage_reasons: concrete material omissions from already supplied evidence only
-- reasons: concrete blocking defects only
-- claims: material factual claims from the candidate that matter to the user's request
-- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
-- retry_summary: for a rejected candidate, one concise English correction instruction (1–800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. For an accepted candidate, set this field to "No correction needed." Keep full details in reasons and claims; never omit actual findings to shorten this summary.
-
-Claim-level evidence grounding:
-- For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
-- A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
-- Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
-- Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
-- Verify each claim against the actual source statement, not merely shared names or keywords.
-- For each rejected claim, write a concrete reason based on observed evidence. Cite the tool name, result index and character offsets when available. A search miss only establishes that a phrase was not located in the selected evidence scope; it is not proof of contradiction or global absence.
-- For each extracted claim, return a claim-level verdict and reason. Do not silently omit a claim. A feature description does not establish a different mechanism or product identity.
-- For translation, summarization or rewriting, judge fidelity to the source meaning, not literal wording. Unchanged target-language text or proper names are valid; invented details and unsupported counts are not.
-- Prior assistant text may clarify conversational context but is not factual evidence. Current user messages and observed tool results are evidence.
-- The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
-- A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
-- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
-
-Temporal authority:
-- authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
-- Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
-- If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
-
-Evidence scope preservation:
-- A final claim must not be semantically broader than the evidence supporting it.
-- Distinguish local state from remote state, one file from all files, visible rows from a complete collection, one command's effect from a larger goal, and one source's observation from a universal conclusion.
-- When evidence covers only part of a set or state, exhaustive, exclusive, global, superlative, or broader-scope conclusions require evidence that the broader scope was actually observed.
-- If the evidence supports a narrower statement but the candidate asserts a broader one, mark that claim unsupported with defect "scope_expansion".
-- Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
-- Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
-
-Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
-- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
-- Prefer concrete supported results over replacing them with generic advice to check another source later.
-- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
-- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
-- coverage_reasons must identify the concrete already-observed information that the candidate should have used. Never require inclusion of a claim marked unsupported or inferred solely from a rejected draft. If coverage is sufficient or uncertain, coverage_reasons should be empty.
-
-Action outcome verification:
-- Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
-- If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
-- A successful action/tool invocation is evidence that the tool contract reported success. It is not automatically evidence for a broader requested end state.
-- Use "verified" only when the candidate claims completion and the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
-- Use "unverified" when an action was attempted or reported successful but the candidate claims completion beyond what resulting-state evidence establishes.
-- Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
-- Do not demand extra verification for a task that did not request or claim an external state change.
-
-Task alignment and partial-answer policy:
-- Identify the user's current request from the latest user message, resolving references from conversational context when needed.
-- Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
-- A truthful partial answer is aligned when part of the requested work failed or remains unverified, provided it preserves the supported results and clearly states the limitation instead of inventing completion.
-- Do not reject merely because the answer openly says a step failed, a result is unverified, or only part of the task could be completed.
-- Do reject a candidate that hides a material failure and presents an unverified result as completed.
-- Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
-
-Overall verdicts:
-- evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
-- evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
-- evidence_verdict is "uncertain" only when you cannot confidently decide.
-- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
+You are the sole final-answer evidence reviewer. Do not call tools, rewrite the answer or add requirements.
+Use the current user request, candidate, extracted claims and indexed excerpts. Every extracted claim must receive a verdict and a specific reason.
+- Support factual claims only when observed evidence supports their actual meaning and scope; distinguish absence of evidence from direct contradiction. Do not fabricate counterfacts or causal explanations.
+- An unsuccessful phrase search means only that no match was located in the selected tool-result scope. It cannot prove global absence or falsity. State uncertainty when the available excerpts are insufficient.
+- For translations, summaries and rewrites, judge fidelity to the source meaning, not literal wording. Retaining target-language text and proper names is valid.
+- Treat numerically equivalent expressions as supported, including comma/date formatting, meaningful approximations (e.g. about 1,000 for 1,037), sensible rounding, and mathematically equivalent unit conversions. Reject misleading precision or approximation. Do not confuse characters, bytes, file size, and tokens.
+- Distinguish local and remote state, partial and exhaustive sets, source reports and confirmed facts, claims and conjectures, and current timestamps from historical ones.
+- Past assistant messages and rejected drafts provide context, not evidence. The user and successful observed tool results may provide evidence. Web search snippets support what a result states, not automatically the underlying truth.
+- Coverage requires only material user-relevant facts already observed; never demand unsupported statements, optional details or additional research. Honest partial answers and reported failures are acceptable.
+- Align to the user's actual essential request. Verify claimed external changes only using evidence establishing the resulting state, not merely attempted tool calls.
+- On rejection, explain each defective claim with tool name, result index and source offsets where available. Never invent evidence offsets. Reasons must distinguish missing evidence, contradiction, unsupported inference and scope expansion.
+Return the required structured verdicts and claims. Use 'unsupported' for an asserted claim lacking support, 'uncertain' for reviewer uncertainty; do not conflate the two. Keep all blocking findings in the detailed reasons and concise retry_summary.
 """.strip()
-
-
 
 _CLAIM_EXTRACTION_SYSTEM = """Extract material factual claims requiring grounding from the current user request and candidate final. Return each claim verbatim from the candidate, with several distinctive search phrases (including plausible original-language expressions for translated claims). Do not judge support, invent evidence, or treat search misses as proof of absence."""
 
@@ -226,15 +147,6 @@ class _FinalReviewPayload(BaseModel):
     claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
-
-
-class _NumericReviewPayload(BaseModel):
-    """Strict provider-structured numeric equivalence response."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    numeric_verdict: Literal["supported", "unsupported", "uncertain"]
-    reason: str = Field(max_length=240)
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,63 +259,14 @@ class FinalGroundingVerifier:
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
     ) -> FinalVerificationResult:
-        numeric_issue: VerificationIssue | None = None
-        numeric_facts = self._unsupported_numeric_facts(
-            candidate=candidate,
-            messages=messages,
-            tool_results=tool_results,
-        )
-        if allow_numeric_review and numeric_facts:
-            numeric_issue = self._numeric_issue_from_facts(numeric_facts)
-            if self.reviewer_adapter is not None:
-                numeric_review = await self._review_numeric_grounding(
-                    candidate=candidate,
-                    messages=messages,
-                    tool_results=tool_results,
-                    unsupported_facts=numeric_facts,
-                )
-                if numeric_review.numeric_verdict == "supported":
-                    _LOG.info(
-                        "MAI numeric verification semantic_review=supported reason=%s",
-                        numeric_review.reason.strip() or "-",
-                    )
-                    numeric_issue = None
-                else:
-                    reason = numeric_review.reason.strip()
-                    if reason:
-                        numeric_issue = VerificationIssue(
-                            code=numeric_issue.code,
-                            message=f"{numeric_issue.message} Semantic numeric review: {reason}",
-                        )
-                    _LOG.info(
-                        "MAI numeric verification semantic_review=%s reason=%s",
-                        numeric_review.numeric_verdict,
-                        reason or "-",
-                    )
-
+        if self.reviewer_adapter is None:
+            raise RuntimeError("final verifier requires a reviewer adapter")
         if allow_evidence_review is None:
             allow_evidence_review = allow_semantic_review
+        if not (allow_numeric_review or allow_evidence_review or allow_semantic_review or allow_coverage_review):
+            raise RuntimeError("all final verification axes disabled; release was not verified")
         issues: list[VerificationIssue] = []
-        if numeric_issue is not None:
-            issues.append(numeric_issue)
-
-        if self.reviewer_adapter is None or (not allow_semantic_review and not allow_evidence_review and not allow_coverage_review):
-            reason = () if self.reviewer_adapter is None else ("alignment, evidence and coverage review retry budgets exhausted",)
-            self._log_result(
-                numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
-                evidence="skipped",
-                alignment="skipped",
-                coverage="skipped",
-                action="skipped",
-                reasons=reason,
-            )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues), retry_summary=f"{numeric_issue.code}: {numeric_issue.message}" if numeric_issue else "")
-
-        review = await self._review_final(
-            candidate=candidate,
-            messages=messages,
-            tool_results=tool_results,
-        )
+        review = await self._review_final(candidate=candidate, messages=messages, tool_results=tool_results)
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
@@ -453,7 +316,7 @@ class FinalGroundingVerifier:
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
         self._log_result(
-            numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
+            numeric="integrated" if allow_numeric_review else "skipped",
             evidence=review.evidence_verdict if allow_evidence_review else "skipped",
             alignment=review.alignment_verdict if allow_semantic_review else "skipped",
             coverage=review.coverage_verdict if allow_coverage_review else "skipped",
@@ -464,8 +327,7 @@ class FinalGroundingVerifier:
             ok=not issues,
             issues=tuple(issues),
             retry_summary=(
-                (f"{numeric_issue.code}: {numeric_issue.message}. " if numeric_issue else "")
-                + review.retry_summary
+                review.retry_summary
             ) if issues else "",
             review_details={
                 "evidence_verdict": review.evidence_verdict,
@@ -480,87 +342,6 @@ class FinalGroundingVerifier:
                 ],
             },
         )
-
-    def _unsupported_numeric_facts(
-        self,
-        *,
-        candidate: str,
-        messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult],
-    ) -> tuple[str, ...]:
-        evidence: set[str] = set()
-        for message in messages:
-            if message.get("role") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-        for _, ok, _, content in tool_results:
-            if not ok:
-                continue
-            evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-
-        if not evidence:
-            return ()
-
-        candidate_facts = _extract_material_numeric_facts(candidate)
-        return tuple(sorted(
-            fact for fact in candidate_facts
-            if fact not in evidence and not _supported_as_month_day_alias(fact, evidence)
-        ))
-
-    @staticmethod
-    def _numeric_issue_from_facts(unsupported: Sequence[str]) -> VerificationIssue:
-        if not unsupported:
-            raise ValueError("unsupported numeric facts must be non-empty")
-        return VerificationIssue(
-            code="numeric_grounding_failed",
-            message=(
-                "These material numeric values do not appear in the user evidence or observed tool results: "
-                + ", ".join(unsupported)
-            ),
-        )
-
-    async def _review_numeric_grounding(
-        self,
-        *,
-        candidate: str,
-        messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult],
-        unsupported_facts: Sequence[str],
-    ) -> _NumericReviewPayload:
-        payload = _review_payload(
-            candidate=candidate,
-            messages=messages,
-            tool_results=tool_results,
-        )
-        payload["flagged_numeric_or_date_values"] = tuple(unsupported_facts)
-        request = ChatRequest(
-            messages=(
-                {"role": "system", "content": _NUMERIC_REVIEW_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ),
-            tools=(),
-            think=False,
-            response_format=_NumericReviewPayload.model_json_schema(),
-        )
-        _LOG.info(
-            "MAI numeric reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d flagged=%s",
-            self.reviewer_timeout_seconds,
-            len(payload["conversation_context"]),
-            len(payload["tool_results_in_execution_order"]),
-            len(candidate),
-            ",".join(unsupported_facts),
-        )
-        try:
-            return await self._request_numeric_review(request)
-        except TimeoutError as exc:
-            _LOG.warning("MAI numeric verification reviewer timed out")
-            raise RuntimeError("numeric reviewer timed out; release was not verified") from exc
-        except ValidationError as exc:
-            raise RuntimeError("numeric reviewer violated structured output schema") from exc
-        except Exception as exc:
-            raise RuntimeError("numeric reviewer failed; release was not verified") from exc
 
     async def _review_final(
         self,
@@ -666,12 +447,6 @@ class FinalGroundingVerifier:
         payload = await self._request_structured_review(request, _FinalReviewPayload, label="final")
         if not isinstance(payload, _FinalReviewPayload):
             raise AssertionError("unexpected final reviewer payload type")
-        return payload
-
-    async def _request_numeric_review(self, request: ChatRequest) -> _NumericReviewPayload:
-        payload = await self._request_structured_review(request, _NumericReviewPayload, label="numeric")
-        if not isinstance(payload, _NumericReviewPayload):
-            raise AssertionError("unexpected numeric reviewer payload type")
         return payload
 
     async def _request_structured_review(
