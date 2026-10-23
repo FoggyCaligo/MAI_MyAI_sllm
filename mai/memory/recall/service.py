@@ -28,25 +28,43 @@ class RecallService:
         self.concept_limit = concept_limit
         self.anchor_fact_limit = anchor_fact_limit
 
-    def recall_query(self, *, user_id: str, query: str) -> WorkingGraph:
+    def recall_query(
+        self, *, user_id: str, query: str, limit: int | None = None,
+    ) -> WorkingGraph:
         if not query.strip():
             raise ValueError("memory recall query must be non-empty")
+        if limit is not None and limit < 1:
+            raise ValueError("memory recall limit must be >= 1")
         anchor = self.graph.get_user_anchor(user_id)
         if anchor is None:
             raise KeyError(f"user anchor for '{user_id}' does not exist")
 
         hits = self._select_query_seeds(query)
-        recalled = WorkingGraph()
-
+        # Reuse the ranked Concept hits: a fact's score is the best score of
+        # any directly connected seed. Stable encounter order breaks ties.
+        fact_hits: dict[int, tuple[float, int]] = {}
         for hit in hits:
-            neighborhood = self.graph.one_hop(hit.node_id)
-            compact = self._facts_only(neighborhood)
+            compact = self._facts_only(self.graph.one_hop(hit.node_id))
             for node in compact.nodes:
                 if node.node_type != "fact" or node.payload.get("user_id") != user_id:
                     continue
-                path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
-                if path is not None:
-                    recalled.merge(self._facts_only(path), mark_expanded=False)
+                previous = fact_hits.get(node.id)
+                if previous is None:
+                    fact_hits[node.id] = (hit.score, len(fact_hits))
+                elif hit.score > previous[0]:
+                    fact_hits[node.id] = (hit.score, previous[1])
+
+        ranked = sorted(
+            fact_hits, key=lambda node_id: (-fact_hits[node_id][0], fact_hits[node_id][1])
+        )
+        if limit is not None:
+            ranked = ranked[:limit]
+
+        recalled = WorkingGraph()
+        for node_id in ranked:
+            path = self.graph.shortest_path_to_user_anchor(node_id, user_id)
+            if path is not None:
+                recalled.merge(self._facts_only(path), mark_expanded=False)
         return recalled
 
     def auto_recall(self, *, user_id: str, user_text: str) -> WorkingGraph:
