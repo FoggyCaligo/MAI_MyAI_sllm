@@ -561,7 +561,7 @@ async def chat(
             status_code=500,
             content={
                 "error_type": exc.error_type,
-                "detail": exc.error_message,
+                "detail": exc.user_visible_error,
                 "model": selected_model or runtime.model,
                 "model_rounds": exc.context.model_rounds,
                 "verification_rejections": verification_rejections,

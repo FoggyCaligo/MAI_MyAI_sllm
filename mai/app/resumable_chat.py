@@ -61,7 +61,7 @@ async def _execute_chat(
     except AgentRunFailure as exc:
         return 500, {
             "error_type": exc.error_type,
-            "detail": exc.error_message,
+            "detail": exc.user_visible_error,
             "model": active_model,
             "model_rounds": exc.context.model_rounds,
             "tools": [server._tool_payload(execution) for execution in exc.context.tool_executions],

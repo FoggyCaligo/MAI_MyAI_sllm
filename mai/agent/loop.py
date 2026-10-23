@@ -109,6 +109,7 @@ class AgentFailureContext:
     messages: tuple[Message, ...]
     tool_executions: tuple[ToolExecution, ...]
     model_rounds: int
+    last_rejected_draft: str | None = None
 
 
 class AgentRunFailure(AgentRuntimeError):
@@ -119,6 +120,17 @@ class AgentRunFailure(AgentRuntimeError):
         self.error_message = str(cause)
         self.context = context
         super().__init__(f"{self.error_type}: {self.error_message}")
+
+    @property
+    def user_visible_error(self) -> str:
+        """Expose the last unapproved draft as diagnostic data, not a valid answer."""
+        if self.context.last_rejected_draft is None:
+            return self.error_message
+        return (
+            f"{self.error_message}\n\n"
+            "[검증에 통과하지 못한 마지막 임시답변 — 사실 오류가 있을 수 있으며 확정 답변이 아닙니다]\n\n"
+            f"{self.context.last_rejected_draft}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -523,6 +535,10 @@ class AgentLoop:
                     messages=tuple(history),
                     tool_executions=tuple(executions),
                     model_rounds=round_number,
+                    last_rejected_draft=(
+                        str(history[rejected_final_indices[-1]].get("content", ""))
+                        if rejected_final_indices else None
+                    ),
                 ),
             ) from exc
 
