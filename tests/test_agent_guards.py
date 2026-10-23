@@ -46,6 +46,14 @@ def assistant_turn(calls=(), content: str = "") -> ModelTurn:
     return ModelTurn(content=content, thinking="", tool_calls=calls, assistant_message=message)
 
 
+def activate_echo():
+    return assistant_turn((NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),))
+
+
+def native_executions(result):
+    return [execution for execution in result.tool_executions if execution.name == "echo"]
+
+
 def registry_with_echo(handler=None) -> ToolRegistry:
     registry = ToolRegistry()
     registry.add(
@@ -60,6 +68,7 @@ def registry_with_echo(handler=None) -> ToolRegistry:
 def test_identical_successful_calls_have_no_fixed_count_cap() -> None:
     call = NativeToolCall(name="echo", arguments={"text": "same"})
     adapter = FakeAdapter([
+        activate_echo(),
         *(assistant_turn((call,)) for _ in range(12)),
         assistant_turn(content="done"),
     ])
@@ -74,13 +83,14 @@ def test_identical_successful_calls_have_no_fixed_count_cap() -> None:
 
     assert result.content == "done"
     assert executed == ["same"] * 12
-    assert len(result.tool_executions) == 12
-    assert all(execution.ok for execution in result.tool_executions)
+    assert len(native_executions(result)) == 12
+    assert all(execution.ok for execution in native_executions(result))
 
 
 def test_same_failure_is_executed_five_times_then_guard_failure_returns_to_model() -> None:
     call = NativeToolCall(name="echo", arguments={"text": "x"})
     adapter = FakeAdapter([
+        activate_echo(),
         *(assistant_turn((call,)) for _ in range(6)),
         assistant_turn(content="reported failure"),
     ])
@@ -104,15 +114,16 @@ def test_same_failure_is_executed_five_times_then_guard_failure_returns_to_model
 
     assert result.content == "reported failure"
     assert attempts == ["x"] * 5
-    assert len(result.tool_executions) == 6
-    assert all(not execution.ok for execution in result.tool_executions)
-    assert result.tool_executions[-1].error_type == "RepeatedToolFailureError"
+    assert len(native_executions(result)) == 6
+    assert all(not execution.ok for execution in native_executions(result))
+    assert native_executions(result)[-1].error_type == "RepeatedToolFailureError"
 
 
 def test_identical_failure_warning_is_visible_before_model_changes_approach() -> None:
     failed = NativeToolCall(name="echo", arguments={"text": "bad"})
     changed = NativeToolCall(name="echo", arguments={"text": "fixed"})
     adapter = FakeAdapter([
+        activate_echo(),
         assistant_turn((failed,)),
         assistant_turn((failed,)),
         assistant_turn((failed,)),
@@ -129,8 +140,8 @@ def test_identical_failure_warning_is_visible_before_model_changes_approach() ->
     result = run(runtime.run_user_message("recover"))
 
     assert result.content == "done"
-    assert [execution.ok for execution in result.tool_executions] == [False, False, False, True]
-    fourth_request_messages = adapter.requests[3].messages
+    assert [execution.ok for execution in native_executions(result)] == [False, False, False, True]
+    fourth_request_messages = adapter.requests[4].messages
     notices = [
         message["content"]
         for message in fourth_request_messages
@@ -143,6 +154,7 @@ def test_changed_failure_outcome_breaks_identical_failure_streak() -> None:
     call_a = NativeToolCall(name="echo", arguments={"text": "a"})
     call_b = NativeToolCall(name="echo", arguments={"text": "b"})
     adapter = FakeAdapter([
+        activate_echo(),
         assistant_turn((call_a,)),
         assistant_turn((call_a,)),
         assistant_turn((call_b,)),
@@ -165,12 +177,13 @@ def test_changed_failure_outcome_breaks_identical_failure_streak() -> None:
 
     result = run(runtime.run_user_message("change approach"))
     assert result.content == "done"
-    assert len(result.tool_executions) == 4
+    assert len(native_executions(result)) == 4
 
 
 def test_structural_no_progress_notice_is_returned_to_next_model_turn() -> None:
     call = NativeToolCall(name="echo", arguments={"text": "same"})
     adapter = FakeAdapter([
+        activate_echo(),
         assistant_turn((call,)),
         assistant_turn((call,)),
         assistant_turn((call,)),
@@ -189,7 +202,7 @@ def test_structural_no_progress_notice_is_returned_to_next_model_turn() -> None:
     result = run(runtime.run_user_message("no progress"))
 
     assert result.content == "done"
-    assert len(result.tool_executions) == 3
+    assert len(native_executions(result)) == 3
     final_request_messages = adapter.requests[-1].messages
     notices = [
         message["content"]
@@ -203,6 +216,7 @@ def test_guard_blocked_failed_call_does_not_skip_other_calls_in_same_round() -> 
     repeated = NativeToolCall(name="echo", arguments={"text": "same"})
     other = NativeToolCall(name="echo", arguments={"text": "other"})
     adapter = FakeAdapter([
+        activate_echo(),
         assistant_turn((repeated,)),
         assistant_turn((repeated, other)),
         assistant_turn(content="done"),
@@ -229,9 +243,9 @@ def test_guard_blocked_failed_call_does_not_skip_other_calls_in_same_round() -> 
 
     assert result.content == "done"
     assert executed == ["same", "other"]
-    assert [execution.ok for execution in result.tool_executions] == [False, False, True]
-    assert result.tool_executions[1].error_type == "RepeatedToolFailureError"
-    assert result.tool_executions[2].content == "other"
+    assert [execution.ok for execution in native_executions(result)] == [False, False, True]
+    assert native_executions(result)[1].error_type == "RepeatedToolFailureError"
+    assert native_executions(result)[2].content == "other"
 
 
 def test_changed_arguments_reset_structural_no_progress_rounds() -> None:
@@ -240,6 +254,7 @@ def test_changed_arguments_reset_structural_no_progress_rounds() -> None:
         NativeToolCall(name="echo", arguments={"text": "b"}),
     ]
     adapter = FakeAdapter([
+        activate_echo(),
         assistant_turn((calls[0],)),
         assistant_turn((calls[1],)),
         assistant_turn(content="done"),
