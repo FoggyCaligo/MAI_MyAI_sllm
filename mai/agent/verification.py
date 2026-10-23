@@ -189,9 +189,15 @@ class FinalVerificationResult:
         # The reviewer authors a separate bounded correction instruction.
         if not self.retry_summary.strip():
             raise ValueError("rejected final verification is missing retry_summary")
+        codes: dict[str, int] = {}
+        for issue in self.issues:
+            codes[issue.code] = codes.get(issue.code, 0) + 1
         lines = [
-            "Rejected final answer. Correct the defects below and provide the full answer.",
-            "Preserve supported findings. Do not invent evidence.",
+            "Rejected final answer. Correct material defects and provide the full answer.",
+            "Preserve supported findings; do not invent evidence.",
+            "Defect categories: " + ", ".join(
+                f"{code} ({count})" for code, count in codes.items()
+            ),
             self.retry_summary.strip(),
         ]
         return "\n".join(lines)
