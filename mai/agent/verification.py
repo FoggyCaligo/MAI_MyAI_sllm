@@ -141,13 +141,13 @@ memory, optional details, stylistic preferences, or more research. Coverage is i
 only if a specifically requested essential item is missing or the omission defeats the task.
 If insufficient, return coverage_verdict=insufficient, one concise actionable coverage_reason,
 and an empty claims list. For sufficient or uncertain coverage, return empty coverage_reason. The caller will reject immediately, without a stage 3 call.
-Otherwise, extract distinct, objectively checkable factual claims (not opinions, speculation,
-or commentary) and pair each with a character span in a successful tool result or user message. Use source_index as the original index into the ordered
-tool_results_in_execution_order entries, or the index into user_input_sources
-when tool="user_input". Supply start and end as zero-based Unicode character offsets
-(start inclusive, end exclusive) in the original source content, not JSON-escaped text.
-The runtime extracts the quotation: never write it yourself. Use null coordinates
-when no observed source supports a claim. Do not decide claim truth from keyword overlap. Return only the schema.
+Otherwise extract only distinct, objectively checkable factual claims. Exclude opinions,
+speculation, greetings and commentary. Match each claim to evidence entries using their
+exact ref identifiers from the supplied evidence_entries; output evidence_refs as a list
+of those identifiers. Choose multiple refs where needed and an empty list if none
+applies. Never invent identifiers or write quotations, positions, or source paths.
+A reference is a location, not proof that the source supports the claim.
+Return only the structured schema.
 """.strip()
 
 _GROUNDING_RELEASE_SYSTEM = """
@@ -164,13 +164,48 @@ State defects succinctly; never recap the entire answer.
 """.strip()
 
 
+def _structured_evidence_index(
+    tool_results: Sequence[ToolVerificationResult],
+    user_messages: Sequence[str],
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Index actual JSON leaves; preserve non-JSON strings whole."""
+    entries: list[dict[str, Any]] = []
+    lookup: dict[str, dict[str, Any]] = {}
+
+    def register(tool: str, source_index: int, path: list[str | int], value: Any) -> None:
+        ref = f"e{len(entries)}"
+        entry = {"ref": ref, "tool": tool, "source_index": source_index,
+                 "path": path, "value": value}
+        entries.append(entry)
+        lookup[ref] = entry
+
+    def walk(tool: str, index: int, value: Any, path: list[str | int]) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                walk(tool, index, child, [*path, key])
+        elif isinstance(value, list):
+            for offset, child in enumerate(value):
+                walk(tool, index, child, [*path, offset])
+        else:
+            register(tool, index, path, value)
+
+    for index, (tool, ok, _error, content) in enumerate(tool_results):
+        if not ok:
+            continue
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            data = content
+        walk(tool, index, data, [])
+    for index, content in enumerate(user_messages):
+        walk("user_input", index, content, [])
+    return entries, lookup
+
+
 class _PreparedClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
     claim: str
-    source_index: int | None
-    tool: str | None
-    start: int | None
-    end: int | None
+    evidence_refs: list[str]
 
 
 class _EvidencePreparationPayload(BaseModel):
@@ -562,10 +597,17 @@ class FinalGroundingVerifier:
         tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
+        user_messages = [str(message["content"]) for message in messages
+                         if message.get("role") == "user" and isinstance(message.get("content"), str)]
+        evidence_entries, evidence_lookup = _structured_evidence_index(tool_results, user_messages)
+        preparation_payload = {
+            **payload,
+            "evidence_entries": evidence_entries,
+        }
         prepare_request = ChatRequest(
             messages=(
                 {"role": "system", "content": _EVIDENCE_PREPARATION_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                {"role": "user", "content": json.dumps(preparation_payload, ensure_ascii=False)},
             ),
             tools=(),
             think=False,
@@ -592,37 +634,23 @@ class FinalGroundingVerifier:
         if prepared.coverage_reason.strip():
             raise OllamaProtocolError("non-rejected coverage must not contain rejection reason")
 
-        selected = {index: (name, content) for index, (name, ok, _error, content)
-                    in enumerate(tool_results) if ok}
-        user_messages = [str(message["content"]) for message in messages
-                         if message.get("role") == "user" and isinstance(message.get("content"), str)]
         validated_claims: list[dict[str, Any]] = []
         for claim in prepared.claims:
-            item = claim.model_dump()
-            item["citation_status"] = "unlocated"
-            item["excerpt"] = None
-            item["source_start"] = None
-            item["source_end"] = None
-            if all(value is None for value in (claim.source_index, claim.tool, claim.start, claim.end)):
-                validated_claims.append(item)
-                continue
-            source = None
-            if claim.tool == "user_input" and claim.source_index is not None:
-                if 0 <= claim.source_index < len(user_messages):
-                    source = user_messages[claim.source_index]
-            elif claim.source_index is not None:
-                observed = selected.get(claim.source_index)
-                if observed is not None and observed[0] == claim.tool:
-                    source = observed[1]
-            if (source is not None and isinstance(claim.start, int)
-                    and isinstance(claim.end, int) and 0 <= claim.start < claim.end <= len(source)):
-                item["citation_status"] = "valid"
-                item["source_start"] = claim.start
-                item["source_end"] = claim.end
-                item["excerpt"] = source[claim.start:claim.end]
-            else:
-                item["citation_status"] = "invalid_citation"
-            validated_claims.append(item)
+            resolved: list[dict[str, Any]] = []
+            for ref in claim.evidence_refs:
+                entry = evidence_lookup.get(ref)
+                if entry is None:
+                    resolved.append({"ref": ref, "citation_status": "invalid_reference",
+                                     "tool": None, "source_index": None, "path": None, "value": None})
+                else:
+                    resolved.append({**entry, "citation_status": "valid"})
+            validated_claims.append({
+                "claim": claim.claim,
+                "evidence": resolved,
+                "citation_status": ("unlocated" if not resolved else
+                                    "invalid_reference" if any(item["citation_status"] != "valid" for item in resolved)
+                                    else "valid"),
+            })
         validated_preparation = prepared.model_dump()
         validated_preparation["claims"] = validated_claims
         _LOG.info(
