@@ -81,7 +81,7 @@ MAI는 기억을 매번 긴 문장으로 모델에 집어넣지 않고, 컴퓨�
 
 최근 대화 문맥은 `data/chat.sqlite3`, 문제 확인용 실행 기록은 `data/log.sqlite3`로 구분해 관리함.
 
-더 자세한 구조는 [기억 구조 문서](WORKING_CONTRACT.md)를 참고해.
+더 자세한 구조는 [기억 구조 문서](WORKING_CONTRACT.md)를 참고.
 
 ## 3. 처음 설치하는 방법
 
