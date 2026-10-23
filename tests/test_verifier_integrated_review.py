@@ -47,8 +47,8 @@ def test_approximations_use_one_integrated_adjudicator():
     assert len(fake.requests) == 3
     assert all(request.think is False for request in fake.requests)
     adjudication = json.loads(fake.requests[2].messages[1]["content"])
-    assert adjudication["claims_and_evidence"][0]["matches"][0]["tool"] == "file_read"
-    assert adjudication["claims_and_evidence"][0]["matches"][0]["tool_result_index"] == 0
+    assert adjudication["lightweight_evidence"][0]["tool"] == "file_read"
+    assert adjudication["lightweight_evidence"][0]["tool_result_index"] == 0
 
 
 def test_rejection_reason_is_preserved_without_second_numeric_review():
@@ -104,4 +104,4 @@ def test_stage_b_receives_only_candidate_and_stage_c_only_indexed_evidence():
     assert b == {"candidate_final": "소설은 약 1,000자이다"}
     assert "current_user_request" not in c
     assert "candidate_final" not in c
-    assert len(c["claims_and_evidence"]) == 1
+    assert len(c["claim_index"]) == 1
