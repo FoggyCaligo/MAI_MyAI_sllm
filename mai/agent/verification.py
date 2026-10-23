@@ -10,6 +10,8 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
+import os
+import re
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
@@ -28,7 +30,7 @@ _LOG = logging.getLogger("uvicorn.error")
 
 _FINAL_REVIEW_SYSTEM = """
 You are the sole final-answer evidence reviewer. Do not call tools, rewrite the answer or add requirements.
-Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict and a specific reason. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
+Read the deduplicated lightweight_evidence corpus first, then follow each claim_index reference by evidence_id and exact offsets. The same excerpt may support multiple claims. Use only extracted claims and indexed source excerpts. Every extracted claim must receive a verdict. Supported claims need only a concise reason (for example, a source location); detailed reasons are required only for unsupported claims. Alignment, coverage, and action outcomes are adjudicated upstream in stage A.
 - Support factual claims only when observed evidence supports their actual meaning and scope; distinguish absence of evidence from direct contradiction. Do not fabricate counterfacts or causal explanations.
 - An unsuccessful phrase search means only that no match was located in the selected tool-result scope. It cannot prove global absence or falsity. State uncertainty when the available excerpts are insufficient.
 - For translations, summaries and rewrites, judge fidelity to the source meaning, not literal wording. Retaining target-language text and proper names is valid.
@@ -41,8 +43,8 @@ Return the structured evidence verdict, claims, and reasons. Use unsupported for
 
 _TASK_REVIEW_SYSTEM = """You are stage A: task-alignment, evidence-coverage, and action-outcome reviewer.
 Use the latest user request, prior conversation for context, candidate answer, and observed successful tool results.
-- Determine whether essential requested outcomes are answered. A truthful partial result or failure report is acceptable; never add optional requirements.
-- Mark coverage insufficient only for material user-relevant facts already observed but omitted; never demand unsupported claims or extra research.
+- Determine only whether essential requested outcomes are answered. Do not reject accurate, useful answers for optional details, style, or preferences not requested. A truthful partial result or failure report is acceptable.
+- Mark coverage insufficient only if a specific, already-observed, essential user-relevant fact is omitted AND the omission prevents a useful answer. Describe the exact observed fact; do not require exhaustive enumeration, unsupported claims, or extra research.
 - Verify external-action completion from actual resulting state. Successful invocation alone does not establish a broader outcome.
 - Distinguish missing evidence from contradicted facts. Do not invent evidence or demand contents of a rejected draft.
 - Provide concrete blocking reasons for alignment, coverage, or action failures.
@@ -84,40 +86,129 @@ def _indexed_evidence(tool_results: Sequence[ToolVerificationResult]) -> tuple[s
         position += 1
     return "".join(fragments), locations
 
+def _evidence_context_chars() -> int:
+    raw = os.getenv("VERIFIER_EVIDENCE_CONTEXT_CHARS", "500")
+    try:
+        count = int(raw)
+    except ValueError as exc:
+        raise ValueError("VERIFIER_EVIDENCE_CONTEXT_CHARS must be a nonnegative integer") from exc
+    if count < 0:
+        raise ValueError("VERIFIER_EVIDENCE_CONTEXT_CHARS must be a nonnegative integer")
+    return count
+
+
 def _retrieve_claim_evidence(
     claims: Sequence[_ClaimSearch], corpus: str, locations: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    """Search literal source spans only; semantic support is an LLM decision."""
-    found: list[dict[str, Any]] = []
+) -> dict[str, Any]:
+    """Build a source-faithful deduplicated lightweight corpus and claim index."""
+    context_chars = _evidence_context_chars()
+    selections: list[dict[str, Any]] = []
+    claim_hits: list[list[dict[str, Any]]] = []
     for claim in claims:
-        matches: list[dict[str, Any]] = []
-        seen: set[tuple[int, int]] = set()
-        for query in claim.queries:
-            if not query:
-                continue
-            for source in locations:
-                cursor = int(source["start"])
-                end = int(source["end"])
-                while len(matches) < 3:
-                    at = corpus.find(query, cursor, end)
-                    if at < 0:
+        hits: list[dict[str, Any]] = []
+        queries = [query.strip() for query in claim.queries if query.strip()]
+        for source in locations:
+            start, end = int(source["start"]), int(source["end"])
+            source_text = corpus[start:end]
+            candidates: list[tuple[int, int, str]] = []
+            for query in queries:
+                cursor = 0
+                while True:
+                    pos = source_text.find(query, cursor)
+                    if pos < 0:
                         break
-                    left = max(int(source["start"]), at - 900)
-                    right = min(end, at + len(query) + 900)
-                    if (left, right) not in seen:
-                        seen.add((left, right))
-                        matches.append({
-                            "tool_result_index": source["index"], "tool": source["tool"],
-                            "start": left, "end": right, "context": corpus[left:right],
-                        })
-                    cursor = at + max(1, len(query))
-                if len(matches) >= 3:
+                    candidates.append((pos, pos + len(query), "exact"))
+                    cursor = pos + max(1, len(query))
+                if not any(strategy == "exact" for _, _, strategy in candidates):
+                    candidates.extend((m.start(), m.end(), "case_insensitive")
+                                      for m in re.finditer(re.escape(query), source_text, flags=re.IGNORECASE))
+            if not candidates:
+                for query in queries:
+                    tokens = query.split()
+                    if len(tokens) < 2:
+                        continue
+                    occurrences = [list(re.finditer(re.escape(token), source_text, re.IGNORECASE))
+                                   for token in tokens]
+                    if any(not group for group in occurrences):
+                        continue
+                    for first in occurrences[0]:
+                        matches = [first]
+                        for group in occurrences[1:]:
+                            near = next((m for m in group if abs(m.start() - first.start()) <= 500), None)
+                            if near is None:
+                                break
+                            matches.append(near)
+                        if len(matches) == len(tokens):
+                            candidates.append((min(m.start() for m in matches),
+                                               max(m.end() for m in matches), "token_proximity"))
+                            break
+            for local_start, local_end, strategy in candidates:
+                hit_start, hit_end = start + local_start, start + local_end
+                if any(hit["start"] == hit_start and hit["end"] == hit_end for hit in hits):
+                    continue
+                title = None
+                for line in source_text[:local_start].splitlines():
+                    if re.match(r"^#{1,6}\\s", line.strip()):
+                        title = line.strip()
+                selection = {
+                    "tool": source["tool"], "tool_result_index": source["index"],
+                    "start": max(start, hit_start - context_chars),
+                    "end": min(end, hit_end + context_chars), "title": title,
+                }
+                selections.append(selection)
+                hits.append({"start": hit_start, "end": hit_end,
+                             "tool_result_index": source["index"],
+                             "retrieval_strategy": strategy})
+                if len(hits) >= 3:
                     break
-            if len(matches) >= 3:
+            if len(hits) >= 3:
                 break
-        found.append({"claim": claim.claim, "matches": matches,
-                      "search_status": "located" if matches else "not_located_in_selected_scope"})
-    return found
+        claim_hits.append(hits)
+
+    # Merge only overlaps inside the same tool-result provenance; do not merge
+    # merely adjacent but independent sources, and never duplicate source text.
+    merged: list[dict[str, Any]] = []
+    for selection in sorted(selections, key=lambda item: (item["tool_result_index"], item["start"])):
+        if merged and merged[-1]["tool_result_index"] == selection["tool_result_index"] and selection["start"] <= merged[-1]["end"]:
+            merged[-1]["end"] = max(merged[-1]["end"], selection["end"])
+            if selection["title"] is not None:
+                merged[-1]["title"] = selection["title"]
+        else:
+            merged.append(dict(selection))
+    lightweight: list[dict[str, Any]] = []
+    for index, span in enumerate(merged):
+        lightweight.append({
+            "id": index, "tool": span["tool"],
+            "tool_result_index": span["tool_result_index"],
+            "source_start": span["start"], "source_end": span["end"],
+            "title": span["title"],
+            "text": corpus[span["start"]:span["end"]],
+        })
+    indexed_claims: list[dict[str, Any]] = []
+    for claim, hits in zip(claims, claim_hits):
+        references = []
+        for hit in hits:
+            snippet = next(
+                (entry for entry in lightweight
+                 if entry["tool_result_index"] == hit["tool_result_index"]
+                 and entry["source_start"] <= hit["start"] < hit["end"] <= entry["source_end"]),
+                None,
+            )
+            if snippet is None:
+                raise RuntimeError("retrieved match is missing from lightweight evidence")
+            references.append({
+                "evidence_id": snippet["id"],
+                "source_match_start": hit["start"], "source_match_end": hit["end"],
+                "excerpt_match_start": hit["start"] - snippet["source_start"],
+                "excerpt_match_end": hit["end"] - snippet["source_start"],
+                "retrieval_strategy": hit["retrieval_strategy"],
+            })
+        indexed_claims.append({
+            "claim": claim.claim, "references": references,
+            "search_status": "located" if references else "not_located_in_selected_scope",
+        })
+    return {"lightweight_evidence": lightweight, "claim_index": indexed_claims}
+
 
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -408,7 +499,7 @@ class FinalGroundingVerifier:
         if not isinstance(extracted, _ClaimExtraction):
             raise OllamaProtocolError("claim extractor returned unexpected schema")
         payload = {}
-        payload["claims_and_evidence"] = _retrieve_claim_evidence(extracted.claims, corpus, locations)
+        payload.update(_retrieve_claim_evidence(extracted.claims, corpus, locations))
         payload["evidence_scope"] = {
             "indexed_sources": len(locations),
             "corpus_chars": len(corpus),
@@ -427,7 +518,7 @@ class FinalGroundingVerifier:
             "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
             self.reviewer_timeout_seconds,
             len(extracted.claims),
-            len(payload["claims_and_evidence"]),
+            len(payload["claim_index"]),
             len(candidate),
         )
         try:

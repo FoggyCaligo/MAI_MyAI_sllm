@@ -20,11 +20,11 @@ def test_retrieved_evidence_has_exact_source_coordinates():
     result = _retrieve_claim_evidence(
         [_ClaimSearch(claim="옐리크는 사람이다", queries=["ёлик is human"])], corpus, locations,
     )
-    assert result[0]["search_status"] == "located"
-    hit = result[0]["matches"][0]
+    assert result["claim_index"][0]["search_status"] == "located"
+    hit = result["lightweight_evidence"][0]
     assert hit["tool_result_index"] == 0
-    assert corpus[hit["start"]:hit["end"]] == hit["context"]
-    assert "ёлик is human" in hit["context"]
+    assert corpus[hit["source_start"]:hit["source_end"]] == hit["text"]
+    assert "ёлик is human" in hit["text"]
 
 
 def test_not_found_is_only_scoped_search_status():
@@ -32,11 +32,8 @@ def test_not_found_is_only_scoped_search_status():
     result = _retrieve_claim_evidence(
         [_ClaimSearch(claim="translated detail", queries=["не найдено"])], corpus, locations,
     )
-    assert result == [{
-        "claim": "translated detail",
-        "matches": [],
-        "search_status": "not_located_in_selected_scope",
-    }]
+    assert result["claim_index"] == [{"claim": "translated detail", "references": [], "search_status": "not_located_in_selected_scope"}]
+    assert result["lightweight_evidence"] == []
 
 
 def test_results_from_different_tools_keep_distinct_provenance():
@@ -47,6 +44,6 @@ def test_results_from_different_tools_keep_distinct_provenance():
     result = _retrieve_claim_evidence(
         [_ClaimSearch(claim="He is human", queries=["Ёлик"])], corpus, locations,
     )
-    assert result[0]["matches"][0]["tool"] == "file_read"
-    assert result[0]["matches"][0]["tool_result_index"] == 0
+    assert result["lightweight_evidence"][0]["tool"] == "file_read"
+    assert result["lightweight_evidence"][0]["tool_result_index"] == 0
     assert locations[1]["tool"] == "web_fetch"

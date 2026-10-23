@@ -46,7 +46,7 @@ A가 거절하면 LLM 검증 호출은 기본 1회이며, 통과하면 A/B/C 3�
 | `action_verdict` | `not_applicable` / `verified` / `unverified` / `contradicted` | 상태 변경 완료 주장이 실제 결과로 확인되는지 |
 | `reasons`, `coverage_reasons` | 문자열 배열 | 구체적 거절 근거 |
 
-`misaligned`, `insufficient`, `unverified`, `contradicted` 판정 중 하나라도 발생하면 B/C 호출 없이 즉시 REJECTED 처리함. 필수 거절 사유가 비어 있는 등 계약 위반은 `OllamaProtocolError`로 표출함. A는 사실 주장별 근거의 진위를 검증하거나 주장을 추출하지 않음.
+`misaligned`, `insufficient`, `unverified`, `contradicted` 판정 중 하나라도 발생하면 B/C 호출 없이 즉시 REJECTED 처리함. 필수 거절 사유가 비어 있는 등 계약 위반은 `OllamaProtocolError`로 표출함. A는 사실 주장별 근거의 진위를 검증하거나 주장을 추출하지 않음. 문체·선택적 부연설명·완전한 목록을 임의 필수 조건으로 만들지 않고, 이미 관측한 필수 결과의 실질적인 누락에만 거절 판정을 사용함.
 
 정직한 부분 완료 및 실패 보고는 그 사실만으로 거절하지 않음. Coverage는 *실제로 관측한* 중요 자료의 누락만 대상으로 하며, 검증되지 않은 주장을 포함하라고 요구하지 않음. 외부 상태 변경은 단순 명령 성공과 작업 목표의 결과 상태를 구분함.
 
@@ -58,9 +58,11 @@ A가 거절하면 LLM 검증 호출은 기본 1회이며, 통과하면 A/B/C 3�
 
 ## Python — 텍스트 합치기·색인·검색
 
-`_indexed_evidence()`는 성공 툴 결과를 하나의 텍스트로 연결하고 각 출처의 시작/끝 위치를 기록함. `_retrieve_claim_evidence()`는 B의 검색어로 **리터럴 텍스트 위치 검색**만 수행함. 검색 결과 자체로 참·거짓을 판단하는 문자열 휴리스틱은 사용하지 않음.
+`_indexed_evidence()`는 성공 툴 결과를 하나의 텍스트로 연결하고 각 출처의 시작/끝 위치를 기록함. `_retrieve_claim_evidence()`는 B의 검색어로 정확한 구절 검색 뒤 대소문자 무시 검색과 검색어 토큰의 근접 검색을 수행함. 검색 결과 자체로 참·거짓을 판단하는 문자열 휴리스틱은 사용하지 않음. C에는 색인된 검색 발췌만 전달하며 전체 툴 결과는 전달하지 않음.
 
-현재 구현의 한 주장당 검색 결과는 최대 **3개**, 각 결과의 좌우 문맥은 최대 **900자씩**임(출처 경계 내). 반환 데이터는 `tool`, `tool_result_index`, `start`, `end`, `context`, `search_status` 등으로 구성됨. 미발견은 `not_located_in_selected_scope`로 표기하며 해당 범위에서 검색 문자열을 찾지 못했다는 뜻일 뿐임.
+현재 구현은 각 검색 적중 지점의 앞뒤 최대 **500자**(설정: `.env`의 `VERIFIER_EVIDENCE_CONTEXT_CHARS`, 기본 500)를 가져온 뒤, **같은 원본 툴 결과 내에서 겹치는 구간을 병합**하여 한 번씩만 보관함. 제목이 있으면 별도 보관함. C는 중복 없는 `lightweight_evidence`를 먼저 읽고, 주장별 `claim_index`의 `evidence_id`와 원문·발췌 상대 좌표로 내용을 참조함. C에 전체 툴로그는 전달하지 않음.
+
+반환 데이터는 `tool`, `tool_result_index`, `start`, `end`, `context`, `search_status` 등으로 구성됨. 미발견은 `not_located_in_selected_scope`로 표기하며 해당 범위에서 검색 문자열을 찾지 못했다는 뜻일 뿐임.
 
 러시아어 원문과 한국어 답변처럼 언어가 다르거나 의역된 경우 리터럴 검색은 실제 근거를 놓칠 수 있음. 검색 누락을 전체 근거의 부재나 모순이라고 단정해서는 안 됨.
 
