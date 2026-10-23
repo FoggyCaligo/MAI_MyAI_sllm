@@ -17,7 +17,6 @@ import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
-import os
 import logging
 import re
 from typing import Any, Literal, Mapping, Sequence
@@ -60,12 +59,21 @@ Judge only numeric/date grounding for the flagged values. Do not decide overall 
 - Preserve units and measurement types: characters, bytes, file size and tokens are not interchangeable. A missing size measurement is lack of evidence, not proof of a different size.
 """.strip()
 
-_FACTUAL_REVIEW_SYSTEM = """
-You are the factual grounding reviewer for a provisional answer. Do not call tools,
-rewrite the answer, assess answer completeness or demand optional details.
-Use the original current user request, conversation context and observed tool evidence.
-Return claim-level grounding, action-outcome evidence and blocking factual reasons.
-Do not judge coverage or task alignment. Reject unsupported factual expansion.
+_FINAL_REVIEW_SYSTEM = """
+You are a judgment-only final-answer release reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
+
+Review the candidate against the supplied current user request, conversation context, and ordered tool evidence. The goal is to prevent unsupported factual expansion while also preventing useful supported evidence from being unnecessarily discarded.
+
+Your response is constrained by the supplied structured-output schema. Populate every required field.
+Keep full, precise, independent material findings in the detailed review fields without arbitrary count or character limits. Write the separate retry_summary in concise English, avoiding translations, repeated claims and filler.
+- evidence_verdict: "supported", "unsupported", or "uncertain"
+- alignment_verdict: "aligned", "misaligned", or "uncertain"
+- coverage_verdict: "sufficient", "insufficient", or "uncertain"
+- coverage_reasons: concrete material omissions from already supplied evidence only
+- reasons: concrete blocking defects only
+- claims: material factual claims from the candidate that matter to the user's request
+- action_verdict: "not_applicable", "verified", "unverified", or "contradicted"
+- retry_summary: for a rejected candidate, one concise English correction instruction (1–800 characters) covering the essential types of blocking defects, without repeating the full detailed claim list. For an accepted candidate, set this field to "No correction needed." Keep full details in reasons and claims; never omit actual findings to shorten this summary.
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
@@ -92,6 +100,14 @@ Evidence scope preservation:
 - Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
 - Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
+Evidence coverage:
+- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
+- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
+- Prefer concrete supported results over replacing them with generic advice to check another source later.
+- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
+- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
+- coverage_reasons must identify the concrete already-observed information that the candidate should have used. Never require inclusion of a claim marked unsupported or inferred solely from a rejected draft. If coverage is sufficient or uncertain, coverage_reasons should be empty.
+
 Action outcome verification:
 - Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
 - If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
@@ -101,29 +117,6 @@ Action outcome verification:
 - Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
-Set evidence_verdict=supported only when no material factual claim is unsupported.
-If no requested external state change is claimed, action_verdict=not_applicable.
-Return the required structured schema. retry_summary is concise, actionable English.
-""".strip()
-
-_QUALITY_REVIEW_SYSTEM = """
-You are an answer-quality reviewer, not a factual grounding reviewer.
-The factual grounding stage has already accepted this provisional answer.
-Do not re-evaluate grounded factual claims or demand new research.
-Judge whether the answer meets the user's actual request, preserves a truthful
-partial answer when appropriate, and covers material already-established findings.
-Use the factual review summary to understand what has been established.
-No tool use, no answer rewriting; return the structured schema.
-
-Evidence coverage:
-- Judge coverage only from facts already present in the current user messages and supplied tool evidence. Do not imagine facts that additional research might discover.
-- Use "insufficient" only when the candidate omits material, user-relevant, supported evidence that is already available and the omission makes the answer materially less useful, evasive, or generic relative to the user's request.
-- Prefer concrete supported results over replacing them with generic advice to check another source later.
-- Do not require exhaustive listing, every available detail, optional background, speculation, or unsupported claims.
-- Do not mark coverage insufficient merely because another tool call or broader research could potentially find more information.
-- coverage_reasons must identify the concrete already-observed information that the candidate should have used. Never require inclusion of a claim marked unsupported or inferred solely from a rejected draft. If coverage is sufficient or uncertain, coverage_reasons should be empty.
-
-
 Task alignment and partial-answer policy:
 - Identify the user's current request from the latest user message, resolving references from conversational context when needed.
 - Use "misaligned" only when the candidate clearly fails an essential requested outcome, answers a substituted task, or deflects instead of reporting available results.
@@ -132,8 +125,11 @@ Task alignment and partial-answer policy:
 - Do reject a candidate that hides a material failure and presents an unverified result as completed.
 - Do not add requirements the user did not ask for, and do not reject merely because more detail or optional completeness could be obtained.
 
-For accepted quality verdicts return concise reasons=[] and retry_summary="No correction needed.".
-For rejected verdicts provide actionable reasons without proposing unsupported new facts.
+Overall verdicts:
+- evidence_verdict is "unsupported" when at least one material candidate claim is concretely unsupported.
+- evidence_verdict is "supported" when material claims are supported or explicitly scoped as uncertainty/partial results.
+- evidence_verdict is "uncertain" only when you cannot confidently decide.
+- reasons should name concrete blocking defects. If no grounding/alignment/action axis is blocking, reasons should be empty.
 """.strip()
 
 
@@ -152,21 +148,18 @@ class _ClaimReviewPayload(BaseModel):
     reason: str
 
 
-class _FactualReviewPayload(BaseModel):
+class _FinalReviewPayload(BaseModel):
+    """Strict provider-structured reviewer response."""
+
     model_config = ConfigDict(extra="forbid")
+
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
-    reasons: list[str]
-    claims: list[_ClaimReviewPayload]
-    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
-    retry_summary: str = Field(min_length=1, max_length=800)
-
-
-class _QualityReviewPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     alignment_verdict: Literal["aligned", "misaligned", "uncertain"]
     coverage_verdict: Literal["sufficient", "insufficient", "uncertain"]
     coverage_reasons: list[str]
     reasons: list[str]
+    claims: list[_ClaimReviewPayload]
+    action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
 
 
@@ -272,18 +265,11 @@ class FinalGroundingVerifier:
         reviewer_adapter: OllamaAdapter | None = None,
         *,
         reviewer_timeout_seconds: float | None = None,
-        quality_review_enabled: bool | None = None,
     ) -> None:
         if reviewer_timeout_seconds is not None and reviewer_timeout_seconds <= 0:
             raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
-        if quality_review_enabled is None:
-            raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "true").lower()
-            if raw not in {"true", "false"}:
-                raise ValueError("MAI_ANSWER_QUALITY_REVIEW must be true or false")
-            quality_review_enabled = raw == "true"
-        self.quality_review_enabled = quality_review_enabled
 
     async def verify(
         self,
@@ -352,10 +338,6 @@ class FinalGroundingVerifier:
             candidate=candidate,
             messages=messages,
             tool_results=tool_results,
-            run_quality_review=(
-                self.quality_review_enabled and numeric_issue is None
-                and allow_evidence_review and allow_semantic_review and allow_coverage_review
-            ),
         )
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
@@ -516,78 +498,82 @@ class FinalGroundingVerifier:
             raise RuntimeError("numeric reviewer failed; release was not verified") from exc
 
     async def _review_final(
-        self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
+        self,
+        *,
+        candidate: str,
+        messages: Sequence[Mapping[str, Any]],
+        tool_results: Sequence[ToolVerificationResult],
     ) -> FinalReview:
-        payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
-        fact_request = ChatRequest(
+        payload = _review_payload(
+            candidate=candidate,
+            messages=messages,
+            tool_results=tool_results,
+        )
+        request = ChatRequest(
             messages=(
-                {"role": "system", "content": _FACTUAL_REVIEW_SYSTEM},
+                {"role": "system", "content": _FINAL_REVIEW_SYSTEM},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ),
-            tools=(), think=False, response_format=_FactualReviewPayload.model_json_schema(),
+            tools=(),
+            think=False,
+            response_format=_FinalReviewPayload.model_json_schema(),
         )
-        facts = await self._request_structured_review(
-            fact_request, _FactualReviewPayload, label="factual"
+        _LOG.info(
+            "MAI final reviewer start timeout=%s context_messages=%d tool_results=%d candidate_chars=%d",
+            self.reviewer_timeout_seconds,
+            len(payload["conversation_context"]),
+            len(payload["tool_results_in_execution_order"]),
+            len(candidate),
         )
-        claims = tuple(ClaimReview(
-            claim=item.claim.strip(), verdict=item.verdict,
-            defect=item.defect, reason=item.reason.strip(),
-        ) for item in facts.claims)
-        evidence_verdict = (
-            "unsupported" if any(item.verdict == "unsupported" for item in claims)
-            else facts.evidence_verdict
-        )
-        factual_reasons = tuple(dict.fromkeys(
-            reason.strip() for reason in facts.reasons if reason.strip()
-        ))
-        # Quality is a separate, optional gate. Never run it on a rejected factual
-        # candidate; the next agent turn must re-run factual verification.
-        factual_pass = evidence_verdict == "supported" and facts.action_verdict in (
-            "not_applicable", "verified"
-        )
-        if not (run_quality_review and factual_pass):
-            return FinalReview(
-                evidence_verdict=evidence_verdict, alignment_verdict="aligned",
-                coverage_verdict="sufficient", coverage_reasons=(),
-                reasons=factual_reasons, claims=claims,
-                action_verdict=facts.action_verdict,
-                retry_summary=facts.retry_summary,
+        try:
+            parsed = await self._request_review(request)
+            reasons = tuple(dict.fromkeys(item.strip() for item in parsed.reasons if item.strip()))
+            coverage_reasons = tuple(dict.fromkeys(item.strip() for item in parsed.coverage_reasons if item.strip()))
+            claims = tuple(
+                ClaimReview(
+                    claim=item.claim.strip(),
+                    verdict=item.verdict,
+                    defect=item.defect,
+                    reason=item.reason.strip(),
+                )
+                for item in parsed.claims
+                if item.claim.strip()
             )
+            evidence_verdict = parsed.evidence_verdict
+            alignment_verdict = parsed.alignment_verdict
+            coverage_verdict = parsed.coverage_verdict
+            unsupported_claims = tuple(claim for claim in claims if claim.verdict == "unsupported")
+            if unsupported_claims:
+                evidence_verdict = "unsupported"
+            elif not reasons and evidence_verdict == "unsupported":
+                evidence_verdict = "uncertain"
+            if not reasons and alignment_verdict == "misaligned":
+                alignment_verdict = "uncertain"
+            if not coverage_reasons and coverage_verdict == "insufficient":
+                coverage_verdict = "uncertain"
+            return FinalReview(
+                evidence_verdict=evidence_verdict,
+                alignment_verdict=alignment_verdict,
+                coverage_verdict=coverage_verdict,
+                coverage_reasons=coverage_reasons,
+                reasons=reasons,
+                claims=claims,
+                action_verdict=parsed.action_verdict,
+                retry_summary=parsed.retry_summary,
+            )
+        except TimeoutError as exc:
+            _LOG.warning("MAI final verification reviewer timed out")
+            raise RuntimeError("final reviewer timed out; release was not verified") from exc
+        except ValidationError as exc:
+            raise RuntimeError("final reviewer violated structured output schema") from exc
+        except Exception as exc:
+            raise RuntimeError("final reviewer failed; release was not verified") from exc
 
-        quality_input = {
-            "current_user_request": payload["current_user_request"],
-            "conversation_context": payload["conversation_context"],
-            "candidate_final": candidate,
-            "factual_review": {
-                "evidence_verdict": evidence_verdict,
-                "action_verdict": facts.action_verdict,
-                "claims": [item.model_dump() for item in facts.claims],
-            },
-        }
-        quality_request = ChatRequest(
-            messages=(
-                {"role": "system", "content": _QUALITY_REVIEW_SYSTEM},
-                {"role": "user", "content": json.dumps(quality_input, ensure_ascii=False)},
-            ),
-            tools=(), think=False, response_format=_QualityReviewPayload.model_json_schema(),
-        )
-        quality = await self._request_structured_review(
-            quality_request, _QualityReviewPayload, label="quality"
-        )
-        return FinalReview(
-            evidence_verdict=evidence_verdict,
-            alignment_verdict=quality.alignment_verdict,
-            coverage_verdict=quality.coverage_verdict,
-            coverage_reasons=tuple(dict.fromkeys(
-                reason.strip() for reason in quality.coverage_reasons if reason.strip()
-            )),
-            reasons=factual_reasons + tuple(dict.fromkeys(
-                reason.strip() for reason in quality.reasons if reason.strip()
-            )),
-            claims=claims, action_verdict=facts.action_verdict,
-            retry_summary=quality.retry_summary,
-        )
+    async def _request_review(self, request: ChatRequest) -> _FinalReviewPayload:
+        payload = await self._request_structured_review(request, _FinalReviewPayload, label="final")
+        if not isinstance(payload, _FinalReviewPayload):
+            raise AssertionError("unexpected final reviewer payload type")
+        return payload
 
     async def _request_numeric_review(self, request: ChatRequest) -> _NumericReviewPayload:
         payload = await self._request_structured_review(request, _NumericReviewPayload, label="numeric")
