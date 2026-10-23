@@ -492,18 +492,12 @@ async def chat(
     candidate_by_round: dict[int, str] = {}
     verification_rejections: list[dict[str, object]] = []
 
-    streamed_thinking_rounds: set[int] = set()
-
-    def publish_thinking_chunk(round_number: int, chunk: str) -> None:
-        streamed_thinking_rounds.add(round_number)
-        audit.append(run_id, "model_think_step", chunk, round_number=round_number, status="streaming")
-
     def publish_model_turn(round_number: int, turn: object) -> None:
         nonlocal current_round
         current_round = round_number
         candidate_by_round[round_number] = getattr(turn, "content")
         thinking = getattr(turn, "thinking")
-        if thinking and round_number not in streamed_thinking_rounds:
+        if thinking:
             audit.append(run_id, "model_think_step", thinking, round_number=round_number)
         audit.append(
             run_id, "model", getattr(turn, "content"), round_number=round_number,
@@ -555,7 +549,6 @@ async def chat(
             model=selected_model,
             on_tool_execution=publish_tool,
             on_model_turn=publish_model_turn,
-            on_thinking_chunk=publish_thinking_chunk,
             on_verification_rejection=publish_verification_rejection,
         )
         _append_session_message(principal, request.session_id, role="assistant", content=result.answer)
