@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
@@ -160,7 +160,6 @@ class AgentLoop:
         frozen_requirements = requirements or FrozenToolRequirements(frozenset())
         if self.registry.has("tool_manual"):
             raise ValueError("tool_manual is reserved for native lazy tool activation")
-        all_tool_names = frozenset(self.registry.names())
         activated_tool_names: set[str] = set()
         active_tools = (_TOOL_MANUAL_SCHEMA,)
         active_tool_names = frozenset({"tool_manual"})
@@ -539,7 +538,10 @@ class AgentLoop:
             )
         try:
             if call.name == "tool_manual":
-                request = ToolManualInput.model_validate(call.arguments, strict=True)
+                try:
+                    request = ToolManualInput.model_validate(call.arguments, strict=True)
+                except ValidationError as exc:
+                    raise ToolArgumentsError("invalid arguments for native tool 'tool_manual'") from exc
                 requested = request.tools
                 unknown = sorted(set(requested) - frozenset(self.registry.names()))
                 if unknown:
