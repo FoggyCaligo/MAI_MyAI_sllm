@@ -16,7 +16,7 @@ class RecallService:
         graph: MemoryGraphRepository,
         concept_index: ConceptIndex,
         *,
-        concept_limit: int = 5,
+        concept_limit: int = 12,
         anchor_fact_limit: int = DEFAULT_ANCHOR_FACT_LIMIT,
     ) -> None:
         if concept_limit < 1:
@@ -37,14 +37,12 @@ class RecallService:
 
         hits = self._select_query_seeds(query)
         recalled = WorkingGraph()
-        self._merge_user_anchor_context(recalled, user_id=user_id)
 
         for hit in hits:
             neighborhood = self.graph.one_hop(hit.node_id)
             compact = self._facts_only(neighborhood)
-            recalled.merge(compact, mark_expanded=False)
             for node in compact.nodes:
-                if node.node_type != "fact":
+                if node.node_type != "fact" or node.payload.get("user_id") != user_id:
                     continue
                 path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
                 if path is not None:
@@ -79,37 +77,25 @@ class RecallService:
         return delta.model_snapshot()
 
     def _select_query_seeds(self, query: str) -> tuple[ConceptHit, ...]:
-        """Select bounded Concept seeds from intact whitespace query chunks.
+        """Retrieve multiple ranked lexical candidates for each query term.
 
-        Sentence_Breaker remains part of memory admission, but recall-query
-        parsing deliberately does not use it. Each whitespace chunk contributes
-        at most its single best ConceptIndex hit before the global seed budget.
+        Candidate selection is independent of recency; user ownership is
+        verified while assembling the returned graph.
         """
         chunks = tuple(dict.fromkeys(query.split()))
-        candidates: dict[int, tuple[ConceptHit, int]] = {}
+        candidates: dict[int, tuple[ConceptHit, int, int]] = {}
         for chunk_order, chunk in enumerate(chunks):
-            chunk_hits = tuple(self.concept_index.search((chunk,), limit=1))
-            if not chunk_hits:
-                continue
-            hit = chunk_hits[0]
-            previous = candidates.get(hit.node_id)
-            if previous is None or hit.score > previous[0].score:
-                candidates[hit.node_id] = (hit, chunk_order)
+            hits = self.concept_index.search((chunk,), limit=self.concept_limit)
+            for hit_order, hit in enumerate(hits):
+                previous = candidates.get(hit.node_id)
+                if previous is None or hit.score > previous[0].score:
+                    candidates[hit.node_id] = (hit, chunk_order, hit_order)
 
         ranked = sorted(
             candidates.values(),
-            key=lambda item: (-item[0].score, item[1], item[0].node_id),
+            key=lambda item: (-item[0].score, item[2], item[1], item[0].node_id),
         )
-        return tuple(hit for hit, _chunk_order in ranked[: self.concept_limit])
-
-    def _merge_user_anchor_context(self, working: WorkingGraph, *, user_id: str) -> None:
-        working.merge(
-            self.graph.user_anchor_fact_context(
-                user_id,
-                limit=self.anchor_fact_limit,
-            ),
-            mark_expanded=False,
-        )
+        return tuple(hit for hit, _, _ in ranked[:self.concept_limit])
 
     @staticmethod
     def _facts_only(neighborhood: GraphNeighborhood) -> GraphNeighborhood:

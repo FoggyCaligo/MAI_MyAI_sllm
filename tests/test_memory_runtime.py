@@ -168,8 +168,7 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
             if node.node_type == "fact"
         }
         assert not utterance_texts
-        assert len(fact_texts) == 2
-        assert "stable profile fact" in fact_texts
+        assert fact_texts == set()  # Unrelated recent memories must not be returned
 
         anchor = graph.get_user_anchor("alice")
         assert anchor is not None
@@ -178,8 +177,8 @@ def test_recall_anchor_context_is_bounded_and_anchor_search_does_not_dump_uttera
             user_id="alice",
             node_id=anchor.id,
         )
-        assert not any(node["type"] == "utterance" for node in expanded["nodes"])
-        assert len([node for node in expanded["nodes"] if node["type"] == "fact"]) == 2
+        assert not any(node["node_type"] == "utterance" for node in expanded["nodes"])
+        assert len([node for node in expanded["nodes"] if node["node_type"] == "fact"]) == 2
     finally:
         graph.close()
 
@@ -207,10 +206,49 @@ def test_recall_query_uses_whitespace_chunks_without_sentence_breaker_segmentati
         )
 
         assert index.search_calls == [
-            (("만년필",), 1),
-            (("fountain",), 1),
-            (("pen",), 1),
-            (("사용",), 1),
+            (("만년필",), 12),
+            (("fountain",), 12),
+            (("pen",), 12),
+            (("사용",), 12),
         ]
+    finally:
+        graph.close()
+
+def test_recall_returns_multiple_facts_for_same_query_term(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = FakeConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        for fact_text in ("만년필 필기 취미", "만년필 수집 관심사"):
+            evidence = memory.record_raw_user_evidence("alice", fact_text)
+            asyncio.run(memory.finish_turn(
+                user_id="alice", user_text=fact_text, final_answer="ok",
+                user_evidence=evidence, fact_texts=(fact_text,),
+            ))
+        result = memory.explicit_recall(user_id="alice", query="만년필")
+        facts = {node.canonical_text for node in result.nodes.values() if node.node_type == "fact"}
+        assert facts == {"만년필 필기 취미", "만년필 수집 관심사"}
+    finally:
+        graph.close()
+
+
+def test_recall_does_not_leak_other_users_matching_facts(tmp_path):
+    graph = MemoryGraphRepository(tmp_path / "memory.db")
+    index = FakeConceptIndex()
+    segmenter = FixedSegmenter()
+    recall = RecallService(graph, index)
+    memory = MemoryRuntime(graph, index, segmenter, recall, now=lambda: NOW)
+    try:
+        for user_id, text in (("alice", "만년필 alice"), ("bob", "만년필 bob")):
+            evidence = memory.record_raw_user_evidence(user_id, text)
+            asyncio.run(memory.finish_turn(
+                user_id=user_id, user_text=text, final_answer="ok",
+                user_evidence=evidence, fact_texts=(text,),
+            ))
+        result = memory.explicit_recall(user_id="alice", query="만년필")
+        facts = {node.canonical_text for node in result.nodes.values() if node.node_type == "fact"}
+        assert facts == {"만년필 alice"}
     finally:
         graph.close()

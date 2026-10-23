@@ -61,8 +61,8 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
             name="memory_recall",
             description=(
                 "Search this user's persistent memory from a specific free-text query. The default result is "
-                "compact content-bearing Fact memories with node IDs; use memory_search when exact "
-                "source wording or neighboring evidence is needed. Use recall when the answer depends on a "
+                "query-matched Fact memories with node IDs, not a recent-memory overview. An empty or "
+                "weak result means that this search did not locate evidence, not that the memory is absent. Rephrase the query or use memory_search on related nodes for more evidence. Use recall when the answer depends on a "
                 "particular remembered topic, preference, decision, person, project, or past event."
             ),
             input_model=MemoryRecallInput,
