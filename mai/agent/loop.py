@@ -161,6 +161,7 @@ class AgentLoop:
         requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_thinking_chunk: Callable[[int, str], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
@@ -264,6 +265,7 @@ class AgentLoop:
                     tools=active_tools,
                     think=think,
                     options=options,
+                    on_thinking_chunk=(lambda chunk, n=round_number: on_thinking_chunk(n, chunk)) if on_thinking_chunk is not None else None,
                 ))
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
