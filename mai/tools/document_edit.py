@@ -218,7 +218,16 @@ def register_document_edit_tool(
     timeout_seconds: float | None = 60,
 ) -> None:
     def handler(**kwargs: Any) -> dict[str, Any]:
-        return document_edit(cwd=cwd, **kwargs)
+        # ToolRegistry passes Pydantic's model_dump(), so restore the
+        # discriminated action model before dispatching to typed handlers.
+        validated = DocumentEditInput.model_validate(kwargs, strict=True)
+        return document_edit(
+            path=validated.path,
+            action=validated.action,
+            output_path=validated.output_path,
+            encoding=validated.encoding,
+            cwd=cwd,
+        )
 
     registry.add(
         name="document_edit",
