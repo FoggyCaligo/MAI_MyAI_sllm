@@ -1,4 +1,4 @@
-"""The final reviewer replaces the old numeric reviewer; exactly two LLM calls."""
+"""Task review A, claim extraction B, and evidence verification C are separate calls."""
 import asyncio
 import json
 
@@ -14,7 +14,9 @@ class FakeReviewer:
     async def chat(self, request):
         self.requests.append(request)
         if len(self.requests) == 1:
-            data = {"claims": [{"claim": "소설은 약 1,000자이다", "queries": ["1037"]}], "alignment_verdict": "aligned", "coverage_verdict": "sufficient", "coverage_reasons": [], "action_verdict": "not_applicable", "reasons": []}
+            data = {"alignment_verdict": "aligned", "coverage_verdict": "sufficient", "coverage_reasons": [], "action_verdict": "not_applicable", "reasons": []}
+        elif len(self.requests) == 2:
+            data = {"claims": [{"claim": "소설은 약 1,000자이다", "queries": ["1037"]}]}
         else:
             data = {
                 "evidence_verdict": "supported" if self.supported else "unsupported",
@@ -42,9 +44,9 @@ def test_approximations_use_one_integrated_adjudicator():
     fake = FakeReviewer(supported=True)
     result = _verify(fake)
     assert result.ok
-    assert len(fake.requests) == 2
+    assert len(fake.requests) == 3
     assert all(request.think is False for request in fake.requests)
-    adjudication = json.loads(fake.requests[1].messages[1]["content"])
+    adjudication = json.loads(fake.requests[2].messages[1]["content"])
     assert adjudication["claims_and_evidence"][0]["matches"][0]["tool"] == "file_read"
     assert adjudication["claims_and_evidence"][0]["matches"][0]["tool_result_index"] == 0
 
@@ -53,7 +55,7 @@ def test_rejection_reason_is_preserved_without_second_numeric_review():
     fake = FakeReviewer(supported=False)
     result = _verify(fake)
     assert not result.ok
-    assert len(fake.requests) == 2
+    assert len(fake.requests) == 3
     assert result.issues[0].code == "claim_grounding_failed"
     assert "No evidence for count" in result.feedback_message()
 
@@ -66,7 +68,6 @@ class StageARejectReviewer:
     async def chat(self, request):
         self.requests.append(request)
         data = {
-            "claims": [],
             "alignment_verdict": "misaligned" if self.verdict == "alignment" else "aligned",
             "coverage_verdict": "insufficient" if self.verdict == "coverage" else "sufficient",
             "coverage_reasons": ["Missing already observed detail"] if self.verdict == "coverage" else [],
@@ -91,3 +92,16 @@ def test_stage_a_rejection_skips_stage_b_for_each_axis():
         assert len(fake.requests) == 1
         assert any(issue.code == issue_code for issue in result.issues)
         assert result.retry_summary
+
+
+def test_stage_b_receives_only_candidate_and_stage_c_only_indexed_evidence():
+    fake = FakeReviewer(supported=True)
+    _verify(fake)
+    a = json.loads(fake.requests[0].messages[1]["content"])
+    b = json.loads(fake.requests[1].messages[1]["content"])
+    c = json.loads(fake.requests[2].messages[1]["content"])
+    assert "current_user_request" in a
+    assert b == {"candidate_final": "소설은 약 1,000자이다"}
+    assert "current_user_request" not in c
+    assert "candidate_final" not in c
+    assert len(c["claims_and_evidence"]) == 1
