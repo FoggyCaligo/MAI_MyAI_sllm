@@ -42,7 +42,7 @@ class RecallService:
             neighborhood = self.graph.one_hop(hit.node_id)
             compact = self._facts_only(neighborhood)
             for node in compact.nodes:
-                if node.node_type != "fact":
+                if node.node_type != "fact" or node.payload.get("user_id") != user_id:
                     continue
                 path = self.graph.shortest_path_to_user_anchor(node.id, user_id)
                 if path is not None:
