@@ -43,6 +43,9 @@ try {
                     $psi.RedirectStandardInput = $true
                     $psi.RedirectStandardOutput = $true
                     $psi.RedirectStandardError = $true
+                    $psi.StandardInputEncoding = New-Object Text.UTF8Encoding($false)
+                    $psi.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
+                    $psi.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
                     $psi.CreateNoWindow = $true
                     $process = New-Object Diagnostics.Process
                     $process.StartInfo = $psi
@@ -52,9 +55,9 @@ try {
                         $stderrTask = $process.StandardError.ReadToEndAsync()
                         $process.StandardInput.WriteLine($payload)
                         $process.StandardInput.Close()
-                        if (-not $process.WaitForExit(120000)) {
+                        if (-not $process.WaitForExit(110000)) {
                             $process.Kill()
-                            throw 'Remote Python worker timed out after 120 seconds'
+                            throw 'Remote Python worker timed out after 110 seconds'
                         }
                         $stdout = $stdoutTask.GetAwaiter().GetResult()
                         $stderr = $stderrTask.GetAwaiter().GetResult()
