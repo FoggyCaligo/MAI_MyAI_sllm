@@ -140,6 +140,10 @@ python run_server.py
 기본 Ollama 외에 llama.cpp의 `llama-server`를 텍스트 모델 백엔드로 선택할 수 있음. 설치·설정·모델 호환성과 백업 방법은 [llama.cpp 연동 및 장기 보존](docs/llamacpp-portability.md) 참고.
 
 
+### 외장 SSD Portable 모드 (Windows / Linux 공용 구성 목표)
+
+**외장 SSD는 NTFS로 준비함.** 포맷 전에 모든 파일을 외장 HDD 등 별도 디스크에 백업해야 하며, 포맷은 데이터를 삭제함. [Portable 최초 설정 및 NTFS 포맷 가이드](setup-portable.md) 참조. **현재 실행 자동화는 Windows용만 구현되어 있고 Linux SSD 직접 실행은 미구현임.**
+
 ### Windows 외장 SSD Portable 모드
 
 외장 SSD에 소스·DB·모델·별도 런타임을 배치하는 방법과 오프라인 백업·복구 안내는 [Portable 사용 가이드](docs/portable-windows.md) 참조. 현재는 실행 파일을 수동으로 준비해야 하며 새 PC에서 무설치 동작까지 검증된 상태는 아님.
