@@ -6,6 +6,7 @@ from typing import Any, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.ollama import OllamaAdapter
+from ..llm.llamacpp import LlamaCppAdapter
 from ..tools.time import current_time
 from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
@@ -29,7 +30,7 @@ The following JSON is authoritative runtime context declared structurally by reg
 class AgentRuntime:
     def __init__(
         self,
-        adapter: OllamaAdapter,
+        adapter: OllamaAdapter | LlamaCppAdapter,
         registry: ToolRegistry,
         *,
         guard_config: GuardConfig | None = None,
