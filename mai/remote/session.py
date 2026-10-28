@@ -48,10 +48,6 @@ class RemoteSession:
     in_flight: dict[str, asyncio.Future] = field(default_factory=dict)
     last_seen: float = field(default_factory=time.monotonic)
     closed: bool = False
-    pairing_secret: str | None = None
-    pairing_code: str | None = None
-    pairing_approved: bool = False
-    claimed: bool = False
 
 
 class RemoteSessionManager:
@@ -79,37 +75,9 @@ class RemoteSessionManager:
 
     def authenticate_agent(self, session_id: str, secret: str) -> RemoteSession:
         session = self.get(session_id)
-        if (session.pairing_secret is not None and not session.pairing_approved) or not secrets.compare_digest(session.secret, secret):
+        if not secrets.compare_digest(session.secret, secret):
             raise RemoteExecutionError("remote agent authentication failed")
         return session
-
-    def begin_pairing(self, session_id: str, agent_key: str) -> str:
-        session = self.get(session_id)
-        if session.claimed or session.connected or session.pairing_secret is not None:
-            raise RemoteExecutionError("this session already has a pairing attempt")
-        if len(agent_key) < 40:
-            raise RemoteExecutionError("agent pairing key is too short")
-        session.pairing_secret = agent_key
-        session.pairing_code = f"{secrets.randbelow(1000000):06d}"
-        return session.pairing_code
-
-    def pairing_status(self, session_id: str, agent_key: str) -> bool:
-        session = self.get(session_id)
-        if session.pairing_secret is None or not secrets.compare_digest(session.pairing_secret, agent_key):
-            raise RemoteExecutionError("invalid pairing key")
-        return session.pairing_approved
-
-    def approve_pairing(self, owner_id: str, session_id: str, code: str) -> None:
-        session = self.get(session_id)
-        if session.owner_id != owner_id:
-            raise RemoteExecutionError("session belongs to another owner")
-        if session.pairing_code is None or session.pairing_approved or not secrets.compare_digest(session.pairing_code, code):
-            raise RemoteExecutionError("pairing code invalid or already used")
-        session.secret = session.pairing_secret
-        session.pairing_approved = True
-        session.claimed = True
-        session.pairing_code = None
-        _LOG.info("MAI remote pairing approved session=%s owner=%s", session_id, owner_id)
 
     async def close(self, session_id: str) -> None:
         async with self._lock:
