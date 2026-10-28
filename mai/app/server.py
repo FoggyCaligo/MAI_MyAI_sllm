@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -305,32 +305,48 @@ def _get_login_limiter() -> LoginRateLimiter:
     return _login_rate_limiter
 
 
+_PREAUTH_COOKIE = "mai_preauth_session"
+
+
+@app.get("/login/session")
+async def browser_login_session(request: Request, response: Response) -> dict[str, bool]:
+    # No shared IP identity is used; each browser gets an opaque pre-login cookie.
+    token = request.cookies.get(_PREAUTH_COOKIE)
+    if token is None or len(token) < 32:
+        token = secrets.token_urlsafe(32)
+        response.set_cookie(
+            key=_PREAUTH_COOKIE, value=token, httponly=True, secure=True,
+            samesite="strict", max_age=86400, path="/",
+        )
+    return {"ready": True}
+
+
 @app.post("/login", response_model=LoginResponse)
 async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
-    peer = http_request.client
-    if peer is None:
-        raise HTTPException(status_code=503, detail="client IP is unavailable")
-    source_ip = peer.host
+    browser_token = http_request.cookies.get(_PREAUTH_COOKIE)
+    if browser_token is None:
+        raise HTTPException(status_code=400, detail="pre-login browser session required")
     limiter = _get_login_limiter()
-    remaining = limiter.remaining_seconds(source_ip)
+    try:
+        remaining = limiter.remaining_seconds(browser_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if remaining:
         raise HTTPException(
-            status_code=429,
-            detail="Too many failed login attempts from this IP",
+            status_code=429, detail="Too many failed login attempts in this browser session",
             headers={"Retry-After": str(remaining)},
         )
     try:
         principal = _get_access_policy().authenticate(request.user_id, request.user_pw)
     except AccessDeniedError as exc:
-        blocked_for = limiter.failed(source_ip)
+        blocked_for = limiter.failed(browser_token)
         if blocked_for:
             raise HTTPException(
-                status_code=429,
-                detail="Too many failed login attempts from this IP",
+                status_code=429, detail="Too many failed login attempts in this browser session",
                 headers={"Retry-After": str(blocked_for)},
             ) from exc
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    limiter.succeeded(source_ip)
+    limiter.succeeded(browser_token)
     token = _store_login_session(principal)
     return LoginResponse(
         token=token,
