@@ -211,30 +211,19 @@ def install() -> None:
     async def resumable_root() -> HTMLResponse:
         index_path = Path(server._STATIC_DIR) / "index.html"
         resumable_script = Path(server._STATIC_DIR) / "resumable-chat.js"
-        password_script = Path(server._STATIC_DIR) / "login-password.js"
         html = index_path.read_text(encoding="utf-8-sig")
         subtitle_marker = '<div class="subtitle">local personal agent</div>'
         if subtitle_marker not in html:
             raise RuntimeError("MAI subtitle marker is missing from index.html")
         html = html.replace(subtitle_marker, '<div class="subtitle">My - AI</div>', 1)
 
-        login_marker = '<div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /><button class="primary-btn" id="login-btn" type="submit">접속</button></div>'
-        if login_marker not in html:
-            raise RuntimeError("MAI login row marker is missing from index.html")
-        login_html = (
-            '<div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /></div>'
-            '<div class="login-row" style="margin-top:8px"><input id="login-pw" type="password" autocomplete="current-password" placeholder="비밀번호" required />'
-            '<button class="primary-btn" id="login-btn" type="submit">접속</button></div>'
-        )
-        html = html.replace(login_marker, login_html, 1)
+        # Login input markup is owned by index.html. Do not rewrite it at runtime.
         login_style = (
-            '<style>#login-pw{flex:1;min-width:0;background:#121218;color:var(--text);border:1px solid var(--border);'
-            'border-radius:10px;padding:11px 12px;outline:none}#login-pw:focus{border-color:var(--accent)}'
-            '#new-chat-btn{background:none;border:1px solid var(--border);color:var(--text-dim);border-radius:20px;padding:6px 10px;cursor:pointer;white-space:nowrap}'
+            '<style>#new-chat-btn{background:none;border:1px solid var(--border);color:var(--text-dim);'
+            'border-radius:20px;padding:6px 10px;cursor:pointer;white-space:nowrap}'
             '#new-chat-btn:hover{border-color:var(--accent);color:var(--text)}</style>\n'
         )
         html = html.replace("</head>", login_style + "</head>", 1)
-
         logout_marker = '<button id="logout-btn" type="button">로그아웃</button>'
         if logout_marker not in html:
             raise RuntimeError("logout button marker is missing from index.html")
@@ -249,10 +238,8 @@ def install() -> None:
             raise RuntimeError("chat form marker is missing from index.html")
         html = html.replace(chat_form_marker, '<form id="chat-form" novalidate>', 1)
         resumable_digest = hashlib.sha256(resumable_script.read_bytes()).hexdigest()[:16]
-        password_digest = hashlib.sha256(password_script.read_bytes()).hexdigest()[:16]
         assets = (
             f'  <script src="/static/resumable-chat.js?v={resumable_digest}"></script>\n'
-            f'  <script src="/static/login-password.js?v={password_digest}"></script>\n'
         )
         html = html.replace("</body>", assets + "</body>", 1)
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
