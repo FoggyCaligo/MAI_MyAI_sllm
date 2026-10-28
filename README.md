@@ -133,3 +133,8 @@ python run_server.py
 서버가 실행되면 같은 컴퓨터의 브라우저에서 **http://127.0.0.1:8000**에 접속하면 됨. 외부 접속은 Tailscale Funnel을 별도로 설정한 경우에만 가능.
 
 문제가 발생하면 **[설치·실행·오류 해결 안내서](setup.md)**를 확인.
+
+
+### 대체 로컬 LLM 백엔드 및 장기 보존
+
+기본 Ollama 외에 llama.cpp의 `llama-server`를 텍스트 모델 백엔드로 선택할 수 있음. 설치·설정·모델 호환성과 백업 방법은 [llama.cpp 연동 및 장기 보존](docs/llamacpp-portability.md) 참고.
