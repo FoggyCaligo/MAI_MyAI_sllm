@@ -20,9 +20,9 @@ from .registry import ToolRegistry
 
 
 WEB_SEARCH_PAGE_COUNT = 3
-WEB_SEARCH_DEFAULT_RESULTS = 15
+WEB_SEARCH_DEFAULT_RESULTS = 10
 WEB_SEARCH_MAX_RESULTS = 15
-WEB_SEARCH_SNIPPET_CHARS = 240
+WEB_SEARCH_SNIPPET_CHARS = 160
 
 
 class WebSearchError(RuntimeError):
@@ -47,7 +47,7 @@ class WebSearchInput(BaseModel):
 class WebFetchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     url: str = Field(min_length=1, description="Public HTTP or HTTPS URL to read")
-    max_chars: int = Field(default=50000, ge=1, le=500000)
+    max_chars: int = Field(default=33333, ge=1, le=500000)
 
 
 def _compact_search_text(value: object, *, max_chars: int) -> str | None:
@@ -135,7 +135,7 @@ def _validate_public_url(url: str) -> str:
     return url
 
 
-def web_fetch(url: str, max_chars: int = 50000) -> dict[str, object]:
+def web_fetch(url: str, max_chars: int = 33333) -> dict[str, object]:
     current = _validate_public_url(url.strip())
     max_redirects = 5
     try:
