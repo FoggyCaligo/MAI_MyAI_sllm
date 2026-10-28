@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Manifest,
     [switch]$CopyLocalModels,
-    [switch]$InstallChromium
+    [switch]$InstallChromium,
+    [switch]$PullModels
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -78,6 +79,7 @@ $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFr
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
 $runtimes = Join-Path $root 'portable-runtimes'
 New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
+Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
 Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
 Install-VerifiedArchive $config.ollama (Join-Path $runtimes 'ollama') 'ollama.exe'
 if ($null -ne $config.llamacpp) {
@@ -89,8 +91,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python cannot start' }
 
 # Use an independently installed uv command for provisioning only; MAI runtime
 # does not depend on uv at startup. Do not silently use global Python for MAI.
-$uvCommand = Get-Command 'uv' -ErrorAction Stop
-& $uvCommand.Source pip install --python $python -e "$root"
+$uv = Join-Path $runtimes 'uv\uv.exe'
+& $uv pip install --python $python "$root"
 if ($LASTEXITCODE -ne 0) { throw 'MAI dependency installation failed' }
 & $python -c 'import fastapi, ollama, uvicorn, playwright, mai'
 if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
@@ -109,6 +111,41 @@ if ($CopyLocalModels) {
     New-Item -ItemType Directory -Force -Path $targetModels | Out-Null
     & robocopy $sourceModels $targetModels /E /COPY:DAT /DCOPY:DAT /R:1 /W:1
     if ($LASTEXITCODE -ge 8) { throw "Model copy failed with robocopy code $LASTEXITCODE" }
+}
+if ($PullModels) {
+    if ($null -eq $config.models -or @($config.models).Count -eq 0) {
+        throw 'Manifest must list exact Ollama model tags when -PullModels is specified'
+    }
+    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) {
+        throw 'Port 11434 is already in use; stop the existing Ollama service before model provisioning'
+    }
+    $env:OLLAMA_MODELS = Join-Path $root 'portable-models\ollama'
+    New-Item -ItemType Directory -Path $env:OLLAMA_MODELS -Force | Out-Null
+    $ollamaExe = Join-Path $runtimes 'ollama\ollama.exe'
+    $process = Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollamaExe) -PassThru -NoNewWindow
+    try {
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            if ($process.HasExited) { throw 'Ollama exited before becoming ready' }
+            try {
+                $probe = Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 -UseBasicParsing
+                if ($probe.StatusCode -eq 200) { $ready = $true; break }
+            } catch [System.Net.WebException] { }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $ready) { throw 'Ollama service did not start' }
+        foreach ($model in $config.models) {
+            if (-not ($model -is [string]) -or [string]::IsNullOrWhiteSpace($model)) {
+                throw 'Model tags must be non-empty strings'
+            }
+            & $ollamaExe pull $model
+            if ($LASTEXITCODE -ne 0) { throw "Model pull failed: $model" }
+            & $ollamaExe show $model
+            if ($LASTEXITCODE -ne 0) { throw "Model verification failed: $model" }
+        }
+    } finally {
+        if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+    }
 }
 Write-Host "Portable installation prepared under $root"
 Write-Host 'Verify all model tags and run start-portable.ps1; this script does not fabricate missing models.'
