@@ -1,22 +1,20 @@
-from mai.remote.tools import register_bound_remote_tools
+from mai.remote.routing import register_routed_pc_tools
 from mai.tools.registry import ToolRegistry
 
 
-def test_connected_remote_context_is_explicit_and_tools_bound():
+def test_remote_target_context_is_explicit_and_unified(tmp_path):
     registry = ToolRegistry()
-    register_bound_remote_tools(registry, "owner", "active-session")
+    register_routed_pc_tools(registry, owner_id="owner", cwd=str(tmp_path))
     contexts = registry.model_context()
-    assert len(contexts) == 1
-    assert contexts[0]["source"] == "active_remote_computer"
-    info = contexts[0]["context"]
-    assert info["connected"] is True
-    assert "server PC" in info["local_distinction"]
-    assert "session ID" in info["routing"]
-    tools = registry.get("remote_file_read")
-    assert "session_id" not in tools.input_model.model_fields
-    assert "path" in tools.input_model.model_fields
+    target = next(item for item in contexts if item["source"] == "remote_execution_target")
+    assert "is_remote=false" in target["context"]["default"]
+    assert "is_remote=true" in target["context"]["remote"]
+    model = registry.get("file_read").input_model
+    assert model.model_fields["is_remote"].default is False
+    assert "path" in model.model_fields
+    assert not registry.has("remote_file_read")
 
 
-def test_no_remote_context_without_remote_registration():
+def test_no_remote_context_without_pc_registration():
     registry = ToolRegistry()
     assert registry.model_context() == ()

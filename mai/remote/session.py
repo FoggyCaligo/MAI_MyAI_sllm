@@ -63,6 +63,9 @@ class RemoteSessionManager:
 
     async def create(self, owner_id: str, ttl_seconds: int = _PENDING_SECONDS) -> RemoteSession:
         async with self._lock:
+            for existing in self._sessions.values():
+                if existing.owner_id == owner_id and not existing.closed and time.monotonic() < existing.expires_at:
+                    raise RemoteExecutionError("owner already has an active or pending remote session")
             session = RemoteSession(
                 session_id=secrets.token_urlsafe(18),
                 owner_id=owner_id,
@@ -72,6 +75,18 @@ class RemoteSessionManager:
             self._sessions[session.session_id] = session
             _LOG.info("MAI remote session created session=%s owner=%s", session.session_id, owner_id)
             return session
+
+    def owner_session(self, owner_id: str) -> RemoteSession | None:
+        """Resolve the single current remote connection for an owner, independently of browser auth."""
+        active = [
+            session for session in self._sessions.values()
+            if session.owner_id == owner_id
+            and not session.closed
+            and time.monotonic() < session.expires_at
+        ]
+        if len(active) > 1:
+            raise RemoteExecutionError("multiple remote sessions for one owner")
+        return active[0] if active else None
 
     def get(self, session_id: str) -> RemoteSession:
         session = self._sessions.get(session_id)
