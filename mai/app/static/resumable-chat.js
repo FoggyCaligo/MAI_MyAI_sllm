@@ -393,6 +393,7 @@
     if (recovering || resettingConversation || currentSubmissionJobId) return;
 
     recovering = true;
+    const recoveryEpoch = historyEpoch;
     let pending = null;
     let recoveredJobId = null;
     try {
@@ -432,7 +433,7 @@
         return;
       }
 
-      if (resettingConversation) return;
+      if (resettingConversation || recoveryEpoch !== historyEpoch) return;
       if (response.ok) {
         if (pending) {
           pending.bubble.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(data.answer) : String(data.answer || '');
@@ -455,7 +456,7 @@
     } finally {
       if (recoveredJobId && currentSubmissionJobId === recoveredJobId) setCurrentJob(null);
       recovering = false;
-      if (!currentSubmissionJobId) void syncPersistentHistory();
+      if (!resettingConversation && recoveryEpoch === historyEpoch && !currentSubmissionJobId) void syncPersistentHistory();
       if (typeof scrollToBottom === 'function') scrollToBottom();
     }
   }
