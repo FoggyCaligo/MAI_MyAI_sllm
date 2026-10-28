@@ -110,6 +110,7 @@ class AgentFailureContext:
     tool_executions: tuple[ToolExecution, ...]
     model_rounds: int
     last_rejected_draft: str | None = None
+    last_verifier_feedback: str | None = None
 
 
 class AgentRunFailure(AgentRuntimeError):
@@ -198,6 +199,8 @@ class AgentLoop:
         rejection_feedback_indices: list[int] = []
         latest_verification_rejection: tuple[int, int] | None = None
         latest_correction_contract: dict[str, Any] | None = None
+        latest_verifier_feedback: str | None = None
+        verification_rejection_count = 0
 
         try:
             while True:
@@ -376,8 +379,13 @@ class AgentLoop:
                                 or (evidence_failure and evidence_verification_retries >= _MAX_EVIDENCE_VERIFICATION_RETRIES)
                                 or (coverage_failure and coverage_verification_retries >= _MAX_COVERAGE_VERIFICATION_RETRIES)
                             )
+                            verification_rejection_count += 1
+                            latest_verifier_feedback = verification.feedback_message()
                             if on_verification_rejection is not None:
                                 on_verification_rejection(round_number, verification)
+                            if verification_rejection_count >= 5:
+                                raise VerificationRetriesExhausted(
+                                    "provisional answer rejected five times; displaying last unverified answer")
                             guard.after_verification_rejection([
                                 {
                                     "code": issue.code,
@@ -542,6 +550,7 @@ class AgentLoop:
                         str(history[rejected_final_indices[-1]].get("content", ""))
                         if rejected_final_indices else None
                     ),
+                    last_verifier_feedback=latest_verifier_feedback,
                 ),
             ) from exc
 
