@@ -341,7 +341,7 @@ class AgentLoop:
                     if self.final_verifier is not None:
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
-                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices],
+                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
