@@ -19,3 +19,6 @@ portable-models/
 # Downloaded Portable runtime archives and local source pins
 portable-downloads/
 portable-sources.json
+
+# Linux host-specific pinned release manifest
+portable-sources-linux.json
