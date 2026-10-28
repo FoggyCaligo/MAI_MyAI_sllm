@@ -114,3 +114,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\prepare-portable.ps1 -Mani
 - 재실행은 이미 설치된 런타임 폴더를 덮어쓰지 않고 오류로 중단함. 업데이트는 기존 세트를 백업한 뒤 새 Portable 복제본에서 수행할 것.
 - \`-CopyLocalModels\` 실행 전 소스의 \`OLLAMA_MODELS\` 환경변수 또는 \`%USERPROFILE%\.ollama\models\` 경로를 확인할 것.
 - 이 절차는 **준비 자동화**이며 정기 백업 예약의 자동 생성과는 별도임. 백업은 기존 \`scripts/portable_backup.py\` 및 \`scripts/verify_portable_backup.py\` 사용.
+
+## 설치 중 중단된 뒤 다시 실행하기
+
+`prepare-portable.ps1`은 성공적으로 설치한 각 런타임에 `.mai-portable-source.json` 영수증을 기록함. 재실행할 때 고정 URL·SHA-256·실행 파일이 일치하는 런타임만 재사용함. 이전 버전에서 설치되어 영수증이 없는 런타임은 안전을 위해 자동으로 인정하지 않음. 최초 전환 시 아래 옵션을 한 번 사용하면 기존 런타임 폴더를 날짜가 붙은 `.before-portable-*` 폴더로 이동시켜 **보존한 후** 검증된 아카이브에서 다시 설치함.
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Manifest ./portable-sources.json -CopyLocalModels -InstallChromium -PreserveAndReinstallExisting
+```
+
+보존된 기존 폴더는 자동 삭제하지 않음. 이후에는 동일한 명령을 옵션 없이 실행해도 기존 영수증이 일치하면 재사용함. 영수증은 설치 출처를 확인하는 기록이며, 설치 폴더의 모든 파일이 이후 변경되지 않았음을 보증하는 전수 무결성 검사는 아님.
