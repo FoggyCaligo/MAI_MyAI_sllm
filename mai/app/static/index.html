@@ -186,8 +186,12 @@
   let remoteSession=null, remotePollTimer=null, remoteCommandText='';
   async function remoteApi(path,method='GET'){
     const response=await fetch(path,{method,headers:authHeaders()});
+    const contentType=response.headers.get('content-type')||'';
+    if(!contentType.toLowerCase().includes('application/json')){
+      throw new Error('원격 API 응답 오류 (HTTP '+response.status+', Content-Type: '+(contentType||'없음')+')');
+    }
     const data=await response.json();
-    if(!response.ok)throw new Error(data.detail||'원격 세션 요청 실패');
+    if(!response.ok)throw new Error(data.detail||'원격 세션 요청 실패 (HTTP '+response.status+')');
     return data;
   }
   function remoteReset(){
@@ -212,7 +216,7 @@
   function buildRemoteCommand(data){
     const uri=new URL('/static/remote-agent.ps1',location.origin).href;
     if(new URL(uri).protocol!=='https:')throw new Error('원격 PowerShell 연결은 HTTPS에서만 허용됩니다.');
-    return `& { $p = Join-Path $env:TEMP ([guid]::NewGuid().ToString()+'.ps1'); try { Invoke-WebRequest -Uri '${uri}' -OutFile $p -UseBasicParsing; & $p -Server '${location.origin}' -Session '${data.session_id}' -Key '${data.agent_secret}' } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }`;
+    return `& { $p = Join-Path $env:TEMP ([guid]::NewGuid().ToString()+'.ps1'); try { Invoke-WebRequest -Uri '${uri}' -OutFile $p -UseBasicParsing; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Server '${location.origin}' -Session '${data.session_id}' -Key '${data.agent_secret}'; if ($LASTEXITCODE -ne 0) { throw "MAI remote agent exited with code $LASTEXITCODE" } } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }`;
   }
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
@@ -232,6 +236,8 @@
       remoteSession={id:data.session_id};
       remoteCommandText=buildRemoteCommand(data);
       $remoteClose.hidden=false;
+      $remoteCreate.textContent='다시 복사';
+      if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
       showRemoteDialog();
       await copyRemoteCommand();
       await refreshRemoteStatus();
@@ -243,7 +249,21 @@
     if(remoteSession){showRemoteDialog();return;}
     await beginRemoteConnection();
   });
-  $remoteCreate.addEventListener('click',copyRemoteCommand);
+  $remoteCreate.addEventListener('click',async()=>{
+    if(remoteCommandText)await copyRemoteCommand();
+    else await beginRemoteConnection();
+  });
+  $remoteClose.addEventListener('click',async()=>{
+    if(!remoteSession)return;
+    $remoteClose.disabled=true;
+    try{
+      await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id),'DELETE');
+      remoteReset();
+      $remotePanel.hidden=true;
+      $remoteBtn.setAttribute('aria-expanded','false');
+    }catch(err){$remoteError.textContent=err.message;}
+    finally{$remoteClose.disabled=false;}
+  });
   document.getElementById('remote-hide').addEventListener('click',()=>{$remotePanel.hidden=true;$remoteBtn.setAttribute('aria-expanded','false');});
   async function recoverRemoteSession(){
     if(state.role!=='owner')return;
@@ -251,8 +271,9 @@
     if(!data.session_id){remoteReset();return;}
     remoteSession={id:data.session_id};
     remoteCommandText='';
-    $remoteClose.hidden=true;
-    $remoteCreate.hidden=true;
+    $remoteClose.hidden=false;
+    $remoteCreate.hidden=false;
+    $remoteCreate.textContent='연결 명령 다시 발급';
     await refreshRemoteStatus();
     if(remotePollTimer!==null)clearInterval(remotePollTimer);
     remotePollTimer=setInterval(refreshRemoteStatus,5000);
