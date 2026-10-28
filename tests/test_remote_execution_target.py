@@ -31,3 +31,16 @@ async def test_explicit_remote_dispatch_is_bound_to_selected_owner_session(monke
     result = await target.execute("file.read", {"path": "a.txt"}, is_remote=True)
     assert result == {"ok": True}
     assert calls == [("owner1", "selected", "file.read", {"path": "a.txt"})]
+
+
+@pytest.mark.asyncio
+async def test_owner_can_have_only_one_live_remote_session():
+    from mai.remote.session import RemoteSessionManager
+
+    manager = RemoteSessionManager()
+    first = await manager.create("one-owner")
+    with pytest.raises(RemoteExecutionError, match="already has"):
+        await manager.create("one-owner")
+    await manager.close(first.session_id)
+    second = await manager.create("one-owner")
+    assert second.session_id != first.session_id
