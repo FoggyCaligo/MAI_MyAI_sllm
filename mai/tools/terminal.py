@@ -70,9 +70,9 @@ def _powershell_command(command: str) -> list[str]:
         "$global:LASTEXITCODE = 0; "
     )
     suffix = (
-        "\nif (-not $?) { exit 1 }; "
-        "if ($null -ne $global:LASTEXITCODE -and $global:LASTEXITCODE -ne 0) "
-        "{ exit $global:LASTEXITCODE }"
+        "\nif ($null -ne $global:LASTEXITCODE -and $global:LASTEXITCODE -ne 0) "
+        "{ exit $global:LASTEXITCODE }; "
+        "if (-not $?) { exit 1 }"
     )
     payload = base64.b64encode((prefix + command + suffix).encode("utf-16-le")).decode("ascii")
     return ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", payload]
