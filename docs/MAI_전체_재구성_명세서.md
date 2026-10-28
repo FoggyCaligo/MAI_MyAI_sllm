@@ -20,7 +20,7 @@
 | 설계 의도 | 프롬프트나 기존 설명에 적혀 있는 목표. 코드가 이를 완전히 보장한다는 뜻은 아님 |
 | 재구현 권고 | 현재의 빈틈을 개선하고 싶은 경우의 선택지. 현재 구현과 동등한 재현에는 자동으로 포함하지 않음 |
 
-이 구분은 중요하다. 기존 README에는 사전 도구 판단이 없다고 적혀 있지만 실제 코드에서는 연결되어 있다. 검증기 장애를 통과시킨다는 설명도 실제 코드와 다르다. 이 문서는 함수 호출 관계와 데이터 흐름을 기준으로 작성했다. 차이는 25장에 모았다.
+이 구분은 중요하다. 현재 production 기본 경로는 별도 사전 planner보다 `tool_manual` 기반 lazy native activation을 사용하고, verifier도 factual grounding과 선택적 answer-quality 단계로 분리되어 있다. 이 문서는 README의 개괄 문구보다 실제 composition root와 호출 관계를 우선해 작성했다. 의도적 절충과 남은 한계는 25장에 모았다.
 
 또한 문서만으로 원래 모델의 모든 답변 문장을 동일하게 재생할 수는 없다. 모델 가중치, 실행 옵션, 과거 기억 데이터, 문장 분해기의 누적 데이터와 입력 순서가 결과에 영향을 준다. 이 문서의 목표는 **구조와 계약의 재현**이다. 기존 사용자의 기억까지 복원하려면 해당 데이터베이스도 별도로 있어야 한다.
 
@@ -121,9 +121,9 @@ MAI는 사용자의 컴퓨터에서 실행되는 개인 AI 프로그램이다. �
 
 ### 4.1 현재 production 구성 관계
 
-현재 기본 경로는 별도 planner가 먼저 모든 도구 필요성을 결정하는 구조가 아니다. 기본값에서는 main agent가 첫 라운드에 받은 **도구 카탈로그와 \`tool_manual\`**을 보고 필요한 도구를 활성화하고, 다음 라운드부터 해당 native schema를 직접 호출한다.
+현재 기본 경로는 별도 planner가 먼저 모든 도구 필요성을 결정하는 구조가 아니다. 기본값에서는 main agent가 첫 라운드에 받은 **도구 카탈로그와 `tool_manual`**을 보고 필요한 도구를 활성화하고, 다음 라운드부터 해당 native schema를 직접 호출한다.
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     U["사용자 / Web UI"] --> J["복구 가능한 Chat Job"]
     J --> C["최근 대화 + 계정/세션 확인"]
@@ -142,32 +142,32 @@ flowchart TD
     V --> L
     T --> B["요청별 BrowserSessionManager"]
     R -->|"run 종료"| BC["남은 브라우저 세션 일괄 종료"]
-\`\`\`
+```
 
-도구 목록은 등록소의 구조적 메타데이터다. 모델은 문자열 규칙으로 도구 이름의 의미를 추측하지 않는다. 첫 라운드에는 상세 인자 schema가 전부 노출되지 않고, \`tool_manual(tools=[...])\`로 정확한 등록 이름을 활성화한 뒤 다음 라운드에 해당 schema가 추가된다.
+도구 목록은 등록소의 구조적 메타데이터다. 모델은 문자열 규칙으로 도구 이름의 의미를 추측하지 않는다. 첫 라운드에는 상세 인자 schema가 전부 노출되지 않고, `tool_manual(tools=[...])`로 정확한 등록 이름을 활성화한 뒤 다음 라운드에 해당 schema가 추가된다.
 
-\`TOOL_REQUIREMENT_VERIFIER=true\`일 때만 과거의 별도 tool-requirement planner가 선택적으로 동작한다. 기본 \`.env.example\`은 \`false\`이며, 이 문서에서 “현재 production 기본 경로”라고 할 때는 planner가 없는 경로를 뜻한다.
+`TOOL_REQUIREMENT_VERIFIER=true`일 때만 과거의 별도 tool-requirement planner가 선택적으로 동작한다. 기본 `.env.example`은 `false`이며, 이 문서에서 “현재 production 기본 경로”라고 할 때는 planner가 없는 경로를 뜻한다.
 
 ### 4.2 상태의 수명과 저장 위치
 
 | 상태 | 수명 | 저장 위치/소유자 | 프로세스 재시작 후 |
 |---|---|---|---|
-| 계정 설정 | 설정 파일이 유지되는 동안 | \`.env\` | 유지 |
+| 계정 설정 | 설정 파일이 유지되는 동안 | `.env` | 유지 |
 | 로그인 Bearer token | 로그인~로그아웃 또는 서버 종료 | 서버 메모리 | 유지 안 됨 |
-| Web 대화 기록 | 삭제 전까지 | \`CHAT_DB_PATH\` / \`web_chat_messages\` | 유지 |
-| 감사·디버깅 기록 | 삭제 전까지 | \`LOG_DB_PATH\` / \`runs\`, \`steps\` | 유지 |
-| 장기기억 그래프 | 삭제 전까지 | \`MEMORY_DB_PATH\` | 유지 |
-| 문장 분해기 이력 | 삭제 전까지 | \`SENTENCE_BREAKER_DB_PATH\` | 유지 |
+| Web 대화 기록 | 삭제 전까지 | `CHAT_DB_PATH` / `web_chat_messages` | 유지 |
+| 감사·디버깅 기록 | 삭제 전까지 | `LOG_DB_PATH` / `runs`, `steps` | 유지 |
+| 장기기억 그래프 | 삭제 전까지 | `MEMORY_DB_PATH` | 유지 |
+| 문장 분해기 이력 | 삭제 전까지 | `SENTENCE_BREAKER_DB_PATH` | 유지 |
 | 업로드 파일 | 삭제/덮어쓰기 전까지 | 계정별 upload directory | 유지 |
-| 음성 프로필 | 재등록/삭제 전까지 | \`VOICE_PROFILE_DIR\` | 유지 |
-| resumable chat job 계산 상태 | 서버 프로세스 동안 | \`ChatJobStore\` | 유지 안 됨 |
-| Working Graph | 사용자 요청 하나 | \`MAIRuntime\` | 유지 안 됨 |
-| 큰 tool result 원문 | 사용자 요청 하나 | \`ToolResultStore\` | 유지 안 됨 |
-| Chromium browser session | 사용자 요청 하나 | \`BrowserSessionManager\` | 유지 안 됨 |
-| 반복 guard / verifier retry 횟수 | 사용자 요청 하나 | \`AgentLoop\` | 유지 안 됨 |
-| 모델 adapter / fact extractor cache | 서버 프로세스 동안 | \`MAIRuntime\` | 유지 안 됨 |
+| 음성 프로필 | 재등록/삭제 전까지 | `VOICE_PROFILE_DIR` | 유지 |
+| resumable chat job 계산 상태 | 서버 프로세스 동안 | `ChatJobStore` | 유지 안 됨 |
+| Working Graph | 사용자 요청 하나 | `MAIRuntime` | 유지 안 됨 |
+| 큰 tool result 원문 | 사용자 요청 하나 | `ToolResultStore` | 유지 안 됨 |
+| Chromium browser session | 사용자 요청 하나 | `BrowserSessionManager` | 유지 안 됨 |
+| 반복 guard / verifier retry 횟수 | 사용자 요청 하나 | `AgentLoop` | 유지 안 됨 |
+| 모델 adapter / fact extractor cache | 서버 프로세스 동안 | `MAIRuntime` | 유지 안 됨 |
 
-\`chat.sqlite3\`, \`memory.sqlite3\`, \`log.sqlite3\`는 역할이 다르다. 대화 DB는 사용자에게 보이는 대화 기록, memory DB는 장기기억 그래프, log DB는 감사·디버깅 기록이다. \`log.sqlite3\`의 내용은 agent나 memory 입력으로 다시 읽어 넣지 않는다.
+`chat.sqlite3`, `memory.sqlite3`, `log.sqlite3`는 역할이 다르다. 대화 DB는 사용자에게 보이는 대화 기록, memory DB는 장기기억 그래프, log DB는 감사·디버깅 기록이다. `log.sqlite3`의 내용은 agent나 memory 입력으로 다시 읽어 넣지 않는다.
 
 ### 4.3 같은 chat model을 여러 역할로 사용한다
 
@@ -175,16 +175,16 @@ flowchart TD
 
 | 역할 | tools | think | 비고 |
 |---|---|---|---|
-| main agent | \`tool_manual\` + 활성화된 native tools | 기본 \`True\` | 실제 답변/도구 실행 |
-| 선택적 tool requirement planner | 없음 | \`False\` | \`TOOL_REQUIREMENT_VERIFIER=true\`일 때만 |
-| numeric semantic reviewer | 없음 | \`False\` | deterministic numeric 검사에서 애매한 표현 보정 |
-| factual grounding reviewer | 없음 | \`False\` | claim/evidence/action outcome 검증 |
-| answer quality reviewer | 없음 | \`False\` | factual pass 후 선택적 alignment/coverage 검증 |
-| memory fact extractor | 없음 | \`False\` | 최종 답변 뒤 비동기 기억 추출 |
+| main agent | `tool_manual` + 활성화된 native tools | 기본 `True` | 실제 답변/도구 실행 |
+| 선택적 tool requirement planner | 없음 | `False` | `TOOL_REQUIREMENT_VERIFIER=true`일 때만 |
+| numeric semantic reviewer | 없음 | `False` | deterministic numeric 검사에서 애매한 표현 보정 |
+| factual grounding reviewer | 없음 | `False` | claim/evidence/action outcome 검증 |
+| answer quality reviewer | 없음 | `False` | factual pass 후 선택적 alignment/coverage 검증 |
+| memory fact extractor | 없음 | `False` | 최종 답변 뒤 비동기 기억 추출 |
 
 검증기는 도구를 호출하지 않는다. reviewer가 실패했다고 문자열 fallback으로 의미를 복원하지 않으며, 현재 구현은 retryable infrastructure/structured-output 오류를 최대 3회 재시도한 뒤에도 실패하면 그 실패를 상위로 전달한다.
 
-\`model_rounds\`는 main \`AgentLoop\`의 라운드 수다. verifier와 memory extractor 호출 수는 포함하지 않는다.
+`model_rounds`는 main `AgentLoop`의 라운드 수다. verifier와 memory extractor 호출 수는 포함하지 않는다.
 
 ## 5. 서버를 시작할 때 만드는 것
 
@@ -213,53 +213,53 @@ flowchart TD
 
 ### 6.1 Web job과 감사 로그를 먼저 만든다
 
-기본 Web UI는 \`POST /chat/jobs\`로 resumable job을 만든다. 작업 시작 시 \`LOG_DB_PATH\`의 audit run도 함께 생성하고 사용자의 원문을 \`user\` role로 기록한다. 같은 \`user_id\`의 job은 lock을 사용해 순차 실행한다.
+기본 Web UI는 `POST /chat/jobs`로 resumable job을 만든다. 작업 시작 시 `LOG_DB_PATH`의 audit run도 함께 생성하고 사용자의 원문을 `user` role로 기록한다. 같은 `user_id`의 job은 lock을 사용해 순차 실행한다.
 
-직접 \`POST /chat\` 경로도 감사 로그를 남기지만, 일반 화면은 resumable job 경로를 사용한다.
+직접 `POST /chat` 경로도 감사 로그를 남기지만, 일반 화면은 resumable job 경로를 사용한다.
 
 ### 6.2 최근 대화와 현재 사용자 메시지를 분리한다
 
-서버는 먼저 \`SESSION_HISTORY_MESSAGES\` 범위의 기존 대화를 읽고, 그 뒤 현재 사용자 메시지를 \`chat.sqlite3\`에 저장한다. 따라서 현재 메시지가 최근 문맥에 중복되어 main model에 두 번 들어가지 않는다.
+서버는 먼저 `SESSION_HISTORY_MESSAGES` 범위의 기존 대화를 읽고, 그 뒤 현재 사용자 메시지를 `chat.sqlite3`에 저장한다. 따라서 현재 메시지가 최근 문맥에 중복되어 main model에 두 번 들어가지 않는다.
 
 모델에게 전달되는 대화 범위와 UI에 영구 저장된 전체 대화 기록은 동일한 개념이 아니다.
 
 ### 6.3 같은 사용자의 직전 memory 후처리를 기다린다
 
-같은 \`db_id\`의 이전 응답에서 background memory write가 아직 끝나지 않았다면 다음 요청은 \`asyncio.shield\`로 그 작업을 기다린다. 직전 턴에서 새로 말한 사실이 바로 다음 질문의 recall에 반영되도록 하기 위한 순서 보장이다.
+같은 `db_id`의 이전 응답에서 background memory write가 아직 끝나지 않았다면 다음 요청은 `asyncio.shield`로 그 작업을 기다린다. 직전 턴에서 새로 말한 사실이 바로 다음 질문의 recall에 반영되도록 하기 위한 순서 보장이다.
 
 ### 6.4 요청별 실행 상태를 만든다
 
 각 요청마다 새로 만든다.
 
-- \`WorkingGraph\`
-- \`ToolResultStore\`
-- \`BrowserSessionManager\`
-- 계정 권한에 맞는 \`ToolRegistry\`
-- 선택 chat model의 \`OllamaAdapter\`
-- 같은 모델을 \`think=False\`로 쓰는 \`OllamaFactExtractor\`
+- `WorkingGraph`
+- `ToolResultStore`
+- `BrowserSessionManager`
+- 계정 권한에 맞는 `ToolRegistry`
+- 선택 chat model의 `OllamaAdapter`
+- 같은 모델을 `think=False`로 쓰는 `OllamaFactExtractor`
 
-browser session은 요청 종료 시 성공/실패와 관계없이 \`close_all()\`로 정리한다.
+browser session은 요청 종료 시 성공/실패와 관계없이 `close_all()`로 정리한다.
 
 ### 6.5 authoritative runtime context를 주입한다
 
-\`AgentRuntime\`은 도구 등록소의 model context와 \`current_time()\` 결과를 구조화 JSON으로 system context에 넣는다. 현재 시각, working directory, memory temporal precedence 같은 실행 환경 사실을 모델이 학습 지식이나 문자열 추측으로 대신하지 않게 한다.
+`AgentRuntime`은 도구 등록소의 model context와 `current_time()` 결과를 구조화 JSON으로 system context에 넣는다. 현재 시각, working directory, memory temporal precedence 같은 실행 환경 사실을 모델이 학습 지식이나 문자열 추측으로 대신하지 않게 한다.
 
 ### 6.6 기본 경로에서는 main agent가 직접 도구를 고른다
 
 첫 main model round에는 상세 native tool schema 전체가 아니라 다음 두 가지가 제공된다.
 
-1. 등록된 도구의 \`name\`과 \`category\` 카탈로그.
-2. run-local activation tool인 \`tool_manual\` schema.
+1. 등록된 도구의 `name`과 `category` 카탈로그.
+2. run-local activation tool인 `tool_manual` schema.
 
-모델이 도구가 필요하다고 판단하면 예를 들어 \`tool_manual(tools=["memory_recall","web_search"])\`처럼 정확한 이름을 활성화한다. 다음 round부터 그 도구들의 native schema가 추가되고 직접 호출할 수 있다. 활성화된 schema는 해당 run 동안 유지된다.
+모델이 도구가 필요하다고 판단하면 예를 들어 `tool_manual(tools=["memory_recall","web_search"])`처럼 정확한 이름을 활성화한다. 다음 round부터 그 도구들의 native schema가 추가되고 직접 호출할 수 있다. 활성화된 schema는 해당 run 동안 유지된다.
 
-\`TOOL_REQUIREMENT_VERIFIER=true\`이면 이 전에 별도 planner가 frozen required-tools 집합을 만들 수 있지만 기본값은 \`false\`다.
+`TOOL_REQUIREMENT_VERIFIER=true`이면 이 전에 별도 planner가 frozen required-tools 집합을 만들 수 있지만 기본값은 `false`다.
 
 ### 6.7 도구 실행과 large-result pagination
 
-활성화되지 않은 도구를 직접 호출하거나, 등록되지 않은 이름을 \`tool_manual\`에 넣거나, schema를 위반한 인자를 보내면 구조적 실패다. handler exception과 timeout도 실패로 기록한다.
+활성화되지 않은 도구를 직접 호출하거나, 등록되지 않은 이름을 `tool_manual`에 넣거나, schema를 위반한 인자를 보내면 구조적 실패다. handler exception과 timeout도 실패로 기록한다.
 
-큰 결과는 \`ToolResultStore\`가 bounded model view만 본문에 넣고 원문은 request-local store에 남긴다. 추가 범위가 필요하면 \`tool_result_read\`를 활성화하고 result id/offset/limit로 읽는다.
+큰 결과는 `ToolResultStore`가 bounded model view만 본문에 넣고 원문은 request-local store에 남긴다. 추가 범위가 필요하면 `tool_result_read`를 활성화하고 result id/offset/limit로 읽는다.
 
 ### 6.8 candidate final을 검증한다
 
@@ -272,7 +272,7 @@ browser session은 요청 종료 시 성공/실패와 관계없이 \`close_all()
 3. deterministic numeric/date grounding.
 4. 필요한 경우 numeric semantic review.
 5. factual grounding + action outcome review.
-6. factual pass이고 \`MAI_ANSWER_QUALITY_REVIEW=true\`이면 answer-quality review.
+6. factual pass이고 `MAI_ANSWER_QUALITY_REVIEW=true`이면 answer-quality review.
 7. 문제가 있으면 candidate를 사용자에게 전달하지 않고 correction round로 돌아간다.
 
 거절된 초안은 factual evidence가 아니다. 현재 model prompt에는 **가장 최근 거절 초안과 그 verifier feedback만** 다시 넣고, 과거의 여러 rejected draft는 audit log에만 남긴다.
@@ -285,34 +285,34 @@ memory 후처리는 raw user turn, 이전 assistant 문맥, 최종 답변, 성�
 
 ### 6.10 fatal failure
 
-main loop가 최종적으로 실패하면 \`AgentRunFailure\`에 이미 관찰된 tool execution, model round 수, 마지막 rejected candidate를 포함한 failure context가 보존된다. Web job 경로는 이 오류를 숨기지 않고 failed 상태와 error message를 chat/audit에 남긴다. 마지막 verifier 거절 초안이 있다면 사용자가 “아무 답도 없었다”고 오해하지 않도록 failure detail에 함께 보여 줄 수 있다.
+main loop가 최종적으로 실패하면 `AgentRunFailure`에 이미 관찰된 tool execution, model round 수, 마지막 rejected candidate를 포함한 failure context가 보존된다. Web job 경로는 이 오류를 숨기지 않고 failed 상태와 error message를 chat/audit에 남긴다. 마지막 verifier 거절 초안이 있다면 사용자가 “아무 답도 없었다”고 오해하지 않도록 failure detail에 함께 보여 줄 수 있다.
 
 
 ## 7. 도구 선택과 lazy native activation
 
 ### 7.1 production 기본은 별도 planner가 아니다
 
-현재 \`.env.example\`의 \`TOOL_REQUIREMENT_VERIFIER=false\`가 기본이다. 따라서 production 기본 경로에서는 사용자 요청 전에 별도 LLM planner를 호출하지 않는다.
+현재 `.env.example`의 `TOOL_REQUIREMENT_VERIFIER=false`가 기본이다. 따라서 production 기본 경로에서는 사용자 요청 전에 별도 LLM planner를 호출하지 않는다.
 
-대신 main agent가 **카탈로그 → \`tool_manual\` → 실제 native tool**의 두 단계로 도구를 선택한다. 이렇게 하면 처음부터 모든 상세 schema를 prompt에 싣지 않으면서도 도구 선택을 문자열 heuristic으로 바꾸지 않는다.
+대신 main agent가 **카탈로그 → `tool_manual` → 실제 native tool**의 두 단계로 도구를 선택한다. 이렇게 하면 처음부터 모든 상세 schema를 prompt에 싣지 않으면서도 도구 선택을 문자열 heuristic으로 바꾸지 않는다.
 
-### 7.2 \`tool_manual\`의 계약
+### 7.2 `tool_manual`의 계약
 
-\`tool_manual\`은 Registry의 일반 handler가 아니라 \`AgentLoop\`가 직접 제공하는 run-local activation tool이다. 실제 외부 작업을 수행하지 않고 “다음 round부터 어떤 native schema를 노출할지”만 바꾼다.
+`tool_manual`은 Registry의 일반 handler가 아니라 `AgentLoop`가 직접 제공하는 run-local activation tool이다. 실제 외부 작업을 수행하지 않고 “다음 round부터 어떤 native schema를 노출할지”만 바꾼다.
 
 입력은 등록된 정확한 도구 이름 목록이다. 부분 문자열, 별칭 추측, 자연어 설명으로 도구를 고르지 않는다.
 
-- 없는 이름: \`UnknownToolError\`
-- 잘못된 입력 구조: \`ToolArgumentsError\`
-- 아직 활성화하지 않은 실제 도구 직접 호출: \`ToolUnavailableInRoundError\`
+- 없는 이름: `UnknownToolError`
+- 잘못된 입력 구조: `ToolArgumentsError`
+- 아직 활성화하지 않은 실제 도구 직접 호출: `ToolUnavailableInRoundError`
 
 한 번 활성화된 도구는 해당 run 동안 계속 활성화된다.
 
 ### 7.3 선택적 frozen tool requirement verifier
 
-\`TOOL_REQUIREMENT_VERIFIER=true\`이면 \`OllamaToolRequirementPlanner\`가 사용자 요청, 최근 대화, tool definition을 보고 required tool 집합을 만든다. 이 집합은 판단 후 \`FrozenToolRequirements\`로 고정된다.
+`TOOL_REQUIREMENT_VERIFIER=true`이면 `OllamaToolRequirementPlanner`가 사용자 요청, 최근 대화, tool definition을 보고 required tool 집합을 만든다. 이 집합은 판단 후 `FrozenToolRequirements`로 고정된다.
 
-이 모드에서도 실제 충족 여부는 verifier의 자연어 판단이 아니라 \`handler_started\` 관찰을 구조적으로 비교한다. required tool을 실행하지 않고 final을 만들면 correction round가 시작된다.
+이 모드에서도 실제 충족 여부는 verifier의 자연어 판단이 아니라 `handler_started` 관찰을 구조적으로 비교한다. required tool을 실행하지 않고 final을 만들면 correction round가 시작된다.
 
 이 기능은 현재 기본 production path의 필수 구성요소가 아니므로 재구현 시 “기본 동등 구현”과 “선택적 강화 모드”를 구분해야 한다.
 
@@ -327,12 +327,12 @@ main loop가 최종적으로 실패하면 \`AgentRunFailure\`에 이미 관찰�
 - 기본 system policy
 - 최근 대화와 현재 사용자 요청
 - 도구 카탈로그
-- \`tool_manual\`
+- `tool_manual`
 - 이전 round에서 활성화된 native tool schema
 - 필요한 경우 가장 최근 rejected candidate + correction contract
 - 선택적 frozen required-tools 상태
 
-모델의 자연어 본문이나 \`<think>\` 문자열을 파싱해 도구 호출로 바꾸지 않는다. Ollama native \`tool_calls\`만 실행 계약이다.
+모델의 자연어 본문이나 `<think>` 문자열을 파싱해 도구 호출로 바꾸지 않는다. Ollama native `tool_calls`만 실행 계약이다.
 
 ### 8.2 tool call 처리
 
@@ -352,12 +352,12 @@ tool call은 순서대로 실행하고 각 실행은 다음 정보를 남긴다.
 
 resumable job에서는 observer callback으로 다음을 동시에 갱신한다.
 
-- \`model_think_step\`: 모델 thinking
-- \`model\`: candidate content와 tool_calls
-- \`tool_log\`: tool 결과와 성공/실패
-- \`verifier_step\`: rejection feedback 또는 final accepted
+- `model_think_step`: 모델 thinking
+- `model`: candidate content와 tool_calls
+- `tool_log`: tool 결과와 성공/실패
+- `verifier_step`: rejection feedback 또는 final accepted
 
-이 기록은 \`log.sqlite3\`에 append-only로 남고 model/memory context로 다시 주입되지 않는다.
+이 기록은 `log.sqlite3`에 append-only로 남고 model/memory context로 다시 주입되지 않는다.
 
 ### 8.4 rejected draft 격리
 
@@ -374,21 +374,21 @@ unsupported claim마다 correction contract는 다음 둘 중 하나를 요구�
 
 ### 8.5 반복 guard
 
-현재는 global \`AGENT_MAX_ROUNDS\`를 두지 않는다. 대신 구조적으로 다음 반복을 제한한다.
+현재는 global `AGENT_MAX_ROUNDS`를 두지 않는다. 대신 구조적으로 다음 반복을 제한한다.
 
 - 동일 tool call 반복
 - 동일 failure 반복
 - no-progress round 반복
 
-기본 설정은 \`.env.example\`의 \`AGENT_MAX_IDENTICAL_CALLS=3\`, \`AGENT_MAX_IDENTICAL_FAILURES=2\`, \`AGENT_MAX_NO_PROGRESS_ROUNDS=2\`다.
+기본 설정은 `.env.example`의 `AGENT_MAX_IDENTICAL_CALLS=3`, `AGENT_MAX_IDENTICAL_FAILURES=2`, `AGENT_MAX_NO_PROGRESS_ROUNDS=2`다.
 
 guard는 의미 router가 아니다. tool 이름이나 오류 문구를 문자열로 해석해 다른 기능으로 자동 우회하지 않는다.
 
 ### 8.6 empty final과 최종 failure context
 
-content가 비어 있고 tool call도 없으면 한 번 구조적 재시도를 허용한다. 다시 빈 final이면 \`EmptyFinalResponseError\`다.
+content가 비어 있고 tool call도 없으면 한 번 구조적 재시도를 허용한다. 다시 빈 final이면 `EmptyFinalResponseError`다.
 
-어떤 fatal exception이 발생하더라도 \`AgentRunFailure\`는 가능한 범위에서 이미 실행한 tool 기록, model round 수, 마지막 rejected draft를 \`AgentFailureContext\`에 보존한다. 실패를 성공 답변으로 바꾸는 별도 recovery agent는 현재 production contract의 핵심 경로가 아니다.
+어떤 fatal exception이 발생하더라도 `AgentRunFailure`는 가능한 범위에서 이미 실행한 tool 기록, model round 수, 마지막 rejected draft를 `AgentFailureContext`에 보존한다. 실패를 성공 답변으로 바꾸는 별도 recovery agent는 현재 production contract의 핵심 경로가 아니다.
 
 ## 9. 도구 등록소와 실행 환경 정보
 
@@ -507,7 +507,7 @@ content가 비어 있고 tool call도 없으면 한 번 구조적 재시도를 �
 
 ## 11. 후보 답변 검증
 
-현재 \`FinalGroundingVerifier\`는 **숫자 검사 → factual review → optional quality review**로 분리되어 있다. verifier는 tool을 호출하거나 답변을 직접 수정하지 않는다.
+현재 `FinalGroundingVerifier`는 **숫자 검사 → factual review → optional quality review**로 분리되어 있다. verifier는 tool을 호출하거나 답변을 직접 수정하지 않는다.
 
 ### 11.1 deterministic numeric/date grounding
 
@@ -516,7 +516,7 @@ candidate의 material numeric/date value를 추출하고 다음에서 관찰된 
 - 현재 user messages
 - 성공한 tool result
 
-단순 형식 차이, 날짜 별칭처럼 deterministic 비교만으로 애매한 경우에는 같은 chat model을 \`think=False\`, \`tools=()\`, strict structured output으로 호출해 numeric semantic review를 할 수 있다.
+단순 형식 차이, 날짜 별칭처럼 deterministic 비교만으로 애매한 경우에는 같은 chat model을 `think=False`, `tools=()`, strict structured output으로 호출해 numeric semantic review를 할 수 있다.
 
 numeric reviewer는 전체 답변 품질을 평가하지 않는다.
 
@@ -524,13 +524,13 @@ numeric reviewer는 전체 답변 품질을 평가하지 않는다.
 
 factual reviewer는 candidate의 material claim을 claim 단위로 분해하고 다음을 반환한다.
 
-- \`evidence_verdict\`
-- \`claims[]\`
-  - \`supported | unsupported | uncertain\`
-  - defect: \`none | scope_expansion | contradiction | unsupported_inference | missing_evidence\`
-- \`action_verdict\`
-- \`reasons\`
-- \`retry_summary\`
+- `evidence_verdict`
+- `claims[]`
+  - `supported | unsupported | uncertain`
+  - defect: `none | scope_expansion | contradiction | unsupported_inference | missing_evidence`
+- `action_verdict`
+- `reasons`
+- `retry_summary`
 
 근거는 현재 user message와 **성공한** tool result다. 과거 assistant 문장은 대화 맥락일 수 있지만 factual evidence는 아니다. failed tool call은 grounding evidence에서 제외한다.
 
@@ -544,7 +544,7 @@ state-changing tool invocation이 성공했다는 사실은 그 tool contract가
 
 ### 11.4 answer-quality reviewer
 
-\`MAI_ANSWER_QUALITY_REVIEW=true\`이고 numeric/factual 단계가 통과했을 때만 별도 quality reviewer를 호출한다.
+`MAI_ANSWER_QUALITY_REVIEW=true`이고 numeric/factual 단계가 통과했을 때만 별도 quality reviewer를 호출한다.
 
 quality reviewer는 raw tool log 전체를 다시 받지 않는다. 다음을 본다.
 
@@ -553,7 +553,7 @@ quality reviewer는 raw tool log 전체를 다시 받지 않는다. 다음을 �
 - candidate final
 - factual review summary
 
-평가 축은 주로 \`alignment_verdict\`, \`coverage_verdict\`, \`coverage_reasons\`다.
+평가 축은 주로 `alignment_verdict`, `coverage_verdict`, `coverage_reasons`다.
 
 coverage는 “더 조사할 수 있었는가”가 아니라 **이미 관찰된, 사용자 요청에 중요한 정보를 candidate가 빠뜨렸는가**를 본다. 추가 검색 가능성 자체는 coverage failure가 아니다.
 
@@ -576,7 +576,7 @@ structured reviewer 호출은 timeout, protocol error, malformed structured outp
 
 ### 11.7 verifier evidence 범위
 
-factual verifier에 전달되는 successful tool evidence는 verifier용 bounded corpus로 구성되지만, 과거의 고정 3500자 원문 절단 정책은 제거되었다. 큰 tool result 자체의 모델 전달 제한은 \`ToolResultStore\`의 pagination 계약에서 별도로 처리한다.
+factual verifier에 전달되는 successful tool evidence는 verifier용 bounded corpus로 구성되지만, 과거의 고정 3500자 원문 절단 정책은 제거되었다. 큰 tool result 자체의 모델 전달 제한은 `ToolResultStore`의 pagination 계약에서 별도로 처리한다.
 
 quality reviewer는 성능 절충을 위해 raw tool result 전체를 다시 보지 않는다. 따라서 “tool result에만 있는 사실을 candidate가 빠뜨렸는가”에 대한 coverage 민감도는 integrated reviewer보다 낮을 수 있다는 현재 한계를 문서에 인정해야 한다.
 
@@ -1012,32 +1012,32 @@ FTS5 결과는 BM25 값이 작은 순서, 그 다음 노드 번호 순서로 정
 
 ## 18. 현재 production 도구와 권한
 
-모든 도구는 \`ToolRegistry\`의 Pydantic input schema와 handler로 등록한다. \`tool_manual\`만 AgentLoop가 직접 제공하는 run-local activation tool이다.
+모든 도구는 `ToolRegistry`의 Pydantic input schema와 handler로 등록한다. `tool_manual`만 AgentLoop가 직접 제공하는 run-local activation tool이다.
 
 ### 18.1 memory
 
-- \`memory_recall(query, limit=None)\`
+- `memory_recall(query, limit=None)`
   - 특정 주제의 persistent Fact를 lexical concept 기반으로 검색한다.
-  - \`limit\`을 주면 matching Concept score 기준 관련성이 높은 Fact를 최대 그 개수만 반환한다.
-  - \`limit\`을 생략하면 matching fact 전체를 반환한다.
-- \`memory_overview(limit=12)\`
+  - `limit`을 주면 matching Concept score 기준 관련성이 높은 Fact를 최대 그 개수만 반환한다.
+  - `limit`을 생략하면 matching fact 전체를 반환한다.
+- `memory_overview(limit=12)`
   - 최근 user-grounded memory를 넓게 본다. 최대 50.
-- \`memory_search(node_id)\`
+- `memory_search(node_id)`
   - 일반 node는 one-hop 확장한다.
   - 현재 user anchor는 bounded structured Fact context를 반환한다.
 
-recalled memory에는 temporal precedence model context가 함께 등록된다. 현재 user message/current tool result가 과거 memory보다 우선하며, 같은 시간 범위에서 충돌하는 Fact끼리는 \`created_at\`이 최신인 Fact를 우선한다.
+recalled memory에는 temporal precedence model context가 함께 등록된다. 현재 user message/current tool result가 과거 memory보다 우선하며, 같은 시간 범위에서 충돌하는 Fact끼리는 `created_at`이 최신인 Fact를 우선한다.
 
 ### 18.2 time / calculator
 
-- \`current_time\`: host OS의 local/UTC 시간, timezone/offset을 authoritative runtime fact로 제공한다.
-- \`calculator\`: 수식 계산용 deterministic tool.
+- `current_time`: host OS의 local/UTC 시간, timezone/offset을 authoritative runtime fact로 제공한다.
+- `calculator`: 수식 계산용 deterministic tool.
 
 ### 18.3 web
 
-- \`web_search(query, max_results)\`
+- `web_search(query, max_results)`
   - 검색 결과의 title/url/snippet을 반환한다.
-- \`web_fetch(url, max_chars)\`
+- `web_fetch(url, max_chars)`
   - public HTTP(S) 정적 문서를 읽는다.
   - private/loopback destination과 redirect를 검증한다.
   - HTML의 실제 link와 pagination hint를 함께 반환한다.
@@ -1047,52 +1047,52 @@ recalled memory에는 temporal precedence model context가 함께 등록된다. 
 
 JS-rendered 페이지나 실제 클릭/스크롤/입력이 필요할 때 request-local Chromium session을 사용한다.
 
-- \`browser_open\`
-- \`browser_snapshot\`
-- \`browser_click\`
-- \`browser_input_text\`
-- \`browser_press_key\`
-- \`browser_scroll\`
-- \`browser_close\`
+- `browser_open`
+- `browser_snapshot`
+- `browser_click`
+- `browser_input_text`
+- `browser_press_key`
+- `browser_scroll`
+- `browser_close`
 
-click/input은 text guessing이 아니라 최신 snapshot이 반환한 exact \`element_ref\`를 사용한다. 남은 session은 agent run 종료 시 자동 정리된다.
+click/input은 text guessing이 아니라 최신 snapshot이 반환한 exact `element_ref`를 사용한다. 남은 session은 agent run 종료 시 자동 정리된다.
 
 ### 18.5 market / image
 
-- \`market_data\`: 한국 상장주식 current quote/valuation read-only source.
-- \`image_analyze\`: \`VISION_MODEL\`이 설정된 경우에만 등록되는 로컬 이미지 해석 도구.
+- `market_data`: 한국 상장주식 current quote/valuation read-only source.
+- `image_analyze`: `VISION_MODEL`이 설정된 경우에만 등록되는 로컬 이미지 해석 도구.
 
 ### 18.6 filesystem read
 
 Owner와 Trial 모두 다음 읽기 도구를 사용할 수 있다.
 
-- \`file_list\`
-- \`file_search\`
-- \`file_read\`
+- `file_list`
+- `file_search`
+- `file_read`
 
-\`file_read\` 하나가 plain text와 PDF/DOCX/XLSX/CSV/PPTX를 처리한다. model-visible \`document_read\`는 없다. 구조 문서 parser failure를 일반 text 성공으로 위장하지 않는다.
+`file_read` 하나가 plain text와 PDF/DOCX/XLSX/CSV/PPTX를 처리한다. model-visible `document_read`는 없다. 구조 문서 parser failure를 일반 text 성공으로 위장하지 않는다.
 
 ### 18.7 filesystem mutation
 
 Owner:
 
-- \`file_write\`
-- \`file_delete\`
-- \`file_move\`
-- \`file_copy\`
+- `file_write`
+- `file_delete`
+- `file_move`
+- `file_copy`
 
 Owner 경로는 repository confinement가 아니라 MAI process OS account의 권한이 실제 경계다.
 
 Trial:
 
-- \`file_write\`만 자기 upload directory 안에서 허용
+- `file_write`만 자기 upload directory 안에서 허용
 - delete/move/copy는 등록하지 않음
 
-\`file_write\`는 새 text file을 만들거나 기존 text file 전체를 교체한다. 별도 \`file_create\` native tool은 없다.
+`file_write`는 새 text file을 만들거나 기존 text file 전체를 교체한다. 별도 `file_create` native tool은 없다.
 
 ### 18.8 structured document edit
 
-Owner는 \`document_edit\`로 지원되는 구조적 수정만 수행할 수 있다.
+Owner는 `document_edit`로 지원되는 구조적 수정만 수행할 수 있다.
 
 현재 지원 범위는 다음 계열이다.
 
@@ -1108,36 +1108,36 @@ PDF의 임의 본문 text 편집을 지원한다고 주장하면 안 된다.
 
 읽기/탐색:
 
-- \`code_search\`
-- \`code_read\`
-- \`code_symbols\`
+- `code_search`
+- `code_read`
+- `code_symbols`
 
 Owner mutation:
 
-- \`code_edit\`
+- `code_edit`
 
 ### 18.10 terminal
 
-Owner만 \`terminal_run\`을 사용한다. 기본 timeout은 \`TERMINAL_TIMEOUT_SECONDS=120\`이며 handler failure/exit failure를 성공으로 바꾸지 않는다.
+Owner만 `terminal_run`을 사용한다. 기본 timeout은 `TERMINAL_TIMEOUT_SECONDS=120`이며 handler failure/exit failure를 성공으로 바꾸지 않는다.
 
 ### 18.11 tool result continuation
 
-\`tool_result_read\`는 request-local \`ToolResultStore\`의 큰 원문을 result id/offset/limit로 이어 읽는 도구다. 최초 bounded view가 전체 결과라는 뜻은 아니다.
+`tool_result_read`는 request-local `ToolResultStore`의 큰 원문을 result id/offset/limit로 이어 읽는 도구다. 최초 bounded view가 전체 결과라는 뜻은 아니다.
 
 ### 18.12 owner download link
 
-Owner에게는 \`file_download_link\`가 추가된다. MAI process가 접근 가능한 기존 local file에 대해 1시간 bearer download link를 만든다. \`MAI_PUBLIC_BASE_URL\`이 있으면 absolute URL, 없으면 현재 MAI server의 relative \`/download/...\` 링크다.
+Owner에게는 `file_download_link`가 추가된다. MAI process가 접근 가능한 기존 local file에 대해 1시간 bearer download link를 만든다. `MAI_PUBLIC_BASE_URL`이 있으면 absolute URL, 없으면 현재 MAI server의 relative `/download/...` 링크다.
 
 ### 18.13 run-local activation tool
 
-\`tool_manual\`은 위 도구 중 필요한 exact name을 활성화하는 전용 도구다. Registry에 같은 이름을 일반 tool로 등록하려 하면 startup/run 구성에서 거부한다.
+`tool_manual`은 위 도구 중 필요한 exact name을 활성화하는 전용 도구다. Registry에 같은 이름을 일반 tool로 등록하려 하면 startup/run 구성에서 거부한다.
 
 
 ## 19. 웹 앱, 작업 상태, 대화·감사·음성 기록
 
 ### 19.1 persistent chat
 
-\`CHAT_DB_PATH\`에는 Web UI 전용 \`web_chat_messages\`가 있다. ownership은 로그인 문자열이 아니라 안정된 \`db_id\` 기준이다.
+`CHAT_DB_PATH`에는 Web UI 전용 `web_chat_messages`가 있다. ownership은 로그인 문자열이 아니라 안정된 `db_id` 기준이다.
 
 저장 role은 사용자에게 실제로 보인 대화 기록을 위한 것이며, verifier rejected draft나 tool log 전체를 chat history에 섞지 않는다. 실패 job의 user-visible error는 error metadata와 함께 assistant record로 남을 수 있다.
 
@@ -1155,24 +1155,24 @@ job에는 다음 progress가 들어갈 수 있다.
 
 같은 login user의 concurrent job은 lock으로 직렬화한다.
 
-### 19.3 감사 로그 \`log.sqlite3\`
+### 19.3 감사 로그 `log.sqlite3`
 
-\`AuditLogStore\`는 append-only 디버깅/감사 기록이다.
+`AuditLogStore`는 append-only 디버깅/감사 기록이다.
 
-\`runs\`:
-- \`run_id\`
-- \`db_id\`
-- \`session_id\`
+`runs`:
+- `run_id`
+- `db_id`
+- `session_id`
 - started/finished time
-- \`running | completed | failed | cancelled\`
+- `running | completed | failed | cancelled`
 - error type/message
 
-\`steps\` role:
-- \`user\`
-- \`model\`
-- \`model_think_step\`
-- \`verifier_step\`
-- \`tool_log\`
+`steps` role:
+- `user`
+- `model`
+- `model_think_step`
+- `verifier_step`
+- `tool_log`
 
 이 DB는 사람이 실행 과정을 추적하기 위한 것이며 agent나 memory가 다음 답변의 근거로 자동 재사용하지 않는다.
 
@@ -1180,16 +1180,16 @@ job에는 다음 progress가 들어갈 수 있다.
 
 주요 endpoint:
 
-- \`POST /login\`, \`GET /me\`, \`POST /logout\`
-- \`GET /models\`
-- \`POST /upload\`
-- \`GET /session/{session_id}\`, \`DELETE /session/{session_id}\`
-- \`POST /chat\`
-- \`POST /chat/jobs\` 및 job status 경로
-- \`GET /download/{token}\`
+- `POST /login`, `GET /me`, `POST /logout`
+- `GET /models`
+- `POST /upload`
+- `GET /session/{session_id}`, `DELETE /session/{session_id}`
+- `POST /chat`
+- `POST /chat/jobs` 및 job status 경로
+- `GET /download/{token}`
 - voice endpoint들
 
-Owner는 설치된 Ollama model 목록에서 선택할 수 있다. Trial은 configured \`MAIN_MODEL\` 하나로 서버 경계에서 고정된다.
+Owner는 설치된 Ollama model 목록에서 선택할 수 있다. Trial은 configured `MAIN_MODEL` 하나로 서버 경계에서 고정된다.
 
 ### 19.5 owner-only voice input
 
@@ -1197,16 +1197,16 @@ voice 기능은 owner 전용이며 Web 로그인 인증을 대신하지 않는�
 
 서버 endpoint:
 
-- \`GET /voice/config\`
-- \`POST /voice/activity\`
-- \`POST /voice/enroll\`
-- \`POST /voice/transcribe\`
+- `GET /voice/config`
+- `POST /voice/activity`
+- `POST /voice/enroll`
+- `POST /voice/transcribe`
 
 주요 동작:
 
 1. 사용자가 voice profile을 등록한다.
-2. recording 중 짧은 window를 \`/voice/activity\`에 보내 VAD가 마지막 speech end를 판단한다.
-3. \`VOICE_SILENCE_SECONDS\`가 지나면 recording을 종료한다.
+2. recording 중 짧은 window를 `/voice/activity`에 보내 VAD가 마지막 speech end를 판단한다.
+3. `VOICE_SILENCE_SECONDS`가 지나면 recording을 종료한다.
 4. speaker verification 후 Whisper transcription이 성공한 새 문장만 chat으로 보낸다.
 5. voice mode가 유지되면 답변 TTS가 끝난 뒤 다시 recording을 시작할 수 있다.
 
@@ -1214,10 +1214,10 @@ voice 기능은 owner 전용이며 Web 로그인 인증을 대신하지 않는�
 - recording 최대 20 MB
 - recording 길이 최대 120초
 - activity window 최대 2 MB / 10초
-- \`VOICE_SILENCE_SECONDS=5\`
-- \`VOICE_MIN_SPEECH_SECONDS=0.5\`
-- \`VOICE_MATCH_THRESHOLD\`는 로컬 환경에서 검증해야 하는 heuristic threshold
-- \`VOICE_WHISPER_MODEL=small\`
+- `VOICE_SILENCE_SECONDS=5`
+- `VOICE_MIN_SPEECH_SECONDS=0.5`
+- `VOICE_MATCH_THRESHOLD`는 로컬 환경에서 검증해야 하는 heuristic threshold
+- `VOICE_WHISPER_MODEL=small`
 
 speaker model format이 기존 profile과 다르면 조용히 호환 처리하지 않고 재등록 오류를 낸다.
 
@@ -1226,9 +1226,9 @@ speaker model format이 기존 profile과 다르면 조용히 호환 처리하�
 
 ### 20.1 기본 모델/timeout
 
-현재 \`.env.example\`의 핵심 기본값:
+현재 `.env.example`의 핵심 기본값:
 
-\`\`\`text
+```text
 OLLAMA_HOST=http://127.0.0.1:11434
 MAIN_MODEL=ornith-1.5:9b
 OLLAMA_REQUEST_TIMEOUT_SECONDS=300
@@ -1241,57 +1241,57 @@ MAI_ANSWER_QUALITY_REVIEW=true
 TOOL_TIMEOUT_SECONDS=60
 TERMINAL_TIMEOUT_SECONDS=120
 MAX_INLINE_TOOL_RESULT_CHARS=16000
-\`\`\`
+```
 
-\`OLLAMA_REQUEST_TIMEOUT_SECONDS\`는 normal agent turn뿐 아니라 memory fact extraction과 verifier adapter가 사용하는 Ollama request에도 영향을 준다. 별도 \`MEMORY_MODEL\`은 없다.
+`OLLAMA_REQUEST_TIMEOUT_SECONDS`는 normal agent turn뿐 아니라 memory fact extraction과 verifier adapter가 사용하는 Ollama request에도 영향을 준다. 별도 `MEMORY_MODEL`은 없다.
 
 ### 20.2 guard
 
-\`\`\`text
+```text
 AGENT_MAX_IDENTICAL_CALLS=3
 AGENT_MAX_IDENTICAL_FAILURES=2
 AGENT_MAX_NO_PROGRESS_ROUNDS=2
-\`\`\`
+```
 
-global \`AGENT_MAX_ROUNDS\`는 현재 contract가 아니다.
+global `AGENT_MAX_ROUNDS`는 현재 contract가 아니다.
 
 ### 20.3 데이터 경로
 
-\`\`\`text
+```text
 MEMORY_DB_PATH=./data/memory.sqlite3
 SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
 CHAT_DB_PATH=./data/chat.sqlite3
 LOG_DB_PATH=./data/log.sqlite3
 MAI_UPLOAD_ROOT=./mai_uploads
 VOICE_PROFILE_DIR=./data/voice_profiles
-\`\`\`
+```
 
-\`chat.sqlite3\`와 \`log.sqlite3\`를 합치지 않는다.
+`chat.sqlite3`와 `log.sqlite3`를 합치지 않는다.
 
 ### 20.4 계정
 
-\`OWNER_USERS\`, \`TRIAL_USERS\`는 다음 세 string field만 사용한다.
+`OWNER_USERS`, `TRIAL_USERS`는 다음 세 string field만 사용한다.
 
-\`\`\`json
+```json
 {"user_id":"owner","user_pw":"change-me","db_id":"local-user"}
-\`\`\`
+```
 
-- \`user_id\`: login identity
-- \`user_pw\`: local \`.env\` plaintext password
-- \`db_id\`: memory/chat/upload 등 persistent identity
+- `user_id`: login identity
+- `user_pw`: local `.env` plaintext password
+- `db_id`: memory/chat/upload 등 persistent identity
 
-기존 데이터를 유지하려면 login 이름을 바꿔도 \`db_id\`는 유지한다.
+기존 데이터를 유지하려면 login 이름을 바꿔도 `db_id`는 유지한다.
 
 ### 20.5 Web / Tailscale
 
-\`\`\`text
+```text
 MAI_HOST=127.0.0.1
 MAI_PORT=8000
 SESSION_HISTORY_MESSAGES=10
 TAILSCALE_FUNNEL=true
-\`\`\`
+```
 
-\`TAILSCALE_SERVE=true\`는 retired 설정이며 startup에서 명시적으로 거부한다. Funnel 실패도 startup failure로 드러낸다.
+`TAILSCALE_SERVE=true`는 retired 설정이며 startup에서 명시적으로 거부한다. Funnel 실패도 startup failure로 드러낸다.
 
 ### 20.6 설치 의존성
 
@@ -1306,7 +1306,7 @@ TAILSCALE_FUNNEL=true
 - 음성: Whisper 계열, speaker embedding model, ONNX VAD
 - Tailscale CLI
 
-Windows 초기 설치 자동화는 \`scripts/install_windows.ps1\`, 비개발자용 상세 절차는 \`setup.md\`를 참고한다. Chromium과 voice package는 현재 설치 대상에서 제거하면 안 된다.
+Windows 초기 설치 자동화는 `scripts/install_windows.ps1`, 비개발자용 상세 절차는 `setup.md`를 참고한다. Chromium과 voice package는 현재 설치 대상에서 제거하면 안 된다.
 
 
 ## 21. 오류, 취소, 종료, 초기화
@@ -1330,11 +1330,11 @@ main answer path를 막는 실패와 background memory failure는 구분한다. 
 
 ### 21.2 rejected final과 failure 표시
 
-verifier가 거절한 candidate는 assistant history에 정상 답변으로 저장하지 않는다. correction이 끝내 성공하지 못하면 \`AgentRunFailure\`의 user-visible detail에 마지막 rejected candidate를 포함할 수 있다. 이는 “거절 초안을 성공 답변으로 간주한다”는 뜻이 아니라, 실패 당시 실제 생성된 내용을 디버깅/사용자 설명 목적으로 보여 주는 것이다.
+verifier가 거절한 candidate는 assistant history에 정상 답변으로 저장하지 않는다. correction이 끝내 성공하지 못하면 `AgentRunFailure`의 user-visible detail에 마지막 rejected candidate를 포함할 수 있다. 이는 “거절 초안을 성공 답변으로 간주한다”는 뜻이 아니라, 실패 당시 실제 생성된 내용을 디버깅/사용자 설명 목적으로 보여 주는 것이다.
 
 ### 21.3 취소와 browser cleanup
 
-job task가 취소되면 audit run은 \`cancelled\`로 종료한다. request-local browser session은 \`finally\`에서 닫는다.
+job task가 취소되면 audit run은 `cancelled`로 종료한다. request-local browser session은 `finally`에서 닫는다.
 
 ### 21.4 새 채팅
 
@@ -1364,7 +1364,7 @@ job task가 취소되면 audit run은 \`cancelled\`로 종료한다. request-loc
 
 ### 22.2 사용자 요청 전체
 
-\`\`\`text
+```text
 handle_user_message(user, session, text, selected_model):
     prior = chat_db.read_recent(user.db_id, session)
     chat_db.append(user.db_id, session, role="user", content=text)
@@ -1397,11 +1397,11 @@ handle_user_message(user, session, text, selected_model):
     )
 
     return result
-\`\`\`
+```
 
 ### 22.3 lazy native tool loop
 
-\`\`\`text
+```text
 active = {"tool_manual"}
 
 loop:
@@ -1437,11 +1437,11 @@ loop:
 
     retain only latest rejected candidate + feedback for correction context
     continue until per-axis budgets/guards produce success or explicit failure
-\`\`\`
+```
 
 ### 22.4 final verification
 
-\`\`\`text
+```text
 unsupported_numbers = deterministic_numeric_diff(candidate, user+tool evidence)
 
 if unsupported_numbers:
@@ -1463,11 +1463,11 @@ if answer_quality_enabled:
         reject
 
 accept
-\`\`\`
+```
 
 ### 22.5 memory post-processing
 
-\`\`\`text
+```text
 facts = fact_extractor(
     raw_user_turn,
     previous_assistant_message,
@@ -1480,18 +1480,18 @@ if recall-only and extraction succeeded and facts empty:
 
 evidence = record_raw_user_evidence(raw_user_turn)
 finish_turn(evidence, facts, tool evidence)
-\`\`\`
+```
 
 
 ## 23. 처음부터 만들 때의 순서
 
 ### 23.1 1단계: native tool runtime
 
-먼저 Ollama native \`tools/tool_calls\`를 그대로 받는 adapter와 strict ToolRegistry를 만든다. 자연어 JSON protocol이나 \`<think>\` parsing으로 tool call을 복원하지 않는다.
+먼저 Ollama native `tools/tool_calls`를 그대로 받는 adapter와 strict ToolRegistry를 만든다. 자연어 JSON protocol이나 `<think>` parsing으로 tool call을 복원하지 않는다.
 
 ### 23.2 2단계: lazy activation
 
-모든 tool schema를 첫 prompt에 넣는 대신 catalog + \`tool_manual\`을 제공하고, 활성화된 schema만 다음 round부터 노출한다. unknown/unactivated tool failure를 명확히 만든다.
+모든 tool schema를 첫 prompt에 넣는 대신 catalog + `tool_manual`을 제공하고, 활성화된 schema만 다음 round부터 노출한다. unknown/unactivated tool failure를 명확히 만든다.
 
 선택적 planner가 필요하면 이 단계 뒤에 feature toggle로 추가한다. 기본 구현을 planner 의존 구조로 되돌릴 필요는 없다.
 
@@ -1505,11 +1505,11 @@ deterministic numeric → factual grounding/action → optional quality를 순�
 
 ### 23.5 5단계: persistent memory
 
-User Anchor / Utterance / Fact / Concept, Sentence_Breaker, exact hash + FTS5 recall을 구현한다. \`memory_recall(limit)\`과 temporal precedence를 포함한다.
+User Anchor / Utterance / Fact / Concept, Sentence_Breaker, exact hash + FTS5 recall을 구현한다. `memory_recall(limit)`과 temporal precedence를 포함한다.
 
 ### 23.6 6단계: Web persistence와 audit
 
-\`chat.sqlite3\`와 \`log.sqlite3\`를 분리한다. resumable job, per-user lock, error persistence, verifier/tool/model audit를 연결한다.
+`chat.sqlite3`와 `log.sqlite3`를 분리한다. resumable job, per-user lock, error persistence, verifier/tool/model audit를 연결한다.
 
 ### 23.7 7단계: 실제 I/O tool
 
@@ -1616,7 +1616,7 @@ owner-only voice profile, VAD, speaker verification, transcription, UI auto-send
 
 ### 25.1 lazy activation은 tool selection을 보장하는 required-tool gate가 아니다
 
-기본 production은 별도 preflight planner를 끈 상태다. main agent가 필요한 tool을 스스로 활성화한다. 따라서 “반드시 이 tool을 써야 한다”는 강제 계약이 필요한 환경에서는 \`TOOL_REQUIREMENT_VERIFIER=true\` 또는 호출자 제공 \`FrozenToolRequirements\`를 별도로 사용해야 한다.
+기본 production은 별도 preflight planner를 끈 상태다. main agent가 필요한 tool을 스스로 활성화한다. 따라서 “반드시 이 tool을 써야 한다”는 강제 계약이 필요한 환경에서는 `TOOL_REQUIREMENT_VERIFIER=true` 또는 호출자 제공 `FrozenToolRequirements`를 별도로 사용해야 한다.
 
 ### 25.2 answer quality review는 raw tool log 전체를 다시 보지 않는다
 
@@ -1636,7 +1636,7 @@ resumable job은 browser disconnect에는 강하지만 server restart 뒤 계산
 
 ### 25.6 audit DB는 민감할 수 있다
 
-\`log.sqlite3\`는 thinking, tool output, rejected candidate를 포함할 수 있으므로 사용자 데이터/비밀정보가 들어갈 수 있다. gitignore 대상이며 답변 근거 DB로 재사용하지 않는다.
+`log.sqlite3`는 thinking, tool output, rejected candidate를 포함할 수 있으므로 사용자 데이터/비밀정보가 들어갈 수 있다. gitignore 대상이며 답변 근거 DB로 재사용하지 않는다.
 
 ### 25.7 voice threshold
 
@@ -1644,160 +1644,76 @@ speaker match threshold는 보안 인증 수준으로 검증된 전역 상수가
 
 ### 25.8 structured document edit 범위
 
-현재 \`document_edit\`는 명시적으로 지원되는 구조 변경만 한다. 특히 PDF arbitrary text editing은 지원하지 않는다.
+현재 `document_edit`는 명시적으로 지원되는 구조 변경만 한다. 특히 PDF arbitrary text editing은 지원하지 않는다.
 
 
 ## 26. 근거 파일과 재현 자료
 
 ### 26.1 이번 갱신의 기준
 
-- MAI repository: \`FoggyCaligo/MAI_MyAI_sllm\`
-- branch: \`dev\`
-- 확인 commit: \`c5d6cf991d514eb285f3d3de1cc7118f9a4e80aa\`
+- MAI repository: `FoggyCaligo/MAI_MyAI_sllm`
+- branch: `dev`
+- 확인 commit: `c5d6cf991d514eb285f3d3de1cc7118f9a4e80aa`
 - 확인일: 2026-10-28
-- Sentence Breaker repository: \`FoggyCaligo/Sentence_Breaker\`
+- Sentence Breaker repository: `FoggyCaligo/Sentence_Breaker`
 
-문서의 동작 설명은 README 문구보다 production code와 \`WORKING_CONTRACT.md\`를 우선했다.
+문서의 동작 설명은 README 문구보다 production code와 `WORKING_CONTRACT.md`를 우선했다.
 
 ### 26.2 핵심 근거 파일
 
 | 주제 | 파일 |
 |---|---|
-| production 구조 계약 | \`WORKING_CONTRACT.md\` |
-| 전체 앱 composition | \`mai/app/runtime.py\` |
-| native loop / lazy tools / rejected draft | \`mai/agent/loop.py\` |
-| optional tool planner | \`mai/agent/runtime.py\`, \`mai/agent/tool_planner.py\` |
-| final verifier | \`mai/agent/verification.py\`, \`docs/verifier.md\` |
-| large tool result | \`mai/agent/tool_results.py\`, \`docs/TOOL_RESULT_PAGINATION.md\` |
-| memory runtime | \`mai/memory/runtime.py\` |
-| memory tools / temporal precedence | \`mai/memory/tools.py\` |
-| recall ranking | \`mai/memory/recall/service.py\` |
-| memory extraction | \`mai/memory/extraction/service.py\` |
-| filesystem | \`mai/tools/filesystem.py\` |
-| code | \`mai/tools/code.py\` |
-| structured document edit | \`mai/tools/document_edit.py\` |
-| web static fetch | \`mai/tools/web.py\` |
-| JS browser navigation | \`mai/tools/browser.py\` |
-| Web API | \`mai/app/server.py\` |
-| resumable job | \`mai/app/resumable_chat.py\`, \`mai/app/chat_jobs.py\` |
-| persistent chat | \`mai/app/chat_sessions.py\` |
-| audit log | \`mai/app/audit_log.py\` |
-| voice | \`mai/app/voice.py\`, \`mai/app/static/voice-input.js\` |
-| download link | \`mai/app/downloads.py\` |
-| 기본 설정 | \`.env.example\` |
-| 비개발자 설치 | \`setup.md\` |
+| production 구조 계약 | `WORKING_CONTRACT.md` |
+| 전체 앱 composition | `mai/app/runtime.py` |
+| native loop / lazy tools / rejected draft | `mai/agent/loop.py` |
+| optional tool planner | `mai/agent/runtime.py`, `mai/agent/tool_planner.py` |
+| final verifier | `mai/agent/verification.py`, `docs/verifier.md` |
+| large tool result | `mai/agent/tool_results.py`, `docs/TOOL_RESULT_PAGINATION.md` |
+| memory runtime | `mai/memory/runtime.py` |
+| memory tools / temporal precedence | `mai/memory/tools.py` |
+| recall ranking | `mai/memory/recall/service.py` |
+| memory extraction | `mai/memory/extraction/service.py` |
+| filesystem | `mai/tools/filesystem.py` |
+| code | `mai/tools/code.py` |
+| structured document edit | `mai/tools/document_edit.py` |
+| web static fetch | `mai/tools/web.py` |
+| JS browser navigation | `mai/tools/browser.py` |
+| Web API | `mai/app/server.py` |
+| resumable job | `mai/app/resumable_chat.py`, `mai/app/chat_jobs.py` |
+| persistent chat | `mai/app/chat_sessions.py` |
+| audit log | `mai/app/audit_log.py` |
+| voice | `mai/app/voice.py`, `mai/app/static/voice-input.js` |
+| download link | `mai/app/downloads.py` |
+| 기본 설정 | `.env.example` |
+| 비개발자 설치 | `setup.md` |
 
 ### 26.3 이번 변경을 확인하는 대표 테스트
 
-- \`tests/test_native_lazy_tools.py\`
-- \`tests/test_agent_runtime.py\`
-- \`tests/test_agent_guards.py\`
-- \`tests/test_final_grounding_verifier.py\`
-- \`tests/test_verifier_factual_quality_split.py\`
-- \`tests/test_verifier_multilingual_equivalence_policy.py\`
-- \`tests/test_recall_ranked_limit.py\`
-- \`tests/test_memory_temporal_precedence_policy.py\`
-- \`tests/test_browser_tools.py\`
-- \`tests/test_web_navigation.py\`
-- \`tests/test_document_edit.py\`
-- \`tests/test_audit_log.py\`
-- \`tests/test_rejected_draft_failure_display.py\`
-- \`tests/test_voice_profile_format.py\`
+- `tests/test_native_lazy_tools.py`
+- `tests/test_agent_runtime.py`
+- `tests/test_agent_guards.py`
+- `tests/test_final_grounding_verifier.py`
+- `tests/test_verifier_factual_quality_split.py`
+- `tests/test_verifier_multilingual_equivalence_policy.py`
+- `tests/test_recall_ranked_limit.py`
+- `tests/test_memory_temporal_precedence_policy.py`
+- `tests/test_browser_tools.py`
+- `tests/test_web_navigation.py`
+- `tests/test_document_edit.py`
+- `tests/test_audit_log.py`
+- `tests/test_rejected_draft_failure_display.py`
+- `tests/test_voice_profile_format.py`
 
 ### 26.4 기존 상태까지 복원하려면 코드 외 데이터도 필요하다
 
 구조만 재구현하는 것과 현재 사용자 상태까지 복원하는 것은 다르다. 후자에는 최소 다음이 추가로 필요하다.
 
-- \`memory.sqlite3\`
-- \`sentence_breaker.sqlite3\`
-- 필요한 경우 \`chat.sqlite3\`
-- 필요한 경우 \`log.sqlite3\`는 감사 이력용으로만
+- `memory.sqlite3`
+- `sentence_breaker.sqlite3`
+- 필요한 경우 `chat.sqlite3`
+- 필요한 경우 `log.sqlite3`는 감사 이력용으로만
 - upload files
 - voice profile
-- 실제 \`.env\`의 계정/경로/모델 설정
+- 실제 `.env`의 계정/경로/모델 설정
 
 이 데이터가 없으면 같은 구조의 새 MAI는 만들 수 있어도 기존 사용자와의 과거 기억 상태까지 동일하게 재생할 수는 없다.
-
-
-
-### 26.1 확인 대상의 고정 주소
-
-- [MAI 확인 커밋](https://github.com/FoggyCaligo/MAI_MyAI_sllm/tree/16f9e5b15e62523f79329a53b927bb053f693a49)
-- [Sentence_Breaker 확인 커밋](https://github.com/FoggyCaligo/Sentence_Breaker/tree/7243e45989b04000cf49825976be9801c44f438c)
-
-MAI의 dev는 작성 시 확인한 대상이다. 사용자의 실제 컴퓨터가 같은 커밋인지, 로컬 미커밋 수정이나 환경 설정이 무엇인지는 이 문서 작성에서 확인하지 않았다. 원격 코드의 현재 구조와 설치 현장의 실행 결과를 같다고 단정하지 않는다.
-
-### 26.2 개념별 근거 파일
-
-다음 경로는 위 고정 커밋 안의 경로다. 이동하는 dev·main의 최신 파일을 나중에 읽으면 이 문서와 다를 수 있다.
-
-| 설명 범위 | 근거 파일 |
-|---|---|
-| 생산 조합, 본 정책, 모델 재사용, 후처리 | `mai/app/runtime.py` |
-| 사전 판단의 기본 연결, 환경 주입, 임시 파일 범위 | `mai/agent/runtime.py` |
-| 실제 반복, 요구 누락, 초안 격리, 수정 횟수, 실행 기록 | `mai/agent/loop.py` |
-| 고정 필수 집합과 사전 판단 | `mai/agent/requirements.py`, `mai/agent/tool_planner.py` |
-| 반복 구조 비교 | `mai/agent/guards.py` |
-| 숫자·2단계 검토·지원 번호·장애 재시도 | `mai/agent/verification.py` |
-| 결과 원문 저장·페이지·참조 축소 | `mai/agent/tool_results.py` |
-| 모델 자료형·Ollama 정규화·한 호출 시간 제한 | `mai/llm/models.py`, `mai/llm/ollama.py` |
-| 도구 등록·엄격 검사·실행 방식 | `mai/tools/registry.py` |
-| 기억 표·정체성·이웃·경로 | `mai/memory/graph/schema.py`, `mai/memory/graph/repository.py` |
-| 정확·FTS5 색인 | `mai/memory/index/sqlite_fts.py` |
-| 조회·투영·기준점 문맥 | `mai/memory/recall/service.py` |
-| 요청별 작업 그래프 | `mai/memory/working.py` |
-| 기억 도구 등록과 현재 우선 규칙 | `mai/memory/tools.py` |
-| 기억 저장 조정·원문·사실·개념 연결 | `mai/memory/runtime.py` |
-| 조회 요청 생략과 새 도구 근거 필터 | `mai/memory/admission.py` |
-| 허용 출처 구성·추출 입력·출처 검사 | `mai/memory/extraction/service.py` |
-| 문장 분해 연결 | `mai/memory/segmenter.py` |
-| 외부 분해 실제 알고리즘 | Sentence_Breaker의 `src/sentence_breaker/lang_graph.py` |
-| 계정·안정된 내부 식별자 | `mai/app/access.py` |
-| 업로드 계정 경로 | `mai/app/uploads.py` |
-| 대화 표와 알려진 옛 구조 이동 | `mai/app/chat_sessions.py` |
-| 로그인·모델·업로드·기본 API·시작 종료 | `mai/app/server.py` |
-| 복구 API 설치와 작업 실행 | `mai/app/resumable_chat.py` |
-| 작업 상태·계정 잠금·취소·보존 | `mai/app/chat_jobs.py` |
-| 최종 화면과 비밀번호·복구 동작 | `mai/app/static/index.html`, `login-password.js`, `resumable-chat.js` |
-| 실제 기본 실행 진입점 | `run_server.py` |
-| Funnel | `mai/app/tailscale.py` |
-| 도구 계약과 의미 | `mai/tools/filesystem.py`, `code.py`, `documents.py`, `terminal.py`, `calculator.py`, `time.py`, `web.py`, `market.py`, `images.py`, `artifacts.py`, `local.py` |
-| 설정 예시·의존성 | `.env.example`, `pyproject.toml` |
-| 체험 초기화 범위 | `reset_trial.py` |
-
-기존 `README.md`, `WORKING_CONTRACT.md`, `MEMORY_V1.md`, `RUN_UI.md`, `TOOL_RESULT_PAGINATION.md`도 설명 의도를 비교하는 데 사용했다. 이 문서의 현재 동작 판단에서는 위 실행 코드를 우선했다.
-
-### 26.3 참고할 기존 테스트
-
-재구현의 판단 기준을 더 구체화할 때 다음 테스트 묶음을 함께 읽을 수 있다.
-
-| 분야 | 테스트 파일 예 |
-|---|---|
-| 반복·등록·사전 판단 | `test_agent_runtime.py`, `test_agent_guards.py`, `test_tool_registry.py`, `test_llm_tool_preflight.py` |
-| 최종 근거 검토 | `test_final_grounding_verifier.py`, `test_temporal_grounding_prompts.py` |
-| 큰 결과 | `test_tool_results.py`, `test_collection_scope_metadata.py` |
-| 기억 추출과 승인 | `test_fact_extractor.py`, `test_memory_approval_context.py`, `test_memory_admission.py` |
-| 기억 저장·조회 | `test_memory_runtime.py`, `test_memory_v1.py`, `test_sqlite_fts_index.py`, `test_production_c_runtime.py` |
-| 후속 요청 대기 | `test_memory_read_after_write.py` |
-| 계정·대화·복구 | `test_access_policy.py`, `test_auth_sessions.py`, `test_chat_sessions.py`, `test_chat_jobs.py` |
-| 실제 도구·임시 파일 | `test_local_tools.py`, `test_code_tools.py`, `test_external_tools.py`, `test_temporary_artifacts.py`, `test_uploads.py` |
-
-각 경로는 MAI 저장소의 `tests/` 아래에 있다. 테스트 이름에 오래된 설계명이 남을 수 있다. 파일 이름만으로 현재 생산 경로를 판단하지 않고 실제 호출 관계와 테스트 내용을 확인한다.
-
-### 26.4 기존 상태까지 재현할 때 보존할 자료
-
-| 자료 | 필요한 이유 |
-|---|---|
-| 정확한 소스 커밋과 로컬 변경 기록 | 확인한 구조와 실제 설치 코드 차이 확인 |
-| 정확한 모델 산출물·실행 옵션 | 생성·검토·추출 의미 판단 재현 |
-| 의존성의 정확한 버전 | API·타입·문서 해석 차이 방지 |
-| 기억 SQLite | 기존 사실·개념·관계·색인 보존 |
-| 문장 분해 SQLite | 기존 분해 경계와 입력 이력 보존 |
-| 대화 SQLite | 최근 문맥·화면 복원 |
-| 업로드와 참조하는 로컬 파일 | 요청의 실제 자료 보존 |
-| 내부 식별자와 환경 설정 | 사용자 자료와 계정·작업 디렉터리 연결 |
-
-비밀번호나 실제 사용자 원문은 이 문서에 포함하지 않았다. 이 문서가 설명하는 표 구조와 가상 예시는 실제 개인 데이터 사본이 아니다.
-
-
-
