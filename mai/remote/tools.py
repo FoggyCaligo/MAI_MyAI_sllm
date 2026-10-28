@@ -27,6 +27,19 @@ class BoundRemoteProcess(BaseModel):
 
 def register_bound_remote_tools(registry: ToolRegistry, owner_id: str, session_id: str) -> None:
     """Tools bind to the selected browser session, not to model-supplied IDs."""
+    registry.add_model_context(
+        key="active_remote_computer",
+        context={
+            "connected": True,
+            "target": "The separate Windows computer currently running the user's approved PowerShell Remote Agent.",
+            "routing": "The remote tools in this catalog are already bound to the authenticated browser-selected remote session. Do not supply or guess a session ID.",
+            "local_distinction": "MAI local filesystem and terminal tools operate on MAI's server PC, not the connected remote computer. Remote tools operate on the connected remote computer, not MAI's server PC.",
+            "selection": "For tasks the user directs at the connected PC, select remote_file_read, remote_file_list, remote_file_write, remote_file_delete, or remote_process_run as appropriate. For work on the MAI server PC use the local tools. If the user's target PC is ambiguous and choosing incorrectly could alter data, ask which PC before executing.",
+            "limitations": "Remote file operations support listing directories, reading UTF-8 text, writing UTF-8 text, and deleting one file. Remote process execution accepts an executable and argv list. Capabilities are limited to those explicitly listed by the tools; never claim unrestricted GUI access.",
+            "lifecycle": "Remote access depends on the live PowerShell Agent session and its OS permissions. If a remote call fails or the session disconnects, report the failure without silently switching to local tools.",
+        },
+    )
+
     async def dispatch(operation: str, arguments: dict) -> dict:
         return await remote_sessions.execute(owner_id, session_id, RemoteOperation(operation=operation, arguments=arguments))
 
