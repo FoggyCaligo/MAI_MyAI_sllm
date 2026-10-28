@@ -1,6 +1,8 @@
 param(
     [ValidateSet('ollama','llamacpp')]
-    [string]$Backend = 'ollama'
+    [string]$Backend = 'ollama',
+    [string]$GgufPath,
+    [string]$ModelAlias
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -50,5 +52,25 @@ if ($Backend -eq 'ollama') {
     }
 } else {
     if (-not (Test-Path -LiteralPath $llama -PathType Leaf)) { throw "Portable llama.cpp runtime is missing: $llama" }
-    throw 'llama.cpp portable launch needs an explicit GGUF path and alias; see docs/portable-windows.md. Start llama-server manually, then launch MAI with LLM_BACKEND=llamacpp. No implicit model selection.'
+    if (-not $GgufPath -or -not $ModelAlias) { throw 'Specify -GgufPath and -ModelAlias for llama.cpp' }
+    $resolvedModel = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
+    $env:MAIN_MODEL = $ModelAlias
+    $args = @('-m', $resolvedModel, '--alias', $ModelAlias, '--host', '127.0.0.1', '--port', '8080', '--jinja')
+    $llamaProcess = Start-Process -FilePath $llama -ArgumentList $args -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
+    try {
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 100; $attempt++) {
+            if ($llamaProcess.HasExited) { throw "llama.cpp exited with code $($llamaProcess.ExitCode)" }
+            try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2 -UseBasicParsing
+                if ($response.StatusCode -eq 200) { $ready = $true; break }
+            } catch [System.Net.WebException] { }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $ready) { throw 'llama.cpp did not become ready within 100 seconds' }
+        & $python run_server.py
+        if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
+    } finally {
+        if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
+    }
 }
