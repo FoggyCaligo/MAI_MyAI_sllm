@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import os
 import secrets
+import io
+import hashlib
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -716,6 +719,36 @@ async def remote_revoke_session(session_id: str, authorization: str | None = Hea
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await remote_sessions.close(session_id)
     return {"revoked": True}
+
+
+def _remote_worker_bundle() -> tuple[bytes, str]:
+    """Package the exact MAI Python sources used by this server."""
+    root = Path(__file__).resolve().parents[2]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(root / "pyproject.toml", "pyproject.toml")
+        for source in sorted((root / "mai").rglob("*.py")):
+            archive.write(source, source.relative_to(root).as_posix())
+    data = buffer.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+@app.get("/remote/agent/{session_id}/bootstrap")
+async def remote_agent_bootstrap(
+    session_id: str, x_mai_agent_secret: str | None = Header(default=None),
+) -> StreamingResponse:
+    if x_mai_agent_secret is None:
+        raise HTTPException(status_code=401, detail="remote agent secret required")
+    try:
+        remote_sessions.authenticate_agent(session_id, x_mai_agent_secret)
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    bundle, digest = _remote_worker_bundle()
+    return StreamingResponse(
+        iter([bundle]),
+        media_type="application/zip",
+        headers={"X-MAI-Bundle-SHA256": digest, "Cache-Control": "no-store"},
+    )
 
 
 @app.post("/remote/agent/{session_id}/poll")
