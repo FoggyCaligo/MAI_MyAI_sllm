@@ -55,7 +55,9 @@ def _windows_console_encoding() -> str:
     """Match the active Windows console output code page for CMD subprocesses."""
     code_page = ctypes.windll.kernel32.GetConsoleOutputCP()
     if not code_page:
-        raise RuntimeError("Windows console output code page is unavailable")
+        code_page = ctypes.windll.kernel32.GetOEMCP()
+    if not code_page:
+        raise RuntimeError("Windows command output code page is unavailable")
     return f"cp{code_page}"
 
 
@@ -68,7 +70,7 @@ def _powershell_command(command: str) -> list[str]:
         "$global:LASTEXITCODE = 0; "
     )
     suffix = (
-        "; if (-not $?) { exit 1 }; "
+        "\nif (-not $?) { exit 1 }; "
         "if ($null -ne $global:LASTEXITCODE -and $global:LASTEXITCODE -ne 0) "
         "{ exit $global:LASTEXITCODE }"
     )
