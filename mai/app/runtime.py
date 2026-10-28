@@ -40,7 +40,7 @@ from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..remote.tools import register_bound_remote_tools
+from ..remote.routing import register_routed_pc_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -242,9 +242,7 @@ class MAIRuntime:
         if self.vision_model is not None:
             register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:
-            register_local_pc_tools(registry, cwd=self.cwd)
-            if remote_session_id is not None:
-                register_bound_remote_tools(registry, principal.db_id, remote_session_id)
+            register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
                 name="file_download_link",
                 description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
