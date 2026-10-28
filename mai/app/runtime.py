@@ -302,7 +302,10 @@ class MAIRuntime:
                 max_identical_failures=max_identical_failures,
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
-            final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
+            final_verifier=FinalGroundingVerifier(
+                reviewer_adapter=adapter,
+                verified_prior_conversation=prior_messages,
+            ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
             enable_tool_requirement_verifier=self.enable_tool_requirement_verifier,
