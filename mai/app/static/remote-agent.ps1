@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$Server,
-    [Parameter(Mandatory=$true)][string]$Session
+    [Parameter(Mandatory=$true)][string]$Session,
+    [Parameter(Mandatory=$true)][string]$Key
 )
 $ErrorActionPreference = 'Stop'
 if (-not $Server.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase)) {
@@ -12,23 +13,7 @@ Write-Host 'The connected MAI can read, modify and delete files, and execute com
 if ((Read-Host 'Type YES to authorize remote management') -cne 'YES') {
     throw 'Remote control was not authorized'
 }
-$random = New-Object byte[] 32
-$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-try { $rng.GetBytes($random) } finally { $rng.Dispose() }
-$key = [BitConverter]::ToString($random).Replace('-', '').ToLowerInvariant()
-$pairUrl = "$Server/remote/agent/$Session/pair"
-$body = @{agent_key=$key} | ConvertTo-Json -Compress
-$pair = Invoke-RestMethod -Method Post -Uri $pairUrl -ContentType 'application/json' -Body $body
-Write-Host "Connection code: $($pair.code)"
-Write-Host 'Enter the code in the MAI browser connection dialog and approve.'
-$headers = @{'X-MAI-Agent-Secret'=$key}
-$approved = $false
-for ($i = 0; $i -lt 120; $i++) {
-    $status = Invoke-RestMethod -Method Post -Uri "$pairUrl/status" -ContentType 'application/json' -Body $body
-    if ($status.approved) { $approved = $true; break }
-    Start-Sleep -Seconds 2
-}
-if (-not $approved) { throw 'Pairing was not approved within 4 minutes' }
+$headers = @{'X-MAI-Agent-Secret'=$Key}
 Write-Host 'Connected. Close this PowerShell window or press Ctrl+C to stop accepting work.'
 try {
     while ($true) {
