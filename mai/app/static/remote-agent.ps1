@@ -25,6 +25,51 @@ try {
             $a = $req.arguments
             $result = $null
             switch ($req.operation) {
+                'native.invoke' {
+                    # The bootstrap must provision a Python environment containing MAI before
+                    # this operation is dispatched. An absent worker is a real failure.
+                    $python = [Environment]::GetEnvironmentVariable('MAI_REMOTE_PYTHON', 'Process')
+                    if ([string]::IsNullOrWhiteSpace($python)) {
+                        throw 'MAI_REMOTE_PYTHON is not configured; remote Python worker is unavailable'
+                    }
+                    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+                        throw "Remote Python executable is missing: $python"
+                    }
+                    $payload = @{ name = [string]$a.name; arguments = $a.arguments } | ConvertTo-Json -Compress -Depth 40
+                    $psi = New-Object Diagnostics.ProcessStartInfo
+                    $psi.FileName = $python
+                    $psi.Arguments = '-m mai.remote.python_worker'
+                    $psi.UseShellExecute = $false
+                    $psi.RedirectStandardInput = $true
+                    $psi.RedirectStandardOutput = $true
+                    $psi.RedirectStandardError = $true
+                    $psi.CreateNoWindow = $true
+                    $process = New-Object Diagnostics.Process
+                    $process.StartInfo = $psi
+                    if (-not $process.Start()) { throw 'Unable to launch remote Python worker' }
+                    try {
+                        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+                        $stderrTask = $process.StandardError.ReadToEndAsync()
+                        $process.StandardInput.WriteLine($payload)
+                        $process.StandardInput.Close()
+                        if (-not $process.WaitForExit(120000)) {
+                            $process.Kill()
+                            throw 'Remote Python worker timed out after 120 seconds'
+                        }
+                        $stdout = $stdoutTask.GetAwaiter().GetResult()
+                        $stderr = $stderrTask.GetAwaiter().GetResult()
+                        if ($process.ExitCode -ne 0) {
+                            throw "Remote Python worker failed (exit $($process.ExitCode)): $stderr"
+                        }
+                        $parsed = $stdout | ConvertFrom-Json
+                        if ($null -eq $parsed.result) {
+                            throw 'Remote Python worker returned no result'
+                        }
+                        $result = $parsed.result
+                    } finally {
+                        $process.Dispose()
+                    }
+                }
                 'file.read' {
                     $bytes = [IO.File]::ReadAllBytes($a.path)
                     if ($bytes.Length -gt 2000000) { throw 'File exceeds 2 MB response limit' }
