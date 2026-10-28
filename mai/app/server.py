@@ -699,39 +699,3 @@ async def remote_agent_disconnect(session_id: str, x_mai_agent_secret: str | Non
         return {"revoked": True}
     except RemoteExecutionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-class RemotePairRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    agent_key: str = Field(min_length=40)
-
-
-class RemoteApproveRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    code: str = Field(pattern=r"^[0-9]{6}$")
-
-
-@app.post("/remote/agent/{session_id}/pair")
-async def remote_pair_start(session_id: str, request: RemotePairRequest) -> dict[str, str]:
-    try:
-        return {"code": remote_sessions.begin_pairing(session_id, request.agent_key)}
-    except RemoteExecutionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.post("/remote/agent/{session_id}/pair/status")
-async def remote_pair_status(session_id: str, request: RemotePairRequest) -> dict[str, bool]:
-    try:
-        return {"approved": remote_sessions.pairing_status(session_id, request.agent_key)}
-    except RemoteExecutionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-@app.post("/remote/sessions/{session_id}/approve")
-async def remote_pair_approve(session_id: str, request: RemoteApproveRequest, authorization: str | None = Header(default=None)) -> dict[str, bool]:
-    principal = _require_remote_owner(authorization)
-    try:
-        remote_sessions.approve_pairing(principal.db_id, session_id, request.code)
-        return {"approved": True}
-    except RemoteExecutionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
