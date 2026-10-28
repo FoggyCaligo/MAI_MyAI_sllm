@@ -50,12 +50,18 @@ class RemoteSession:
     closed: bool = False
 
 
+# A newly created, unconnected command is valid for ten minutes.
+# Once connected, the lease is refreshed on every Agent poll/result.
+_PENDING_SECONDS = 600
+_ACTIVE_LEASE_SECONDS = 180
+
+
 class RemoteSessionManager:
     def __init__(self) -> None:
         self._sessions: dict[str, RemoteSession] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, owner_id: str, ttl_seconds: int = 3600) -> RemoteSession:
+    async def create(self, owner_id: str, ttl_seconds: int = _PENDING_SECONDS) -> RemoteSession:
         async with self._lock:
             session = RemoteSession(
                 session_id=secrets.token_urlsafe(18),
@@ -95,7 +101,7 @@ class RemoteSessionManager:
         session = self.get(session_id)
         if session.owner_id != owner_id:
             raise RemoteExecutionError("remote session belongs to another owner")
-        if not session.connected or time.monotonic() - session.last_seen > 35:
+        if not session.connected or time.monotonic() - session.last_seen > _ACTIVE_LEASE_SECONDS:
             raise RemoteExecutionError("remote agent is not connected")
         request_id = secrets.token_urlsafe(16)
         future = asyncio.get_running_loop().create_future()
@@ -112,17 +118,20 @@ class RemoteSessionManager:
         if not session.connected:
             session.connected = True
         session.last_seen = time.monotonic()
+        session.expires_at = session.last_seen + _ACTIVE_LEASE_SECONDS
         try:
             request = await asyncio.wait_for(session.pending.get(), timeout=15)
         except TimeoutError:
             request = None
         self.get(session_id)
         session.last_seen = time.monotonic()
+        session.expires_at = session.last_seen + _ACTIVE_LEASE_SECONDS
         return request
 
     def resolve(self, session_id: str, secret: str, response: AgentResponse) -> None:
         session = self.authenticate_agent(session_id, secret)
         session.last_seen = time.monotonic()
+        session.expires_at = session.last_seen + _ACTIVE_LEASE_SECONDS
         future = session.in_flight.get(response.request_id)
         if future is None or future.done():
             raise RemoteExecutionError("unknown, expired, or duplicate request ID")

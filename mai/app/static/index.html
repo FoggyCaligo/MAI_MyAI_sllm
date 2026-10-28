@@ -144,21 +144,18 @@
       <button id="logout-btn" type="button">로그아웃</button>
     </div>
   </header>
-  <section id="remote-panel" hidden aria-label="원격 PC 연결">
-    <h2>일회용 원격 PC 연결</h2>
-    <p>현재 PC에서 원격 Agent를 실행해 연결하세요. 연결 후 MAI가 해당 PC의 파일과 프로그램을 조작할 수 있습니다.</p>
-    <div id="remote-status" role="status">연결 없음</div>
+  <section id="remote-panel" hidden role="dialog" aria-label="원격 PC 연결 안내">
+    <h2 id="remote-title">명령이 복사되었습니다</h2>
+    <p id="remote-instruction">PowerShell을 열어 붙여넣고 실행해주세요. 최초 실행 시 이 PC에 대한 MAI 관리 권한을 승인해야 합니다.</p>
+    <div id="remote-status" role="status">연결 대기</div>
     <div id="remote-details" hidden>
-      <p>Agent 실행 시 서버 주소와 세션 ID를 사용하고, 요청받은 비밀 키를 Agent에 직접 입력하세요. 비밀 키는 다른 사람과 공유하면 안 됩니다.</p>
-      <div class="remote-secret"><strong>서버</strong> <code id="remote-server"></code></div>
-      <div class="remote-secret"><strong>세션 ID</strong> <code id="remote-session"></code></div>
-      <div class="remote-secret"><strong>일회용 키</strong> <code id="remote-secret"></code></div>
-      <p>실행 예: <code id="remote-command"></code></p>
+      <p>클립보드 복사가 차단됐습니다. 아래 명령을 직접 선택하여 복사해주세요. 명령에는 일회용 연결 키가 포함되므로 공유하지 마세요.</p>
+      <div class="remote-secret"><code id="remote-command"></code></div>
     </div>
     <div id="remote-error" role="alert"></div>
     <div class="remote-actions">
-      <button id="remote-create" type="button">연결 생성</button>
-      <button id="remote-close" type="button" hidden>연결 해제</button>
+      <button id="remote-create" type="button" hidden>다시 복사</button>
+      <button id="remote-close" type="button">연결 해제</button>
       <button id="remote-hide" type="button">닫기</button>
     </div>
   </section>
@@ -184,51 +181,73 @@
   const $loginScreen=document.getElementById('login-screen'), $loginForm=document.getElementById('login-form'), $loginId=document.getElementById('login-id'), $loginBtn=document.getElementById('login-btn'), $loginError=document.getElementById('login-error');
   const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
   const $remoteBtn=document.getElementById('remote-btn'), $remotePanel=document.getElementById('remote-panel'), $remoteCreate=document.getElementById('remote-create'), $remoteClose=document.getElementById('remote-close'), $remoteStatus=document.getElementById('remote-status'), $remoteError=document.getElementById('remote-error'), $remoteDetails=document.getElementById('remote-details');
-  let remoteSession=null;
-  let remotePollTimer=null;
-  async function remoteApi(path,method='GET') {
+  let remoteSession=null, remotePollTimer=null, remoteCommandText='';
+  async function remoteApi(path,method='GET'){
     const response=await fetch(path,{method,headers:authHeaders()});
     const data=await response.json();
     if(!response.ok)throw new Error(data.detail||'원격 세션 요청 실패');
     return data;
   }
-  function remoteReset() {
+  function remoteReset(){
     if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
-    remoteSession=null;$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
-    $remoteDetails.hidden=true;$remoteClose.hidden=true;$remoteCreate.hidden=false;
+    remoteSession=null;remoteCommandText='';$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
+    $remoteDetails.hidden=true;$remoteClose.hidden=true;$remoteCreate.hidden=true;
     $remoteBtn.classList.remove('connected');$remoteBtn.textContent='원격 연결';
-    document.getElementById('remote-secret').textContent='';
-    document.getElementById('remote-session').textContent='';
   }
-  async function refreshRemoteStatus() {
+  async function refreshRemoteStatus(){
     if(!remoteSession)return;
     try{
       const data=await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id));
-      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'연결 대기 — Agent 실행 필요';
+      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'PowerShell 연결 대기';
       $remoteBtn.classList.toggle('connected',data.connected);
       $remoteBtn.textContent=data.connected?'원격 연결됨':'원격 연결';
-    }catch(err){$remoteError.textContent=err.message;remoteReset();$remoteError.textContent=err.message;}
+      if(data.connected)$remoteCreate.hidden=true;
+    }catch(err){remoteReset();$remoteError.textContent=err.message;}
   }
-  $remoteBtn.addEventListener('click',()=>{$remotePanel.hidden=!$remotePanel.hidden;$remoteBtn.setAttribute('aria-expanded',String(!$remotePanel.hidden));});
-  document.getElementById('remote-hide').addEventListener('click',()=>{$remotePanel.hidden=true;$remoteBtn.setAttribute('aria-expanded','false');});
-  $remoteCreate.addEventListener('click',async()=>{
-    $remoteError.textContent='';$remoteCreate.disabled=true;
+  function showRemoteDialog(){
+    $remotePanel.hidden=false;$remoteBtn.setAttribute('aria-expanded','true');
+  }
+  function buildRemoteCommand(data){
+    const uri=new URL('/static/remote-agent.ps1',location.origin).href;
+    if(new URL(uri).protocol!=='https:')throw new Error('원격 PowerShell 연결은 HTTPS에서만 허용됩니다.');
+    return `& { $p = Join-Path $env:TEMP ([guid]::NewGuid().ToString()+'.ps1'); try { Invoke-WebRequest -Uri '${uri}' -OutFile $p -UseBasicParsing; & $p -Server '${location.origin}' -Session '${data.session_id}' -Key '${data.agent_secret}' } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }`;
+  }
+  async function copyRemoteCommand(){
+    try{await navigator.clipboard.writeText(remoteCommandText);
+      document.getElementById('remote-title').textContent='명령이 복사되었습니다';
+      $remoteDetails.hidden=true;$remoteCreate.hidden=true;
+    }catch(err){
+      document.getElementById('remote-title').textContent='명령을 직접 복사해주세요';
+      document.getElementById('remote-command').textContent=remoteCommandText;
+      $remoteDetails.hidden=false;$remoteCreate.hidden=false;
+      $remoteError.textContent='클립보드 복사 실패: '+err.message;
+    }
+  }
+  async function beginRemoteConnection(){
+    $remoteError.textContent='';$remoteBtn.disabled=true;
     try{
       const data=await remoteApi('/remote/sessions','POST');
-      remoteSession={id:data.session_id,connected:false};
-      document.getElementById('remote-server').textContent=location.origin;
-      document.getElementById('remote-session').textContent=data.session_id;
-      document.getElementById('remote-secret').textContent=data.agent_secret;
-      document.getElementById('remote-command').textContent='mai-remote-agent.exe --server "'+location.origin+'" --session "'+data.session_id+'"';
-      $remoteDetails.hidden=false;$remoteClose.hidden=false;$remoteCreate.hidden=true;
+      remoteSession={id:data.session_id};
+      remoteCommandText=buildRemoteCommand(data);
+      $remoteClose.hidden=false;
+      showRemoteDialog();
+      await copyRemoteCommand();
       await refreshRemoteStatus();
       remotePollTimer=setInterval(refreshRemoteStatus,5000);
-    }catch(err){$remoteError.textContent=err.message;}finally{$remoteCreate.disabled=false;}
+    }catch(err){$remoteError.textContent=err.message;showRemoteDialog();}
+    finally{$remoteBtn.disabled=false;}
+  }
+  $remoteBtn.addEventListener('click',async()=>{
+    if(remoteSession){showRemoteDialog();return;}
+    await beginRemoteConnection();
   });
+  $remoteCreate.addEventListener('click',copyRemoteCommand);
+  document.getElementById('remote-hide').addEventListener('click',()=>{$remotePanel.hidden=true;$remoteBtn.setAttribute('aria-expanded','false');});
   $remoteClose.addEventListener('click',async()=>{
     $remoteError.textContent='';
-    try{await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id),'DELETE');remoteReset();}
-    catch(err){$remoteError.textContent=err.message;}
+    try{if(remoteSession)await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id),'DELETE');
+      remoteReset();$remotePanel.hidden=true;$remoteBtn.setAttribute('aria-expanded','false');
+    }catch(err){$remoteError.textContent=err.message;}
   });
   let stickToBottom=true;
   let activeChat=null;
