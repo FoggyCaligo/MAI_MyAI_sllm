@@ -50,3 +50,17 @@ def test_owner_can_have_only_one_live_remote_session():
         second = await manager.create("one-owner")
         assert second.session_id != first.session_id
     asyncio.run(exercise())
+
+
+def test_owner_session_survives_browser_auth_changes():
+    async def exercise():
+        manager = RemoteSessionManager()
+        session = await manager.create("same-account")
+        assert manager.owner_session("same-account") is session
+        assert manager.owner_session("different-account") is None
+        session.connected = True
+        assert manager.owner_session("same-account").connected is True
+        await manager.close(session.session_id)
+        assert manager.owner_session("same-account") is None
+
+    asyncio.run(exercise())
