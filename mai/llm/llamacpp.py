@@ -21,7 +21,7 @@ class LlamaCppAdapter:
             raise ValueError("llama.cpp does not support MAI's Ollama-specific options")
         payload: dict[str, Any] = {
             "model": self.config.model,
-            "messages": [_openai_message(message) for message in request.messages],
+            "messages": _openai_messages(request.messages),
             "tools": [dict(tool) for tool in request.tools],
             "stream": False,
         }
@@ -117,3 +117,32 @@ def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
         normalized.append({"type": "function", "function": function})
     result["tool_calls"] = normalized
     return result
+
+ 
+def _openai_messages(messages: Any) -> list[dict[str, Any]]:
+    """Pair Ollama-style tool result messages with stable OpenAI tool_call_id values."""
+    out: list[dict[str, Any]] = []
+    pending: list[tuple[str, str]] = []
+    for turn_index, original in enumerate(messages):
+        message = dict(original)
+        if message.get("role") == "tool":
+            tool_name = message.pop("tool_name", None)
+            if not pending:
+                raise OllamaProtocolError("tool result without preceding assistant tool call")
+            expected_name, call_id = pending.pop(0)
+            if tool_name != expected_name:
+                raise OllamaProtocolError("tool result name does not match preceding tool call")
+            message["tool_call_id"] = call_id
+            out.append(message)
+            continue
+        normalized = _openai_message(message)
+        normalized.pop("thinking", None)
+        if normalized.get("tool_calls"):
+            for index, tool_call in enumerate(normalized["tool_calls"]):
+                call_id = f"call_{turn_index}_{index}"
+                tool_call["id"] = call_id
+                pending.append((tool_call["function"]["name"], call_id))
+        out.append(normalized)
+    if pending:
+        raise OllamaProtocolError("assistant tool calls are missing tool results")
+    return out
