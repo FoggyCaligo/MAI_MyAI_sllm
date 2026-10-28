@@ -78,6 +78,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Mani
 
 이 옵션은 기존 런타임을 `.before-portable-...` 폴더로 이동해 보존함. 이미 설치 기록이 일치하는 런타임은 재사용하므로 강제 재설치 옵션이 아님. 다운로드·패키지 설치 중에는 출력이 잠시 없어도 작업이 실행 중일 수 있음.
 
+### 필요한 모델만 선택해서 복사
+
+기존 PC의 Ollama 모델 저장소에 필요한 모델이 이미 있다면 `-CopyLocalModels`과 `-Models`를 함께 사용함. **Git Bash에서 PowerShell의 `-File` 호출로 전달할 수 있도록 하나의 쉼표 구분 문자열로 지정**함.
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Manifest ./portable-sources.json -CopyLocalModels -Models "ornith-1.5:9b,gemma4:e4b,lfm2.5:8b"
+```
+
+이 명령은 지정된 3개 모델의 manifest와 참조된 SHA-256 blob만 복사하며, 다른 모델의 파일은 복사하지 않음. 공유 blob은 한 번만 복사하고 실제 파일 크기와 해시를 검증함. 대상에 파일이 이미 있다면 검증 후 재사용하지만, 다른 manifest나 손상된 blob은 자동 덮어쓰지 않고 명시적 오류로 처리함. **Portable Ollama를 포함한 모델 저장소 쓰기 프로세스를 모두 종료한 후 실행할 것.** 원본 모델 디렉터리는 수정하지 않음. 기존 빈 `portable-models/ollama` 폴더가 있어도 선택 복사 가능함.
+
+`-Models` 없이 `-CopyLocalModels`만 사용하면 기존과 동일하게 전체 모델 디렉터리 복사를 시도하고, 대상이 이미 존재할 때는 덮어쓰지 않고 실패함. `-Models`는 `-CopyLocalModels`과만 조합하며 `-PullModels`와 함께 사용할 수 없음.
+
+선택 복사 이후 Portable Ollama를 실행하고 별도의 Git Bash 창에서 확인함.
+
+```bash
+./portable-runtimes/ollama/ollama.exe list
+```
+
+모델 목록은 실행 중인 Ollama 서버의 저장소를 조회함. 따라서 Portable Ollama가 실행 중인지 먼저 확인할 것.
+
 ## 5. 실행
 
 먼저 `.env`가 존재하는지, `portable-models/ollama/`에 사용할 모델이 있는지 확인함. 이후 Git Bash에서:
