@@ -121,7 +121,7 @@ class MAIRuntime:
         if not model.strip():
             raise ValueError("model must be non-empty")
         if max_inline_tool_result_chars is None:
-            max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "16000"))
+            max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
         if enable_tool_requirement_verifier is None:
             enable_tool_requirement_verifier = _env_bool("TOOL_REQUIREMENT_VERIFIER", False)
         if max_inline_tool_result_chars < 1024:
