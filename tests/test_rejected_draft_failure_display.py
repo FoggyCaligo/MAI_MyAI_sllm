@@ -77,3 +77,32 @@ def test_evidence_retry_budget_keeps_five_corrections_and_last_feedback():
     assert model.calls == 6  # first draft + five evidence correction attempts
     assert failure.context.last_rejected_draft.startswith("## Draft 6")
     assert "claim_grounding_failed" in failure.context.last_verifier_feedback
+
+
+def test_verifier_feedback_ends_with_actionable_claim_correction():
+    result = FinalVerificationResult(
+        ok=False,
+        issues=(VerificationIssue(code="claim_grounding_failed", message="missing evidence"),),
+        retry_summary="No correction needed.",
+        review_details={"claims": [
+            {"claim": "배송이 완료됨", "defect": "missing_evidence",
+             "verdict": "unsupported", "reason": "완료 확인 기록 없음"},
+        ]},
+    )
+    feedback = result.feedback_message()
+    assert feedback.endswith(
+        "수정 지시: 배송이 완료됨 부분의 근거를 tool 호출을 통해 보강하거나, 해당 부분 자체를 삭제하라."
+    )
+    assert "No correction needed." not in feedback
+
+
+def test_verifier_feedback_for_non_claim_issue_never_invents_missing_claim():
+    result = FinalVerificationResult(
+        ok=False,
+        issues=(VerificationIssue(code="task_alignment_failed", message="답변 범위가 요청과 다름"),),
+    )
+    feedback = result.feedback_message()
+    assert feedback.endswith(
+        "수정 지시: 답변 범위가 요청과 다름 부분을 실제 근거와 요청에 맞게 수정하라. "
+        "근거가 필요한 주장이라면 tool 호출로 보강하거나 해당 주장을 삭제하라."
+    )
