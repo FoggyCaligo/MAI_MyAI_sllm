@@ -200,7 +200,6 @@ class AgentLoop:
         latest_verification_rejection: tuple[int, int] | None = None
         latest_correction_contract: dict[str, Any] | None = None
         latest_verifier_feedback: str | None = None
-        verification_rejection_count = 0
 
         try:
             while True:
@@ -379,13 +378,12 @@ class AgentLoop:
                                 or (evidence_failure and evidence_verification_retries >= _MAX_EVIDENCE_VERIFICATION_RETRIES)
                                 or (coverage_failure and coverage_verification_retries >= _MAX_COVERAGE_VERIFICATION_RETRIES)
                             )
-                            verification_rejection_count += 1
                             latest_verifier_feedback = verification.feedback_message()
                             if on_verification_rejection is not None:
                                 on_verification_rejection(round_number, verification)
-                            if verification_rejection_count >= 5:
+                            if exhausted:
                                 raise VerificationRetriesExhausted(
-                                    "provisional answer rejected five times; displaying last unverified answer")
+                                    "provisional answer verification correction budget exhausted: " + issue_codes)
                             if numeric_failure:
                                 numeric_verification_retries += 1
                             if semantic_failure:
