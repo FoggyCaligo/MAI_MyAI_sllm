@@ -17,7 +17,7 @@ from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
-from ..llm.models import ModelConfig
+from ..llm.models import ModelConfig, ollama_generation_limit
 from ..llm.ollama import OllamaAdapter
 from ..llm.llamacpp import LlamaCppAdapter
 from ..memory.admission import (
@@ -176,7 +176,7 @@ class MAIRuntime:
             raise ValueError("model must be non-empty")
         adapter = self._adapters.get(clean_model)
         if adapter is None:
-            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True))
+            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True, options={"num_predict": ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 4096)}))
                        if self.llm_backend == "ollama" else
                        LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True)))
             self._adapters[clean_model] = adapter
@@ -188,7 +188,7 @@ class MAIRuntime:
             raise ValueError("model must be non-empty")
         extractor = self._fact_extractors.get(clean_model)
         if extractor is None:
-            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False))
+            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False, options={"num_predict": ollama_generation_limit("OLLAMA_MEMORY_MAX_OUTPUT_TOKENS", 2048)}))
                        if self.llm_backend == "ollama" else
                        LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=False)))
             extractor = OllamaFactExtractor(adapter)
