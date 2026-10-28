@@ -8,8 +8,11 @@ from mai.remote.agent import execute
 from mai.remote.session import AgentResponse, RemoteExecutionError, RemoteOperation, RemoteSessionManager
 
 
-@pytest.mark.asyncio
-async def test_remote_session_dispatch_requires_owner_and_agent_secret():
+def test_remote_session_dispatch_requires_owner_and_agent_secret():
+    asyncio.run(_exercise_remote_session())
+
+
+async def _exercise_remote_session():
     manager = RemoteSessionManager()
     session = await manager.create("owner-A")
     with pytest.raises(RemoteExecutionError):
