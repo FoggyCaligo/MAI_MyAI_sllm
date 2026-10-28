@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 import pytest
 
@@ -6,8 +7,7 @@ from mai.llm.models import ChatRequest, ModelConfig
 from mai.llm.ollama import OllamaProtocolError
 
 
-@pytest.mark.asyncio
-async def test_llamacpp_tool_call_and_thinking_round_trip():
+def test_llamacpp_tool_call_and_thinking_round_trip():
     captured = []
     def responder(request):
         import json
@@ -18,9 +18,11 @@ async def test_llamacpp_tool_call_and_thinking_round_trip():
                 "name": "memory_search", "arguments": "{\"keyword\":\"취미\"}"
             }}],
         }}]})
-    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
-        adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test", think=True), client=client)
-        result = await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test", think=True), client=client)
+            return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
+    result = asyncio.run(run())
     assert result.thinking == "memory needed"
     assert result.tool_calls[0].arguments == {"keyword": "취미"}
     assert captured[0]["reasoning_effort"] == "medium"
@@ -33,11 +35,12 @@ def test_outgoing_tool_calls_serialized_to_openai_format():
     assert message["tool_calls"][0]["function"]["arguments"] == '{"node_id": 42}'
 
 
-@pytest.mark.asyncio
-async def test_malformed_response_fails_visibly():
-    async with httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda request: httpx.Response(200, json={"choices": []})
-    )) as client:
-        adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
-        with pytest.raises(OllamaProtocolError):
-            await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hi"}]))
+def test_malformed_response_fails_visibly():
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"choices": []})
+        )) as client:
+            adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
+            return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hi"}]))
+    with pytest.raises(OllamaProtocolError):
+        asyncio.run(run())
