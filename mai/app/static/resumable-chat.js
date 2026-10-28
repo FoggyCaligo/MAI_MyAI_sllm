@@ -6,6 +6,8 @@
   let recovering = false;
   let liveProgressWrap = null;
   let historySyncing = false;
+  let historyEpoch = 0;
+  let resettingConversation = false;
   let renderedHistorySignature = null;
 
   // MAI currently exposes one continuing conversation per account. Keeping the
@@ -238,8 +240,9 @@
   }
 
   async function syncPersistentHistory() {
-    if (historySyncing || currentSubmissionJobId || !state?.token) return;
+    if (historySyncing || resettingConversation || currentSubmissionJobId || !state?.token) return;
     historySyncing = true;
+    const epoch = historyEpoch;
     try {
       const response = await nativeFetch(`/session/${encodeURIComponent(state.sessionId || 'default')}`, {
         headers: headersWithAuth(),
@@ -251,6 +254,7 @@
       }
       if (!response.ok) return;
       const data = await response.json().catch(() => ({}));
+      if (epoch !== historyEpoch || resettingConversation) return;
       renderPersistentHistory(Array.isArray(data.messages) ? data.messages : []);
     } finally {
       historySyncing = false;
@@ -386,9 +390,10 @@
   }
 
   async function recoverPendingJob() {
-    if (recovering || currentSubmissionJobId) return;
+    if (recovering || resettingConversation || currentSubmissionJobId) return;
 
     recovering = true;
+    const recoveryEpoch = historyEpoch;
     let pending = null;
     let recoveredJobId = null;
     try {
@@ -401,6 +406,7 @@
       if (!auth.ok) return;
 
       await syncPersistentHistory();
+      if (resettingConversation) return;
 
       let saved = null;
       const raw = localStorage.getItem(storageKey);
@@ -427,6 +433,7 @@
         return;
       }
 
+      if (resettingConversation || recoveryEpoch !== historyEpoch) return;
       if (response.ok) {
         if (pending) {
           pending.bubble.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(data.answer) : String(data.answer || '');
@@ -449,10 +456,37 @@
     } finally {
       if (recoveredJobId && currentSubmissionJobId === recoveredJobId) setCurrentJob(null);
       recovering = false;
-      if (!currentSubmissionJobId) void syncPersistentHistory();
+      if (!resettingConversation && recoveryEpoch === historyEpoch && !currentSubmissionJobId) void syncPersistentHistory();
       if (typeof scrollToBottom === 'function') scrollToBottom();
     }
   }
+
+  window.maiResetConversation = async function() {
+    if (resettingConversation) throw new Error('이미 대화 초기화가 진행 중입니다.');
+    resettingConversation = true;
+    historyEpoch += 1;
+    try {
+      const activeResponse = await nativeFetch('/chat/jobs/active', {
+        headers: headersWithAuth(), cache: 'no-store',
+      });
+      if (!activeResponse.ok) throw new Error('진행 중인 대화 확인 실패');
+      const active = await activeResponse.json();
+      for (const job of active.jobs) {
+        const cancelled = await nativeFetch(`/chat/jobs/${encodeURIComponent(job.job_id)}`, {
+          method: 'DELETE', headers: headersWithAuth(),
+        });
+        if (!cancelled.ok) throw new Error('진행 중인 작업 취소 실패');
+      }
+      const result = await nativeFetch(`/session/${encodeURIComponent(state.sessionId || 'default')}`, {
+        method: 'DELETE', headers: headersWithAuth(),
+      });
+      if (!result.ok) throw new Error('대화 기록 초기화 실패');
+      localStorage.removeItem(storageKey);
+      clearVisibleConversation();
+    } finally {
+      resettingConversation = false;
+    }
+  };
 
   const chatForm = document.getElementById('chat-form');
   const messageInput = document.getElementById('msg-input');

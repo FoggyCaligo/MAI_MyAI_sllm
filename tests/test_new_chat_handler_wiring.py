@@ -10,5 +10,8 @@ def test_new_chat_handler_is_loaded_by_resumable_root():
     assert 'src="/static/new-chat.js?v={new_chat_digest}"' in module
     assert "document.getElementById('new-chat-btn')" in script
     assert "button.addEventListener('click'" in script
-    assert "cancelActiveChatJobs()" in script
-    assert "resetVisibleConversation()" in script
+    assert "window.maiResetConversation()" in script
+    reset = (root / "mai/app/static/resumable-chat.js").read_text(encoding="utf-8")
+    assert "window.maiResetConversation = async function()" in reset
+    assert "historyEpoch += 1" in reset
+    assert "clearVisibleConversation()" in reset
