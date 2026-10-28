@@ -256,12 +256,16 @@ class MAIRuntime:
         browser_manager = BrowserSessionManager()
         registry = self._registry_for(principal, working, tool_result_store, browser_manager)
 
+        max_identical_failures = int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5"))
         agent = AgentRuntime(
             adapter,
             registry,
             guard_config=GuardConfig(
-                warn_identical_failures=int(os.environ.get("AGENT_MAX_IDENTICAL_CALLS", "3")),
-                max_identical_failures=int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5")),
+                warn_identical_failures=min(
+                    int(os.environ.get("AGENT_MAX_IDENTICAL_CALLS", "3")),
+                    max_identical_failures,
+                ),
+                max_identical_failures=max_identical_failures,
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
