@@ -638,7 +638,7 @@ async def remote_create_session(authorization: str | None = Header(default=None)
     return RemoteCreateResponse(
         session_id=session.session_id,
         agent_secret=session.secret,
-        expires_in_seconds=3600,
+        expires_in_seconds=600,
     )
 
 
