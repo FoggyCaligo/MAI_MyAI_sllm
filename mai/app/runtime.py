@@ -18,6 +18,7 @@ from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig
 from ..llm.ollama import OllamaAdapter
+from ..llm.llamacpp import LlamaCppAdapter
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
@@ -115,6 +116,8 @@ class MAIRuntime:
         *,
         model: str,
         ollama_host: str,
+        llm_backend: str = "ollama",
+        llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
         vision_model: str | None = None,
@@ -133,6 +136,10 @@ class MAIRuntime:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.download_links = DownloadLinkStore()
         self.cwd = cwd
+        if llm_backend not in {"ollama", "llamacpp"}:
+            raise ValueError("LLM_BACKEND must be ollama or llamacpp")
+        self.llm_backend = llm_backend
+        self.llamacpp_host = llamacpp_host
         self.ollama_host = ollama_host
         self.model = model
         self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
@@ -155,19 +162,21 @@ class MAIRuntime:
             self.recall,
             now=lambda: datetime.now(timezone.utc),
         )
-        self._adapters: dict[str, OllamaAdapter] = {}
+        self._adapters: dict[str, OllamaAdapter | LlamaCppAdapter] = {}
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
         self._ollama_client = AsyncClient(host=ollama_host)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 
-    def _adapter_for(self, model: str) -> OllamaAdapter:
+    def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
         clean_model = model.strip()
         if not clean_model:
             raise ValueError("model must be non-empty")
         adapter = self._adapters.get(clean_model)
         if adapter is None:
-            adapter = OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True))
+            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True))
+                       if self.llm_backend == "ollama" else
+                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True)))
             self._adapters[clean_model] = adapter
         return adapter
 
@@ -177,12 +186,16 @@ class MAIRuntime:
             raise ValueError("model must be non-empty")
         extractor = self._fact_extractors.get(clean_model)
         if extractor is None:
-            adapter = OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False))
+            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False))
+                       if self.llm_backend == "ollama" else
+                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=False)))
             extractor = OllamaFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
 
     async def list_models(self) -> tuple[str, ...]:
+        if self.llm_backend == "llamacpp":
+            return (self.model,)
         response = await self._ollama_client.list()
         raw_models = getattr(response, "models", None)
         if raw_models is None and isinstance(response, Mapping):
