@@ -110,6 +110,7 @@ class AgentFailureContext:
     tool_executions: tuple[ToolExecution, ...]
     model_rounds: int
     last_rejected_draft: str | None = None
+    last_verifier_feedback: str | None = None
 
 
 class AgentRunFailure(AgentRuntimeError):
@@ -198,6 +199,7 @@ class AgentLoop:
         rejection_feedback_indices: list[int] = []
         latest_verification_rejection: tuple[int, int] | None = None
         latest_correction_contract: dict[str, Any] | None = None
+        latest_verifier_feedback: str | None = None
 
         try:
             while True:
@@ -217,19 +219,13 @@ class AgentLoop:
                     model_history.append({
                         "role": "system",
                         "content": (
-                            "This is the latest rejected candidate and its verifier feedback. "
-                            "The candidate was not delivered and is not factual evidence. "
-                            "For EACH unsupported_claim in correction_contract, choose exactly one "
-                            "resolution: remove (omit the claim or narrow it to what existing observations "
-                            "actually prove) or re-observe (call a tool that directly establishes the "
-                            "claim before asserting it). Do not infer missing evidence from file listings, "
-                            "bounded histories, earlier rejected drafts, or other indirect observations. "
-                            "Never treat the rejected draft or the verifier's diagnosis as evidence. "
-                            "Keep supported findings. If required observations cannot be obtained, "
-                            "explicitly report the limitation rather than claim success. "
-                            "Other verification issues must also be corrected.\\n"
+                            "The preceding provisional answer was rejected before release. "
+                            "Continue the SAME agent run with the existing native tools: "
+                            "re-observe the unsupported facts using tools or remove/narrow them. "
+                            "Do not treat any rejected draft or verifier diagnosis as evidence. "
+                            "This is the ONLY retained verifier rejection feedback; earlier "
+                            "feedback is in the audit log, not this model context.\\n"
                             + json.dumps({
-                                "rejected_draft": history[latest_rejected].get("content", ""),
                                 "correction_contract": latest_correction_contract,
                                 "verifier_feedback": history[latest_feedback].get("content", ""),
                             }, ensure_ascii=False)
@@ -337,7 +333,7 @@ class AgentLoop:
                         round_number += 1
                         continue
                     _LOG.info(
-                        "MAI final candidate round=%d chars=%d semantic_retries=%d numeric_retries=%d coverage_retries=%d",
+                        "MAI provisional answer verification round=%d chars=%d semantic_retries=%d numeric_retries=%d coverage_retries=%d",
                         round_number,
                         len(turn.content),
                         semantic_verification_retries,
@@ -347,7 +343,7 @@ class AgentLoop:
                     if self.final_verifier is not None:
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
-                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices],
+                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
@@ -382,11 +378,12 @@ class AgentLoop:
                                 or (evidence_failure and evidence_verification_retries >= _MAX_EVIDENCE_VERIFICATION_RETRIES)
                                 or (coverage_failure and coverage_verification_retries >= _MAX_COVERAGE_VERIFICATION_RETRIES)
                             )
+                            latest_verifier_feedback = verification.feedback_message()
+                            if on_verification_rejection is not None:
+                                on_verification_rejection(round_number, verification)
                             if exhausted:
-                                if on_verification_rejection is not None:
-                                    on_verification_rejection(round_number, verification)
                                 raise VerificationRetriesExhausted(
-                                    "final verification correction budget exhausted: " + issue_codes)
+                                    "provisional answer verification correction budget exhausted: " + issue_codes)
                             if numeric_failure:
                                 numeric_verification_retries += 1
                             if semantic_failure:
@@ -396,7 +393,7 @@ class AgentLoop:
                             if coverage_failure:
                                 coverage_verification_retries += 1
                             _LOG.warning(
-                                "MAI final rejected round=%d issues=%s semantic_retries=%d/%d numeric_retries=%d/%d coverage_retries=%d/%d evidence_retries=%d/%d",
+                                "MAI provisional answer rejected round=%d issues=%s semantic_retries=%d/%d numeric_retries=%d/%d coverage_retries=%d/%d evidence_retries=%d/%d",
                                 round_number,
                                 issue_codes,
                                 semantic_verification_retries,
@@ -410,8 +407,6 @@ class AgentLoop:
                             )
                             feedback = verification.feedback_message()
                             latest_correction_contract = verification.correction_contract()
-                            if on_verification_rejection is not None:
-                                on_verification_rejection(round_number, verification)
                             history.append({"role": "system", "content": feedback})
                             rejection_feedback_indices.append(len(history) - 1)
                             latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
@@ -539,6 +534,7 @@ class AgentLoop:
                         str(history[rejected_final_indices[-1]].get("content", ""))
                         if rejected_final_indices else None
                     ),
+                    last_verifier_feedback=latest_verifier_feedback,
                 ),
             ) from exc
 

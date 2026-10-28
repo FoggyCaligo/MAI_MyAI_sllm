@@ -205,6 +205,31 @@
   }
   function removeEmpty(){const empty=document.getElementById('empty-state');if(empty)empty.remove();}
   function addMessage(role,text){removeEmpty();const row=document.createElement('div');row.className=`msg-row ${role}`;const avatar=document.createElement('div');avatar.className=`avatar ${role}`;avatar.textContent=role==='user'?'U':'MAI';const wrap=document.createElement('div');wrap.className='content-wrap';const bubble=document.createElement('div');bubble.className='bubble';if(role==='user')bubble.textContent=text;else bubble.innerHTML=renderMarkdown(text);wrap.appendChild(bubble);row.append(avatar,wrap);$messages.appendChild(row);scrollToBottom('smooth',role==='user');return{row,wrap,bubble};}
+  function renderUnverifiedAnswer(bubble, payload) {
+    bubble.classList.add('error');
+    bubble.replaceChildren();
+    const title = document.createElement('div');
+    title.textContent = '검증 미통과 · 임시답변 (확정된 결과가 아님)';
+    title.style.fontWeight = '700';
+    title.style.marginBottom = '10px';
+
+    const answer = document.createElement('div');
+    answer.className = 'unverified-answer';
+    answer.innerHTML = renderMarkdown(payload.unverified_answer);
+
+    const report = document.createElement('details');
+    report.className = 'verifier-report';
+    report.open = true;
+    report.style.marginTop = '16px';
+    const heading = document.createElement('summary');
+    heading.textContent = 'Verifier 마지막 거절 사유';
+    const feedback = document.createElement('div');
+    feedback.style.whiteSpace = 'pre-wrap';
+    feedback.style.marginTop = '8px';
+    feedback.textContent = payload.verifier_feedback;
+    report.append(heading, feedback);
+    bubble.append(title, answer, report);
+  }
   function addThinking(){const pending=addMessage('mai','');pending.bubble.innerHTML='<div class="loader" aria-label="생각 중"><span></span><span></span><span></span></div>';scrollToBottom();return pending;}
   function markInterrupted(pending){if(!pending)return;pending.bubble.classList.remove('error');pending.bubble.innerHTML='<div class="interrupted">중단됨 · 새 메시지로 전환</div>';}
   function renderToolLog(wrap,tools,rounds,model){const diag=document.createElement('div');diag.className='diagnostics';diag.textContent=`${model} · rounds: ${rounds}`;wrap.appendChild(diag);if(!tools.length)return;const details=document.createElement('details');details.className='tool-log';const summary=document.createElement('summary');summary.textContent=`tool log · ${tools.length} call${tools.length===1?'':'s'}`;details.appendChild(summary);const entries=document.createElement('div');entries.className='tool-log-entries';tools.forEach(tool=>{const entry=document.createElement('details');entry.className='tool-entry';const head=document.createElement('summary');head.className='tool-head';const name=document.createElement('span');name.textContent=tool.name;const status=document.createElement('span');status.textContent=tool.ok?'ok':(tool.error_type||'failed');if(!tool.ok)status.className='tool-failed';head.append(name,status);const args=document.createElement('div');args.className='tool-args';args.textContent=JSON.stringify(tool.arguments,null,2);entry.append(head,args);if(tool.result){const result=document.createElement('div');result.className='tool-result';result.textContent=tool.result;entry.appendChild(result);}entries.appendChild(entry);});details.appendChild(entries);wrap.appendChild(details);scrollToBottom();}
@@ -310,7 +335,7 @@
       uploadingClipboardImages = false;
     }
   }
-  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
+  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string' && typeof data.verifier_feedback === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
   $input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=`${Math.min($input.scrollHeight,150)}px`;syncSendButton();});
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   syncSendButton();

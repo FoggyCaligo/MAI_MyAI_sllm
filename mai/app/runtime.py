@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 
 from ollama import AsyncClient
 
+from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
@@ -85,6 +86,8 @@ For arithmetic that materially affects the answer, activate and use the calculat
 
 The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through file_read. The owner can use document_edit for explicit supported edits to existing structured files, including PDF page operations; arbitrary PDF text edits are not supported. There are no separate file_create or model-visible document_read native tools.
 
+Once you have sufficient evidence for a complete response, produce a provisional answer rather than performing unnecessary extra tool calls. The provisional answer is verified before delivery. If rejected, continue the same agent run, use the latest verifier feedback to obtain missing evidence with native tools or narrow unsupported claims, and propose a revised answer. Older rejected answers and verifier feedback are not factual evidence.
+
 Do not invent tool results. If a tool fails, treat the failure as real and make the failure visible when it matters to the request.
 """.strip()
 
@@ -121,7 +124,7 @@ class MAIRuntime:
         if not model.strip():
             raise ValueError("model must be non-empty")
         if max_inline_tool_result_chars is None:
-            max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "16000"))
+            max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
         if enable_tool_requirement_verifier is None:
             enable_tool_requirement_verifier = _env_bool("TOOL_REQUIREMENT_VERIFIER", False)
         if max_inline_tool_result_chars < 1024:
@@ -255,9 +258,18 @@ class MAIRuntime:
         browser_manager = BrowserSessionManager()
         registry = self._registry_for(principal, working, tool_result_store, browser_manager)
 
+        max_identical_failures = int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5"))
         agent = AgentRuntime(
             adapter,
             registry,
+            guard_config=GuardConfig(
+                warn_identical_failures=min(
+                    int(os.environ.get("AGENT_MAX_IDENTICAL_CALLS", "3")),
+                    max_identical_failures,
+                ),
+                max_identical_failures=max_identical_failures,
+                max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
+            ),
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
