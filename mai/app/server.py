@@ -352,7 +352,8 @@ async def me(authorization: str | None = Header(default=None)) -> dict[str, str]
 
 @app.post("/logout")
 async def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
-    token, _ = _principal_from_authorization(authorization)
+    token, principal = _principal_from_authorization(authorization)
+    await remote_sessions.close_owner_sessions(principal.db_id)
     _auth_sessions.pop(token, None)
     return {"logged_out": True}
 
