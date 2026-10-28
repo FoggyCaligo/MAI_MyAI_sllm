@@ -63,6 +63,9 @@ class RemoteSessionManager:
 
     async def create(self, owner_id: str, ttl_seconds: int = _PENDING_SECONDS) -> RemoteSession:
         async with self._lock:
+            for existing in self._sessions.values():
+                if existing.owner_id == owner_id and not existing.closed and time.monotonic() < existing.expires_at:
+                    raise RemoteExecutionError("owner already has an active or pending remote session")
             session = RemoteSession(
                 session_id=secrets.token_urlsafe(18),
                 owner_id=owner_id,
