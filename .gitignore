@@ -15,3 +15,7 @@ data/voice_profiles/
 # Externally provisioned portable runtimes and large model weights
 portable-runtimes/
 portable-models/
+
+# Downloaded Portable runtime archives and local source pins
+portable-downloads/
+portable-sources.json

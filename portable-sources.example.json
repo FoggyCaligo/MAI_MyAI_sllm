@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "python": {
+    "url": "https://REPLACE-WITH-PINNED-PYTHON-BUILD-STANDALONE-RELEASE.tar.gz",
+    "sha256": "REPLACE_WITH_VERIFIED_SHA256"
+  },
+  "uv": {
+    "url": "https://REPLACE-WITH-PINNED-UV-WINDOWS-X64-RELEASE.zip",
+    "sha256": "REPLACE_WITH_VERIFIED_SHA256"
+  },
+  "ollama": {
+    "url": "https://REPLACE-WITH-PINNED-OLLAMA-WINDOWS-AMD64-RELEASE.zip",
+    "sha256": "REPLACE_WITH_VERIFIED_SHA256"
+  },
+  "llamacpp": {
+    "url": "https://REPLACE-WITH-PINNED-LLAMA-CPP-VULKAN-RELEASE.zip",
+    "sha256": "REPLACE_WITH_VERIFIED_SHA256"
+  },
+  "models": [
+    "ornith-1.5:9b",
+    "gemma4:e4b"
+  ]
+}
