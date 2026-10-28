@@ -7,7 +7,7 @@ from ..index import ConceptHit, ConceptIndex
 from ..working import WorkingGraph
 
 
-DEFAULT_ANCHOR_FACT_LIMIT = 8
+DEFAULT_ANCHOR_FACT_LIMIT = 5
 
 
 class RecallService:
