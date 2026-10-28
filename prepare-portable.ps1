@@ -5,7 +5,8 @@ param(
     [switch]$CopyLocalModels,
     [switch]$InstallChromium,
     [switch]$PullModels,
-    [switch]$PreserveAndReinstallExisting
+    [switch]$PreserveAndReinstallExisting,
+    [string[]]$Models
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -100,6 +101,12 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
 
 }
 
+if ($Models.Count -gt 0 -and -not $CopyLocalModels) {
+    throw '-Models requires -CopyLocalModels'
+}
+if ($CopyLocalModels -and $PullModels) {
+    throw '-CopyLocalModels and -PullModels cannot be used together'
+}
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
@@ -133,10 +140,19 @@ if ($CopyLocalModels) {
         throw "Source Ollama models not found: $sourceModels"
     }
     $targetModels = Join-Path $root 'portable-models\ollama'
-    if (Test-Path -LiteralPath $targetModels) { throw "Refusing to overwrite existing models: $targetModels" }
-    New-Item -ItemType Directory -Force -Path $targetModels | Out-Null
-    & robocopy $sourceModels $targetModels /E /COPY:DAT /DCOPY:DAT /R:1 /W:1
-    if ($LASTEXITCODE -ge 8) { throw "Model copy failed with robocopy code $LASTEXITCODE" }
+    if ($Models.Count -gt 0) {
+        $copyArgs = @('scripts/copy_ollama_models.py', '--source', $sourceModels, '--destination', $targetModels)
+        foreach ($model in $Models) {
+            $copyArgs += @('--model', $model)
+        }
+        & $python @copyArgs
+        if ($LASTEXITCODE -ne 0) { throw 'Selective Ollama model copy failed' }
+    } else {
+        if (Test-Path -LiteralPath $targetModels) { throw "Refusing to overwrite existing models: $targetModels" }
+        New-Item -ItemType Directory -Force -Path $targetModels | Out-Null
+        & robocopy $sourceModels $targetModels /E /COPY:DAT /DCOPY:DAT /R:1 /W:1
+        if ($LASTEXITCODE -ge 8) { throw "Model copy failed with robocopy code $LASTEXITCODE" }
+    }
 }
 if ($PullModels) {
     if ($null -eq $config.models -or @($config.models).Count -eq 0) {
