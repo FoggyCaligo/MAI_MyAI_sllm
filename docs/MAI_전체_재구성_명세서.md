@@ -67,7 +67,7 @@ MAI는 사용자의 컴퓨터에서 실행되는 개인 AI 프로그램이다. �
 | 작업 그래프 | 이번 요청에서 가져온 기억을 모아 두는 임시 상태 |
 | 색인 | 검색어로 기존 개념 노드의 번호를 찾는 보조 구조 |
 | FTS5 | SQLite의 단어 기반 텍스트 검색 기능. 의미 임베딩 검색과 다름 |
-| 사전 판단 | 본 실행 전에 반드시 실행해야 할 도구 이름을 정하는 모델 호출 |
+| 선택적 tool requirement planner | `TOOL_REQUIREMENT_VERIFIER=true`일 때 본 실행 전에 required tool 집합을 정하는 모델 호출. 기본 production에서는 꺼져 있음 |
 | 비동기 작업 | 웹 연결과 분리하여 서버에서 계속 수행하는 작업 |
 | `user_id` | 로그인할 때 입력하는 계정 이름 |
 | `db_id` | 로그인 이름이 바뀌어도 유지하는 내부 사용자 식별자 |
@@ -784,25 +784,28 @@ FTS5 결과는 BM25 값이 작은 순서, 그 다음 노드 번호 순서로 정
 
 옛 벡터 색인 표가 남아 있어도 현재 검색에 사용하지 않는다. 그렇다고 시작 시 몰래 삭제하지도 않는다.
 
+
 ### 14.3 `memory_recall(query, limit=None)`의 실제 알고리즘
 
-1. 현재 사용자 기준점을 확보한다.
-2. 모델이 만든 검색어를 **공백으로만** 나눈다. 문장 분해기를 적용하지 않는다.
-3. 같은 검색 조각은 최초 위치를 남기고 중복 제거한다.
-4. 각 조각을 개념 색인에서 `limit=1`로 검색한다.
-5. 같은 개념 번호가 여러 조각에서 나오면 더 높은 점수를 유지한다.
-6. 점수 내림차순, 조각 최초 순서, 노드 번호 순서로 정렬한다.
-7. 기본 최대 5개 개념 번호를 검색 시작점으로 선택한다.
-8. 새 임시 그래프에 사용자 기준점과 기본 8개의 기준점 사실 문맥을 넣는다.
-9. 각 개념 번호의 1단계 이웃을 읽는다.
-10. 그 이웃에서 기준점·사실만 남긴다. 개념·발화 노드 및 이들이 필요한 연결은 제거한다.
-11. 각 사실에서 현재 사용자 기준점까지의 최단 경로를 찾고, 역시 기준점·사실만 남겨 합친다.
-12. 이번 조회 결과를 요청의 작업 그래프에 누적한다.
-13. 모델에는 누적 전체가 아니라 **이번 조회에서 만든 결과만** 돌려준다.
+현재 `RecallService.recall_query()`는 다음 순서를 따른다.
 
-검색 조각이 하나도 일치하지 않아도 기준점 사실 문맥은 반환될 수 있다. 따라서 검색 결과에 사실이 있다고 그 사실이 반드시 검색어와 직접 일치한 것이라고 생각하면 안 된다.
+1. `query.strip()`이 비어 있으면 실패한다.
+2. 현재 `user_id`의 anchor를 찾는다. 없으면 실패한다.
+3. query를 **공백 기준 chunk**로 나누고 같은 chunk를 중복 제거한다.
+4. 각 chunk마다 Concept FTS index에서 최대 `concept_limit`개의 후보를 가져온다. 기본 `concept_limit`은 12다.
+5. 같은 Concept node가 여러 chunk에서 잡히면 더 높은 score를 남긴다.
+6. Concept 후보를 score 우선으로 다시 정렬하고 전체 seed를 `concept_limit`개로 제한한다.
+7. 각 seed Concept의 one-hop neighborhood에서 현재 `user_id` 소유 Fact만 모은다.
+8. 하나의 Fact가 여러 Concept과 연결되면 그 Fact의 score는 연결된 seed 중 가장 높은 score를 사용한다.
+9. Fact를 score 내림차순으로 정렬한다. 동점은 안정적인 encounter order로 정한다.
+10. `limit`이 있으면 **이 최종 Fact 순위에** 적용한다.
+11. 각 선택 Fact에서 현재 user anchor까지 shortest path가 존재하는지 확인하고, model-visible working graph에는 anchor와 Fact만 합친다.
 
-기준점 사실 문맥은 `asserted_fact`로 직접 연결된 사실을 등장 횟수 내림차순, 마지막 관찰 시각 내림차순, 노드 번호 내림차순으로 정렬하여 기본 8개를 고른다. 원문 발화 연결은 이 문맥에서 제외한다.
+즉 `memory_recall(limit=5)`는 “Concept 후보를 5개만 찾는다”는 뜻이 아니라 **관련성 순으로 최종 Fact를 최대 5개 반환한다**는 뜻이다.
+
+현재 recall query 자체에는 Sentence_Breaker를 다시 적용하지 않는다. Sentence_Breaker는 저장 시 Concept canonicalization 쪽에서 사용되고, recall entry는 whitespace chunk + lexical Concept index 검색을 사용한다.
+
+검색 결과가 비거나 약하다는 것은 “기억이 없다”는 증명이 아니다. query 표현을 바꾸거나 관련 node를 `memory_search`로 확장할 수 있다.
 
 ### 14.4 1단계 이웃과 최단 경로
 
@@ -1519,98 +1522,119 @@ filesystem/code/terminal, static web fetch, Chromium browser navigation, structu
 
 owner-only voice profile, VAD, speaker verification, transcription, UI auto-send/TTS loop를 추가한다. voice 인증은 Web 로그인 자체를 대체하지 않는다.
 
+
 ## 24. 구현 완료를 판단하는 처리 예시와 검증 항목
 
 ### 24.1 새 사용자 사실을 기억한다
 
 입력: “내가 쓰는 건 은색 만년필이야.”
 
-가능한 정상 흐름은 다음과 같다. 이 요청은 현재 대화에 필요한 정보가 있어 사전 판단이 빈 집합일 수 있다. 본 모델이 답변을 만든다. 후보 분석은 사용자 원문에서 직접 진술한 발췌를 얻는다. 답변이 통과하면 후처리가 그 발췌를 허용 출처로 주고 ‘사용자는 은색 만년필을 사용한다’라는 문장을 추출한다.
+정상 흐름:
 
-원문과 사실 문장은 다른 문자열이어도 된다. 사용자 기준점·사실·분해된 개념·고정 연결이 생긴다. 실제 분해 조각은 초기 문장 분해 DB에 의존한다.
+1. main agent는 별도 tool이 필요하지 않으면 `tool_manual`을 호출하지 않고 답할 수 있다.
+2. final verifier가 답변의 사실 범위를 현재 user message와 대조한다.
+3. 통과한 뒤 background fact extractor가 user turn을 근거로 Fact 후보를 만든다.
+4. raw user utterance와 Fact/Concept 관계를 memory DB에 저장한다.
 
-검증해야 할 것은 원문 발췌가 실제 메시지에 존재하는지, 사실의 출처 번호가 허용 목록에 있는지, 동일 사용자의 동일 문장을 다시 저장했을 때 새 사실 노드가 아니라 횟수가 갱신되는지다.
+검증 포인트: assistant가 만든 표현을 user 원문 자체로 위장하지 않는가.
 
-### 24.2 승인만으로 기억이 오염되지 않는다
+### 24.2 기억 조회만으로 새 기억을 만들지 않는다
 
-직전 답변: “당신은 은색 펜을 사용합니다.”
+입력: “전에 쓰던 펜이 뭐였지?”
 
-현재 사용자: “맞아. 그렇게 정리해 줘.”
+정상 흐름:
 
-사용자가 승인했다는 이유만으로 직전 모델 답변 전체가 직접 사용자 발췌가 되어서는 안 된다. 사용자 발췌에 ‘맞아’가 존재한다는 형식 검사만으로 본 사실의 지원이 확보된 것은 아니다. 승인 배제의 의미 판단도 필요하다.
+1. main agent가 `tool_manual(["memory_recall"])`로 schema를 활성화한다.
+2. 다음 round에서 `memory_recall(...)`을 호출한다.
+3. recalled memory로 답한다.
+4. 후처리 extraction이 새 Fact를 만들지 못했고 요청이 recall-only라면 persistent mutation을 skip할 수 있다.
 
-반면 “맞아. 내가 실제로 쓰는 건 은색 펜이야”에는 뒤의 직접 진술이 있으므로 그 범위는 근거가 될 수 있다.
+검증 포인트: memory를 읽었다는 이유만으로 occurrence나 user assertion이 새로 생기지 않는가.
 
-### 24.3 기억 질문과 새 사실이 섞인다
+### 24.3 현재 말이 과거 기억보다 우선한다
 
-현재 사용자: “내가 전에 쓰던 펜 기억해? 지금은 검은색 펜으로 바꿨어.”
+과거 memory: “사용자는 검은 펜을 사용한다.”
+현재 입력: “이제 은색 펜으로 바꿨어.”
 
-기억 도구가 성공했고 새 사실도 추출됐으면 저장을 생략하지 않는다. ‘지금은 검은색 펜으로 바꿨어’라는 최신 발췌가 새 근거다. 옛 기억 조회 결과는 새 사실의 출처 목록에 넣지 않는다.
+정상 결과: 현재 user message가 과거 memory보다 우선한다. 같은 subject/property/time scope에서 persistent Fact끼리 충돌한다면 `created_at`이 최신인 Fact를 우선한다.
 
-다음 요청은 이 후처리가 끝난 뒤 시작하도록 기다린다. 그래프의 옛 사실은 자동 삭제되지 않을 수 있지만 모델은 현재 메시지를 우선해야 한다.
+### 24.4 `memory_recall(limit)`은 Fact 개수 제한이다
 
-### 24.4 중요한 계산을 확인한다
+여러 Concept에서 20개의 Fact가 걸렸고 `memory_recall(query="만년필", limit=5)`를 호출했다면 model-visible 결과는 관련성 높은 Fact 최대 5개다.
 
-현재 사용자: “100,000원에 산 걸 110,000원에 팔면 수익률은?”
+검증 포인트: Concept 후보 개수나 raw node 개수에 limit을 잘못 적용하지 않는가.
 
-계산 도구에 `(110000-100000)/100000*100`을 전달하여 결과를 확보한다. 답변의 수익률은 계산 결과의 백분율 의미를 보존한다. 거래비용 등 사용자나 도구에 없는 숫자를 임의로 끼워 넣지 않는다.
+### 24.5 lazy tool activation
 
-숫자 집합에 원래 금액이 있다는 것과 수익률 산식이 맞는 것은 별개다. 의미 검토에서 매매 금액·수익률·목표 도달을 서로 바꿔 쓰지 않아야 한다.
+첫 round에서 `web_search` schema는 아직 노출되지 않았다.
 
-### 24.5 실패 후 다른 방법을 선택한다
+정상 흐름:
 
-파일 읽기가 경로 오류로 실패하면 실패 결과를 모델에게 준다. 같은 존재하지 않는 경로를 같은 방식으로 반복하면 경고·차단 대상이다. 파일 검색으로 정확한 경로를 찾은 뒤 다른 인자로 다시 읽는 것은 구조상 다른 호출이다.
+1. model이 `tool_manual(tools=["web_search"])` 호출.
+2. 다음 round부터 `web_search` native schema 노출.
+3. model이 schema에 맞춰 실제 호출.
 
-입력 규격 오류로 처리 함수가 시작하지 않았다면 필수 도구 의무는 남는다. 파일이 없어 처리 함수가 실패했다면 실행 의무는 충족될 수 있지만 요청 결과는 실패로 설명해야 한다.
+검증 포인트: 활성화되지 않은 tool 직접 호출을 조용히 실행하지 않는가.
 
-### 24.6 일부 결과를 전체로 확대하지 않는다
+### 24.6 JS 페이지 탐색
 
-파일 검색이 200개에서 멈췄고 `complete=false`다. 답변은 관찰한 200개의 범위를 말해야 한다. ‘이 폴더의 모든 파일은 200개다’는 전체 수 주장에 필요한 근거가 없다.
+정적 `web_fetch`로 원하는 내용이 보이지 않고 페이지가 JS 렌더링이라면 `browser_open`을 활성화해 실제 DOM snapshot을 얻는다. click은 snapshot의 exact `element_ref`를 사용한다.
 
-큰 결과의 첫 페이지에서 일부 종목만 읽었다면 ‘이 종목이 전체 1위다’라고 결론 내릴 수 없다. 다음 페이지를 읽거나 관찰한 범위 안에서의 비교라고 제한한다.
+검증 포인트: button text 문자열을 추측해서 임의 클릭하지 않는가.
 
-### 24.7 파일 변경 완료의 범위를 확인한다
+### 24.7 일부 결과를 전체로 확대하지 않는다
 
-사용자: “이 파일에 문장을 추가해 줘.”
+`file_list` 또는 `file_search`가 `collection.complete=false`를 반환했다면 답변은 그 범위를 partial result로 표현해야 한다.
 
-정확한 파일을 읽고 기존 내용을 보존하여 새 본문을 만든 다음 쓰기 도구를 실행한다. 반환 결과가 실제 본문 상태를 충분히 보장하지 않는다면 후속 읽기로 확인할 수 있다. 답변은 로컬 파일 변경을 말한다. 원격 Git 저장소까지 업데이트됐다고 주장하지 않는다.
+검증 포인트: 반환된 200개를 “전체가 200개”라고 말하지 않는가.
 
-터미널이 오류 종료하면서 일부 파일을 이미 썼다면, 실패 코드만 보고 모든 작업이 아무 변화 없이 끝났다고 단정하지 않는다. 결과 상태가 필요한 범위는 추가 관찰하거나 미확인으로 구분한다.
+### 24.8 구조 문서 수정
 
-### 24.8 서버 작업 복구와 새 채팅
+사용자가 XLSX 특정 cell을 수정하라고 요청했다면 owner는 `document_edit`의 지원 operation을 사용한다. PDF arbitrary text edit처럼 지원되지 않는 작업은 성공했다고 꾸미지 않는다.
 
-작업 실행 중 브라우저를 닫고 같은 서버에 다시 접속하면 로그인 후 활성 작업을 찾아 상태 조회를 이어갈 수 있다. 서버 자체를 재시작하면 같은 작업 번호가 남아 있다는 보장은 없다. 이미 저장된 정상 대화는 DB에서 복원할 수 있다.
+검증 포인트: 실제 supported operation 범위와 final 완료 주장이 일치하는가.
 
-새 채팅을 누르면 활성 작업 취소가 먼저 끝나고 해당 세션 대화가 삭제되어야 한다. 장기기억을 함께 초기화해서는 안 된다.
+### 24.9 verifier rejection
 
-### 24.9 자동 검증 시나리오
+candidate가 tool evidence보다 넓은 범위의 성공을 주장하면 factual reviewer가 `scope_expansion` 또는 action outcome issue로 거절할 수 있다.
 
-아래는 새 구현의 확인 기준이다. 이 문서 작성 과정에서 아래 모든 통합 시나리오를 실제 모델로 수행했다는 뜻은 아니다.
+다음 correction round에는 최신 rejected candidate와 feedback만 다시 들어간다. 과거 rejected candidate는 factual evidence가 아니다.
 
-| 분야 | 필수 검증 |
+### 24.10 reviewer infrastructure failure
+
+structured reviewer가 malformed JSON 또는 timeout을 내면 retryable 조건에서 최대 3회 재시도한다. 계속 실패하면 상위 failure로 드러난다.
+
+검증 포인트: reviewer 장애를 문자열 fallback으로 `supported` 처리하지 않는가.
+
+### 24.11 audit log
+
+한 resumable job에 대해 `runs` 한 행과 시간순 `steps`가 생겨야 한다. thinking/tool/verifier/model이 같은 테이블에서 role로 구분되어야 한다.
+
+검증 포인트: audit DB 내용을 다음 model context나 memory evidence로 자동 주입하지 않는가.
+
+### 24.12 voice
+
+owner가 voice profile을 등록하지 않은 채 transcription을 요청하면 명시적 오류가 나야 한다. profile model format이 다르면 자동 호환하지 않고 재등록을 요구한다.
+
+### 24.13 자동 검증 권장 묶음
+
+| 분야 | 최소 확인 |
 |---|---|
-| 모델 연결 | 잘못된 역할·본문 타입·인자 타입 거절, 정상 호출 보존 |
-| 도구 등록 | 중복 이름 거절, 추가 인자 거절, 엄격 타입, 동기·비동기 실행 |
-| 사전 판단 | 없는 이름 거절, 요구 고정, 처리 함수 미시작과 실행 실패 구별 |
-| 본 반복 | 도구 배열 순서, 빈 답변 1회 보정, 초안 격리, 정상 총횟수 상한 없음 |
-| 반복 감시 | 같은 실패 3회 경고·5회 후 차단, 다른 결과에서 진행 구별 |
-| 결과 페이지 | 원문 보존, 메타데이터 포함 한도, next_offset 연속 읽기, 다음 차례 후 축소 |
-| 숫자 | 날짜·단위·쉼표·퍼센트·목록 번호, 이전 답변 숫자 배제, 계산 결과 지원 |
-| 후보 분석 | 직접 원문 발췌만 허용, 승인 배제, 부분 답변 정렬 판단 |
-| 근거 검토 | 주장 번호 1대1, 지원 번호 유효성, 실패 결과와 성공 결과 구별 |
-| 검증 재시도 | 인프라 재시도와 후보 수정 분리, 횟수 소진 시 차단 |
-| 그래프 | 사용자별 사실·공유 개념, 정확 정체성, 연결 중복, 조회 시 횟수 미증가 |
-| 색인 | 정확 우선, FTS 보조, 누락 동기화, 충돌 명시 실패 |
-| 문장 분해 | 연속 층·위치, 점수와 동점, 분해 후 입력 학습 |
-| 기억 조회 | 공백 검색 조각, 조각당 1개, 5개 시작점, 8개 기준점 문맥, 조회·확장 차이 |
-| 사실 추출 | 현재 발췌만, 기억 재활용 금지, 허용 출처 번호, 새 사실 혼합 보존 |
-| 기억 작업 | 같은 사용자 대기, 다른 사용자 비대기, 추출 실패 원문 보존 시도 |
-| 계정 | 안정된 db_id, 체험 모델 제한, 체험 쓰기 경계, 다른 사용자 작업 404 |
-| 대화 | 최신 N개 순서, 새 채팅 기억 유지, 알려지지 않은 옛 표 보존 |
-| 실제 도구 | 문서 내부 잘림, 실패 stdout/stderr, 시간 제한·취소, 임시 파일 수명 |
-
-현재 사용자 격리의 한계를 개선하기로 했다면 공유 개념·임의 노드 번호·최단 경로를 통한 다른 사용자 자료 노출이 차단되는 테스트를 별도로 추가해야 한다. 이는 개선판의 필수 검증이고 현재 동등 재현의 동작과는 구분한다.
-
+| native adapter | native `tools/tool_calls` 보존, invalid payload 명시적 실패 |
+| lazy activation | exact name 활성화, unknown/unactivated tool 거부 |
+| registry | duplicate name, strict Pydantic args, handler failure 보존 |
+| guard | identical call/failure/no-progress 제한, global round ceiling 없음 |
+| large result | 원문 보존, bounded view, `tool_result_read` continuation |
+| verifier | numeric → factual/action → optional quality 순서 |
+| verifier retry | retryable infra 오류 3회, non-retryable failure 노출 |
+| rejected draft | 최신 draft만 correction context, evidence로 사용 금지 |
+| memory recall | whitespace lexical query, Fact ranking, optional final Fact limit |
+| temporal precedence | current user/tool > persistent memory, latest conflicting Fact |
+| chat/audit 분리 | `chat.sqlite3`와 `log.sqlite3` 역할 분리 |
+| browser | exact element ref, request 종료 cleanup |
+| document edit | supported operation만 성공 |
+| permissions | owner PC-wide, trial upload-scoped write |
+| voice | owner-only, VAD/speaker/transcription failure 구분 |
 
 ## 25. 현재 구현의 의도적 절충과 남은 한계
 
