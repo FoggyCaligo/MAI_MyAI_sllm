@@ -166,7 +166,9 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 principal, request.session_id, role="assistant", content=detail,
                 metadata={"kind": "error", "error_type": error_type,
                           "model": payload.get("model"), "model_rounds": payload.get("model_rounds"),
-                          "tools": payload.get("tools", [])},
+                          "tools": payload.get("tools", []),
+                          "unverified_answer": payload.get("unverified_answer"),
+                          "verifier_feedback": payload.get("verifier_feedback")},
             )
             audit.finish(job_id, status="failed",
                          error_type=error_type, error_message=detail)
