@@ -224,14 +224,13 @@ def install() -> None:
             '#new-chat-btn:hover{border-color:var(--accent);color:var(--text)}</style>\n'
         )
         html = html.replace("</head>", login_style + "</head>", 1)
-        logout_marker = '<button id="logout-btn" type="button">로그아웃</button>'
-        if logout_marker not in html:
-            raise RuntimeError("logout button marker is missing from index.html")
+        remote_marker = '<button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>'
+        if remote_marker not in html:
+            raise RuntimeError("remote connection button marker is missing from index.html")
         new_chat_html = (
             '<button id="new-chat-btn" type="button" title="최근 대화 문맥만 지우고 장기기억은 유지합니다.">새 채팅</button>'
-            + logout_marker
         )
-        html = html.replace(logout_marker, new_chat_html, 1)
+        html = html.replace(remote_marker, new_chat_html + remote_marker, 1)
 
         chat_form_marker = '<form id="chat-form">'
         if chat_form_marker not in html:
