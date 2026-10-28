@@ -1,5 +1,8 @@
 ## 배포 파일 URL 및 SHA-256 자동 생성
 
+참고: llama.cpp의 GitHub `/releases/latest`에는 Windows용 바이너리가 없을 수 있어, resolver는 최근 공식 릴리스 목록에서 Windows x64 Vulkan 바이너리가 있는 가장 새로운 릴리스를 찾음. 선택한 릴리스 태그와 파일명을 출력하고 배포자가 제공한 SHA-256이 없으면 실패함.
+
+
 기존 portable-sources.example.json에는 실제 다운로드 정보 대신 자리표시자가 있었음. 먼저 아래 명령을 실행해 공식 GitHub 릴리스 API의 배포자 제공 SHA-256과 URL을 portable-sources.json에 고정함.
 
 ```bash
