@@ -35,7 +35,7 @@ if ($Backend -eq 'ollama') {
     }
     if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) { throw 'Ollama port 11434 is already occupied' }
     # Explicitly configure the server started by this script, independent of the installed Ollama app.
-    $env:OLLAMA_CONTEXT_LENGTH = '262144'
+    $env:OLLAMA_CONTEXT_LENGTH = '131072'
     $ollamaProcess = Start-Process -FilePath $ollama -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollama) -PassThru -NoNewWindow
     try {
         $ready = $false
