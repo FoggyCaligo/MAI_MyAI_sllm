@@ -6,12 +6,16 @@ credentials; session expiry and disconnect revoke further requests.
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 class RemoteExecutionError(RuntimeError):
@@ -60,6 +64,7 @@ class RemoteSessionManager:
                 expires_at=time.monotonic() + ttl_seconds,
             )
             self._sessions[session.session_id] = session
+            _LOG.info("MAI remote session created session=%s owner=%s", session.session_id, owner_id)
             return session
 
     def get(self, session_id: str) -> RemoteSession:
@@ -80,6 +85,7 @@ class RemoteSessionManager:
             if session is None:
                 return
             session.closed = True
+            _LOG.info("MAI remote session revoked session=%s", session_id)
             for future in session.in_flight.values():
                 if not future.done():
                     future.set_exception(RemoteExecutionError("remote session closed"))
@@ -94,6 +100,7 @@ class RemoteSessionManager:
         request_id = secrets.token_urlsafe(16)
         future = asyncio.get_running_loop().create_future()
         session.in_flight[request_id] = future
+        _LOG.info("MAI remote dispatch session=%s request=%s operation=%s", session_id, request_id, operation.operation)
         await session.pending.put({"request_id": request_id, **operation.model_dump()})
         try:
             return await asyncio.wait_for(future, timeout=timeout)
@@ -122,8 +129,10 @@ class RemoteSessionManager:
         if response.ok:
             if response.result is None:
                 raise RemoteExecutionError("successful response requires result")
+            _LOG.info("MAI remote result session=%s request=%s ok=true", session_id, response.request_id)
             future.set_result(response.result)
         else:
+            _LOG.warning("MAI remote result session=%s request=%s ok=false error_type=%s", session_id, response.request_id, response.error_type)
             future.set_exception(RemoteExecutionError(f"{response.error_type}: {response.error}"))
 
 
