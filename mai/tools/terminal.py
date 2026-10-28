@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import locale
+import ctypes
 import json
 import os
 import signal
@@ -50,6 +51,31 @@ def _shell_family() -> str:
     return "cmd" if os.name == "nt" else "sh"
 
 
+def _windows_console_encoding() -> str:
+    """Match the active Windows console output code page for CMD subprocesses."""
+    code_page = ctypes.windll.kernel32.GetConsoleOutputCP()
+    if not code_page:
+        raise RuntimeError("Windows console output code page is unavailable")
+    return f"cp{code_page}"
+
+
+def _powershell_command(command: str) -> list[str]:
+    """Return a Unicode-safe invocation with failure-preserving process status."""
+    prefix = (
+        "$ErrorActionPreference = 'Stop'; "
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+        "$OutputEncoding = [Console]::OutputEncoding; "
+        "$global:LASTEXITCODE = 0; "
+    )
+    suffix = (
+        "; if (-not $?) { exit 1 }; "
+        "if ($null -ne $global:LASTEXITCODE -and $global:LASTEXITCODE -ne 0) "
+        "{ exit $global:LASTEXITCODE }"
+    )
+    payload = base64.b64encode((prefix + command + suffix).encode("utf-16-le")).decode("ascii")
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", payload]
+
+
 def _terminate_process_tree(pid: int) -> None:
     if os.name == "nt":
         subprocess.run(
@@ -75,9 +101,7 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
     if shell == 'powershell':
         if os.name != 'nt':
             raise ValueError('PowerShell shell selection requires Windows')
-        utf8_setup = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; '
-        encoded = base64.b64encode((utf8_setup + command).encode('utf-16-le')).decode('ascii')
-        command_args = ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded]
+        command_args = _powershell_command(command)
         process = await asyncio.create_subprocess_exec(*command_args, cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs)
     else:
@@ -103,7 +127,8 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
         await process.communicate()
         raise
 
-    output_encoding = "utf-8" if shell == "powershell" else locale.getpreferredencoding(False)
+    output_encoding = ("utf-8" if shell == "powershell" else
+                       _windows_console_encoding() if os.name == "nt" else locale.getpreferredencoding(False))
     return {
         "command": command,
         "cwd": str(cwd),
@@ -171,7 +196,10 @@ def register_terminal_tools(
             "stderr, permission failures and timeouts as real failures. "
             "Paths outside the repository are allowed. For Unicode Windows PowerShell commands, "
             "select shell=powershell explicitly to use UTF-16LE EncodedCommand. "
-            "The runner configures UTF-8 output and decodes it strictly."
+            "The runner configures UTF-8 output and decodes it strictly. "
+            "PowerShell treats nonterminating errors as failures; native process nonzero "
+            "exit codes are preserved. Invoke sc.exe rather than the PowerShell sc alias "
+            "when querying Windows services. CMD uses its console output code page."
         ),
         input_model=TerminalRunInput,
         handler=handler,
