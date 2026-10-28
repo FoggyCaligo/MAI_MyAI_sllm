@@ -22,3 +22,8 @@ portable-sources.json
 
 # Linux host-specific pinned release manifest
 portable-sources-linux.json
+
+# Local Windows Remote Agent packaging artifacts
+build/
+dist/
+*.spec
