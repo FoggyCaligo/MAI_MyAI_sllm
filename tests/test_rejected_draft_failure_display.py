@@ -60,7 +60,7 @@ class MultipleProvisionalDrafts:
 
     async def chat(self, request):
         self.calls += 1
-        content = f"## Draft {self.calls}\\n\\n- item"
+        content = f"## Draft {self.calls}\n\n- item"
         return ModelTurn(
             content=content, thinking="", tool_calls=(),
             assistant_message={"role": "assistant", "content": content},
