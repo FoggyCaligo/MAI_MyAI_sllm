@@ -11,3 +11,7 @@ data/log.sqlite3*
 
 # Local biometric voice embeddings
 data/voice_profiles/
+
+# Externally provisioned portable runtimes and large model weights
+portable-runtimes/
+portable-models/
