@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 
 from ollama import AsyncClient
 
+from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
@@ -258,6 +259,11 @@ class MAIRuntime:
         agent = AgentRuntime(
             adapter,
             registry,
+            guard_config=GuardConfig(
+                warn_identical_failures=int(os.environ.get("AGENT_MAX_IDENTICAL_CALLS", "3")),
+                max_identical_failures=int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5")),
+                max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
+            ),
             final_verifier=FinalGroundingVerifier(reviewer_adapter=adapter),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
