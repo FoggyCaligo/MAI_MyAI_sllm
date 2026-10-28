@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ollama import AsyncClient
+import httpx
 
 from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver
@@ -195,7 +196,18 @@ class MAIRuntime:
 
     async def list_models(self) -> tuple[str, ...]:
         if self.llm_backend == "llamacpp":
-            return (self.model,)
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(self.llamacpp_host.rstrip("/") + "/v1/models")
+                response.raise_for_status()
+                body = response.json()
+            if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                raise RuntimeError("llama.cpp /v1/models response is invalid")
+            names = []
+            for entry in body["data"]:
+                if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                    raise RuntimeError("llama.cpp model entry is missing id")
+                names.append(entry["id"])
+            return tuple(names)
         response = await self._ollama_client.list()
         raw_models = getattr(response, "models", None)
         if raw_models is None and isinstance(response, Mapping):
