@@ -97,6 +97,12 @@ class RemoteSessionManager:
                     future.set_exception(RemoteExecutionError("remote session closed"))
             session.in_flight.clear()
 
+    async def close_owner_sessions(self, owner_id: str) -> None:
+        # Revoke every outstanding ephemeral key for this owner.
+        ids = [session_id for session_id, session in self._sessions.items() if session.owner_id == owner_id]
+        for session_id in ids:
+            await self.close(session_id)
+
     async def execute(self, owner_id: str, session_id: str, operation: RemoteOperation, *, timeout: float = 120) -> dict[str, Any]:
         session = self.get(session_id)
         if session.owner_id != owner_id:
