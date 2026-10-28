@@ -122,43 +122,6 @@ try {
                         $process.Dispose()
                     }
                 }
-                'file.read' {
-                    $bytes = [IO.File]::ReadAllBytes($a.path)
-                    if ($bytes.Length -gt 2000000) { throw 'File exceeds 2 MB response limit' }
-                    $sha = [BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash($bytes)).Replace('-','').ToLowerInvariant()
-                    $utf8 = New-Object Text.UTF8Encoding($false, $true)
-                    $result = @{path=$a.path;text=$utf8.GetString($bytes);sha256=$sha}
-                }
-                'file.list' {
-                    $entries = @(Get-ChildItem -LiteralPath $a.path | Select-Object -First 1000 | ForEach-Object { @{name=$_.Name;is_dir=$_.PSIsContainer} })
-                    $result = @{entries=$entries}
-                }
-                'file.write' {
-                    $path = [string]$a.path
-                    if (Test-Path -LiteralPath $path -PathType Leaf) {
-                        if (-not $a.expected_sha256) { throw 'expected_sha256 required for overwrite' }
-                        $old = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-                        if ($old -cne $a.expected_sha256) { throw 'File content changed since read' }
-                    } elseif ($null -ne $a.expected_sha256) { throw 'File does not exist for supplied hash' }
-                    [IO.File]::WriteAllText($path,[string]$a.text,(New-Object Text.UTF8Encoding($false)))
-                    $result = @{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
-                }
-                'file.delete' {
-                    Remove-Item -LiteralPath $a.path -ErrorAction Stop
-                    $result = @{deleted=$a.path}
-                }
-                'process.run' {
-                    $exe = [string]$a.executable
-                    $argv = @($a.argv)
-                    $working = [string]$a.cwd
-                    if ($working) { Push-Location -LiteralPath $working }
-                    try {
-                        $output = (& $exe @argv 2>&1 | Out-String)
-                        $code = $LASTEXITCODE
-                    } finally { if ($working) { Pop-Location } }
-                    if ($code -ne 0) { throw "Process failed with exit code $code : $output" }
-                    $result = @{returncode=0;stdout=$output;stderr=''}
-                }
                 default { throw "Unsupported operation $($req.operation)" }
             }
             $out.ok=$true
