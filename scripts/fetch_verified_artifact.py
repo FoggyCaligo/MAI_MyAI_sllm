@@ -17,7 +17,8 @@ def fetch_verified(url: str, sha256: str, destination: Path) -> None:
         raise ValueError("sha256 must be exactly 64 hexadecimal characters")
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
-        digest = hashlib.file_digest(destination.open("rb"), "sha256").hexdigest()
+        with destination.open("rb") as existing:
+            digest = hashlib.file_digest(existing, "sha256").hexdigest()
         if digest.lower() != sha256.lower():
             raise ValueError(f"Existing file digest mismatch: {destination}")
         return
