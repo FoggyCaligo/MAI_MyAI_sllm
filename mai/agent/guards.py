@@ -72,6 +72,8 @@ class AgentGuard:
         self._failure_streak_count = 0
         self._previous_round_signature: str | None = None
         self._identical_rounds = 0
+        self._previous_verification_signature: str | None = None
+        self._identical_verification_rejections = 0
         self._previous_missing_requirements: frozenset[str] | None = None
         self._identical_requirement_rejections = 0
 
