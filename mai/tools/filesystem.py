@@ -232,7 +232,7 @@ _READ_BINDINGS = (
     ("file_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
 )
 _WRITE_BINDINGS = (
-    ("file_write", "Write text to any accessible local file. Create the file if absent or replace it if present. Set create_parents=true to create missing parent directories; lifecycle=temporary registers a newly created scratch file for cleanup after the final answer is approved.", FileWriteInput, file_write),
+    ("file_write", "Write text to any accessible local file. Create the file if absent or replace it if present. Set create_parents=true to create missing parent directories; lifecycle=temporary registers a newly created scratch file for cleanup after the final answer is approved. For Windows PowerShell 5.1 script files containing non-ASCII text, explicitly pass encoding=utf-8-sig (UTF-8 BOM). Do not infer encoding from the path or extension.", FileWriteInput, file_write),
     ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
     ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
     ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
