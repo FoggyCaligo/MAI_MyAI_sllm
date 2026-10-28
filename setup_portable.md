@@ -80,10 +80,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Mani
 
 ### 필요한 모델만 선택해서 복사
 
-기존 PC의 Ollama 모델 저장소에 필요한 모델이 이미 있다면 `-CopyLocalModels`과 `-Models`를 함께 사용함. **Git Bash에서 PowerShell 배열 인수가 확실하게 전달되도록 쉼표 구분 문자열을 인용**함.
+기존 PC의 Ollama 모델 저장소에 필요한 모델이 이미 있다면 `-CopyLocalModels`과 `-Models`를 함께 사용함. **Git Bash에서 PowerShell의 `-File` 호출로 전달할 수 있도록 하나의 쉼표 구분 문자열로 지정**함.
 
 ```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Manifest ./portable-sources.json -CopyLocalModels -Models "ornith-1.5:9b","gemma4:e4b","lfm2.5:8b"
+powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Manifest ./portable-sources.json -CopyLocalModels -Models "ornith-1.5:9b,gemma4:e4b,lfm2.5:8b"
 ```
 
 이 명령은 지정된 3개 모델의 manifest와 참조된 SHA-256 blob만 복사하며, 다른 모델의 파일은 복사하지 않음. 공유 blob은 한 번만 복사하고 실제 파일 크기와 해시를 검증함. 대상에 파일이 이미 있다면 검증 후 재사용하지만, 다른 manifest나 손상된 blob은 자동 덮어쓰지 않고 명시적 오류로 처리함. **Portable Ollama를 포함한 모델 저장소 쓰기 프로세스를 모두 종료한 후 실행할 것.** 원본 모델 디렉터리는 수정하지 않음. 기존 빈 `portable-models/ollama` 폴더가 있어도 선택 복사 가능함.
