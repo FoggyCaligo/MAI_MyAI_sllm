@@ -1,7 +1,5 @@
 (() => {
-  const previousFetch = window.fetch.bind(window);
   const rememberedUserIdKey = 'MAI:last-login-id';
-  const pendingChatJobKey = 'MAI:pending-chat-job';
   function restoreRememberedUserId() {
     const loginIdInput = document.getElementById('login-id');
     if (!loginIdInput || loginIdInput.value) return;
@@ -29,46 +27,17 @@
     host.appendChild(empty);
   }
 
-  async function cancelActiveChatJobs() {
-    const response = await previousFetch('/chat/jobs/active', {
-      headers: authHeadersForUi(),
-      cache: 'no-store',
-    });
-    if (response.status === 401) throw new Error('로그인 세션이 만료되었습니다.');
-    if (!response.ok) throw new Error('진행 중인 대화 확인에 실패했습니다.');
-
-    const data = await response.json().catch(() => ({}));
-    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
-    for (const job of jobs) {
-      if (!job?.job_id) continue;
-      const cancelled = await previousFetch(`/chat/jobs/${encodeURIComponent(job.job_id)}`, {
-        method: 'DELETE',
-        headers: authHeadersForUi(),
-      });
-      if (!cancelled.ok && cancelled.status !== 404) {
-        throw new Error('진행 중인 대화를 중단하지 못했습니다.');
-      }
-    }
-    localStorage.removeItem(pendingChatJobKey);
-  }
-
   async function startNewChat(button) {
     if (!state?.token) return;
     button.disabled = true;
     const originalText = button.textContent;
     button.textContent = '초기화 중…';
     try {
-      await cancelActiveChatJobs();
-      const sessionId = state.sessionId || 'default';
-      const response = await previousFetch(`/session/${encodeURIComponent(sessionId)}`, {
-        method: 'DELETE',
-        headers: authHeadersForUi(),
-      });
-      if (response.status === 401) throw new Error('로그인 세션이 만료되었습니다.');
-      if (!response.ok) throw new Error('최근 대화 문맥을 지우지 못했습니다.');
-      resetVisibleConversation();
-      const input = document.getElementById('msg-input');
-      if (input) input.focus();
+      if (typeof window.maiResetConversation !== 'function') {
+        throw new Error('대화 초기화 기능이 준비되지 않았습니다.');
+      }
+      await window.maiResetConversation();
+      document.getElementById('msg-input')?.focus();
     } catch (error) {
       window.alert(`새 채팅 시작 실패: ${error.message}`);
     } finally {
