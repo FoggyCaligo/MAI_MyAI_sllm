@@ -52,7 +52,7 @@ def test_tool_result_history_preserves_call_identity():
         {"role": "assistant", "content": "", "tool_calls": [
             {"type": "function", "function": {"name": "memory_search", "arguments": {"keyword": "취미"}}}
         ]},
-        {"role": "tool", "tool_name": "memory_search", "content": "{\\"nodes\\":[]}"},
+        {"role": "tool", "tool_name": "memory_search", "content": "[]"},
     ])
     identifier = turns[1]["tool_calls"][0]["id"]
     assert turns[2]["tool_call_id"] == identifier
