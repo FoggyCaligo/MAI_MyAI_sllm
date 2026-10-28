@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..agent import AgentRunFailure
 from ..remote.session import AgentResponse, RemoteExecutionError, remote_sessions
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
+from .login_rate_limit import LoginRateLimiter
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
@@ -33,6 +34,7 @@ _chat_session_store: ChatSessionStore | None = None
 _tailscale: TailscaleFunnel | None = None
 _auth_sessions: dict[str, AccessPrincipal] = {}
 _voice_service: VoiceService | None = None
+_login_rate_limiter: LoginRateLimiter | None = None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -146,7 +148,7 @@ def _append_session_message(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global _runtime, _access_policy, _chat_session_store, _tailscale, _voice_service
+    global _runtime, _access_policy, _chat_session_store, _tailscale, _voice_service, _login_rate_limiter
     _voice_service = VoiceService()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
@@ -160,6 +162,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         trial_users=os.environ.get("TRIAL_USERS"),
     )
     _chat_session_store = ChatSessionStore(_db_path("CHAT_DB_PATH"))
+    _login_rate_limiter = LoginRateLimiter(_db_path("LOG_DB_PATH"))
     # PR #134 initially keyed persisted chat rows by login ID. Move those rows
     # to the stable db_id when the two differ so changing user_id does not lose
     # an already-created conversation.
@@ -198,6 +201,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _chat_session_store = None
         _access_policy = None
         _voice_service = None
+        _login_rate_limiter = None
 
 
 app = FastAPI(title="MAI MyAI sLLM", version="0.1.0", lifespan=lifespan)
@@ -295,12 +299,54 @@ async def health() -> dict[str, object]:
     }
 
 
+def _get_login_limiter() -> LoginRateLimiter:
+    if _login_rate_limiter is None:
+        raise RuntimeError("login rate limiter is not initialized")
+    return _login_rate_limiter
+
+
+_PREAUTH_COOKIE = "mai_preauth_session"
+
+
+@app.get("/login/session")
+async def browser_login_session(request: Request, response: Response) -> dict[str, bool]:
+    # No shared IP identity is used; each browser gets an opaque pre-login cookie.
+    token = request.cookies.get(_PREAUTH_COOKIE)
+    if token is None or len(token) < 32:
+        token = secrets.token_urlsafe(32)
+        response.set_cookie(
+            key=_PREAUTH_COOKIE, value=token, httponly=True, secure=True,
+            samesite="strict", max_age=86400, path="/",
+        )
+    return {"ready": True}
+
+
 @app.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest) -> LoginResponse:
+async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
+    browser_token = http_request.cookies.get(_PREAUTH_COOKIE)
+    if browser_token is None:
+        raise HTTPException(status_code=400, detail="pre-login browser session required")
+    limiter = _get_login_limiter()
+    try:
+        remaining = limiter.remaining_seconds(browser_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if remaining:
+        raise HTTPException(
+            status_code=429, detail="Too many failed login attempts in this browser session",
+            headers={"Retry-After": str(remaining)},
+        )
     try:
         principal = _get_access_policy().authenticate(request.user_id, request.user_pw)
     except AccessDeniedError as exc:
+        blocked_for = limiter.failed(browser_token)
+        if blocked_for:
+            raise HTTPException(
+                status_code=429, detail="Too many failed login attempts in this browser session",
+                headers={"Retry-After": str(blocked_for)},
+            ) from exc
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    limiter.succeeded(browser_token)
     token = _store_login_session(principal)
     return LoginResponse(
         token=token,
@@ -322,7 +368,8 @@ async def me(authorization: str | None = Header(default=None)) -> dict[str, str]
 
 @app.post("/logout")
 async def logout(authorization: str | None = Header(default=None)) -> dict[str, bool]:
-    token, _ = _principal_from_authorization(authorization)
+    token, principal = _principal_from_authorization(authorization)
+    await remote_sessions.close_owner_sessions(principal.db_id)
     _auth_sessions.pop(token, None)
     return {"logged_out": True}
 
