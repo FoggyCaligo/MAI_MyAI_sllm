@@ -20,6 +20,7 @@ def test_lookup_node_id():
 
 @pytest.mark.parametrize("payload", [
     {}, {"keyword": "취미", "node_id": 584},
+    {"limit": 51},
     {"node_id": 584, "limit": 3},
     {"keyword": ""}, {"node_id": -1},
     {"query": "취미"},
@@ -27,6 +28,13 @@ def test_lookup_node_id():
 def test_lookup_rejects_invalid_contract(payload):
     with pytest.raises(ValidationError):
         MemorySearchInput.model_validate(payload)
+
+
+def test_overview_requires_bounded_limit():
+    value = MemorySearchInput.model_validate({"limit": 8})
+    assert value.node_id is None
+    assert value.keyword is None
+    assert value.limit == 8
 
 
 def test_unified_lookup_excluded_from_new_fact_evidence():
