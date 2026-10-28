@@ -75,7 +75,8 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
     if shell == 'powershell':
         if os.name != 'nt':
             raise ValueError('PowerShell shell selection requires Windows')
-        encoded = base64.b64encode(command.encode('utf-16-le')).decode('ascii')
+        utf8_setup = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; '
+        encoded = base64.b64encode((utf8_setup + command).encode('utf-16-le')).decode('ascii')
         command_args = ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded]
         process = await asyncio.create_subprocess_exec(*command_args, cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs)
@@ -170,8 +171,7 @@ def register_terminal_tools(
             "stderr, permission failures and timeouts as real failures. "
             "Paths outside the repository are allowed. For Unicode Windows PowerShell commands, "
             "select shell=powershell explicitly to use UTF-16LE EncodedCommand. "
-            "PowerShell commands must set [Console]::OutputEncoding=[Text.UTF8Encoding]::new() "
-            "and $OutputEncoding=[Console]::OutputEncoding before emitting text."
+            "The runner configures UTF-8 output and decodes it strictly."
         ),
         input_model=TerminalRunInput,
         handler=handler,
