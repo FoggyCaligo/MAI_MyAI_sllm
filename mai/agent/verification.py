@@ -727,10 +727,16 @@ def _review_payload(
         for message in messages
         if message.get("role") == "user" and isinstance(message.get("content"), str)
     ]
-    # This is exactly the session history supplied to the main model,
-    # without per-message clipping or a second 10-message cutoff. The server
-    # has already applied SESSION_HISTORY_MESSAGES to this window.
+    # Do not reduce the main model's conversation window to another fixed
+    # ten-message slice. Exclude tool results; keep any unverified draft text
+    # as context only, never in the verified prior-evidence collection.
     context_messages = [
+        {"role": message["role"], "content": message["content"]}
+        for message in messages[:-1]
+        if message.get("role") in {"user", "assistant"}
+        and isinstance(message.get("content"), str)
+    ]
+    accepted_messages = [
         {"role": message["role"], "content": message["content"]}
         for message in verified_prior_conversation
     ]
@@ -749,7 +755,7 @@ def _review_payload(
         "authoritative_current_time": current_time(),
         "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
         "conversation_context": context_messages,
-        "verified_prior_conversation": context_messages,
+        "verified_prior_conversation": accepted_messages,
         "tool_results_in_execution_order": tool_evidence,
         "candidate_final": _clip_text(candidate, 6000),
     }
