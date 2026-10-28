@@ -211,7 +211,16 @@ def register_terminal_tools(
             "The runner configures UTF-8 output and decodes it strictly. "
             "PowerShell treats nonterminating errors as failures; native process nonzero "
             "exit codes are preserved. Invoke sc.exe rather than the PowerShell sc alias "
-            "when querying Windows services. CMD uses an explicit UTF-8 code page and a temporary UTF-8 batch file for multiline commands. External commands emitting non-UTF-8 bytes fail decoding rather than being silently reinterpreted."
+            "when querying Windows services. "
+            "Windows CMD supports & (always continue), && (continue on success), "
+            "and || (continue on failure). CMD is already the default Windows shell: "
+            "do not nest cmd /c unnecessarily. Quote paths containing spaces with "
+            "ordinary double quotes; backslash does not escape double quotes in CMD. "
+            "A chain of commands reports the final process exit status, not proof "
+            "that every earlier command succeeded: check individual results when "
+            "each step matters. CMD uses an explicit UTF-8 code page and a temporary "
+            "UTF-8 batch file for multiline commands. External commands emitting "
+            "non-UTF-8 bytes fail decoding rather than being silently reinterpreted."
         ),
         input_model=TerminalRunInput,
         handler=handler,
