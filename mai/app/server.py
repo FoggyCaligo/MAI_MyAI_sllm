@@ -688,7 +688,10 @@ async def remote_current_session(authorization: str | None = Header(default=None
 @app.post("/remote/sessions", response_model=RemoteCreateResponse)
 async def remote_create_session(authorization: str | None = Header(default=None)) -> RemoteCreateResponse:
     principal = _require_remote_owner(authorization)
-    session = await remote_sessions.create(principal.db_id)
+    try:
+        session = await remote_sessions.create(principal.db_id)
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return RemoteCreateResponse(
         session_id=session.session_id,
         agent_secret=session.secret,
