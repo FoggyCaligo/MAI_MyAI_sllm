@@ -2,7 +2,7 @@ import asyncio
 import httpx
 import pytest
 
-from mai.llm.llamacpp import LlamaCppAdapter, _openai_message
+from mai.llm.llamacpp import LlamaCppAdapter, _openai_message, _openai_messages
 from mai.llm.models import ChatRequest, ModelConfig
 from mai.llm.ollama import OllamaProtocolError
 
@@ -44,3 +44,17 @@ def test_malformed_response_fails_visibly():
             return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hi"}]))
     with pytest.raises(OllamaProtocolError):
         asyncio.run(run())
+
+
+def test_tool_result_history_preserves_call_identity():
+    turns = _openai_messages([
+        {"role": "user", "content": "기억 조회"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"type": "function", "function": {"name": "memory_search", "arguments": {"keyword": "취미"}}}
+        ]},
+        {"role": "tool", "tool_name": "memory_search", "content": "{\\"nodes\\":[]}"},
+    ])
+    identifier = turns[1]["tool_calls"][0]["id"]
+    assert turns[2]["tool_call_id"] == identifier
+    assert turns[2]["role"] == "tool"
+    assert "tool_name" not in turns[2]
