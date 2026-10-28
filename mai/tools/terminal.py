@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import locale
 import json
 import os
 import signal
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,6 +21,7 @@ class TerminalRunInput(BaseModel):
 
     command: str = Field(min_length=1)
     cwd: str | None = None
+    shell: Literal['default', 'powershell'] = 'default'
 
 
 class TerminalRunError(RuntimeError):
@@ -62,14 +65,23 @@ def _terminate_process_tree(pid: int) -> None:
         pass
 
 
-async def _run_command(command: str, cwd: Path, timeout_seconds: float | None) -> dict[str, Any]:
+async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, shell: Literal['default', 'powershell'] = 'default') -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
 
-    process = await asyncio.create_subprocess_shell(
+    if shell == 'powershell':
+        if os.name != 'nt':
+            raise ValueError('PowerShell shell selection requires Windows')
+        utf8_setup = '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; '
+        encoded = base64.b64encode((utf8_setup + command).encode('utf-16-le')).decode('ascii')
+        command_args = ['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded]
+        process = await asyncio.create_subprocess_exec(*command_args, cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs)
+    else:
+        process = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
@@ -91,12 +103,13 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None) -
         await process.communicate()
         raise
 
+    output_encoding = "utf-8" if shell == "powershell" else locale.getpreferredencoding(False)
     return {
         "command": command,
         "cwd": str(cwd),
-        "shell": _shell_description(),
-        "stdout": stdout_bytes.decode(errors="replace"),
-        "stderr": stderr_bytes.decode(errors="replace"),
+        "shell": "powershell.exe" if shell == "powershell" else _shell_description(),
+        "stdout": stdout_bytes.decode(output_encoding, errors="strict"),
+        "stderr": stderr_bytes.decode(output_encoding, errors="strict"),
         "returncode": process.returncode,
         "timed_out": timed_out,
     }
@@ -108,6 +121,7 @@ async def terminal_run(
     cwd: str | None = None,
     default_cwd: str | Path | None = None,
     default_timeout_seconds: float | None = None,
+    shell: Literal["default", "powershell"] = "default",
 ) -> dict[str, Any]:
     base = cwd if cwd is not None else default_cwd
     resolved_cwd = Path(base or os.getcwd()).expanduser().resolve(strict=False)
@@ -116,7 +130,7 @@ async def terminal_run(
     if not resolved_cwd.is_dir():
         raise NotADirectoryError(str(resolved_cwd))
 
-    result = await _run_command(command, resolved_cwd, default_timeout_seconds)
+    result = await _run_command(command, resolved_cwd, default_timeout_seconds, shell=shell)
     if result["timed_out"]:
         raise TerminalTimeoutError("terminal command timed out", result)
     if result["returncode"] != 0:
@@ -136,10 +150,12 @@ def register_terminal_tools(
     async def handler(
         command: str,
         cwd: str | None = None,
+        shell: Literal["default", "powershell"] = "default",
     ) -> dict[str, Any]:
         return await terminal_run(
             command=command,
             cwd=cwd,
+            shell=shell,
             default_cwd=register_default_cwd,
             default_timeout_seconds=register_default_timeout,
         )
@@ -153,7 +169,9 @@ def register_terminal_tools(
             "Use the actual shell and default_cwd from the authoritative runtime context; "
             "set cwd only when needed. The runtime controls timeouts. Preserve non-zero exits, "
             "stderr, permission failures and timeouts as real failures. "
-            "Paths outside the repository are allowed."
+            "Paths outside the repository are allowed. For Unicode Windows PowerShell commands, "
+            "select shell=powershell explicitly to use UTF-16LE EncodedCommand. "
+            "The runner configures UTF-8 output and decodes it strictly."
         ),
         input_model=TerminalRunInput,
         handler=handler,
