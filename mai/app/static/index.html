@@ -34,6 +34,19 @@
     .identity { color:var(--text-dim); font-size:11px; white-space:nowrap; }
     #logout-btn { background:none; border:1px solid var(--border); color:var(--text-dim); border-radius:20px; padding:6px 10px; cursor:pointer; }
     #logout-btn:hover { border-color:var(--accent); color:var(--text); }
+    #remote-btn { background:none; border:1px solid var(--border); color:var(--text); border-radius:20px; padding:6px 10px; cursor:pointer; }
+    #remote-btn[hidden] { display:none; }
+    #remote-btn.connected { border-color:var(--accent); color:var(--accent); }
+    #remote-panel[hidden] { display:none; }
+    #remote-panel { position:fixed; z-index:100; top:64px; right:18px; width:min(410px,calc(100vw - 36px)); background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; box-shadow:0 16px 40px #0009; display:grid; gap:10px; }
+    #remote-panel h2 { font-size:15px; }
+    #remote-panel p { font-size:12px; color:var(--text-dim); line-height:1.5; }
+    #remote-panel code { overflow-wrap:anywhere; white-space:pre-wrap; font-size:12px; }
+    #remote-panel .remote-secret { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; }
+    .remote-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .remote-actions button { border:1px solid var(--border); border-radius:7px; padding:6px 10px; background:var(--bg); color:var(--text); cursor:pointer; }
+    #remote-error { color:var(--danger); font-size:12px; white-space:pre-wrap; }
+    #remote-status { color:var(--text); font-size:12px; }
 
     #messages { flex:1; min-height:0; overflow-y:auto; padding:22px 18px; display:flex; flex-direction:column; gap:16px; scroll-behavior:smooth; }
     #messages::-webkit-scrollbar { width:5px; } #messages::-webkit-scrollbar-thumb { background:var(--border); border-radius:6px; }
@@ -127,9 +140,28 @@
     <div class="header-right">
       <select id="model-select" title="생성 모델 선택"><option value="">모델 로딩 중…</option></select>
       <div class="identity" id="identity"></div><div class="identity" id="connection"></div>
+      <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>
       <button id="logout-btn" type="button">로그아웃</button>
     </div>
   </header>
+  <section id="remote-panel" hidden aria-label="원격 PC 연결">
+    <h2>일회용 원격 PC 연결</h2>
+    <p>현재 PC에서 원격 Agent를 실행해 연결하세요. 연결 후 MAI가 해당 PC의 파일과 프로그램을 조작할 수 있습니다.</p>
+    <div id="remote-status" role="status">연결 없음</div>
+    <div id="remote-details" hidden>
+      <p>Agent 실행 시 서버 주소와 세션 ID를 사용하고, 요청받은 비밀 키를 Agent에 직접 입력하세요. 비밀 키는 다른 사람과 공유하면 안 됩니다.</p>
+      <div class="remote-secret"><strong>서버</strong> <code id="remote-server"></code></div>
+      <div class="remote-secret"><strong>세션 ID</strong> <code id="remote-session"></code></div>
+      <div class="remote-secret"><strong>일회용 키</strong> <code id="remote-secret"></code></div>
+      <p>실행 예: <code id="remote-command"></code></p>
+    </div>
+    <div id="remote-error" role="alert"></div>
+    <div class="remote-actions">
+      <button id="remote-create" type="button">연결 생성</button>
+      <button id="remote-close" type="button" hidden>연결 해제</button>
+      <button id="remote-hide" type="button">닫기</button>
+    </div>
+  </section>
   <div id="messages"><div id="empty-state"><div class="big">MAI</div><div>메시지를 입력하세요.</div></div></div>
   <div id="input-area">
     <form id="chat-form">
@@ -151,6 +183,53 @@
   const state = { token: sessionStorage.getItem('MAI:auth-token'), userId:null, role:null, sessionId:crypto.randomUUID() };
   const $loginScreen=document.getElementById('login-screen'), $loginForm=document.getElementById('login-form'), $loginId=document.getElementById('login-id'), $loginBtn=document.getElementById('login-btn'), $loginError=document.getElementById('login-error');
   const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
+  const $remoteBtn=document.getElementById('remote-btn'), $remotePanel=document.getElementById('remote-panel'), $remoteCreate=document.getElementById('remote-create'), $remoteClose=document.getElementById('remote-close'), $remoteStatus=document.getElementById('remote-status'), $remoteError=document.getElementById('remote-error'), $remoteDetails=document.getElementById('remote-details');
+  let remoteSession=null;
+  let remotePollTimer=null;
+  async function remoteApi(path,method='GET') {
+    const response=await fetch(path,{method,headers:authHeaders()});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.detail||'원격 세션 요청 실패');
+    return data;
+  }
+  function remoteReset() {
+    if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
+    remoteSession=null;$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
+    $remoteDetails.hidden=true;$remoteClose.hidden=true;$remoteCreate.hidden=false;
+    $remoteBtn.classList.remove('connected');$remoteBtn.textContent='원격 연결';
+    document.getElementById('remote-secret').textContent='';
+    document.getElementById('remote-session').textContent='';
+  }
+  async function refreshRemoteStatus() {
+    if(!remoteSession)return;
+    try{
+      const data=await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id));
+      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'연결 대기 — Agent 실행 필요';
+      $remoteBtn.classList.toggle('connected',data.connected);
+      $remoteBtn.textContent=data.connected?'원격 연결됨':'원격 연결';
+    }catch(err){$remoteError.textContent=err.message;remoteReset();$remoteError.textContent=err.message;}
+  }
+  $remoteBtn.addEventListener('click',()=>{$remotePanel.hidden=!$remotePanel.hidden;$remoteBtn.setAttribute('aria-expanded',String(!$remotePanel.hidden));});
+  document.getElementById('remote-hide').addEventListener('click',()=>{$remotePanel.hidden=true;$remoteBtn.setAttribute('aria-expanded','false');});
+  $remoteCreate.addEventListener('click',async()=>{
+    $remoteError.textContent='';$remoteCreate.disabled=true;
+    try{
+      const data=await remoteApi('/remote/sessions','POST');
+      remoteSession={id:data.session_id,connected:false};
+      document.getElementById('remote-server').textContent=location.origin;
+      document.getElementById('remote-session').textContent=data.session_id;
+      document.getElementById('remote-secret').textContent=data.agent_secret;
+      document.getElementById('remote-command').textContent='mai-remote-agent.exe --server "'+location.origin+'" --session "'+data.session_id+'"';
+      $remoteDetails.hidden=false;$remoteClose.hidden=false;$remoteCreate.hidden=true;
+      await refreshRemoteStatus();
+      remotePollTimer=setInterval(refreshRemoteStatus,5000);
+    }catch(err){$remoteError.textContent=err.message;}finally{$remoteCreate.disabled=false;}
+  });
+  $remoteClose.addEventListener('click',async()=>{
+    $remoteError.textContent='';
+    try{await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id),'DELETE');remoteReset();}
+    catch(err){$remoteError.textContent=err.message;}
+  });
   let stickToBottom=true;
   let activeChat=null;
   let chatRunSerial=0;
@@ -264,8 +343,8 @@
   }
   async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');$connection.textContent=data.tailscale_funnel?'Tailscale':'Local';}
   async function loadModels(){const res=await fetch('/models',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'모델 목록 조회 실패');$model.innerHTML='';data.models.forEach(name=>{const option=document.createElement('option');option.value=name;option.textContent=name;option.selected=name===data.current;$model.appendChild(option);});if(!data.models.length)$model.innerHTML='<option value="">설치된 모델 없음</option>';}
-  function showApp(){ $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='연결 실패';$connection.title=err.message;}); syncSendButton(); $input.focus(); }
-  function showLogin(message=''){if(activeChat){activeChat.controller.abort();activeChat=null;}syncSendButton();state.token=null;state.userId=null;state.role=null;sessionStorage.removeItem('MAI:auth-token');$app.style.display='none';$loginScreen.style.display='grid';$loginError.textContent=message;$loginId.focus();}
+  function showApp(){ $remoteBtn.hidden=state.role!=='owner'; $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='연결 실패';$connection.title=err.message;}); syncSendButton(); $input.focus(); }
+  function showLogin(message=''){remoteReset();$remoteBtn.hidden=true;$remotePanel.hidden=true;if(activeChat){activeChat.controller.abort();activeChat=null;}syncSendButton();state.token=null;state.userId=null;state.role=null;sessionStorage.removeItem('MAI:auth-token');$app.style.display='none';$loginScreen.style.display='grid';$loginError.textContent=message;$loginId.focus();}
   async function restoreSession(){if(!state.token){showLogin();return;}try{const res=await fetch('/me',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'세션 만료');state.userId=data.user_id;state.role=data.role;showApp();}catch(err){showLogin(err.message);}}
 
   $loginForm.addEventListener('submit',async event=>{event.preventDefault();$loginBtn.disabled=true;$loginError.textContent='';try{const res=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:$loginId.value})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'접속 거부');state.token=data.token;state.userId=data.user_id;state.role=data.role;sessionStorage.setItem('MAI:auth-token',state.token);showApp();}catch(err){$loginError.textContent=err.message;}finally{$loginBtn.disabled=false;}});
@@ -335,7 +414,7 @@
       uploadingClipboardImages = false;
     }
   }
-  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string' && typeof data.verifier_feedback === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
+  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null,remote_session_id:remoteSession?.id||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string' && typeof data.verifier_feedback === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
   $input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=`${Math.min($input.scrollHeight,150)}px`;syncSendButton();});
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   syncSendButton();
