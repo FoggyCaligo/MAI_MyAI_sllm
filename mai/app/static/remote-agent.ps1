@@ -92,7 +92,6 @@ try {
                     $psi.RedirectStandardInput = $true
                     $psi.RedirectStandardOutput = $true
                     $psi.RedirectStandardError = $true
-                    $psi.StandardInputEncoding = New-Object Text.UTF8Encoding($false)
                     $psi.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
                     $psi.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
                     $psi.CreateNoWindow = $true
@@ -102,8 +101,15 @@ try {
                     try {
                         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
                         $stderrTask = $process.StandardError.ReadToEndAsync()
-                        $process.StandardInput.WriteLine($payload)
-                        $process.StandardInput.Close()
+                        # Windows PowerShell 5.1 uses .NET Framework, whose ProcessStartInfo
+                        # has no StandardInputEncoding property. Send exact UTF-8 bytes
+                        # to the redirected stdin stream instead of using the default
+                        # locale-dependent StreamWriter encoding.
+                        $payloadBytes = [Text.Encoding]::UTF8.GetBytes($payload + "`n")
+                        $stdin = $process.StandardInput.BaseStream
+                        $stdin.Write($payloadBytes, 0, $payloadBytes.Length)
+                        $stdin.Flush()
+                        $stdin.Close()
                         if (-not $process.WaitForExit(110000)) {
                             $process.Kill()
                             throw 'Remote Python worker timed out after 110 seconds'
