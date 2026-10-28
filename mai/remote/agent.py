@@ -79,26 +79,34 @@ async def main(url: str, session_id: str) -> None:
     secret = getpass.getpass("One-time agent secret (from MAI owner session): ")
     headers = {"X-MAI-Agent-Secret": secret}
     async with httpx.AsyncClient(base_url=url, headers=headers, timeout=30, follow_redirects=False) as client:
-        while True:
-            response = await client.post(f"/remote/agent/{session_id}/poll")
+        try:
+            await run_session(client, session_id)
+        finally:
+            response = await client.delete(f"/remote/agent/{session_id}")
             response.raise_for_status()
-            request = response.json().get("request")
-            if request is None:
-                continue
-            request_id = request["request_id"]
-            try:
-                operation = RemoteOperation.model_validate({
-                    "operation": request["operation"], "arguments": request["arguments"]
-                }, strict=True)
-                result = await asyncio.to_thread(execute, operation)
-                payload = {"request_id": request_id, "ok": True, "result": result}
-            except Exception as exc:
-                payload = {
-                    "request_id": request_id, "ok": False,
-                    "error_type": type(exc).__name__, "error": str(exc),
-                }
-            delivered = await client.post(f"/remote/agent/{session_id}/result", json=payload)
-            delivered.raise_for_status()
+
+
+async def run_session(client: httpx.AsyncClient, session_id: str) -> None:
+    while True:
+        response = await client.post(f"/remote/agent/{session_id}/poll")
+        response.raise_for_status()
+        request = response.json().get("request")
+        if request is None:
+            continue
+        request_id = request["request_id"]
+        try:
+            operation = RemoteOperation.model_validate({
+                "operation": request["operation"], "arguments": request["arguments"]
+            }, strict=True)
+            result = await asyncio.to_thread(execute, operation)
+            payload = {"request_id": request_id, "ok": True, "result": result}
+        except Exception as exc:
+            payload = {
+                "request_id": request_id, "ok": False,
+                "error_type": type(exc).__name__, "error": str(exc),
+            }
+        delivered = await client.post(f"/remote/agent/{session_id}/result", json=payload)
+        delivered.raise_for_status()
 
 
 if __name__ == "__main__":
