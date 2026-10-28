@@ -151,6 +151,26 @@ class AgentGuard:
                 f"{self.config.max_no_progress_rounds} times"
             )
 
+    def after_verification_rejection(self, issues: Sequence[Mapping[str, Any]]) -> None:
+        """Detect repeated verifier defects independently of tool-round progress.
+
+        Comparisons use the verifier's structured issue/claim fields, not prose
+        matching. A changed finding is a new structural state.
+        """
+        if not issues:
+            raise ValueError("verification rejection requires at least one issue")
+        signature = _fingerprint(list(issues))
+        if signature == self._previous_verification_signature:
+            self._identical_verification_rejections += 1
+        else:
+            self._previous_verification_signature = signature
+            self._identical_verification_rejections = 1
+        if self._identical_verification_rejections > self.config.max_no_progress_rounds:
+            raise NoProgressError(
+                "verifier rejected the same structured defects more than "
+                f"{self.config.max_no_progress_rounds} consecutive times"
+            )
+
     def note_requirement_progress(self) -> None:
         """Reset requirement-omission no-progress state after a required handler starts."""
 
