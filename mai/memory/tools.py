@@ -25,7 +25,7 @@ _MEMORY_MODEL_CONTEXT = {
 }
 
 
-class MemoryLookupInput(BaseModel):
+class MemorySearchInput(BaseModel):
     """Exactly one lookup selector is required."""
     model_config = ConfigDict(extra="forbid")
     node_id: int | None = Field(
@@ -42,7 +42,7 @@ class MemoryLookupInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def check_selector(self) -> "MemoryLookupInput":
+    def check_selector(self) -> "MemorySearchInput":
         if (self.node_id is None) == (self.keyword is None):
             raise ValueError("Provide exactly one of node_id or keyword")
         if self.node_id is not None and self.limit is not None:
@@ -66,7 +66,7 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         context=_MEMORY_MODEL_CONTEXT,
     )
 
-    async def memory_lookup(
+    async def memory_search(
         node_id: int | None = None,
         keyword: str | None = None,
         limit: int | None = None,
@@ -82,7 +82,7 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         return recalled.model_snapshot()
 
     registry.add(
-        name="memory_lookup",
+        name="memory_search",
         description=(
             "Retrieve persistent memory using exactly one selector: keyword for topic-based "
             "recall (e.g. user's hobbies, preferences, people or past events), or node_id "
@@ -90,8 +90,8 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
             "node_id results expand graph relations. limit applies only to keyword searches. "
             "A bounded overview or empty search does not prove that other memories are absent."
         ),
-        input_model=MemoryLookupInput,
-        handler=memory_lookup,
+        input_model=MemorySearchInput,
+        handler=memory_search,
         category="memory",
     )
 
