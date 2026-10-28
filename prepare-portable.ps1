@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Manifest,
     [switch]$CopyLocalModels,
     [switch]$InstallChromium,
-    [switch]$PullModels
+    [switch]$PullModels,
+    [switch]$PreserveAndReinstallExisting
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -19,9 +20,6 @@ function Get-Required([object]$obj, [string]$property) {
     return [string]$value.Value
 }
 function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$expectedExecutable) {
-    if (Test-Path -LiteralPath $destination) {
-        throw "Refusing to overwrite existing runtime: $destination"
-    }
     $url = Get-Required $entry 'url'
     $hash = Get-Required $entry 'sha256'
     if ($url -notmatch '^https://') { throw "Only HTTPS release URLs are allowed: $url" }
@@ -30,6 +28,29 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $archiveName = [IO.Path]::GetFileName(([uri]$url).AbsolutePath)
     if ($archiveName -notmatch '\.(zip|tar\.gz)$') { throw "Unsupported archive type: $archiveName" }
+    $recordPath = Join-Path $destination '.mai-portable-source.json'
+    if (Test-Path -LiteralPath $destination) {
+        $binary = Join-Path $destination $expectedExecutable
+        if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "Existing runtime lacks expected executable: $binary"
+        }
+        if (-not (Test-Path -LiteralPath $recordPath -PathType Leaf)) {
+            if (-not $PreserveAndReinstallExisting) {
+                throw "Existing runtime has no installation receipt: $destination. Rerun with -PreserveAndReinstallExisting to preserve it and reinstall."
+            }
+            $backup = "$destination.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
+            if (Test-Path -LiteralPath $backup) { throw "Preservation destination already exists: $backup" }
+            Move-Item -LiteralPath $destination -Destination $backup -ErrorAction Stop
+            Write-Host "Preserved existing runtime in $backup"
+        } else {
+            $record = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($record.url -cne $url -or $record.sha256 -ine $hash -or $record.executable -cne $expectedExecutable) {
+                throw "Existing runtime does not match pinned manifest: $destination"
+            }
+            Write-Host "Reusing verified runtime: $destination"
+            return
+        }
+    }
     $archive = Join-Path $cache $archiveName
     if (-not (Test-Path -LiteralPath $archive)) {
         $temporary = "$archive.incomplete"
@@ -74,6 +95,9 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
     if (-not (Test-Path -LiteralPath (Join-Path $destination $expectedExecutable))) {
         throw "Runtime executable not found at destination: $destination"
     }
+    @{ url = $url; sha256 = $hash.ToLowerInvariant(); executable = $expectedExecutable } |
+        ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding UTF8
+
 }
 
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
