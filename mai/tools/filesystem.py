@@ -182,7 +182,14 @@ def file_write(*, path: str, content: str, encoding: str = "utf-8", create_paren
     existed = target.exists()
     if existed and not target.is_file():
         raise IsADirectoryError(str(target))
-    target.write_text(content, encoding=encoding)
+    # Windows PowerShell 5.1 needs a BOM to load UTF-8 scripts reliably.
+    # This is a file-format encoding policy, not a natural-language heuristic.
+    effective_encoding = (
+        "utf-8-sig"
+        if os.name == "nt" and target.suffix.casefold() == ".ps1" and encoding == "utf-8"
+        else encoding
+    )
+    target.write_text(content, encoding=effective_encoding)
     if not existed and lifecycle == "temporary":
         register_temporary_artifact(target)
     return {"path": str(target), "bytes": target.stat().st_size, "created": not existed, "lifecycle": lifecycle if not existed else "existing"}
@@ -232,7 +239,7 @@ _READ_BINDINGS = (
     ("file_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
 )
 _WRITE_BINDINGS = (
-    ("file_write", "Write text to any accessible local file. Create the file if absent or replace it if present. Set create_parents=true to create missing parent directories; lifecycle=temporary registers a newly created scratch file for cleanup after the final answer is approved. For Windows PowerShell 5.1 script files containing non-ASCII text, explicitly pass encoding=utf-8-sig (UTF-8 BOM). Do not infer encoding from the path or extension.", FileWriteInput, file_write),
+    ("file_write", "Write text to any accessible local file. Create the file if absent or replace it if present. Set create_parents=true to create missing parent directories; lifecycle=temporary registers a newly created scratch file for cleanup after the final answer is approved. On Windows, PowerShell .ps1 files written with the default UTF-8 encoding automatically receive a UTF-8 BOM for PowerShell 5.1 compatibility; explicitly requested alternative encodings are honored.", FileWriteInput, file_write),
     ("file_delete", "Delete a local file or directory. Non-empty directories require recursive=true.", FileDeleteInput, file_delete),
     ("file_move", "Move or rename a local file or directory.", FileMoveInput, file_move),
     ("file_copy", "Copy a local file or directory.", FileCopyInput, file_copy),
