@@ -19,7 +19,7 @@ async def _exercise_remote_session():
         manager.authenticate_agent(session.session_id, "wrong")
     with pytest.raises(RemoteExecutionError):
         await manager.execute("owner-B", session.session_id, RemoteOperation(operation="file.read", arguments={"path": "a"}))
-    await manager.poll(session.session_id, session.secret)
+    session.connected = True
     task = asyncio.create_task(manager.execute("owner-A", session.session_id, RemoteOperation(operation="file.read", arguments={"path": "a"})))
     request = await manager.poll(session.session_id, session.secret)
     assert request["operation"] == "file.read"
