@@ -1,7 +1,7 @@
 """Strict llama.cpp OpenAI-compatible chat adapter. No automatic provider fallback."""
 from __future__ import annotations
 
-import asyncio
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -21,7 +21,7 @@ class LlamaCppAdapter:
             raise ValueError("llama.cpp does not support MAI's Ollama-specific options")
         payload: dict[str, Any] = {
             "model": self.config.model,
-            "messages": [dict(message) for message in request.messages],
+            "messages": [_openai_message(message) for message in request.messages],
             "tools": [dict(tool) for tool in request.tools],
             "stream": False,
         }
@@ -79,7 +79,6 @@ class LlamaCppAdapter:
             if not isinstance(name, str) or not name.strip():
                 raise OllamaProtocolError("llama.cpp tool call missing function name")
             if isinstance(args, str):
-                import json
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError as exc:
@@ -96,3 +95,25 @@ class LlamaCppAdapter:
                 for c in calls
             ]
         return ModelTurn(content=content, thinking=thinking, tool_calls=tuple(calls), assistant_message=assistant)
+
+
+def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert MAI tool-call argument objects to OpenAI JSON strings."""
+    result = dict(message)
+    calls = result.get("tool_calls")
+    if calls is None:
+        return result
+    if not isinstance(calls, list):
+        raise OllamaProtocolError("outgoing tool_calls must be a list")
+    normalized = []
+    for call in calls:
+        if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+            raise OllamaProtocolError("outgoing tool call is malformed")
+        function = dict(call["function"])
+        arguments = function.get("arguments")
+        if not isinstance(arguments, dict):
+            raise OllamaProtocolError("outgoing tool-call arguments must be an object")
+        function["arguments"] = json.dumps(arguments, ensure_ascii=False)
+        normalized.append({"type": "function", "function": function})
+    result["tool_calls"] = normalized
+    return result
