@@ -62,6 +62,8 @@ async def _execute_chat(
         return 500, {
             "error_type": exc.error_type,
             "detail": exc.user_visible_error,
+            "unverified_answer": exc.context.last_rejected_draft,
+            "verifier_feedback": exc.context.last_verifier_feedback,
             "model": active_model,
             "model_rounds": exc.context.model_rounds,
             "tools": [server._tool_payload(execution) for execution in exc.context.tool_executions],
