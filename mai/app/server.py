@@ -674,3 +674,15 @@ async def remote_agent_result(session_id: str, response: AgentResponse, x_mai_ag
         return {"accepted": True}
     except RemoteExecutionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/remote/agent/{session_id}")
+async def remote_agent_disconnect(session_id: str, x_mai_agent_secret: str | None = Header(default=None)) -> dict[str, bool]:
+    if x_mai_agent_secret is None:
+        raise HTTPException(status_code=401, detail="remote agent secret required")
+    try:
+        remote_sessions.authenticate_agent(session_id, x_mai_agent_secret)
+        await remote_sessions.close(session_id)
+        return {"revoked": True}
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
