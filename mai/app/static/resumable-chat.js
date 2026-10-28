@@ -215,7 +215,11 @@
           if (isError) {
             rendered.bubble.classList.add('error');
             const prefix = metadata.error_type ? `${metadata.error_type}: ` : '';
-            rendered.bubble.textContent = `오류: ${prefix}${String(message.content || '')}`;
+            if (typeof metadata?.unverified_answer === 'string' && typeof metadata?.verifier_feedback === 'string' && typeof renderUnverifiedAnswer === 'function') {
+              renderUnverifiedAnswer(rendered.bubble, metadata);
+            } else {
+              rendered.bubble.textContent = `오류: ${prefix}${String(message.content || '')}`;
+            }
           }
           if (metadata && typeof renderToolLog === 'function') {
             renderToolLog(
@@ -434,7 +438,11 @@
       } else if (pending) {
         pending.bubble.classList.add('error');
         const prefix = data.error_type ? `${data.error_type}: ` : '';
-        pending.bubble.textContent = `오류: ${prefix}${data.detail || '대화 작업을 복구하지 못했습니다.'}`;
+        if (typeof data.unverified_answer === 'string' && typeof data.verifier_feedback === 'string' && typeof renderUnverifiedAnswer === 'function') {
+          renderUnverifiedAnswer(pending.bubble, data);
+        } else {
+          pending.bubble.textContent = `오류: ${prefix}${data.detail || '대화 작업을 복구하지 못했습니다.'}`;
+        }
         if (typeof renderToolLog === 'function') renderToolLog(pending.wrap, data.tools || [], data.model_rounds || 0, data.model || 'unknown');
       }
     } finally {
