@@ -129,7 +129,7 @@
   <form class="login-card" id="login-form">
     <div class="login-logo">MAI</div>
     <div class="login-sub">등록된 ID로 접속하세요.</div>
-    <div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /><button class="primary-btn" id="login-btn" type="submit">접속</button></div>
+    <div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /><input id="login-password" type="password" autocomplete="current-password" placeholder="비밀번호" required /><button class="primary-btn" id="login-btn" type="submit">접속</button></div>
     <div id="login-error"></div>
   </form>
 </div>
@@ -178,6 +178,7 @@
 
 <script>
   const state = { token: sessionStorage.getItem('MAI:auth-token'), userId:null, role:null, sessionId:crypto.randomUUID() };
+  const $loginPassword=document.getElementById('login-password');
   const $loginScreen=document.getElementById('login-screen'), $loginForm=document.getElementById('login-form'), $loginId=document.getElementById('login-id'), $loginBtn=document.getElementById('login-btn'), $loginError=document.getElementById('login-error');
   const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
   const $remoteBtn=document.getElementById('remote-btn'), $remotePanel=document.getElementById('remote-panel'), $remoteCreate=document.getElementById('remote-create'), $remoteClose=document.getElementById('remote-close'), $remoteStatus=document.getElementById('remote-status'), $remoteError=document.getElementById('remote-error'), $remoteDetails=document.getElementById('remote-details');
@@ -366,7 +367,7 @@
   function showLogin(message=''){remoteReset();$remoteBtn.hidden=true;$remotePanel.hidden=true;if(activeChat){activeChat.controller.abort();activeChat=null;}syncSendButton();state.token=null;state.userId=null;state.role=null;sessionStorage.removeItem('MAI:auth-token');$app.style.display='none';$loginScreen.style.display='grid';$loginError.textContent=message;$loginId.focus();}
   async function restoreSession(){if(!state.token){showLogin();return;}try{const res=await fetch('/me',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'세션 만료');state.userId=data.user_id;state.role=data.role;showApp();}catch(err){showLogin(err.message);}}
 
-  $loginForm.addEventListener('submit',async event=>{event.preventDefault();$loginBtn.disabled=true;$loginError.textContent='';try{const res=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:$loginId.value})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'접속 거부');state.token=data.token;state.userId=data.user_id;state.role=data.role;sessionStorage.setItem('MAI:auth-token',state.token);showApp();}catch(err){$loginError.textContent=err.message;}finally{$loginBtn.disabled=false;}});
+  $loginForm.addEventListener('submit',async event=>{event.preventDefault();$loginBtn.disabled=true;$loginError.textContent='';try{const bootstrap=await fetch('/login/session',{credentials:'same-origin'});if(!bootstrap.ok)throw new Error('로그인 세션 생성 실패');const res=await fetch('/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:$loginId.value,user_pw:$loginPassword.value})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'접속 거부');$loginPassword.value='';state.token=data.token;state.userId=data.user_id;state.role=data.role;sessionStorage.setItem('MAI:auth-token',state.token);showApp();}catch(err){$loginError.textContent=err.message;}finally{$loginBtn.disabled=false;}});
   $logout.addEventListener('click',async()=>{try{await fetch('/logout',{method:'POST',headers:authHeaders()});}finally{showLogin();}});
   const $clipboardPreviews = document.getElementById('clipboard-previews');
   const clipboardImages = [];
