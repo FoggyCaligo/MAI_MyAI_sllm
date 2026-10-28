@@ -305,25 +305,19 @@ def _get_login_limiter() -> LoginRateLimiter:
     return _login_rate_limiter
 
 
-_PREAUTH_COOKIE = "mai_preauth_session"
-
-
 @app.get("/login/session")
-async def browser_login_session(request: Request, response: Response) -> dict[str, bool]:
-    # No shared IP identity is used; each browser gets an opaque pre-login cookie.
-    token = request.cookies.get(_PREAUTH_COOKIE)
-    if token is None or len(token) < 32:
-        token = secrets.token_urlsafe(32)
-        response.set_cookie(
-            key=_PREAUTH_COOKIE, value=token, httponly=True, secure=True,
-            samesite="strict", max_age=86400, path="/",
-        )
-    return {"ready": True}
+async def browser_login_session() -> dict[str, str]:
+    # Opaque pre-auth identity carried explicitly rather than in a Secure cookie.
+    # This also works through HTTP localhost and HTTPS reverse proxies.
+    return {"session_token": secrets.token_urlsafe(32)}
 
 
 @app.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
-    browser_token = http_request.cookies.get(_PREAUTH_COOKIE)
+async def login(
+    request: LoginRequest,
+    x_mai_preauth_session: str | None = Header(default=None),
+) -> LoginResponse:
+    browser_token = x_mai_preauth_session
     if browser_token is None:
         raise HTTPException(status_code=400, detail="pre-login browser session required")
     limiter = _get_login_limiter()
