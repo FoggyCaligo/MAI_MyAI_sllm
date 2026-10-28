@@ -210,7 +210,7 @@
   function buildRemoteCommand(data){
     const uri=new URL('/static/remote-agent.ps1',location.origin).href;
     if(new URL(uri).protocol!=='https:')throw new Error('원격 PowerShell 연결은 HTTPS에서만 허용됩니다.');
-    return `& { $p = Join-Path $env:TEMP ([guid]::NewGuid().ToString()+'.ps1'); try { Invoke-WebRequest -Uri '${uri}' -OutFile $p -UseBasicParsing; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Server '${location.origin}' -Session '${data.session_id}' -Key '${data.agent_secret}' } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }`;
+    return `& { $p = Join-Path $env:TEMP ([guid]::NewGuid().ToString()+'.ps1'); try { Invoke-WebRequest -Uri '${uri}' -OutFile $p -UseBasicParsing; & $p -Server '${location.origin}' -Session '${data.session_id}' -Key '${data.agent_secret}' } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }`;
   }
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
