@@ -37,6 +37,10 @@ class OllamaProtocolError(OllamaAdapterError):
     """Ollama returned a response that violates the native chat contract."""
 
 
+class OllamaOutputLimitError(OllamaProtocolError):
+    """A response reached its generation budget and must never be treated as complete."""
+
+
 class OllamaChatClient(Protocol):
     async def chat(self, **kwargs: Any) -> Any: ...
 
@@ -96,6 +100,11 @@ class OllamaAdapter:
             request_id, self.config.model, time.perf_counter() - started,
             " ".join(f"{key}={_read_field(response, key)}" for key in _OLLAMA_TIMING_FIELDS),
         )
+        done_reason = _read_field(response, "done_reason")
+        if done_reason == "length":
+            raise OllamaOutputLimitError(
+                f"Ollama output limit reached (num_predict={options.get('num_predict')}); incomplete content or tool calls rejected"
+            )
         turn = _normalize_response(response)
         if turn.thinking:
             _LOG.info("MAI Ollama thinking id=%s model=%s chars=%d content=%s", request_id, self.config.model, len(turn.thinking), turn.thinking)
