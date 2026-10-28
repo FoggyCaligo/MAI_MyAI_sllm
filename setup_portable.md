@@ -1,6 +1,6 @@
-# MAI Portable 설치·실행 설명서 (Windows)
+# MAI Portable 설치·실행 설명서 (Windows 및 Ubuntu 24.04 첫 지원)
 
-이 문서는 외장 SSD의 MAI를 Windows PC에서 준비하고 실행하는 절차를 설명함. **SSD 파일시스템은 프로젝트 운영 기준상 NTFS로 준비함.** 현재 Linux Portable 시작 스크립트는 구현되지 않았으며, NTFS 포맷만으로 Linux에서 실행되는 것은 아님.
+이 문서는 외장 SSD의 MAI를 Windows PC에서 준비하고 실행하는 절차를 설명함. **SSD 파일시스템은 프로젝트 운영 기준상 NTFS로 준비함.** Ubuntu 24.04 x86-64용 실험적 시작 스크립트도 제공하지만, NTFS 포맷만으로 Linux에서 실행되는 것은 아님.
 
 ## 1. 준비 사항
 
@@ -147,6 +147,64 @@ powershell -NoProfile -Command '$env:PLAYWRIGHT_BROWSERS_PATH=(Join-Path (Get-Lo
 - 다른 Windows PC로 이동 전 MAI와 Ollama를 종료하고 SSD를 안전하게 분리함.
 - 외장 HDD 백업은 MAI 중지 후 **전체 폴더를 날짜별로 복사**하면 됨. `.env`에는 인증정보가 있으므로 백업 디스크 접근을 보호함.
 - SQLite의 DB 복사 시점에는 쓰기 프로세스를 모두 종료해야 함.
-- 현재 제공되는 Portable 설치·시작 스크립트는 **Windows 전용**임. NTFS는 Windows·Linux 양쪽에서 읽을 수 있지만, Linux의 실행 권한·마운트 옵션·시스템 라이브러리·GPU 드라이버 등의 별도 검증이 필요함. **Linux에서 SSD 연결만으로 바로 MAI 실행하는 기능은 아직 구현되지 않았음.**
+- Windows용 실행 환경과 Ubuntu 24.04 x86-64용 실험적 실행 환경은 분리됨. Linux에서는 Python/Ollama를 PC의 로컬 캐시에 준비해 실행함. **Ubuntu 호스트에서 최초 준비 작업이 필요하고 완전 오프라인 플러그 앤 플레이는 아직 보장하지 않음.**
 
 추가 설명: [기존 Portable 디스크 준비 문서](setup-portable.md), [Windows Portable 기술 문서](docs/portable-windows.md).
+
+## 8. Ubuntu 24.04 LTS x86-64 첫 지원 (실험적)
+
+**현재 상태:** Linux 전용 준비·시작 스크립트를 추가했으나, 실제 Ubuntu 24.04 PC에서 종단 간 실행은 아직 검증되지 않음. 기존 Windows 런타임·실행 스크립트는 변경하지 않음.
+
+### 사전 조건
+
+- PC가 **Ubuntu 24.04 LTS x86-64**여야 함. 다른 배포판·아키텍처에서는 준비 스크립트가 오류로 종료됨.
+- 외장 SSD는 NTFS로 유지하되 **Linux에서 읽기·쓰기가 가능한 상태로 마운트**되어야 함. `noexec` 마운트여도 `bash`로 스크립트를 읽어 실행할 수 있으나 데이터 파일 쓰기는 필요함.
+- Ubuntu 호스트에 `python3`, `curl`, `tar`, `zstd`, `git`, `sha256sum`, `flock`가 필요함. 필요한 패키지는 Ubuntu 패키지 관리자를 통해 설치해야 하며, **호스트의 시스템 라이브러리/GPU 드라이버는 SSD가 공급하지 않음**.
+- **Windows MAI와 Ollama를 종료하고 SSD를 안전하게 분리**한 후 Ubuntu에 연결할 것. 두 OS에서 SQLite를 동시에 사용하지 않음.
+- Linux 런타임은 NTFS 파일 권한·심볼릭 링크 문제를 피하기 위해 **Ubuntu PC 사용자 홈의 `~/.cache/mai-portable/` 하위에 설치**함. 모델과 SQLite DB는 계속 SSD의 공통 디렉터리를 사용함.
+
+### 최초 준비
+
+먼저 인터넷이 되는 PC에서 Python으로 Ubuntu 실행 파일 URL과 배포자 SHA-256을 생성함. Linux용 목록은 Windows의 `portable-sources.json`과 **별도 파일**임.
+
+```bash
+python3 scripts/resolve_portable_sources_linux.py
+```
+
+이미 Windows PC에서 Python 런처를 쓰고 있다면 다음과 같이 실행할 수 있음.
+
+```bash
+py -3.14 scripts/resolve_portable_sources_linux.py
+```
+
+공식 GitHub 릴리스가 정확한 파일이나 배포자 SHA-256을 제공하지 않으면 명시적으로 실패함. 임의로 계산한 다운로드 파일 해시를 배포자 서명처럼 사용하지 않음. 생성한 `portable-sources-linux.json`은 SSD에 보관하며 Git에 커밋하지 않음.
+
+Ubuntu PC에서 SSD를 마운트한 뒤 MAI 폴더로 이동해 실행함.
+
+```bash
+bash ./prepare-portable-linux.sh
+```
+
+최초 준비에서 필요한 Linux용 Python/uv/Ollama 아카이브를 SSD의 `portable-downloads/linux/`에 보관하고 검증한 뒤, Ubuntu 사용자 로컬 캐시에 압축 해제함. Python 패키지 설치에는 인터넷이 추가로 필요할 수 있음. Linux용 Playwright Chromium까지 준비하려면 다음 옵션을 사용함.
+
+```bash
+bash ./prepare-portable-linux.sh --install-chromium
+```
+
+Chromium 사용 시 Ubuntu 시스템 의존 라이브러리가 없으면 별도 설치해야 함. Ubuntu의 호스트 패키지 설치는 자동으로 수행하지 않으며 실패 시 명시적인 오류를 확인해야 함.
+
+### 이후 실행
+
+```bash
+bash ./start-portable-linux.sh
+```
+
+이 명령은 Ubuntu PC의 캐시에서 Linux Python과 Ollama를 실행하면서 SSD에 있는 `portable-models/ollama` 및 `data/`를 사용함. `.env`는 SSD에서 읽음. 모델과 DB 복사본을 PC별로 만들지 않음. **기존 Ollama가 11434 포트를 점유한다면 오류로 중단하며 임의로 기존 서버를 재사용하지 않음.** MAI 웹 UI는 `http://127.0.0.1:8000`에서 확인함.
+
+### 제한 및 검증
+
+- 최초 Ubuntu PC에서는 Linux 실행 환경 준비가 필요하며, **아카이브만 가지고 새 Ubuntu PC에서 완전 오프라인 최초 실행까지 보장하는 기능은 아직 미구현**임.
+- Ubuntu PC 로컬 캐시가 삭제되거나 SSD 경로가 바뀌면 해당 PC에서 준비 스크립트를 다시 실행해야 할 수 있음.
+- AMD/NVIDIA GPU 추론은 호스트 드라이버와 엔진 지원에 따라 달라짐. 본 PR은 GPU 드라이버를 설치하거나 GPU 실행을 보장하지 않음.
+- Ollama 모델 목록 확인, 한 차례 텍스트 추론, 대화 DB 쓰기, Windows로 돌아온 뒤 DB 읽기, Chromium 웹도구, Tailscale 접근을 각각 실제 PC에서 시험해야 함.
+- Tailscale/Funnel은 PC별 설치·인증·기기 등록·설정이 필요하며 외장 SSD에 있는 MAI 코드만으로 자동 복원되지 않음.
