@@ -49,7 +49,9 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
         if ($archiveName.EndsWith('.zip')) {
             Expand-Archive -LiteralPath $archive -DestinationPath $staging -ErrorAction Stop
         } else {
-            & tar -xf $archive -C $staging
+            $windowsTar = Join-Path $env:SystemRoot "System32\tar.exe"
+            if (-not (Test-Path -LiteralPath $windowsTar -PathType Leaf)) { throw "Windows tar.exe not found: $windowsTar" }
+            & $windowsTar -xf $archive -C $staging
             if ($LASTEXITCODE -ne 0) { throw "Archive extraction failed: $archive" }
         }
         $candidate = Get-ChildItem -LiteralPath $staging -Recurse -File -Filter $expectedExecutable |
