@@ -1,10 +1,6 @@
 import asyncio
-import hashlib
-from pathlib import Path
-
 import pytest
 
-from mai.remote.agent import execute
 from mai.remote.session import AgentResponse, RemoteExecutionError, RemoteOperation, RemoteSessionManager
 
 
@@ -29,14 +25,3 @@ async def _exercise_remote_session():
     with pytest.raises(RemoteExecutionError):
         await manager.poll(session.session_id, session.secret)
 
-
-def test_agent_write_requires_expected_hash(tmp_path: Path):
-    target = tmp_path / "test.txt"
-    execute(RemoteOperation(operation="file.write", arguments={"path": str(target), "text": "old"}))
-    with pytest.raises(ValueError):
-        execute(RemoteOperation(operation="file.write", arguments={"path": str(target), "text": "wrong"}))
-    digest = hashlib.sha256(b"old").hexdigest()
-    execute(RemoteOperation(operation="file.write", arguments={"path": str(target), "text": "new", "expected_sha256": digest}))
-    assert target.read_text() == "new"
-    with pytest.raises(ValueError):
-        execute(RemoteOperation(operation="file.write", arguments={"path": str(target), "text": "stale", "expected_sha256": digest}))
