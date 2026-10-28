@@ -222,6 +222,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str = Field(default="default", min_length=1)
     model: str | None = None
+    remote_session_id: str | None = None
 
 
 class ToolExecutionResponse(BaseModel):
@@ -479,6 +480,17 @@ async def chat(
 ) -> ChatResponse | JSONResponse:
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
+    if request.remote_session_id is not None:
+        if principal.role is not AccessRole.OWNER:
+            raise HTTPException(status_code=403, detail="remote management is owner only")
+        try:
+            remote_session = remote_sessions.get(request.remote_session_id)
+        except RemoteExecutionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if remote_session.owner_id != principal.db_id:
+            raise HTTPException(status_code=403, detail="not your remote session")
+        if not remote_session.connected:
+            raise HTTPException(status_code=409, detail="remote agent is not connected")
     try:
         selected_model = _selected_model_for_principal(
             principal,
@@ -550,6 +562,7 @@ async def chat(
             principal=principal,
             prior_messages=prior,
             model=selected_model,
+            remote_session_id=request.remote_session_id,
             on_tool_execution=publish_tool,
             on_model_turn=publish_model_turn,
             on_verification_rejection=publish_verification_rejection,
