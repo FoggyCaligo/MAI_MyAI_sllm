@@ -211,6 +211,7 @@ def install() -> None:
     async def resumable_root() -> HTMLResponse:
         index_path = Path(server._STATIC_DIR) / "index.html"
         resumable_script = Path(server._STATIC_DIR) / "resumable-chat.js"
+        new_chat_script = Path(server._STATIC_DIR) / "new-chat.js"
         html = index_path.read_text(encoding="utf-8-sig")
         subtitle_marker = '<div class="subtitle">local personal agent</div>'
         if subtitle_marker not in html:
@@ -237,8 +238,10 @@ def install() -> None:
             raise RuntimeError("chat form marker is missing from index.html")
         html = html.replace(chat_form_marker, '<form id="chat-form" novalidate>', 1)
         resumable_digest = hashlib.sha256(resumable_script.read_bytes()).hexdigest()[:16]
+        new_chat_digest = hashlib.sha256(new_chat_script.read_bytes()).hexdigest()[:16]
         assets = (
             f'  <script src="/static/resumable-chat.js?v={resumable_digest}"></script>\n'
+            f'  <script src="/static/new-chat.js?v={new_chat_digest}"></script>\n'
         )
         html = html.replace("</body>", assets + "</body>", 1)
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
