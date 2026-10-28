@@ -6,6 +6,13 @@ import os
 from typing import Any, Mapping, Sequence
 
 
+def ollama_generation_limit(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if value <= 0:
+        raise ValueError('output token limit must be positive')
+    return value
+
+
 JsonObject = dict[str, Any]
 Message = dict[str, Any]
 ToolSchema = dict[str, Any]
