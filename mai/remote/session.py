@@ -76,6 +76,18 @@ class RemoteSessionManager:
             _LOG.info("MAI remote session created session=%s owner=%s", session.session_id, owner_id)
             return session
 
+    def owner_session(self, owner_id: str) -> RemoteSession | None:
+        """Resolve the single current remote connection for an owner, independently of browser auth."""
+        active = [
+            session for session in self._sessions.values()
+            if session.owner_id == owner_id
+            and not session.closed
+            and time.monotonic() < session.expires_at
+        ]
+        if len(active) > 1:
+            raise RemoteExecutionError("multiple remote sessions for one owner")
+        return active[0] if active else None
+
     def get(self, session_id: str) -> RemoteSession:
         session = self._sessions.get(session_id)
         if session is None or session.closed or time.monotonic() >= session.expires_at:
