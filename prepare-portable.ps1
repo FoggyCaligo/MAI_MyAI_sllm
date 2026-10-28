@@ -6,7 +6,7 @@ param(
     [switch]$InstallChromium,
     [switch]$PullModels,
     [switch]$PreserveAndReinstallExisting,
-    [string[]]$Models
+    [string]$Models
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -101,7 +101,14 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
 
 }
 
-if ($Models.Count -gt 0 -and -not $CopyLocalModels) {
+$selectedModels = @()
+if (-not [string]::IsNullOrWhiteSpace($Models)) {
+    $selectedModels = @($Models.Split(','))
+    if (@($selectedModels | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        throw '-Models requires non-empty comma-separated model identifiers'
+    }
+}
+if ($selectedModels.Count -gt 0 -and -not $CopyLocalModels) {
     throw '-Models requires -CopyLocalModels'
 }
 if ($CopyLocalModels -and $PullModels) {
@@ -140,9 +147,9 @@ if ($CopyLocalModels) {
         throw "Source Ollama models not found: $sourceModels"
     }
     $targetModels = Join-Path $root 'portable-models\ollama'
-    if ($Models.Count -gt 0) {
+    if ($selectedModels.Count -gt 0) {
         $copyArgs = @('scripts/copy_ollama_models.py', '--source', $sourceModels, '--destination', $targetModels)
-        foreach ($model in $Models) {
+        foreach ($model in $selectedModels) {
             $copyArgs += @('--model', $model)
         }
         & $python @copyArgs
