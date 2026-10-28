@@ -221,7 +221,7 @@
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
       document.getElementById('remote-title').textContent='명령이 복사되었습니다';
-      $remoteDetails.hidden=true;$remoteCreate.hidden=true;
+      $remoteDetails.hidden=true;$remoteCreate.hidden=false;
     }catch(err){
       document.getElementById('remote-title').textContent='명령을 직접 복사해주세요';
       document.getElementById('remote-command').textContent=remoteCommandText;
