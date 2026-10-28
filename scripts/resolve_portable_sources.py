@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 from urllib.request import Request, urlopen
@@ -22,32 +23,30 @@ SOURCES = {
 
 def github_json(path: str) -> object:
     url = "https://api.github.com" + path
-    req = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "MAI-portable-manifest"})
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "MAI-portable-manifest"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = Request(url, headers=headers)
     with urlopen(req, timeout=30) as response:
         return json.load(response)
 
 
 
-def matching_assets(owner: str, repo: str, release_id: int, asset_pattern: str) -> list[dict[str, object]]:
-    matches: list[dict[str, object]] = []
-    page = 1
-    while True:
-        assets = github_json(f"/repos/{owner}/{repo}/releases/{release_id}/assets?per_page=100&page={page}")
-        if not isinstance(assets, list):
-            raise ValueError(f"Invalid assets metadata: {owner}/{repo}")
-        matches.extend(
-            asset for asset in assets
-            if isinstance(asset, dict)
-            and isinstance(asset.get("name"), str)
-            and re.fullmatch(asset_pattern, asset["name"]) is not None
-        )
-        if len(assets) < 100:
-            return matches
-        page += 1
+def matching_assets(release: dict[str, object], asset_pattern: str) -> list[dict[str, object]]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("GitHub release response is missing assets")
+    return [
+        asset for asset in assets
+        if isinstance(asset, dict)
+        and isinstance(asset.get("name"), str)
+        and re.fullmatch(asset_pattern, asset["name"]) is not None
+    ]
 
 
 def latest_binary_release(owner: str, repo: str, asset_pattern: str) -> tuple[dict[str, object], dict[str, object]]:
-    """Select the newest published release that actually contains the requested binary."""
+    """Find the newest release with a matching asset without N+1 asset API calls."""
     for page in range(1, 4):
         releases = github_json(f"/repos/{owner}/{repo}/releases?per_page=100&page={page}")
         if not isinstance(releases, list):
@@ -57,7 +56,7 @@ def latest_binary_release(owner: str, repo: str, asset_pattern: str) -> tuple[di
                 raise ValueError(f"Malformed release entry: {owner}/{repo}")
             if release.get("draft") is True:
                 continue
-            matches = matching_assets(owner, repo, release["id"], asset_pattern)
+            matches = matching_assets(release, asset_pattern)
             if len(matches) > 1:
                 raise ValueError(f"Ambiguous Windows Vulkan assets in {owner}/{repo} release {release.get('tag_name')}")
             if matches:
@@ -75,7 +74,7 @@ def resolve_one(owner: str, repo: str, asset_pattern: str) -> dict[str, str]:
         release = github_json(f"/repos/{owner}/{repo}/releases/latest")
         if not isinstance(release, dict) or not isinstance(release.get("id"), int):
             raise ValueError(f"Invalid release metadata: {owner}/{repo}")
-        matches = matching_assets(owner, repo, release["id"], asset_pattern)
+        matches = matching_assets(release, asset_pattern)
         if len(matches) != 1:
             raise ValueError(f"Expected one matching asset for {owner}/{repo}, got {len(matches)}")
         asset = matches[0]
