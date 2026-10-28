@@ -6,9 +6,8 @@ from typing import Protocol
 
 
 MEMORY_RECALL_TOOL_NAMES = frozenset({
-    "memory_recall",
+    "memory_lookup",
     "memory_overview",
-    "memory_search",
 })
 
 
