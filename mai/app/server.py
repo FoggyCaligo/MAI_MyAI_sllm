@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..agent import AgentRunFailure
+from ..remote.session import AgentResponse, RemoteExecutionError, remote_sessions
 from .access import AccessDeniedError, AccessPolicy, AccessPrincipal, AccessRole
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
@@ -600,3 +601,76 @@ async def clear_session(session_id: str, authorization: str | None = Header(defa
     _, principal = _principal_from_authorization(authorization)
     removed = _get_chat_session_store().clear(db_id=principal.db_id, session_id=session_id)
     return {"cleared": removed}
+
+
+# Remote Agent protocol. Only authenticated owner users can create/revoke sessions.
+# Agents require an independent one-time secret, never the web login token.
+class RemoteCreateResponse(BaseModel):
+    session_id: str
+    agent_secret: str
+    expires_in_seconds: int
+
+
+def _require_remote_owner(authorization: str | None) -> AccessPrincipal:
+    _, principal = _principal_from_authorization(authorization)
+    if principal.role is not AccessRole.OWNER:
+        raise HTTPException(status_code=403, detail="remote management is owner only")
+    return principal
+
+
+@app.post("/remote/sessions", response_model=RemoteCreateResponse)
+async def remote_create_session(authorization: str | None = Header(default=None)) -> RemoteCreateResponse:
+    principal = _require_remote_owner(authorization)
+    session = await remote_sessions.create(principal.db_id)
+    return RemoteCreateResponse(
+        session_id=session.session_id,
+        agent_secret=session.secret,
+        expires_in_seconds=3600,
+    )
+
+
+@app.get("/remote/sessions/{session_id}")
+async def remote_session_status(session_id: str, authorization: str | None = Header(default=None)) -> dict[str, object]:
+    principal = _require_remote_owner(authorization)
+    try:
+        session = remote_sessions.get(session_id)
+        if session.owner_id != principal.db_id:
+            raise HTTPException(status_code=403, detail="not your session")
+        return {"session_id": session_id, "connected": session.connected, "expires_at_monotonic": session.expires_at}
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.delete("/remote/sessions/{session_id}")
+async def remote_revoke_session(session_id: str, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    principal = _require_remote_owner(authorization)
+    try:
+        session = remote_sessions.get(session_id)
+        if session.owner_id != principal.db_id:
+            raise HTTPException(status_code=403, detail="not your session")
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await remote_sessions.close(session_id)
+    return {"revoked": True}
+
+
+@app.post("/remote/agent/{session_id}/poll")
+async def remote_agent_poll(session_id: str, x_mai_agent_secret: str | None = Header(default=None)) -> dict[str, object]:
+    if x_mai_agent_secret is None:
+        raise HTTPException(status_code=401, detail="remote agent secret required")
+    try:
+        request = await remote_sessions.poll(session_id, x_mai_agent_secret)
+        return {"request": request}
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.post("/remote/agent/{session_id}/result")
+async def remote_agent_result(session_id: str, response: AgentResponse, x_mai_agent_secret: str | None = Header(default=None)) -> dict[str, bool]:
+    if x_mai_agent_secret is None:
+        raise HTTPException(status_code=401, detail="remote agent secret required")
+    try:
+        remote_sessions.resolve(session_id, x_mai_agent_secret, response)
+        return {"accepted": True}
+    except RemoteExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
