@@ -386,20 +386,6 @@ class AgentLoop:
                             if verification_rejection_count >= 5:
                                 raise VerificationRetriesExhausted(
                                     "provisional answer rejected five times; displaying last unverified answer")
-                            guard.after_verification_rejection([
-                                {
-                                    "code": issue.code,
-                                    "claims": sorted(
-                                        (claim["defect"], claim["claim"])
-                                        for claim in (verification.review_details or {}).get("claims", ())
-                                        if claim["verdict"] == "unsupported"
-                                    ),
-                                }
-                                for issue in verification.issues
-                            ])
-                            if exhausted:
-                                raise VerificationRetriesExhausted(
-                                    "provisional answer verification correction budget exhausted: " + issue_codes)
                             if numeric_failure:
                                 numeric_verification_retries += 1
                             if semantic_failure:
