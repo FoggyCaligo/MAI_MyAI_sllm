@@ -1,7 +1,7 @@
 """Native memory tools bound to one user's current Working Graph."""
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..tools.registry import ToolRegistry
 from .runtime import MemoryRuntime
@@ -25,29 +25,34 @@ _MEMORY_MODEL_CONTEXT = {
 }
 
 
-class MemoryRecallInput(BaseModel):
+class MemoryLookupInput(BaseModel):
+    """Exactly one lookup selector is required."""
     model_config = ConfigDict(extra="forbid")
-    query: str = Field(min_length=1, description="Lexical query for recalling this user's persistent memory")
+    node_id: int | None = Field(
+        default=None, gt=0,
+        description="Expand a known memory node by its ID (graph search).",
+    )
+    keyword: str | None = Field(
+        default=None, min_length=1,
+        description="Search persistent memories by topic or free-text keywords (recall).",
+    )
     limit: int | None = Field(
         default=None, ge=1,
-        description="Optional maximum number of relevant Fact nodes to return, ranked by matching Concept score. Omit to return all matching facts; use a smaller limit for focused queries to reduce context.",
+        description="Optional maximum matching Fact nodes; valid only with keyword.",
     )
+
+    @model_validator(mode="after")
+    def check_selector(self) -> "MemoryLookupInput":
+        if (self.node_id is None) == (self.keyword is None):
+            raise ValueError("Provide exactly one of node_id or keyword")
+        if self.node_id is not None and self.limit is not None:
+            raise ValueError("limit is only valid with keyword")
+        return self
 
 
 class MemoryOverviewInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=8, ge=1, le=50, description="Maximum number of recent user-grounded memories to return")
-
-
-class MemorySearchInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    node_id: int = Field(
-        gt=0,
-        description=(
-            "Working/permanent memory node to expand. Regular nodes use one graph hop; "
-            "the current user's anchor returns its bounded structured Fact context."
-        ),
-    )
 
 
 def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working: WorkingGraph, *, user_id: str, include_recall_entry: bool = True) -> None:
@@ -61,27 +66,36 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         context=_MEMORY_MODEL_CONTEXT,
     )
 
+    async def memory_lookup(
+        node_id: int | None = None,
+        keyword: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, object]:
+        if node_id is not None:
+            return memory.memory_search(working, user_id=user_id, node_id=node_id)
+        if keyword is None:
+            raise ValueError("Exactly one of node_id or keyword is required")
+        if not include_recall_entry:
+            raise ValueError("Keyword recall is disabled for this tool registry")
+        recalled = memory.explicit_recall(user_id=user_id, query=keyword, limit=limit)
+        working.merge_working(recalled)
+        return recalled.model_snapshot()
+
+    registry.add(
+        name="memory_lookup",
+        description=(
+            "Retrieve persistent memory using exactly one selector: keyword for topic-based "
+            "recall (e.g. user's hobbies, preferences, people or past events), or node_id "
+            "to expand a known graph node. Keyword results contain relevant Fact nodes; "
+            "node_id results expand graph relations. limit applies only to keyword searches. "
+            "A bounded overview or empty search does not prove that other memories are absent."
+        ),
+        input_model=MemoryLookupInput,
+        handler=memory_lookup,
+        category="memory",
+    )
+
     if include_recall_entry:
-        async def memory_recall(query: str, limit: int | None = None) -> dict[str, object]:
-            recalled = memory.explicit_recall(user_id=user_id, query=query, limit=limit)
-            working.merge_working(recalled)
-            return recalled.model_snapshot()
-
-        registry.add(
-            name="memory_recall",
-            description=(
-                "Search this user's persistent memory from a specific free-text query. Optionally set limit "
-                "to return only the highest-ranked matching Fact nodes; omit limit to return all matches. "
-                "The default result is "
-                "query-matched Fact memories with node IDs, not a recent-memory overview. An empty or "
-                "weak result means that this search did not locate evidence, not that the memory is absent. Rephrase the query or use memory_search on related nodes for more evidence. Use recall when the answer depends on a "
-                "particular remembered topic, preference, decision, person, project, or past event."
-            ),
-            input_model=MemoryRecallInput,
-            handler=memory_recall,
-            category="memory",
-        )
-
         async def memory_overview(limit: int = 8) -> dict[str, object]:
             return memory.memory_overview(user_id=user_id, limit=limit)
 
@@ -97,17 +111,3 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
             category="memory",
         )
 
-    async def memory_search(node_id: int) -> dict[str, object]:
-        return memory.memory_search(working, user_id=user_id, node_id=node_id)
-
-    registry.add(
-        name="memory_search",
-        description=(
-            "Expand one persistent-memory node and merge the result into the current Working Graph. "
-            "Regular nodes expand by one graph hop and return content-bearing Fact/Utterance nodes only; the current user's anchor returns bounded "
-            "structured Fact context. Preserve available paths back to this user's anchor."
-        ),
-        input_model=MemorySearchInput,
-        handler=memory_search,
-        category="memory",
-    )
