@@ -25,7 +25,9 @@ def build_registry(*, cwd: str | Path | None = None) -> ToolRegistry:
 
 async def execute_native(name: str, arguments: dict[str, Any], *, cwd: str | Path | None = None) -> Any:
     registry = build_registry(cwd=cwd)
-    return await registry.invoke_named(name, arguments)
+    definition = registry.get(name)
+    validated = definition.validate_arguments(arguments)
+    return await definition.invoke(validated.model_dump())
 
 
 def main() -> int:
