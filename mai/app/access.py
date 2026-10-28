@@ -112,7 +112,7 @@ class AccessPolicy:
         if info is None:
             info = self.trials.get(user_id)
             role = AccessRole.TRIAL
-        if info is None or not secrets.compare_digest(submitted_password, info.user_pw):
+        if info is None or not secrets.compare_digest(submitted_password.encode("utf-8"), info.user_pw.encode("utf-8")):
             raise AccessDeniedError("ID or password is incorrect")
 
         return AccessPrincipal(user_id=info.user_id, db_id=info.db_id, role=role)
