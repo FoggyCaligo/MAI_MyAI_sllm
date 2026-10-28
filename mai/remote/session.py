@@ -79,13 +79,13 @@ class RemoteSessionManager:
 
     def authenticate_agent(self, session_id: str, secret: str) -> RemoteSession:
         session = self.get(session_id)
-        if not session.pairing_approved or not secrets.compare_digest(session.secret, secret):
+        if (session.pairing_secret is not None and not session.pairing_approved) or not secrets.compare_digest(session.secret, secret):
             raise RemoteExecutionError("remote agent authentication failed")
         return session
 
     def begin_pairing(self, session_id: str, agent_key: str) -> str:
         session = self.get(session_id)
-        if session.claimed or session.pairing_secret is not None:
+        if session.claimed or session.connected or session.pairing_secret is not None:
             raise RemoteExecutionError("this session already has a pairing attempt")
         if len(agent_key) < 40:
             raise RemoteExecutionError("agent pairing key is too short")
