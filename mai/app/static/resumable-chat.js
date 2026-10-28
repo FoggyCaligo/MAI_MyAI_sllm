@@ -110,6 +110,7 @@
     tools.forEach((tool, index) => {
       const entry = document.createElement('details');
       entry.className = 'tool-entry';
+      entry.name = 'mai-tool-log-exclusive';
       entry.open = openEntries[index] ?? false;
       const head = document.createElement('summary');
       head.className = 'tool-head';
