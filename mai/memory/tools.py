@@ -36,7 +36,7 @@ class MemoryRecallInput(BaseModel):
 
 class MemoryOverviewInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    limit: int = Field(default=12, ge=1, le=50, description="Maximum number of recent user-grounded memories to return")
+    limit: int = Field(default=8, ge=1, le=50, description="Maximum number of recent user-grounded memories to return")
 
 
 class MemorySearchInput(BaseModel):
@@ -82,7 +82,7 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
             category="memory",
         )
 
-        async def memory_overview(limit: int = 12) -> dict[str, object]:
+        async def memory_overview(limit: int = 8) -> dict[str, object]:
             return memory.memory_overview(user_id=user_id, limit=limit)
 
         registry.add(
