@@ -250,6 +250,18 @@ class FinalVerificationResult:
                     lines.append(f"- {issue.code}: {len(related) - 3} further detailed findings retained in the audit log.")
             else:
                 lines.append(f"- {issue.code}: {issue.message}")
+        if unsupported:
+            targets = "; ".join(claim["claim"] for claim in unsupported)
+            lines.append(
+                f"수정 지시: {targets} 부분의 근거를 tool 호출을 통해 보강하거나, "
+                "해당 부분 자체를 삭제하라."
+            )
+        else:
+            targets = "; ".join(issue.message for issue in self.issues)
+            lines.append(
+                f"수정 지시: {targets} 부분을 실제 근거와 요청에 맞게 수정하라. "
+                "근거가 필요한 주장이라면 tool 호출로 보강하거나 해당 주장을 삭제하라."
+            )
         return "\n".join(lines)
 
 
