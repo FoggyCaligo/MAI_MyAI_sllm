@@ -1,3 +1,16 @@
+## 배포 파일 URL 및 SHA-256 자동 생성
+
+기존 portable-sources.example.json에는 실제 다운로드 정보 대신 자리표시자가 있었음. 먼저 아래 명령을 실행해 공식 GitHub 릴리스 API의 배포자 제공 SHA-256과 URL을 portable-sources.json에 고정함.
+
+```bash
+python scripts/resolve_portable_sources.py
+```
+
+llama.cpp Vulkan 릴리스까지 포함하려면 `--include-llamacpp` 옵션을 추가함. SHA-256이 제공되지 않거나 지정된 자산이 없으면 오류로 종료함. 기존 설정 파일은 덮어쓰지 않음.
+
+이 명령은 PC에 이미 설치된 Python으로 최초 한 번 실행함. 생성 후 prepare-portable.ps1을 실행할 것. 최초 다운로드는 인터넷이 필요하며, 오프라인 장기 보관을 위해 설치된 모델과 원본 아카이브를 별도 백업해야 함.
+
+---
 # MAI Portable (Windows x64)
 
 목표: 외장 SSD에 MAI 소스·개인 설정·SQLite DB·모델 가중치·실행 도구를 모아 다른 Windows x64 PC에서도 드라이브 문자와 관계없이 실행함. **현재 이식된 runtime 자체는 자동 공급되지 않음.** 실행 파일과 모델이 실제로 준비되지 않으면 명확하게 실패함.
