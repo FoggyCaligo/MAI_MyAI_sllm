@@ -10,9 +10,12 @@ source /etc/os-release
 if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != 24.04 ]]; then
   echo "Expected Ubuntu 24.04; found ${PRETTY_NAME:-unknown}" >&2; exit 1
 fi
-for utility in python3 curl tar sha256sum flock zstd; do
+for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--install-chromium" ) ]]; then
+  echo "Usage: bash prepare-portable-linux.sh [--install-chromium]" >&2; exit 2
+fi
 manifest="$root/portable-sources-linux.json"
 [[ -f "$manifest" ]] || { echo "Missing $manifest; create with scripts/resolve_portable_sources_linux.py" >&2; exit 1; }
 export MAI_LINUX_ROOT="$root"
@@ -50,7 +53,7 @@ fetch() {
   hash="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]]["sha256"])' "$manifest" "$name")"
   file="$archive_dir/${url##*/}"
   if [[ ! -f "$file" ]]; then
-    echo "[Linux Portable] Downloading $name"
+    echo "[Linux Portable] Downloading $name" >&2
     curl --fail --location --show-error --output "$file.incomplete" "$url"
     mv -- "$file.incomplete" "$file"
   fi
@@ -111,5 +114,9 @@ ollama="$cache/ollama/bin/ollama"
 echo "[Linux Portable] Installing MAI Python dependencies"
 UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root"
 "$python" -c 'import fastapi, ollama, uvicorn, playwright, mai'
+if [[ "${1:-}" == "--install-chromium" ]]; then
+  export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
+  "$python" -m playwright install chromium
+fi
 echo "[Linux Portable] Host runtime prepared: $cache"
 echo "Run: bash '$root/start-portable-linux.sh'"
