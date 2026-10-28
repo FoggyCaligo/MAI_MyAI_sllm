@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Manifest,
     [switch]$CopyLocalModels,
     [switch]$InstallChromium,
-    [switch]$PullModels
+    [switch]$PullModels,
+    [switch]$PreserveAndReinstallExisting
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -34,14 +35,21 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
             throw "Existing runtime lacks expected executable: $binary"
         }
         if (-not (Test-Path -LiteralPath $recordPath -PathType Leaf)) {
-            throw "Existing runtime has no verifiable installation receipt: $destination. Preserve it and reinstall into a fresh directory."
+            if (-not $PreserveAndReinstallExisting) {
+                throw "Existing runtime has no installation receipt: $destination. Rerun with -PreserveAndReinstallExisting to preserve it and reinstall."
+            }
+            $backup = "$destination.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
+            if (Test-Path -LiteralPath $backup) { throw "Preservation destination already exists: $backup" }
+            Move-Item -LiteralPath $destination -Destination $backup -ErrorAction Stop
+            Write-Host "Preserved existing runtime in $backup"
+        } else {
+            $record = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($record.url -cne $url -or $record.sha256 -ine $hash -or $record.executable -cne $expectedExecutable) {
+                throw "Existing runtime does not match pinned manifest: $destination"
+            }
+            Write-Host "Reusing verified runtime: $destination"
+            return
         }
-        $record = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($record.url -cne $url -or $record.sha256 -ine $hash -or $record.executable -cne $expectedExecutable) {
-            throw "Existing runtime does not match pinned manifest: $destination"
-        }
-        Write-Host "Reusing verified runtime: $destination"
-        return
     }
     $archive = Join-Path $cache $archiveName
     if (-not (Test-Path -LiteralPath $archive)) {
