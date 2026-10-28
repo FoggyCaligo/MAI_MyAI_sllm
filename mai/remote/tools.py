@@ -27,6 +27,54 @@ class RemoteProcessRun(BaseModel):
     timeout_seconds: int = Field(default=60, ge=1, le=120)
 
 
+class BoundRemoteFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+
+
+class BoundRemoteWrite(BoundRemoteFile):
+    text: str
+    expected_sha256: str | None = None
+
+
+class BoundRemoteProcess(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    executable: str
+    argv: list[str] = Field(default_factory=list)
+    cwd: str | None = None
+    timeout_seconds: int = Field(default=60, ge=1, le=120)
+
+
+def register_bound_remote_tools(registry: ToolRegistry, owner_id: str, session_id: str) -> None:
+    """Tools bind to the selected browser session, not to model-supplied IDs."""
+    async def dispatch(operation: str, arguments: dict) -> dict:
+        return await remote_sessions.execute(owner_id, session_id, RemoteOperation(operation=operation, arguments=arguments))
+
+    async def read(path: str) -> dict:
+        return await dispatch("file.read", {"path": path})
+
+    async def list_files(path: str) -> dict:
+        return await dispatch("file.list", {"path": path})
+
+    async def write(path: str, text: str, expected_sha256: str | None = None) -> dict:
+        return await dispatch("file.write", {"path": path, "text": text, "expected_sha256": expected_sha256})
+
+    async def delete(path: str) -> dict:
+        return await dispatch("file.delete", {"path": path})
+
+    async def run(executable: str, argv: list[str], cwd: str | None = None, timeout_seconds: int = 60) -> dict:
+        return await dispatch("process.run", {"executable": executable, "argv": argv, "cwd": cwd, "timeout_seconds": timeout_seconds})
+
+    for name, desc, model, handler in (
+        ("remote_file_read", "Read a file on the connected remote computer", BoundRemoteFile, read),
+        ("remote_file_list", "List a directory on the connected remote computer", BoundRemoteFile, list_files),
+        ("remote_file_write", "Write UTF-8 text to a file on the connected remote computer", BoundRemoteWrite, write),
+        ("remote_file_delete", "Delete a single file on the connected remote computer", BoundRemoteFile, delete),
+        ("remote_process_run", "Run a program and argument vector on the connected remote computer", BoundRemoteProcess, run),
+    ):
+        registry.add(name=name, description=desc, input_model=model, handler=handler, timeout_seconds=135, category="remote")
+
+
 def register_remote_tools(registry: ToolRegistry, owner_id: str) -> None:
     async def file_read(session_id: str, path: str) -> dict:
         return await remote_sessions.execute(owner_id, session_id, RemoteOperation(operation="file.read", arguments={"path": path}))
