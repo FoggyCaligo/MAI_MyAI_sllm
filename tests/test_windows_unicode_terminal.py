@@ -31,3 +31,20 @@ def test_powershell_unicode_path_and_stdout(tmp_path):
     command = "& '" + str(script).replace("'", "''") + "'"
     result = asyncio.run(terminal_run(command=command, shell="powershell", cwd=str(tmp_path)))
     assert "테스트 성공" in result["stdout"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows file encoding policy")
+def test_default_file_write_is_powershell_51_compatible(tmp_path):
+    script = tmp_path / "한글 실행.ps1"
+    file_write(path=str(script), content="Write-Output '안녕하세요'")
+    assert script.read_bytes().startswith(b"\\xef\\xbb\\xbf")
+    assert file_read(path=str(script))["content"] == "Write-Output '안녕하세요'"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 integration")
+def test_default_shell_powershell_file_reads_unicode_script(tmp_path):
+    script = tmp_path / "한글 스크립트.ps1"
+    file_write(path=str(script), content="Write-Output '실행 완료'")
+    cmd = 'powershell.exe -NoProfile -NonInteractive -File "' + str(script) + '"'
+    result = asyncio.run(terminal_run(command=cmd, cwd=str(tmp_path)))
+    assert result["returncode"] == 0
