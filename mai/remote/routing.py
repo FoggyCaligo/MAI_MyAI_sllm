@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import create_model
 
-from mai.remote.session import RemoteExecutionError
+from mai.remote.session import RemoteExecutionError, remote_sessions
 from mai.remote.target import ExecutionTarget
 from mai.tools.local import register_local_pc_tools
 from mai.tools.registry import ToolRegistry
@@ -26,7 +26,7 @@ def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str)
             is_remote = kwargs.pop("is_remote")
             if not is_remote:
                 return await _definition.invoke(kwargs)
-            session = __import__("mai.remote.session", fromlist=["remote_sessions"]).remote_sessions.owner_session(owner_id)
+            session = remote_sessions.owner_session(owner_id)
             if session is None:
                 raise RemoteExecutionError("is_remote=true requires an active remote session")
             target = ExecutionTarget(owner_id=owner_id, remote_session_id=session.session_id)
