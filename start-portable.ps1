@@ -33,6 +33,7 @@ if ($Backend -eq 'ollama') {
     if (-not (Test-Path -LiteralPath $env:OLLAMA_MODELS -PathType Container)) {
         throw "Portable Ollama model directory is missing: $env:OLLAMA_MODELS"
     }
+    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) { throw 'Ollama port 11434 is already occupied' }
     $ollamaProcess = Start-Process -FilePath $ollama -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollama) -PassThru -NoNewWindow
     try {
         $ready = $false
@@ -56,6 +57,7 @@ if ($Backend -eq 'ollama') {
     $resolvedModel = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
     $env:MAIN_MODEL = $ModelAlias
     $args = @('-m', $resolvedModel, '--alias', $ModelAlias, '--host', '127.0.0.1', '--port', '8080', '--jinja')
+    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { throw 'llama.cpp port 8080 is already occupied' }
     $llamaProcess = Start-Process -FilePath $llama -ArgumentList $args -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
     try {
         $ready = $false
