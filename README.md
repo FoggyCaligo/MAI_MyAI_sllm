@@ -138,3 +138,8 @@ python run_server.py
 ### 대체 로컬 LLM 백엔드 및 장기 보존
 
 기본 Ollama 외에 llama.cpp의 `llama-server`를 텍스트 모델 백엔드로 선택할 수 있음. 설치·설정·모델 호환성과 백업 방법은 [llama.cpp 연동 및 장기 보존](docs/llamacpp-portability.md) 참고.
+
+
+### Windows 외장 SSD Portable 모드
+
+외장 SSD에 소스·DB·모델·별도 런타임을 배치하는 방법과 오프라인 백업·복구 안내는 [Portable 사용 가이드](docs/portable-windows.md) 참조. 현재는 실행 파일을 수동으로 준비해야 하며 새 PC에서 무설치 동작까지 검증된 상태는 아님.
