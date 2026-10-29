@@ -20,6 +20,7 @@ from .guards import (
     content_fingerprint,
 )
 from .tool_results import ToolResultStore
+from .task_state import TaskObservation, TaskState
 from .verification import FinalGroundingVerifier, FinalVerificationResult
 
 
@@ -138,6 +139,7 @@ class AgentFailureContext:
     model_rounds: int
     last_rejected_draft: str | None = None
     last_verifier_feedback: str | None = None
+    task_state: TaskState | None = None
 
 
 class AgentRunFailure(AgentRuntimeError):
@@ -170,6 +172,7 @@ class AgentRunResult:
     model_rounds: int
     final_turn: ModelTurn
     final_verification: FinalVerificationResult | None = None
+    task_state: TaskState | None = None
 
 
 class AgentLoop:
@@ -203,6 +206,9 @@ class AgentLoop:
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
+        user_messages = [message for message in history if message.get("role") == "user"]
+        task_state = TaskState(goal=str(user_messages[-1].get("content", "")) if user_messages else "")
+        task_state.start()
         executions: list[ToolExecution] = []
         if self.registry.has("tool_manual"):
             raise ValueError("tool_manual is reserved for native lazy tool activation")
@@ -315,6 +321,7 @@ class AgentLoop:
                                 for execution in executions
                             ),
                         )
+                        task_state.verify_answer(accepted=verification.ok)
                         if not verification.ok:
                             rejected_final_indices.append(len(history) - 1)
                             issue_codes = ",".join(issue.code for issue in verification.issues) or "unknown"
@@ -378,6 +385,9 @@ class AgentLoop:
                             latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
                             round_number += 1
                             continue
+                    if self.final_verifier is None:
+                        task_state.verify_answer(accepted=True)
+                    task_state.complete()
                     _LOG.info("MAI final accepted round=%d", round_number)
                     for history_index in reversed(rejected_final_indices):
                         del history[history_index]
@@ -389,6 +399,7 @@ class AgentLoop:
                         model_rounds=round_number,
                         final_turn=turn,
                         final_verification=verification if self.final_verifier is not None else None,
+                        task_state=task_state,
                     )
 
                 round_observations: list[ExecutionObservation] = []
@@ -422,6 +433,13 @@ class AgentLoop:
                         )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
+                    task_state.observe(TaskObservation(
+                        execution_index=len(executions) - 1,
+                        tool_name=execution.name,
+                        ok=execution.ok,
+                        error_type=execution.error_type,
+                        content_fingerprint=execution.source_content_fingerprint,
+                    ))
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
                     _LOG.info(
@@ -470,9 +488,11 @@ class AgentLoop:
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})
                 round_number += 1
-        except AgentRunFailure:
+        except AgentRunFailure as exc:
+            task_state.fail(exc)
             raise
         except Exception as exc:
+            task_state.fail(exc)
             _LOG.exception("MAI agent run failed round=%d error_type=%s", round_number, type(exc).__name__)
             raise AgentRunFailure(
                 exc,
@@ -485,6 +505,7 @@ class AgentLoop:
                         if rejected_final_indices else None
                     ),
                     last_verifier_feedback=latest_verifier_feedback,
+                    task_state=task_state,
                 ),
             ) from exc
 
