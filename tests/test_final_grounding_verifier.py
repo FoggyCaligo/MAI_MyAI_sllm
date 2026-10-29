@@ -1058,8 +1058,9 @@ def test_twenty_review_findings_are_preserved_without_expanding_retry_prompt() -
     assert "claim_grounding_failed" in result.feedback_message()
     assert "Unsupported assertion 0" in result.feedback_message()
     assert "No tool evidence for assertion 0" in result.feedback_message()
-    assert "Unsupported assertion 19" not in result.feedback_message()
-    assert len(result.feedback_message()) < 1100
+    assert "Unsupported assertion 19" in result.feedback_message()
+    assert all(f"No tool evidence for assertion {i}" in result.feedback_message() for i in range(20))
+    assert len(result.correction_contract()["unsupported_claims"]) == 20
     schema = reviewer.requests[0].response_format
     assert "maxItems" not in schema["properties"]["claims"]
     assert schema["properties"]["retry_summary"]["maxLength"] == 800
