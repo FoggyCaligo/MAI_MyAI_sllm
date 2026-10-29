@@ -37,7 +37,7 @@ def test_powershell_unicode_path_and_stdout(tmp_path):
 def test_default_file_write_is_powershell_51_compatible(tmp_path):
     script = tmp_path / "한글 실행.ps1"
     file_write(path=str(script), content="Write-Output '안녕하세요'")
-    assert script.read_bytes().startswith(b"\\xef\\xbb\\xbf")
+    assert script.read_bytes().startswith(b"\xef\xbb\xbf")
     assert file_read(path=str(script))["content"] == "Write-Output '안녕하세요'"
 
 
