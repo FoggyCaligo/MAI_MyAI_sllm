@@ -1,4 +1,4 @@
-from mai.agent.verification import _FINAL_REVIEW_SYSTEM as FINAL_REVIEW_PROMPT
+from mai.agent.verification import _FACTUAL_REVIEW_SYSTEM as FINAL_REVIEW_PROMPT
 
 
 
