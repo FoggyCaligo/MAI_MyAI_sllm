@@ -40,6 +40,7 @@ def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> N
         "code_edit",
         "document_edit",
         "terminal_run",
+        "terminal_run_steps",
     )
 
 
