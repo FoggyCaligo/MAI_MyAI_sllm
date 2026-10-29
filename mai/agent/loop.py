@@ -60,6 +60,34 @@ def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
 
 
 
+def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry) -> None:
+    """Expose catalog metadata without exposing unactivated tool schemas."""
+    # Catalog names and categories are structural registry metadata.
+    # Full parameter schemas are available after explicit activation.
+    catalog_position = next(
+        (index for index, message in enumerate(model_history) if message.get("role") != "system"),
+        len(model_history),
+    )
+    model_history.insert(catalog_position, {
+        "role": "system",
+        "content": (
+            "Native tool activation contract: the tool catalog below lists tools "
+            "available in this run, but their parameter schemas are not initially exposed. "
+            "Call tool_manual with exact tool names to activate them. "
+            "On the next round, the activated native tools can be called directly. "
+            "Activated tools remain available throughout this run. "
+            "Do not call an unactivated tool or invent its arguments. "
+            "You may activate multiple tools in one tool_manual call. "
+            "If tools are unnecessary, answer normally. "
+            "Tool catalog (JSON): "
+            + json.dumps([
+                {"name": definition.name, "category": definition.category}
+                for definition in registry.definitions()
+            ], ensure_ascii=False, separators=(",", ":"))
+        ),
+    })
+
+
 class AgentRuntimeError(RuntimeError):
     """Base class for Agent Runtime failures."""
 
@@ -226,30 +254,7 @@ class AgentLoop:
                             }, ensure_ascii=False)
                         ),
                     })
-                # Catalog names and categories are structural registry metadata.
-                # Full parameter schemas are available after explicit activation.
-                catalog_position = next(
-                    (index for index, message in enumerate(model_history) if message.get("role") != "system"),
-                    len(model_history),
-                )
-                model_history.insert(catalog_position, {
-                    "role": "system",
-                    "content": (
-                        "Native tool activation contract: the tool catalog below lists tools "
-                        "available in this run, but their parameter schemas are not initially exposed. "
-                        "Call tool_manual with exact tool names to activate them. "
-                        "On the next round, the activated native tools can be called directly. "
-                        "Activated tools remain available throughout this run. "
-                        "Do not call an unactivated tool or invent its arguments. "
-                        "You may activate multiple tools in one tool_manual call. "
-                        "If tools are unnecessary, answer normally. "
-                        "Tool catalog (JSON): "
-                        + json.dumps([
-                            {"name": definition.name, "category": definition.category}
-                            for definition in self.registry.definitions()
-                        ], ensure_ascii=False, separators=(",", ":"))
-                    ),
-                })
+                _insert_tool_catalog(model_history, self.registry)
                 activated_order = [
                     name for name in self.registry.names()
                     if name in activated_tool_names
