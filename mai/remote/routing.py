@@ -34,7 +34,7 @@ def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str)
 
         registry.add(
             name=definition.name,
-            description=definition.description + " Set is_remote=true to run on the owner's connected remote PC; false (default) runs on the MAI host. If no remote PC is connected, fail; never fall back.",
+            description=definition.description,
             input_model=remote_input,
             handler=invoke,
             timeout_seconds=None,
@@ -44,8 +44,8 @@ def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str)
     registry.add_model_context(
         key="remote_execution_target",
         context={
-            "default": "The MAI host PC (is_remote=false).",
-            "remote": "One owner-authorized remote PC (is_remote=true), when connected.",
+            "default": "Every routed PC tool accepts is_remote (boolean, default false). The MAI host PC runs the call when false or omitted.",
+            "remote": "Set is_remote=true on any routed PC tool to run on the owner-authorized connected remote PC.",
             "session_selection": "The server resolves the account's active remote session. The model must not supply any session identifier.",
             "failures": "A missing or disconnected remote session is an error, not permission to execute locally.",
         },
