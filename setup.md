@@ -1,1046 +1,156 @@
-## 설정 파일 구분 (settings.yaml / .env)
+# MAI 설치 및 설정 가이드 (Windows)
 
-- `settings.yaml`: 모델 기본값, 실행·검증 정책, 도구 시간제한, 대화 기록 길이, 음성 설정 등 **비밀이 아닌 애플리케이션 설정**. Git으로 추적하므로 개인별 수정 시 `git pull` 충돌 가능성을 확인해야 한다.
-- `.env`: 사용자 계정·비밀번호, 로컬 DB 경로, 업로드 경로, 서버 주소, Tailscale 공개 여부 등 **기기별 값·비밀정보**. Git에 커밋하지 않는다.
-- 기존 설치의 `.env`에 남아 있는 동일한 설정 키는 **우선 적용**한다. 따라서 YAML 값을 수정해도 `.env`에 동일 키가 남아 있으면 기존 `.env` 값이 계속 사용된다. YAML로 완전히 이관하려면 해당 설정 줄을 `.env`에서 제거해야 한다.
-- 새 설치에서는 기본 모델과 비전 모델을 YAML에서 읽어 내려받는다. 초기 설치에서 지정한 메인 모델은 각 기기에 맞게 `.env`에 별도 저장된다.
-- 형식은 기존 환경변수 이름을 그대로 쓰는 YAML 최상위 키/값이며, 중복·알 수 없는 키·잘못된 자료형은 시작 시 오류가 발생한다. 비밀번호는 절대로 YAML에 기입하지 않는다.
+MAI를 처음 설치하는 사용자를 위한 문서임. **1장 공통 준비 → 2장 설치 방식 하나 선택 → 3장 선택형 고급 설정** 순서로 진행함. Python·Ollama가 이미 설치되어 있는지와 관계없이, Portable 방식은 별도의 저장 공간에 런타임을 구성함.
 
-## Windows 빠른 설치 — 관리자 PowerShell에 한 번 붙여넣기
+> 중요: 설치와 사용 중 파일 변경·삭제 또는 터미널 실행이 가능하므로 데이터 백업 권장. 설치 스크립트는 다운로드한 실행 파일을 설치·실행하므로 내용을 먼저 확인할 것. 비밀번호 및 인증 토큰을 Git에 올리지 말 것.
 
-처음 설치는 아래 명령 묶음으로 자동화할 수 있다. **GitHub에서 내려받은 스크립트를 실행하므로, 출처와 [설치 스크립트](scripts/install_windows.ps1) 내용을 확인한 뒤 실행한다.** PowerShell은 **관리자 권한**으로 열되, 설치 이후 MAI 자체는 관리자 권한 없이 실행한다.
+## 1. 공통 준비: GitHub 다운로드와 설정 파일
 
-```powershell
-$installer = Join-Path $env:TEMP 'mai_install_windows.ps1'
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/FoggyCaligo/MAI_MyAI_sllm/dev/scripts/install_windows.ps1' -OutFile $installer
-powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+### 1.1 Git 및 저장소 가져오기
+
+Windows PowerShell 또는 Git Bash를 열어 `git --version`으로 Git 설치를 확인함. 없으면 [Git for Windows](https://git-scm.com/downloads/win)에서 설치한 뒤 터미널을 다시 실행함. 일반 설치는 PC 내 폴더에서, Portable 설치는 **외장 SSD의 NTFS 볼륨**에서 아래 명령을 실행함. 다음은 Git Bash 예시임.
+
+```bash
+git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
+cd MAI_MyAI_sllm
 ```
 
-설치 스크립트는 Git·Python·Ollama가 없으면 winget을 사용해 설치하고, MAI `dev` 저장소 다운로드, 가상환경, 기본 패키지(음성 포함), Playwright Chromium 설치 및 의존성 검증을 진행한다. Windows에 `winget`이 없거나 설치 후 명령이 아직 PATH에 잡히지 않는다면 **명확히 실패**하며 안내에 따라 PowerShell을 다시 열고 재실행한다. 기존 설치 디렉터리가 있다면 보존하며, 소스 코드의 Git 변경 사항을 **자동 pull/merge 하지 않는다.**
+기존 설치에서는 다시 clone하지 않고 해당 폴더에서 `git pull`로 업데이트함. 변경 전 개인 파일과 DB를 백업하고, 로컬 수정이 있는 경우 먼저 확인할 것.
 
-신규 설치라면 Ollama 모델 이름, MAI Owner ID와 비밀번호를 입력받아 `.env`를 생성하고, **Trial 비활성화·Tailscale Funnel 비활성화**로 시작한다. 기존 `.env`, 채팅·기억 DB는 절대 덮어쓰지 않는다. 모델 다운로드 실패 등 필수 단계의 오류는 숨기지 않고 설치가 중단된다.
+### 1.2 설정 파일 두 개의 역할
 
-**한 번 붙여넣어도 남는 수동 단계:** 모델 다운로드에 필요한 인터넷 연결, 설치 프롬프트에 로그인 정보 입력, 필요 시 Ollama 앱 실행, 선택적으로 Tailscale 설치·로그인·Funnel 승인, 브라우저 마이크 권한 및 목소리 등록. Tailscale Funnel은 인터넷에 MAI를 공개하므로 자동으로 켜지지 않는다. 세부 설정은 아래 단계별 안내를 따른다.
+| 파일 | 관리 대상 | 공개 여부 |
+|---|---|---|
+| `settings.yaml` | 모델/백엔드, 동작 정책, 시간제한, 음성 설정 등 비밀이 아닌 기본값 | Git 추적 |
+| `.env` | 로그인 계정·비밀번호, 로컬 경로, 접속 주소, 서버 공개 설정 및 기기별 덮어쓰기 | **Git 추적 금지** |
 
-설치가 완료되면 일반 권한의 터미널에서 다음과 같이 실행한다.
+`.env`가 없다면 **프로젝트 루트에서** 복사함.
 
-```powershell
-cd "$env:USERPROFILE\Documents\Git\MAI_MyAI_sllm"
-.\.venv\Scripts\python.exe run_server.py
-```
-
----
-
-# MAI 첫 설치 안내서 — 비개발자용 (Windows)
-
-이 문서는 **컴퓨터에 개발 도구가 하나도 설치되어 있지 않은 Windows 10/11 사용자**가 MAI를 처음 설치하는 방법이다. 어떤 명령을 **어디에 입력해야 하는지**, 무엇을 확인해야 하는지, 실패하면 무엇부터 검사하는지까지 순서대로 설명한다. 개발 경험이나 Git/Python 지식을 전제로 하지 않는다.
-
-> **가장 먼저 알아둘 점**: `python -m pip install -e .`는 MAI의 Python 라이브러리를 설치하지만, Playwright가 실행할 **Chromium 브라우저 파일은 설치하지 않는다.** 반드시 별도로 `python -m playwright install chromium`을 한 번 실행해야 한다.
->
-> **이 안내서는 Windows PowerShell 기준이다.** macOS/Linux 명령은 Windows 명령과 다르므로 그대로 복사하면 안 된다. 첫 설치는 **로컬 PC에서 성공시킨 뒤** Tailscale을 연결한다.
->
-> **비밀번호 주의**: `.env`는 로그인 비밀번호를 평문으로 포함한다. GitHub, 메신저, 스크린샷에 공개하지 않는다. 특히 Tailscale **Funnel은 로그인하지 않은 외부 인터넷에서도 접속 가능한 공개 주소**를 만든다.
-
-## 전체 순서
-
-1. 준비 사항 및 Windows 확인
-2. Git 설치 (GitHub에서 프로젝트를 내려받는 도구)
-3. Python 설치
-4. Ollama 설치 및 사용할 모델 내려받기
-5. MAI 프로젝트 다운로드
-6. PowerShell에서 프로젝트 폴더 열기
-7. 프로젝트 전용 Python 가상환경 생성
-8. Python 패키지 설치
-9. Playwright Chromium 설치
-10. 설정 파일 `.env` 만들고 비밀번호/모델 설정
-11. 로컬 서버 최초 실행
-12. 브라우저 로그인 및 기능별 동작 확인
-13. Tailscale 설치 및 로그인
-14. Tailscale Funnel 설정과 외부 접속
-15. 다음 날 재실행/업데이트/종료 방법
-16. 자주 발생하는 오류 해결
-17. 선택 사항: SSH 원격 PC 관리
-18. 최종 체크리스트
-
----
-
-## 0. 시작 전에 준비할 것
-
-- Windows 10/11 PC (관리자 권한으로 프로그램을 설치할 수 있어야 한다).
-- 인터넷 연결. Git, Python, Ollama, 모델, Python 패키지, Chromium 설치에 사용한다.
-- PC 저장 공간. 설치 도구 외에 **모델과 Chromium을 위한 추가 여유 공간**이 필요하다. 모델별 크기는 다르므로 설치 화면과 `ollama list`에서 실제 크기를 확인한다.
-- 모델 실행을 위한 충분한 메모리. 필요한 RAM/VRAM은 모델 및 실행 환경에 따라 달라진다. 부족하면 더 작은 모델을 선택한다.
-- 외부 접속까지 하려면 Tailscale에 로그인할 계정.
-- 아래에서 명령을 입력하는 창은 별도 표기가 없으면 **Windows PowerShell**이다. PowerShell은 시작 메뉴 검색창에 `PowerShell`을 입력해 실행한다. 일반적인 단계에는 관리자 실행이 필요하지 않다.
-
-### 0-1. Windows 버전과 저장 공간 확인
-
-1. 시작 메뉴 → **설정** → **시스템** → **정보**를 연다.
-2. Windows 버전과 시스템 종류(일반적으로 64비트)를 확인한다.
-3. 파일 탐색기(`Win + E`) → **내 PC**에서 C: 드라이브의 남은 공간을 확인한다.
-4. 이 가이드에서는 작업 폴더로 `$HOME\Documents\Git\MAI_MyAI_sllm`을 사용한다. 다른 드라이브를 써도 되지만, 이후 명령에서 경로를 동일하게 바꿔야 한다.
-
-### 0-2. 명령어 복사 방법
-
-- 코드 상자의 내용만 복사해 **PowerShell** 창에 붙여넣고 Enter를 누른다.
-- `PS C:\...`나 `(.venv)` 등 **명령 프롬프트 앞부분은 입력하지 않는다**. 예시 화면에 등장하면 위치/상태 표시일 뿐이다.
-- 설치가 실패하면 다음 단계로 넘어가지 않는다. 오류 메시지를 저장하거나 복사해 원인을 먼저 해결한다.
-
----
-
-## 1. Git 설치
-
-**Git**은 GitHub 저장소를 컴퓨터로 복사하고 새 버전을 받아오는 프로그램이다. GitHub 웹사이트 자체를 설치하는 것은 아니다.
-
-1. 웹브라우저에서 공식 사이트 **https://git-scm.com/downloads/win** 을 연다.
-2. Windows 설치 파일을 내려받는다.
-3. 다운로드한 설치 파일을 실행한다.
-4. 설치 마법사에서 특별한 설정이 필요 없다면 기본 옵션으로 진행한다. Git을 명령줄에서 쓸 수 있게 하는 PATH 옵션은 기본 설정을 유지한다.
-5. 설치가 끝나면 열려 있던 PowerShell을 모두 닫고 **새 PowerShell 창**을 연다.
-6. 아래 명령으로 설치를 확인한다.
-
-```powershell
-git --version
-```
-
-`git version ...`이 출력되면 성공이다. `git을 찾을 수 없음`이 나오면 터미널을 새로 열거나 설치 과정의 PATH 설정을 확인한다.
-
-> GitHub Desktop(https://desktop.github.com/)은 선택 사항이다. 이 안내서는 Git만으로 설치하므로 GitHub Desktop이 없어도 된다. GitHub Desktop을 원하면 별도 설치해도 되지만 아래 명령을 그대로 따라가는 것이 가장 일관적이다.
-
----
-
-## 2. Python 설치
-
-MAI는 **Python 3.11 이상**이 필요하다. 처음 설치할 때는 프로젝트 호환성을 우선하여 **Python 3.11의 최신 유지보수 버전(64비트)**을 권장한다.
-
-1. 공식 Python 사이트 **https://www.python.org/downloads/windows/** 로 이동한다.
-2. Python 3.11 항목의 Windows 64-bit installer가 제공되는 버전을 선택한다. 설치 가능한 패키지와 Python 버전은 공식 다운로드 화면에서 확인한다.
-3. 설치 파일 실행 후 **Add python.exe to PATH**라는 체크박스가 나오면 체크한다. 설치 프로그램 UI가 다를 수 있으므로 표시되지 않는다면 설치 후 `py` 명령도 확인한다.
-4. **Install Now**로 설치하고 완료 화면을 닫는다.
-5. PowerShell을 새로 연 다음 확인한다.
-
-```powershell
-python --version
-py --version
-python -m pip --version
-```
-
-- `python --version`에 `Python 3.11.x` 이상이 보이면 성공.
-- `python`이 Microsoft Store로 이동하거나 인식되지 않으면 시작 메뉴에서 **앱 실행 별칭 관리(Manage app execution aliases)**를 찾아 Windows의 `python.exe` / `python3.exe` 별칭을 확인한다. 또는 Python 설치 관리자의 PATH 옵션을 수정한다.
-- `py` 명령만 동작할 경우, **가상환경 생성 단계에서만** `py -3.11 -m venv .venv`를 사용해도 된다. 가상환경 활성화 이후에는 `python`을 사용한다.
-- `pip`을 직접 실행하기보다 `python -m pip`을 사용하면 현재 선택한 Python에 설치한다는 점을 확인할 수 있다.
-
-Python 공식 Windows 문서: https://docs.python.org/3.11/using/windows.html
-
----
-
-## 3. Ollama 설치 및 모델 준비
-
-Ollama는 로컬에서 AI 모델을 다운로드하고 실행하는 프로그램이다. MAI는 Ollama에 접속해 답변을 생성한다.
-
-### 3-1. Ollama 설치
-
-1. **https://ollama.com/download** 접속.
-2. Windows용 Ollama 설치 프로그램 다운로드.
-3. 파일을 실행해 설치를 완료한다.
-4. 시작 메뉴에서 Ollama를 실행한다. 필요한 경우 시스템 트레이(화면 오른쪽 아래)에서 Ollama가 실행 중인지 확인한다.
-5. 새 PowerShell을 열어 설치 상태를 확인한다.
-
-```powershell
-ollama --version
-ollama list
-```
-
-`ollama list`의 목록이 비어 있는 것은 처음이라면 정상이다.
-
-### 3-2. 사용할 모델 설치
-
-이 저장소의 `.env.example` 기본 모델 이름은 `ornith-1.5:9b`다. **모델을 다운로드할 때는 해당 이름이 Ollama 라이브러리에서 실제로 제공되는지 확인한다.** 프로젝트 문서의 예시 이름이라고 해서 모든 PC에서 자동으로 설치되는 것은 아니다.
-
-```powershell
-ollama pull ornith-1.5:9b
-```
-
-명령이 성공하면 확인한다.
-
-```powershell
-ollama list
-ollama run ornith-1.5:9b
-```
-
-질문을 하나 입력해 답변이 오면 모델이 동작한다. 채팅을 종료할 때는 `/bye`를 입력한다.
-
-**중요:** `ollama pull`이 `model not found` 등으로 실패했다면 성공한 척하고 넘어가지 않는다. Ollama 공식 라이브러리(https://ollama.com/library)에서 **실제로 내려받을 수 있는 모델**을 선택하고, 이후 `.env`의 `MAIN_MODEL=`에 그 이름을 **정확히 동일하게** 적는다. 모델이 설치되지 않았거나 이름이 다르면 MAI 답변 요청이 실패한다.
-
-### 3-3. 이미지 분석(선택)
-
-MAI가 사진이나 스크린샷을 별도 비전 모델로 분석하도록 하려면, `.env`의 `VISION_MODEL`과 **실제로 설치한 비전 모델 이름**을 일치시킨다.
-
-```powershell
-ollama pull gemma4:e4b
-```
-
-이 명령이 실패하거나 PC에 부담이 되면 이미지 분석은 건너뛰고 나중에 `VISION_MODEL=`을 **빈 값**으로 설정해도 된다. 빈 값일 때는 MAI의 `image_analyze` 도구가 등록되지 않는다.
-
----
-
-## 4. GitHub에서 MAI 프로젝트 다운로드
-
-프로젝트 주소: https://github.com/FoggyCaligo/MAI_MyAI_sllm
-
-이 프로젝트의 개발 검증용 작업 브랜치는 **dev**다. 이 안내서는 사용자가 수동으로 검증하는 개발 환경을 전제로 **dev**를 받는다. main을 원한다면 아래 `git switch dev` 대신 `git switch main`을 입력한다. 아직 dev에 병합되지 않은 PR 변경은 dev에 존재하지 않는다는 점에 주의한다.
-
-1. PowerShell을 연다.
-2. 다음 명령으로 `문서\Git` 폴더를 만든다.
-
-```powershell
-New-Item -ItemType Directory -Force -Path "$HOME\Documents\Git"
-Set-Location "$HOME\Documents\Git"
-```
-
-3. GitHub 저장소를 컴퓨터에 복사한다.
-
-```powershell
-git clone https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
-```
-
-4. 방금 받은 프로젝트 폴더로 이동한다.
-
-```powershell
-Set-Location .\MAI_MyAI_sllm
-```
-
-5. dev 브랜치를 선택하고 상태를 확인한다.
-
-```powershell
-git fetch origin
-git switch dev
-git status
-```
-
-`On branch dev`, `working tree clean` 등이 출력되면 성공이다. **GitHub에서 ZIP 다운로드도 가능하지만**, 이후 `git pull`로 업데이트하려면 Git clone 방식이 편하므로 이 문서는 clone을 기본으로 한다.
-
-### 4-1. 다운로드한 파일 확인
-
-파일 탐색기로 `Documents\Git\MAI_MyAI_sllm`을 연다. 안에 다음 항목들이 보여야 한다.
-
-- `run_server.py`: MAI 서버 시작 파일
-- `pyproject.toml`: 필요한 Python 패키지 목록
-- `.env.example`: 처음 설정할 때 복사할 예시 파일(숨김 파일 표시가 필요할 수 있음)
-- `mai`: 프로그램 본체 폴더
-- `data`: 데이터베이스 관련 폴더
-- `README.md`, `RUN_UI.md`: 추가 설명
-
-### 4-2. 앞으로 PowerShell에서 프로젝트 폴더를 여는 방법
-
-PowerShell을 다시 열었을 때는 아래 명령으로 항상 해당 폴더로 이동한다.
-
-```powershell
-Set-Location "$HOME\Documents\Git\MAI_MyAI_sllm"
-```
-
-이후 명령을 다른 폴더에서 실행하면 `pyproject.toml`이나 `run_server.py`를 찾지 못할 수 있다.
-
----
-
-## 5. 가상환경 만들기
-
-**가상환경(`.venv`)**은 MAI 전용 Python 패키지 공간이다. 다른 프로그램과 패키지가 충돌하는 문제를 줄여준다. **처음 한 번 생성**, 그다음부터는 사용할 때 **활성화만** 하면 된다.
-
-1. PowerShell에서 프로젝트 폴더인지 확인한다.
-
-```powershell
-Get-Location
-Test-Path .\pyproject.toml
-```
-
-`Test-Path`가 `True`여야 한다.
-
-2. 가상환경 생성:
-
-```powershell
-python -m venv .venv
-```
-
-이 명령이 Python 버전 문제로 실패하고 `py`가 동작한다면:
-
-```powershell
-py -3.11 -m venv .venv
-```
-
-3. 가상환경 활성화:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-4. 실행 정책 때문에 거부되는 경우, **현재 PowerShell 창에만** 허용하고 다시 시도한다.
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-PowerShell 앞에 `(.venv)`가 보이면 활성화됐다. `python -c "import sys; print(sys.executable)"`을 입력했을 때 프로젝트 내부 `.venv\Scripts\python.exe`가 출력되는지도 확인한다.
-
-> 이후 문서의 `python`은 별도 설명이 없으면 **활성화한 가상환경의 Python**이다. 새로운 PowerShell을 열 때마다 이 활성화 단계가 필요하다.
-
----
-
-## 6. Python 패키지 설치
-
-가상환경이 켜져 있는지 확인한 상태에서, 프로젝트 폴더에서 **순서대로** 실행한다.
-
-```powershell
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
-
-- `pip`: Python 패키지 설치 도구.
-- `-e .`: 현재 폴더의 MAI를 **편집 가능한(editable) 방식**으로 설치. 코드가 바뀌어도 패키지를 매번 복사할 필요가 없다.
-- 설치 중 GitHub에서 `sentence-breaker`를 다운로드하므로 인터넷과 Git이 필요하다.
-- 이제 기본 설치에 **ONNX 화자 모델(화자 검증), Faster-Whisper(STT), NumPy**도 포함된다. 음성 전용 추가 설치 명령은 필요하지 않다. 음성 모델 가중치는 최초 사용 시 별도 다운로드될 수 있다.
-- 설치 중 오류가 나면 완료된 것으로 간주하면 안 된다. 마지막 오류 메시지를 확인한다.
-
-테스트용 `pytest`까지 설치하고 싶으면 기본 설치 대신 아래 명령을 사용해도 된다.
-
-```powershell
-python -m pip install -e ".[dev]"
-```
-
-정상 설치 여부 확인:
-
-```powershell
-python -m pip show mai-myai-sllm
-python -m pip show playwright
-python -c "import speakeronnx, vadonnx, faster_whisper, numpy; print('Voice dependencies OK')"
-```
-
-패키지 정보가 출력되고 `Voice dependencies OK`가 보이면 기본 Python 패키지 및 음성 라이브러리 import까지 확인한 것이다. 그러나 **Chromium 본체는 아직 없다.** 다음 단계가 필요하다.
-
----
-
-### 구조화 문서 편집 기능 확인
-
-`document_edit`는 기존 프로젝트 의존성인 `python-docx`, `openpyxl`, `python-pptx`, `pypdf`를 재사용하므로 별도 패키지 설치가 필요하지 않음. 기본 설치 명령 `python -m pip install -e .`에 포함됨.
-
-설치 여부 확인:
-
-```powershell
-python -c "import docx, openpyxl, pptx, pypdf; print('Document edit dependencies OK')"
-```
-
-실패하면 가상환경을 확인하고 프로젝트 폴더에서 `python -m pip install -e .`을 다시 실행함. `document_edit`는 소유자 전용이며 기존 DOCX, XLSX, PPTX, CSV 문서 내용의 지정 위치 수정 및 PDF 페이지 회전·삭제를 지원함. PDF 텍스트 직접 수정은 지원하지 않음.
-
-## 7. Playwright Chromium 브라우저 설치 (중요)
-
-MAI의 `browser_open` 등은 실제 브라우저에서 JavaScript를 실행한다. `pip install`은 브라우저 제어용 Python 라이브러리만 설치한다. **Chromium 바이너리는 별도로 설치해야 한다.**
-
-가상환경을 활성화한 상태에서:
-
-```powershell
-python -m playwright install chromium
-```
-
-다운로드가 완료될 때까지 두고, 오류 없이 끝나는지 확인한다. 이는 **PC/브라우저 버전별 최초 설치에 필요하며**, Playwright 업데이트로 요구하는 브라우저 버전이 변경되면 다시 설치할 수 있다.
-
-실제 실행 테스트:
-
-```powershell
-python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); print('Chromium 실행 성공'); b.close(); p.stop()"
-```
-
-`Chromium 실행 성공`이 출력되면 준비 완료다. Chromium 설치에 실패하면 `browser_open`도 실패한다. `web_fetch`가 잘 동작하더라도 이는 별개다.
-
-참고: https://playwright.dev/python/docs/browsers
-
----
-
-## 8. `.env` 환경 설정 파일 만들기
-
-`.env.example`은 예시 파일이므로 그대로 쓰지 않는다. 실제 실행 설정은 **프로젝트 루트의 `.env`**에 둔다.
-
-1. 프로젝트 폴더에서 PowerShell 명령을 실행한다.
+PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
-notepad .env
 ```
 
-2. 메모장이 열리면 아래 항목을 찾아 수정한다. **모든 항목을 새로 붙여넣거나, 기존에 없는 설정을 추측해 만들 필요는 없다.** 나머지 옵션은 우선 예시 파일 값을 유지한다.
+Git Bash:
 
-```dotenv
-OLLAMA_HOST=http://127.0.0.1:11434
-MAIN_MODEL=ornith-1.5:9b
-VISION_MODEL=
-MAI_HOST=127.0.0.1
-MAI_PORT=8000
-TAILSCALE_FUNNEL=false
+```bash
+cp .env.example .env
 ```
 
-- `MAIN_MODEL`: `ollama list`에 있는 실제 설치 모델 이름을 입력한다. `ornith-1.5:9b`가 설치되지 않았다면 성공적으로 설치한 다른 모델 이름을 넣어야 한다.
-- `VISION_MODEL`: 비전 모델을 다운로드하지 않았다면 빈 값으로 둔다. 설치했다면 이름을 입력한다.
-- `TAILSCALE_FUNNEL=false`: **최초 로컬 테스트에서는 반드시 false를 권장**. 네트워크 공개는 뒤에서 별도로 켠다.
-- `MAI_HOST=127.0.0.1`: 같은 PC에서만 접속하는 로컬 주소. 외부 접속을 위해 `0.0.0.0`으로 변경할 필요는 없다.
-- `MAI_PORT=8000`: MAI 웹서버 포트.
+`.env`에서 `OWNER_USERS`의 `user_id`, `user_pw`를 반드시 개인 값으로 수정하고, `db_id`는 이미 데이터를 사용 중이라면 유지함. `TRIAL_USERS`는 사용하지 않을 때 `[]`로 지정하고, `TAILSCALE_FUNNEL=false`로 시작할 것. 실제 비밀번호를 저장소·로그·공개 게시글에 노출하지 말 것.
 
-3. `.env`의 계정 부분을 찾아 반드시 수정한다. 다음은 **형식 설명용**이며 표시된 암호를 그대로 사용하지 말 것.
+**설정 우선순위:** 기존 환경변수와 `.env`의 동일 이름 값이 `settings.yaml` 기본값보다 우선함. 기존 `.env`의 `MAIN_MODEL` 또는 타임아웃 값을 YAML에서 변경해도 적용되지 않으면 `.env`에 동일 키가 있는지 확인할 것. `.env`를 덮어쓰지 않고 이관하려면 해당 키만 직접 삭제함. `settings.yaml`의 중복/알 수 없는 키와 부적절한 값 형식은 명시적 오류로 처리됨.
 
-```dotenv
-OWNER_USERS=[{"user_id":"owner","user_pw":"여기에_본인만_아는_긴_비밀번호","db_id":"local-user"}]
-TRIAL_USERS=[{"user_id":"체험판","user_pw":"여기도_반드시_변경","db_id":"trial-default"}]
-```
+### 1.3 settings.yaml 설정 구분
 
-- `user_id`: 로그인 ID.
-- `user_pw`: 로그인 비밀번호. 강력하고 서로 다른 비밀번호를 설정한다.
-- `db_id`: 채팅/메모리 데이터의 내부 식별자. 이미 사용 중인 설치에서는 임의 변경하지 않는다.
-- 계정 줄은 **유효한 JSON 배열** 형식을 유지한다. 쌍따옴표, 대괄호, 중괄호, 쉼표를 임의로 삭제하지 않는다.
-- 쓰지 않는 체험 계정의 약한 기본 비밀번호를 그대로 방치하지 않는다. 체험 계정을 운영할 계획이 없다면 해당 계정 설정을 관리할 방법을 프로젝트 정책에 맞게 검토한다.
+**A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VISION_MODEL`은 이미지 인식에만 필요한 선택 설정이며, 전체 텍스트 MAI 실행의 필수 요건은 아님.
 
-4. **파일 → 저장**을 누르고 메모장을 닫는다.
-5. 다음 명령으로 파일 존재만 확인한다. **비밀번호가 담긴 전체 내용을 터미널에 출력해 공유하지 않는다.**
+**B. 동작·성능 조정 설정:** `OLLAMA_REQUEST_TIMEOUT_SECONDS`, `OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `AGENT_MAX_IDENTICAL_CALLS`, `AGENT_MAX_IDENTICAL_FAILURES`, `AGENT_MAX_NO_PROGRESS_ROUNDS`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MAX_INLINE_TOOL_RESULT_CHARS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`, `SESSION_HISTORY_MESSAGES`, `MAI_ANSWER_QUALITY_REVIEW`, `VOICE_*` 중 음성 동작 파라미터. 값을 잘못 지정하면 오류가 날 수 있으므로 '임의 값이어도 무조건 실행됨'이라는 의미가 아님. 기본값을 유지하면 수동 입력은 필요하지 않음.
+
+## 2. 기본 설치: 아래 두 방식 중 하나만 선택
+
+### 2-A. 일반 설치 — Python과 Ollama를 PC에 설치
+
+Windows 10/11을 기준으로 진행함.
+
+1. [Python 공식 설치 안내](https://www.python.org/downloads/windows/)에서 Python 3.11 이상(호환되는 64-bit 버전) 설치. 새 터미널에서 `python --version` 확인. Windows 앱 실행 별칭 때문에 `python`이 동작하지 않으면 `py --version` 확인.
+2. [Ollama](https://ollama.com/download/windows)를 Windows에 설치하고 `ollama --version`으로 확인. Ollama 서버가 실행 가능한지 확인.
+3. 프로젝트 루트에서 Python 가상환경을 생성·활성화하고 필요한 패키지를 설치함.
 
 ```powershell
-Test-Path .\.env
-```
-
-`True`면 파일이 존재한다.
-
-### 8-1. 데이터 파일을 이해하기
-
-예시 설정에는 다음 경로들이 있다.
-
-```dotenv
-MEMORY_DB_PATH=./data/memory.sqlite3
-SENTENCE_BREAKER_DB_PATH=./data/sentence_breaker.sqlite3
-CHAT_DB_PATH=./data/chat.sqlite3
-LOG_DB_PATH=./data/log.sqlite3
-MAI_UPLOAD_ROOT=./mai_uploads
-```
-
-- `memory.sqlite3`: MAI의 장기기억.
-- `chat.sqlite3`: Web UI 대화 저장.
-- `log.sqlite3`: 오류 조사와 감사용 실행/툴 로그. 민감한 정보가 포함될 수 있다.
-- `sentence_breaker.sqlite3`: 문장/개념 처리 관련 데이터.
-- `mai_uploads`: 사용자 업로드 파일 디렉터리.
-
-**이미 운영 중인 PC라면 이 파일들을 지우거나 덮어쓰지 않는다.** 재설치·업데이트 시 백업이 필요하다. 이 저장소에는 버전 관리된 데이터 파일이 들어 있을 수 있으므로 특히 `git reset --hard` 또는 무분별한 폴더 삭제를 피한다.
-
----
-
-## 9. MAI 로컬 서버 처음 실행
-
-필수 조건 확인:
-
-```powershell
-git --version
-python --version
-ollama list
-Test-Path .\.env
-```
-
-이제 프로젝트 폴더에서, 가상환경을 활성화한 상태로 실행한다.
-
-```powershell
-python run_server.py
-```
-
-성공했다면 터미널에 다음과 **비슷한** 문구가 표시된다.
-
-```text
-MAI local: http://127.0.0.1:8000
-MAI Tailscale Funnel: disabled (set TAILSCALE_FUNNEL=true to enable)
-Uvicorn running on http://127.0.0.1:8000
-```
-
-서버 실행 중에는 **PowerShell 창을 닫지 않는다.** 이후 검사용 명령은 새 PowerShell 창에서 실행한다.
-
-### 9-1. 브라우저로 접속
-
-1. Chrome/Edge 브라우저를 연다.
-2. 주소창에 `http://127.0.0.1:8000`을 입력한다.
-3. 로그인 페이지가 나오는지 확인한다.
-4. `.env`에서 설정한 `OWNER_USERS`의 `user_id`와 `user_pw`를 입력한다.
-5. 짧은 대화(예: “안녕, 짧게 답해줘”)를 보낸다.
-6. 정상 답변이 오는지 확인한다. 초기에 모델 다운로드/로딩 및 PC 성능에 따라 시간이 걸릴 수 있다.
-
-### 9-2. 상태 주소 확인
-
-다른 PowerShell 또는 브라우저에서 아래 주소에 접속할 수 있다.
-
-```text
-http://127.0.0.1:8000/health
-```
-
-`status: ok`에 해당하는 응답이 표시되면 웹서버 런타임 상태 확인이 된 것이다. **이것만으로 Ollama 응답이나 모든 도구의 정상 동작이 증명되지는 않는다.** 실제 채팅 테스트도 수행한다.
-
-### 9-3. JavaScript 브라우저 탐색 테스트
-
-브라우저 툴이 포함된 커밋이 실제 설치 브랜치에 있어야 한다. MAI에게 공개 웹페이지 하나를 열고 JavaScript 실행 후 렌더링된 목록과 실제 링크를 읽으라고 요청한다. 예를 들어:
-
-> `https://comicw.net/g/all.php?fare=338&tag=스텔라이브` 를 `browser_open`으로 열고 렌더링된 목록의 제목과 실제 href를 `browser_snapshot`에서 확인해줘. 목록이 안 보이면 확인하지 못했다고 답해줘.
-
-- 툴 로그에 `browser_open`, 필요 시 `browser_snapshot` 호출이 나타나는지 확인한다.
-- 표시된 링크와 실제 페이지가 일치하는지 직접 비교한다.
-- 브라우저 오픈/탐색이 실패했는데 성공했다고 답하면 잘못된 상태다.
-- 특정 페이지가 봇 접속 차단/인증/동적 로딩 문제로 실패할 수 있다. **브라우저 설치가 성공했다고 모든 사이트의 글을 읽을 수 있는 것은 아니다.**
-
----
-
-## 10. Tailscale 설치 — 로컬 실행을 확인한 뒤
-
-**원격 접속이 필요 없다면 10~12단계는 생략해도 된다.**
-
-용어:
-- **Tailscale**: 여러 기기를 안전하게 같은 사설 네트워크에 연결할 수 있는 프로그램.
-- **Tailscale Serve**: tailnet 내부 기기만 접근하도록 로컬 서비스를 공유하는 기능.
-- **Tailscale Funnel**: **공개 인터넷에서도** 접속할 수 있는 HTTPS 주소로 로컬 서비스를 공개하는 기능. MAI 현재 설정은 Funnel을 사용한다.
-
-### 10-1. 설치 및 로그인
-
-1. 공식 문서 https://tailscale.com/docs/install/windows 또는 다운로드 https://tailscale.com/download 로 이동한다.
-2. Windows용 설치 프로그램(.exe)을 다운로드한다.
-3. 설치 프로그램을 실행하고 안내에 따라 설치한다.
-4. 작업 표시줄 오른쪽 아래 **시스템 트레이**에서 Tailscale 아이콘을 찾는다. 안 보이면 `^`(숨겨진 아이콘 보기)를 누른다.
-5. Tailscale 아이콘을 클릭 또는 우클릭한 뒤 **Log in**을 선택한다.
-6. 열린 브라우저에서 사용 중인 인증 계정으로 로그인하고 기기 연결 요청을 승인한다.
-7. 새 PowerShell 창을 연다.
-
-```powershell
-tailscale version
-tailscale status
-tailscale ip -4
-```
-
-- 상태에 연결된 PC 정보가 표시되면 Tailscale 연결을 확인할 수 있다.
-- `tailscale` 명령이 없으면 Tailscale이 설치됐는지 확인하고 **PowerShell을 새로 열어** 다시 시도한다.
-- 출력된 IP/기기 이름이 있다고 해서 아직 Funnel이 공개된 것은 아니다.
-
-### 10-2. 공개 접속 전 보안 확인
-
-Funnel은 인터넷의 **누구든지 MAI 로그인 페이지에 연결을 시도할 수 있는 주소**다. `.env`의 기본 암호를 반드시 변경한다. MAI가 로컬 PC의 파일/터미널 툴을 제공할 수 있으므로 소유자 계정을 강한 비밀번호로 보호한다. 원격 접속에 꼭 공개 URL이 필요하지 않다면 **Funnel을 활성화하지 않는다.**
-
-Tailscale Funnel에는 MagicDNS/HTTPS/ACL(정책) 등 필요한 조건이 있다. 초기 사용 시 관리자 콘솔에서 Funnel 사용을 승인해야 할 수 있다. 공식 설명: https://tailscale.com/docs/features/tailscale-funnel
-
----
-
-## 11. Tailscale Funnel 첫 설정 및 외부 접속
-
-**MAI는 현재 `TAILSCALE_FUNNEL=true`로 실행하면 내부에서 다음 명령을 실행한다.**
-
-```powershell
-tailscale funnel --bg --yes 8000
-tailscale funnel status
-```
-
-### 11-1. 사전 권한 확인
-
-1. MAI 서버는 우선 `TAILSCALE_FUNNEL=false`인 상태에서 **로컬로 실행 중**이어야 한다.
-2. **새 PowerShell 창**을 연다.
-3. 다음 명령으로 Funnel 설정을 시도한다.
-
-```powershell
-tailscale funnel --bg 8000
-```
-
-Tailscale이 브라우저를 열어 허용을 요청한다면 해당 단계를 완료한다. 관리자 정책에 따라 추가 승인이 필요할 수 있다. 성공하면 상태를 확인한다.
-
-```powershell
-tailscale funnel status
-```
-
-**처음부터 실패했다면 MAI의 문제로 단정하지 않는다.** Tailscale 앱 로그인, Funnel 허용 정책, 포트 및 CLI 오류를 확인한다.
-
-> 참고: `--bg`는 Funnel 설정을 **백그라운드로 유지**한다. **MAI 서버를 종료해도 공개 Funnel 설정은 자동 삭제되지 않는다.** 서버가 꺼져 있을 때는 대상에 연결되지 않을 수 있지만, 서버를 다시 켜면 기존 공개 설정이 동작할 수 있다. 따라서 보안상 필요 없을 때는 명시적으로 비활성화해야 한다.
-
-### 11-2. MAI 자동 Funnel 활성화
-
-1. MAI 실행 중인 PowerShell 창에서 `Ctrl + C`를 눌러 서버를 종료한다.
-2. 가상환경이 활성화된 프로젝트 폴더 PowerShell에서 `.env`를 연다.
-
-```powershell
-notepad .env
-```
-
-3. 아래 항목을 변경한 후 저장한다.
-
-```dotenv
-TAILSCALE_FUNNEL=true
-MAI_HOST=127.0.0.1
-MAI_PORT=8000
-```
-
-4. 다시 서버를 실행한다.
-
-```powershell
-python run_server.py
-```
-
-5. 출력에서 `MAI Tailscale Funnel (public internet):`와 `https://...ts.net` 형태의 URL을 확인한다.
-6. 휴대폰 브라우저에서 해당 **실제 출력 URL**을 열어본다. URL은 각 Tailscale 계정/기기마다 다르므로 예제 URL을 복사하지 않는다.
-7. MAI 로그인 화면이 표시되는지 확인한다.
-
-문제가 없다면 외부 접속 준비가 완료된다. 휴대폰에 Tailscale 앱을 설치할 필요가 없는 것이 Funnel의 특징이지만, 그만큼 공개 주소라는 점을 잊지 않는다.
-
-### 11-3. 공개 Funnel 끄기
-
-공개 주소를 더 사용하지 않을 때는 `.env`를 `TAILSCALE_FUNNEL=false`로 바꾸는 것만으로 **이미 설정된 Funnel이 취소되지는 않는다.**
-
-Tailscale 공식 CLI의 설정 제거 명령으로 **현재 Funnel 설정을 확인한 다음** 종료한다. 이 프로젝트가 기본 HTTPS Funnel 포트를 사용했다면 일반적으로:
-
-```powershell
-tailscale funnel status
-tailscale funnel --https=443 off
-tailscale funnel status
-```
-
-다른 Funnel 설정까지 전부 지워도 되는 경우에만 공식 문서를 확인하고 `tailscale funnel reset`을 고려한다. `reset`은 해당 기기의 Funnel 설정 전체에 영향을 줄 수 있다. 자세한 내용: https://tailscale.com/docs/reference/tailscale-cli/funnel
-
----
-
-## 12. 이후 매번 MAI 실행하는 방법
-
-**Windows를 재시작하거나 PowerShell 창을 새로 연 다음**에는 아래 순서로 실행한다.
-
-1. Ollama가 실행 중인지 확인한다(시작 메뉴 또는 작업 표시줄).
-2. PowerShell을 연다.
-3. 다음 세 줄을 차례로 입력한다.
-
-```powershell
-Set-Location "$HOME\Documents\Git\MAI_MyAI_sllm"
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python run_server.py
-```
-
-PowerShell 실행 정책 오류가 있으면 5장 내용을 다시 참고한다.
-
-4. 같은 PC 브라우저에서 `http://127.0.0.1:8000`을 열어 사용한다.
-5. 종료하려면 실행 창으로 이동해 `Ctrl+C`를 누른다.
-6. `deactivate`를 입력하면 가상환경 표시가 사라진다(선택 사항).
-
-**매번 새로 설치할 필요는 없다.** `git clone`, `python -m venv`, `pip install`, `playwright install chromium`, `ollama pull`은 최초 설치나 버전 변경 때 사용하는 명령이다.
-
----
-
-## 13. MAI를 새 버전으로 업데이트하는 방법
-
-1. MAI 서버를 `Ctrl+C`로 종료한다.
-2. PowerShell에서 프로젝트 폴더로 이동한다.
-3. 수정한 파일이나 기록을 확인한다.
-
-```powershell
-Set-Location "$HOME\Documents\Git\MAI_MyAI_sllm"
-git status
-```
-
-4. **직접 수정한 파일이 있으면** 무작정 `git pull`하지 않는다. 변경 내역을 백업하고 병합 방법을 결정한다. 특히 `data/*.sqlite3`와 `.env`를 백업한다.
-5. 변경 사항이 없을 때 dev를 갱신한다.
-
-```powershell
-git switch dev
-git pull --ff-only origin dev
-```
-
-6. 가상환경을 활성화하고 의존성을 최신 프로젝트 기준으로 다시 확인한다.
-
-```powershell
-.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -e .
 python -m playwright install chromium
 ```
 
-7. 새 버전에서 `.env.example`에 신규 설정이 생겼는지 비교하되, 기존 `.env`를 **덮어쓰지 않는다**.
-8. 다시 `python run_server.py` 실행 후 로그인과 채팅을 테스트한다.
-
-> Git 변경 사항을 강제로 초기화하는 `git reset --hard`, `git clean -fd`는 이 가이드에서 **사용하지 않는다.** 로컬 기록·데이터를 손상시킬 수 있다.
-
----
-
-## 14. 자주 발생하는 오류
-
-| 증상 / 메시지 | 확인할 것 / 조치 |
-|---|---|
-| `git` 명령을 찾을 수 없음 | Git 설치 확인 → PowerShell을 새로 열기 → `git --version` |
-| `python` 명령이 없음 / Store 실행 | Python PATH 또는 Windows 앱 실행 별칭 확인. `py --version`도 확인 |
-| `pyproject.toml` 없음 | 현재 프로젝트 폴더가 맞는지 `Get-Location` / `Test-Path .\pyproject.toml` |
-| `.venv\Scripts\Activate.ps1` 실행 거부 | 현재 창에서만 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` 실행 후 재시도 |
-| `pip install -e .` 실패 | 인터넷/Git 확인, Python 3.11 이상 여부, 오류 메시지 확인. 무작정 무시하지 말 것 |
-| `No module named playwright` | 가상환경 활성화 후 `python -m pip install -e .` |
-| `Executable doesn't exist` / Chromium 설치 안내 | `python -m playwright install chromium` 실행 |
-| `ollama` 인식 실패 | 설치 및 실행 확인 후 PowerShell 재시작 |
-| `model not found` | `ollama list`와 `.env`의 `MAIN_MODEL` 정확히 일치시키기 |
-| Ollama 채팅 시간이 너무 오래 걸림 | 모델 크기/PC 자원/실제 오류 확인. 타임아웃 숫자만 무작정 늘리지 않기 |
-| `127.0.0.1:8000` 접속 안 됨 | 서버 실행 창 오류 확인, `.env`의 `MAI_PORT` 확인, 실행 창을 닫지 않았는지 검사 |
-| `Address already in use` | 포트 8000을 사용하는 다른 프로세스 확인. 다른 MAI 서버가 이미 실행 중인지 확인 |
-| MAI 로그인 실패 | `.env` 계정 JSON과 입력한 ID/비밀번호 확인. 공유된 기본 암호 사용 금지 |
-| Tailscale 설치했지만 `tailscale` 명령 없음 | Tailscale 설치/PATH 확인 후 PowerShell 재시작 |
-| Tailscale Funnel 실패 | `tailscale status`, `tailscale funnel status`, Funnel 권한 및 CLI 오류 확인 |
-| 외부 URL은 뜨는데 접속 실패 | 서버 실행 중인지, 실제 `tailscale funnel status`의 대상 포트와 MAI 포트가 일치하는지 확인 |
-| 특정 웹사이트만 `browser_open` 실패 | 사이트 차단·인증·네트워크 요청 실패 여부 확인. 정적 `web_fetch`가 성공해도 브라우저 성공을 뜻하지 않음 |
-
-### 진단 명령 모음
-
-**문제 상황을 확인할 때만** 아래 명령을 실행한다(서버가 실행 중인 창 대신 새 창 사용).
+4. `settings.yaml` 또는 기존 `.env`에서 지정한 모델을 다운로드. 기본 두 모델을 사용한다면 다음과 같음.
 
 ```powershell
-git status
-git branch --show-current
-python --version
-python -m pip show mai-myai-sllm
-python -m pip show playwright
+ollama pull ornith-1.5:9b
+ollama pull gemma4:e4b
 ollama list
-tailscale status
-tailscale funnel status
 ```
 
-Tailscale을 아직 설치하지 않았다면 마지막 두 명령이 실패하는 것은 당연하다. **진단 내용을 공유할 때는 인증 토큰, 계정 정보, `.env` 내용, 사적인 URL/파일 경로를 필요한 범위 외로 노출하지 않는다.**
+5. 실행 후 `http://127.0.0.1:8000` 접속.
 
----
-
-## 15. 선택 사항: Tailscale을 이용한 SSH 원격 관리
-
-**일반적인 MAI Web UI 사용에는 SSH 설정이 전혀 필요하지 않다.** SSH는 휴대폰/다른 PC의 터미널에서 Windows PC 자체를 관리하고 싶을 때 사용하는 별도 기능이다. 공개 Funnel URL과 SSH는 서로 다른 기능이다.
-
-프로젝트에 `scripts/setup_tailscale_ssh.ps1`이 있지만, 실행하면 다음과 같은 **보안·시스템 설정이 변경된다**.
-
-- Windows OpenSSH Server 설치 및 서비스 자동 시작
-- `sshd_config` 설정 변경 및 별도 백업
-- **SSH 비밀번호 인증 활성화**
-- OpenSSH 기본 방화벽 규칙 조정, Tailscale IP 대역용 SSH 방화벽 규칙 생성
-
-그러므로 단순한 MAI 첫 설치 과정에서는 **이 스크립트를 실행하지 않는다.** SSH 접속이 꼭 필요하고 설정 변경을 이해한 사람만 프로젝트의 `scripts/setup_tailscale_ssh.ps1` 내용을 읽고 검토한 다음 관리자 PowerShell에서 수행한다. 가능하면 별도 SSH 키 인증과 최소 권한 정책을 계획한다.
-
----
-
-## 16. 최종 체크리스트
-
-아래 항목을 위에서부터 확인한다.
-
-- [ ] Git을 설치했고 `git --version`이 출력된다.
-- [ ] Python 3.11 이상을 설치했고 `python --version`이 출력된다.
-- [ ] Ollama를 설치하고 모델을 하나 이상 내려받았다.
-- [ ] `ollama list`에 `.env`의 `MAIN_MODEL`과 똑같은 모델명이 보인다.
-- [ ] GitHub에서 프로젝트를 `git clone`으로 받았다.
-- [ ] `git switch dev`로 원하는 개발 브랜치에 있다.
-- [ ] `.venv` 가상환경을 생성하고 활성화했다.
-- [ ] `python -m pip install -e .`가 성공했다.
-- [ ] `python -m playwright install chromium`이 성공했다.
-- [ ] Chromium 실행 테스트가 성공했다.
-- [ ] `.env.example`을 복사해 `.env`를 만들었다.
-- [ ] 소유자와 체험 계정의 **기본 비밀번호를 모두 변경했다**.
-- [ ] 최초 로컬 테스트 시 `TAILSCALE_FUNNEL=false`로 설정했다.
-- [ ] `python run_server.py`가 오류 없이 실행된다.
-- [ ] `http://127.0.0.1:8000`에 로그인하고 모델 답변을 받았다.
-- [ ] (브라우저 툴 포함 버전이라면) `browser_open` 테스트를 해봤다.
-- [ ] (외부 접속을 원한다면) Tailscale을 설치하고 로그인했다.
-- [ ] (외부 접속을 원한다면) 강한 비밀번호를 확인한 뒤 Funnel을 활성화했다.
-- [ ] (외부 접속을 원한다면) 출력된 실제 `https://...ts.net` 주소로 접속에 성공했다.
-- [ ] 매번 재실행하는 3개 명령과 서버 종료 방법을 알고 있다.
-
----
-
-## 공식 참고 링크 및 프로젝트 문서
-
-- Git 설치: https://git-scm.com/downloads/win
-- GitHub 저장소: https://github.com/FoggyCaligo/MAI_MyAI_sllm
-- Python 설치: https://www.python.org/downloads/windows/
-- Python Windows 가이드: https://docs.python.org/3.11/using/windows.html
-- Ollama 다운로드: https://ollama.com/download
-- Ollama 모델 목록: https://ollama.com/library
-- Playwright Chromium 설치: https://playwright.dev/python/docs/browsers
-- Tailscale Windows 설치: https://tailscale.com/docs/install/windows
-- Tailscale Funnel: https://tailscale.com/docs/features/tailscale-funnel
-- Tailscale Funnel CLI: https://tailscale.com/docs/reference/tailscale-cli/funnel
-- 프로젝트 `README.md`: 전체 아키텍처 및 기능
-- 프로젝트 `RUN_UI.md`: Web UI와 계정, Tailscale 상세 자료
-
-
----
-
-## Web UI 운영 상세 — 기존 RUN_UI.md 통합
-
-아래는 기존 UI 실행 문서에서 다루던 계정, 지속 대화, 모델 선택, 업로드, 체험판 초기화, 테스트에 관한 운영 절차다. 최초 설치와 Tailscale 설정은 이 문서의 앞부분을 따른다.
-
-### Owner / Trial 권한
-
-Owner는 전체 native tool을 사용할 수 있다.
-
-Trial은 read/search 계열과 자기 upload directory 내부의 제한된 write만 사용할 수 있다.
-
-```text
-공통
-  memory_overview / memory_recall / memory_search
-  current_time / calculator
-  file_list / file_search / file_read
-  code_search / code_read / code_symbols
-  document_read
-  image_analyze          # VISION_MODEL 설정 시
-  web_search / web_fetch
-  market_data
-
-owner 추가
-  file_write / file_create / file_delete / file_move / file_copy
-  terminal_run
-
-trial 추가
-  file_write / file_create
-  └─ 자기 upload directory 내부만
+```powershell
+python run_server.py
 ```
 
-Trial upload ownership은 `db_id` 기준이다. `user_id`를 바꿔도 같은 `db_id`를 유지하면 기존 upload directory가 이어진다.
+자동 설치를 선호하면 `scripts/install_windows.ps1`을 확인한 뒤 사용할 수 있음. 이 스크립트는 시스템 Git·Python·Ollama 설치 및 초기 `.env` 생성을 자동화함. **이미 `.env`가 있으면 초기 계정 재설정을 하지 않음.**
 
----
+### 2-B. Portable 설치 — Ollama 미설치 PC 및 외장 SSD
 
+**전제:** 처음 준비하는 Windows PC에 Ollama가 설치되어 있지 않음. 프로그램 자체는 외장 SSD의 `portable-runtimes/`에 배치됨. 그러나 최초 준비를 위한 Git, PowerShell 및 Python 런처는 필요하며, 다운로드 시 인터넷이 필요함. 외장 SSD는 프로젝트 운영 정책상 NTFS를 사용하고, 포맷 시 모든 기존 데이터가 삭제되므로 **포맷 대상/백업 확인 후 Windows 파일 탐색기에서 사용자가 수동 포맷**해야 함. 설치 스크립트는 디스크를 포맷하지 않음.
 
-### 로그인과 세션
-
-Owner/Trial 모두 ID + password로 로그인한다. 성공하면 서버가 Bearer token을 발급한다.
-
-같은 `user_id`로 새 로그인하면 기존 token을 폐기한다. 즉 **new-login-wins** 정책이다.
-
-브라우저는 마지막으로 성공 로그인한 `user_id`만 localStorage에 기억한다. Password는 저장하지 않는다.
-
-PC에서 사용하다 폰으로 같은 계정에 로그인하면 PC token이 무효화될 수 있다. PC로 돌아왔을 때 password만 다시 입력하면 된다.
-
-로그인 실패 응답은 ID가 틀렸는지 password가 틀렸는지 구분해 노출하지 않는다.
-
----
-
-
-### Persistent chat
-
-대화 기록은 로그인 ID가 아니라 `db_id` 기준으로 `CHAT_DB_PATH`의 SQLite에 저장된다.
-
-Web UI 전용 table:
-
-```text
-web_chat_messages
-```
-
-기존 SQLite 파일 안에 다른 용도의 `chat_messages`가 있어도 함부로 변형하지 않는다.
-
-Startup migration 규칙:
-
-- `web_chat_messages`가 없고 기존 `chat_messages`가 과거 persistent-chat의 정확히 알려진 schema이면 구조적으로 이관한다.
-- 기존 `chat_messages`가 unrelated schema이면 그대로 보존하고 별도 `web_chat_messages`를 생성한다.
-- `web_chat_messages` 자체가 알 수 없는 schema이면 startup failure로 멈춘다.
-
-`SESSION_HISTORY_MESSAGES=10`이면 model에게 최근 10 messages를 전달하고, 새로 로그인하거나 페이지를 다시 열었을 때 화면에도 같은 최근 10 messages만 복원한다. 더 오래된 기록은 SQLite에 남아 있지만 현재 UI/model context에는 포함하지 않는다.
-
-Browser/device가 사라져도 server process가 살아 있으면 running resumable chat job은 계속될 수 있다. 완료된 assistant answer는 persistent chat에 저장되어 다음 접속에서 보인다.
-
-단, running job 자체는 process-memory state이므로 server process restart 이후 계산을 이어서 수행하는 durable queue는 아니다.
-
----
-
-
-### 모델 선택과 verifier
-
-Owner:
-
-```text
-GET /models -> 설치된 Ollama models
-/chat -> 선택 가능
-```
-
-Trial:
-
-```text
-GET /models -> MAIN_MODEL 하나
-/chat -> MAIN_MODEL 고정
-```
-
-Trial client가 UI를 우회해 다른 model을 직접 보내도 server boundary에서 거부한다.
-
-Memory fact extraction은 해당 chat turn에서 실제 사용한 동일 model을 `think=False`로 사용한다. 별도 `MEMORY_MODEL`은 없다.
-
-Final answer는 사용자에게 보이기 전에 verifier를 거친다. 현재 주요 검증 축:
-
-```text
-numeric grounding
-claim/evidence grounding
-scope preservation
-temporal consistency
-action outcome verification
-task alignment
-evidence coverage
-```
-
-Evidence coverage는 이미 확보된 useful evidence를 model이 너무 조심스럽게 버리고 generic answer로 후퇴하는 것을 막기 위한 축이다. 추가 검색 가능성이나 exhaustive completeness 자체를 요구하지 않는다.
-
-Coverage correction은 최대 2회다. 이후에는 coverage 부족만으로 final을 더 붙잡지 않는다.
-
----
-
-
-### 파일 업로드
-
-기본 upload root:
-
-```text
-./mai_uploads/
-```
-
-필요하면 `.env`에서 바꾼다.
-
-```env
-MAI_UPLOAD_ROOT=./mai_uploads
-```
-
-Owner는 upload root를 사용하고 Trial은 `db_id`에서 파생된 전용 directory를 사용한다.
-
-같은 account directory에서 같은 filename을 조용히 overwrite하지 않고 HTTP 409로 실패한다. Filename에 path separator를 허용하지 않는다.
-
-업로드된 파일의 실제 path가 input에 추가되므로 model이 `file_read`, `document_read`, `image_analyze` 등을 사용할 수 있다.
-
----
-
-
-### Trial 초기화
-
-`.env.example`의 기본 체험 계정:
-
-```text
-ID: 체험판
-PW: 0000
-```
-
-다른 사용자에게 재사용하기 전 server를 종료하고 dry-run을 먼저 확인한다.
+1. **1장 공통 절차를 외장 SSD의 프로젝트 폴더에서 실행**하고, SSD에서 `settings.yaml`과 `.env`를 설정함.
+2. 별도 PC Python이 필요한 최초 매니페스트 생성: `py --version` 또는 `python --version`으로 사용 가능한 Python 확인. Python이 없다면 먼저 설치해야 함(이는 Portable 런타임 준비 과정의 부트스트랩 요구사항임). Git Bash에서:
 
 ```bash
-python reset_trial.py 체험판 --dry-run
-python reset_trial.py 체험판
+python scripts/resolve_portable_sources.py
 ```
 
-Reset은 `user_id`로 account를 찾고 persistent ownership은 `db_id` 기준으로 제거한다.
+이 명령은 공식 배포 자산 URL 및 SHA-256을 기록한 `portable-sources.json`을 생성하며, **기본 모델 목록을 `ornith-1.5:9b`, `gemma4:e4b` 두 개로 지정함.** 이미 매니페스트가 존재하면 자동으로 덮어쓰지 않음. GitHub API 한도를 초과하거나 게시자가 검증 가능한 SHA-256을 제공하지 않으면 실패함.
 
-대상:
-
-- 해당 Trial memory
-- `web_chat_messages`의 해당 `db_id` conversation
-- 해당 Trial upload directory
-
-Unrelated legacy chat table은 임의 삭제하지 않는다.
-
----
-
-
-### 테스트
-
-개발자가 변경 후 확인할 때는 전체 regression test를 실행한다.
+3. **기존 Ollama 모델 복사 옵션을 사용하지 않고**, Portable Python/uv/Ollama 런타임 준비와 두 모델 다운로드를 실행함.
 
 ```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Manifest ./portable-sources.json -PullModels -InstallChromium
+```
+
+`-PullModels`는 외장 SSD의 Ollama 실행 파일을 서버로 시작하여 매니페스트의 **두 모델만** 내려받음. 별도의 Ollama가 PC에 설치되어 있을 필요가 없지만, 11434 포트 충돌이나 다운로드 오류가 있으면 설치가 명확히 실패함. `-CopyLocalModels`는 사용하지 않음.
+
+4. 필요한 파일의 준비 상태와 두 모델의 설치가 끝난 것을 확인한 뒤 서버 실행.
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File ./start-portable.ps1 -Backend ollama
+```
+
+5. `http://127.0.0.1:8000`에서 로그인해 테스트. 종료한 뒤 SSD를 안전하게 분리. 다른 PC에서는 호환되는 Windows x64 환경, 드라이버, 파일 접근 권한과 포트 상태를 확인해야 함. **Portable이라고 GPU 드라이버까지 포함되거나 모든 PC에서 무설치 실행이 보장되는 것은 아님.**
+
+현재 Windows Portable 실행 경로가 제공되며, Ubuntu/Linux는 별도 실험적 준비와 호스트 종속성이 필요함. 상세 진단/추가 백엔드 기능은 [Portable 참고 문서](setup_portable.md) 및 [Portable 기술 설명](docs/portable-windows.md)을 참고할 수 있음.
+
+## 3. 고급 설정 (선택)
+
+### 3.1 외부 접속 — Tailscale
+
+Tailscale은 **일반 설치와 Portable 설치 중 하나가 정상 실행된 다음** 설정함.
+
+1. [Tailscale 공식 설치](https://tailscale.com/download/windows) 후 계정에 로그인하고 장치를 등록함.
+2. 먼저 외부 인터넷 공개 없이 자신의 Tailnet 내부에서만 접속할지 결정함. 외부 인터넷으로 공개하려면 Tailscale Funnel을 별도 승인·구성해야 함.
+3. `.env`에서 `TAILSCALE_FUNNEL=true`로 변경하려면 공개 주소에 MAI 로그인 페이지가 노출될 수 있다는 점을 먼저 확인할 것. 로그인 계정에 강력한 비밀번호 설정.
+4. MAI 서버를 재시작해 출력된 주소 및 Tailscale 상태를 확인. 접속 실패 시 Funnel의 승인·정책·포트·장치 로그인 상태를 점검하고, 불필요할 때는 `TAILSCALE_FUNNEL=false`로 되돌림.
+
+Tailscale 자체의 로그인과 승인 없이 설정값만 바꿔도 연결된다고 가정하면 안 됨. 외부 공개는 개인 PC 및 파일 도구에 대한 공격 표면을 넓힘.
+
+### 3.2 음성 기능
+
+1. 일반 설치는 `pip install -e .`으로 음성 의존성을 설치함. Portable 설치 역시 런타임 준비 시 의존성 설치 절차를 거침.
+2. 사용 중인 브라우저에서 마이크 접근 권한을 허용하고, OS 입력 장치와 브라우저 설정을 확인함.
+3. 음성 입력/화자 구분에 필요한 목소리 등록을 MAI UI에서 진행. 마이크·모델 다운로드/초기화가 실패하면 명시적으로 점검함.
+4. `settings.yaml`에서 `VOICE_SILENCE_SECONDS`, `VOICE_MIN_SPEECH_SECONDS`, `VOICE_MATCH_THRESHOLD`, `VOICE_WHISPER_MODEL` 값을 조정할 수 있음. `VOICE_PROFILE_DIR`은 기기별 데이터 경로이므로 `.env`에 남김.
+5. 음성 답변은 브라우저의 음성 합성에 의존하므로 기기·브라우저별 음성 품질과 지원 언어가 다를 수 있음.
+
+## 4. 실행 문제 진단 및 업데이트
+
+```bash
+python -m compileall -q mai scripts tests
 python -m pytest -q
+python scripts/audit_codebase.py
 ```
 
-Runtime, auth, persistent chat, tool selection, verifier, memory, upload 변경 후에는 전체 suite를 기준으로 확인한다.
+위 명령은 **Python 환경을 설치한 뒤** 실행함. 감사의 정적 사용처 후보는 곧 삭제 대상이 아니며, 테스트 실패가 있으면 오류를 숨기지 않고 그대로 확인함.
 
+- 설치 중 버전/패키지 오류: 현재 사용 중인 Python 버전, 가상환경 활성화, `python -m pip install -e .` 성공 여부 확인.
+- Ollama 연결 실패: 서버 실행, `OLLAMA_HOST`, 모델 이름 및 `ollama list` 확인.
+- 모델 미존재: 사용할 모델이 실제 Ollama 모델 저장소에 설치됐는지 확인.
+- 기존 설정과 YAML이 다르게 동작: `.env`의 동일 키 또는 환경변수 우선순위 확인.
+- Portable 준비 오류: `portable-sources.json`의 제공자 SHA-256, 11434 포트, SSD 사용 권한 및 디스크 여유 공간 확인.
+- MAI DB 백업: 먼저 서버와 모델·기억 저장 작업을 종료하고 `.env`, `settings.yaml`, `data/`를 포함한 백업을 다른 저장장치에 보존할 것.
 
----
+## 5. 라이선스
 
-## 로컬 음성 입력 및 화자 검증
-
-기존 Owner/Trial/Family 계정 및 메모리 구조는 변경하지 않는다. 음성 입력 기능은 **Owner 로그인에만** 제공된다. 현재 로그인 Owner의 `db_id`별로 녹음한 목소리 특징을 따로 저장한다. 모델이 인식한 내용을 기존 메시지 입력란에 채운 후, 사용자가 확인하고 '전송'을 눌러야 일반 채팅으로 들어간다.
-
-### 설치 및 확인
-
-음성 기능의 Python 라이브러리는 **6단계의 기본 설치 명령** `python -m pip install -e .`에 포함된다. 이전 버전에서 업데이트한 경우, `git pull origin dev` 후 가상환경에서 이 명령을 다시 실행해야 새 의존성이 설치된다.
-
-```powershell
-python -m pip install -e .
-python -c "import speakeronnx, vadonnx, faster_whisper, numpy; print('Voice dependencies OK')"
-```
-
-speakeronnx는 ONNX 화자 특징 추출, Faster-Whisper는 로컬 음성인식(STT), NumPy는 음성 수치 연산을 담당한다. 모델 가중치는 최초 사용 시 내려받을 수 있으므로 **초기 다운로드에는 인터넷이 필요할 수 있지만**, 다운로드 후의 녹음·검증·음성 인식은 로컬에서 실행한다. CPU 사용량과 다운로드 용량에 주의한다.
-
-### 환경 변수
-
-```dotenv
-VOICE_SILENCE_SECONDS=5
-VOICE_MIN_SPEECH_SECONDS=0.5
-VOICE_MATCH_THRESHOLD=0.75
-VOICE_WHISPER_MODEL=small
-VOICE_PROFILE_DIR=./data/voice_profiles
-```
-
-일반 음성 입력의 최소 감지 발화 시간은 `VOICE_MIN_SPEECH_SECONDS`로 설정한다(기본 0.5초). 목소리 **최초 등록**은 기존의 더 긴 녹음 기준을 유지한다. 매우 짧은 발화는 화자 검증 및 받아쓰기 정확도가 떨어질 수 있어, 시간을 충족해도 검증 또는 음성 인식이 실패할 수 있다. 설정 변경 뒤에는 서버를 재시작한다.
-
-ONNX 음성 감지기가 확인한 **마지막 발화 종료 시점**부터 `VOICE_SILENCE_SECONDS`(기본 5초)가 지나거나 다시 마이크를 누르면 녹음이 종료된다. 최대 120초까지 녹음할 수 있다. `VOICE_MATCH_THRESHOLD`는 유사도 판정 기준값으로서 환경·마이크·목소리 변화에 따른 오인식 가능성이 있다. 기준을 낮추면 다른 사람을 통과시킬 위험이 증가한다.
-
-1. MAI의 **Owner 계정**으로 로그인한다.
-2. 전송 버튼 오른쪽의 마이크를 처음 누르면 '목소리 등록' 버튼이 나타난다.
-3. 목소리 등록을 누르고 최소 3초 이상 충분히 말을 한 다음 마이크를 다시 누른다. 무음 종료도 가능하다.
-4. 등록이 완료되면 마이크를 클릭해 말하고, 음성모드에서 마지막 발화가 끝난 뒤 설정된 시간이 지나면 자동으로 녹음을 종료하고, 화자 검증과 음성인식에 성공하면 **메시지를 자동 전송**한다.
-5. 마이크 사용에는 localhost 또는 HTTPS와 브라우저의 마이크 권한이 필요하다.
-
-목소리 특징은 파일로 로컬 저장된다. 처음 등록한 목소리 벡터는 변경하지 않고, **화자 검증과 음성 인식을 모두 통과한 발화만** 적응형 특징 벡터에 소량 반영한다. 매 새 음성 구간마다 검증은 다시 수행하며, 한 번의 성공으로 이후 모든 음성을 무조건 신뢰하지 않는다. 현재 UI에서는 덮어쓰기/재등록을 지원하지 않는다. 재등록해야 한다면 먼저 저장소 관리 절차로 기존 프로필을 제거해야 한다.
-
-### 보안 한계
-
-이 기능은 타인의 일상적 음성 명령을 거르는 **편의 필터**일 뿐 신원 인증을 대체하지 않는다. 녹음 재생, AI 음성 복제, 음향적 유사성에 의한 오인증이 가능하다. Voice API는 기존 Bearer 로그인 인증을 추가로 요구하지만, 이미 로그인한 브라우저 및 서버의 로컬 터미널은 고위험 도구를 사용할 수 있으므로 이것만으로 완전한 접근 통제는 제공되지 않는다. 녹음된 원본은 처리 후 영구 저장하지 않고 특징 벡터만 프로필로 저장한다.
-
-
-### 한국어와 영어를 섞어 말할 때
-
-Faster-Whisper STT의 한국어 고정값을 제거하고 음성의 언어를 자동 감지한다. 한국어 문장에 영어 단어·제품 이름을 섞어 말할 수 있지만, 자동 감지는 주된 언어 위주로 수행되므로 영어 고유명사가 항상 정확히 받아써지는 것은 아니다. 인식된 입력란 내용을 확인하고 전송한다.
-
-### 음성 모드 답변 읽기 (브라우저 TTS)
-
-마이크를 눌러 음성 입력 모드를 켜면 마이크 아이콘은 빨간색으로 표시된다. 음성 녹음이 무음 종료된 뒤에도 음성 모드는 유지되어, 이후 MAI 답변이 **완료되었을 때만** 브라우저의 `speechSynthesis`로 답변을 읽는다. 마이크 버튼을 다시 눌러 음성 모드를 끄면 재생 중인 음성도 중지한다. 녹음 중 버튼을 눌러 종료하는 경우 음성 모드도 꺼진다. 이 변경은 자동으로 다음 발화를 다시 녹음하는 핸즈프리 루프를 제공하지 않는다.
-
-브라우저·OS에 설치된 음성에 따라 한국어/영어 혼합 문장의 발음과 품질이 달라지며, TTS 지원 브라우저/목소리가 필요하다. 음성 답변은 브라우저 기능으로 생성되므로 외부 서버 TTS용 별도 API 키를 요구하지 않는다.
-
-
-
-### Windows 코드 무결성 정책을 위한 ONNX 음성 엔진
-
-Windows 스마트 앱 컨트롤이 PyTorch `shm.dll`을 차단한 환경을 위해, 화자 검증과 음성 구간 검출에서 PyTorch 의존성을 제거했다.
-
-- **vadonnx**: ONNX Runtime 기반으로 녹음에서 발화 구간 검출. Silero 모델을 내장해 제공한다.
-- **speakeronnx**: ONNX Runtime 기반으로 화자 특징 추출. 최초 사용 시 WeSpeaker ResNet34 ONNX 모델 다운로드가 필요할 수 있다.
-- **Faster-Whisper**: 검증에 성공한 음성의 텍스트 변환. 기존처럼 CPU로 실행한다.
-
-기본 설치: `python -m pip install -e .`. 검증:
-
-```powershell
-python -c "import speakeronnx, vadonnx, faster_whisper; from speakeronnx import SpeakerEmbedder; from vadonnx import load_vad; print('Voice dependencies OK')"
-python -m pip check
-```
-
-기존 SpeechBrain·Resemblyzer 음성 특징 벡터는 새 방식과 호환되지 않는다. 기존 프로필을 무조건 삭제하지 않고 엔진 종류가 다르면 명시적인 오류를 반환한다. 아직 등록된 화자가 없다면 새 모델로 그대로 등록한다.
-
-기존 `VOICE_MATCH_THRESHOLD` 값은 **새 화자 모델에서 검증된 수치가 아니다**. 음성 검증을 보안 인증 수단으로 취급하면 안 된다. 실제 사용자의 다양한 녹음과 다른 화자의 녹음으로 임계값을 검증해야 한다. Tailscale/웹 로그인 인증은 그대로 유지한다.
-
-기존 가상환경에 남은 `torch`, `speechbrain`, `silero-vad`는 `pip install -e .`만으로 자동 삭제되지 않는다. 그러나 이번 MAI 음성 경로에서는 해당 모듈을 불러오지 않는다. 다른 기능에서 사용하지 않는 것이 확인되기 전에는 강제로 삭제하지 않는다.
-
-
-### 말이 끝난 뒤 자동 종료
-
-브라우저에서 소리의 크기만 보고 무음 시간을 초기화하는 방식을 중단했다. 녹음 중 짧은 음성 구간을 인증된 `/voice/activity`에 보내 ONNX 음성 감지기가 판단한 **마지막 말소리 종료 시점**을 갱신한다. 마지막 말소리 이후 5초(기본값)가 지나면 녹음을 종료한다. `VOICE_SILENCE_SECONDS` 값을 바꾸면 대기 시간을 조절할 수 있다. 발화를 감지하지 못한 경우에는 임의로 성공 처리하지 않으며 최대 녹음 시간 120초 제한이 적용된다. 음성 감지 API 실패는 별도 오류로 표시한다. 실내의 배경 음악·텔레비전 속 사람 목소리는 실제 음성으로 검출될 가능성이 있다.
-
-
-### 음성모드 자동 전송
-
-음성모드가 켜진 상태에서 말소리가 끝나고 `VOICE_SILENCE_SECONDS`(기본 5초)가 경과해 녹음이 종료되면, 화자 검증 및 받아쓰기가 성공한 **새로운 문장만** 자동으로 전송한다. 음성모드가 꺼져 있거나 입력창에 작성 중인 내용이 있거나 현재 대화가 진행 중이면 자동으로 기존 메시지를 덮어쓰거나 중단하지 않는다. 목소리 등록은 자동 전송 대상이 아니다. 인식·검증에 실패한 음성도 자동 전송하지 않는다.
-
-
-### 음성 답변에서 서식 기호 제외
-
-음성모드에서 MAI 답변을 읽을 때 화면에 표시되는 마크다운의 제목·강조·목록·링크 등 서식 표시는 낭독하지 않고, 보이는 문장 위주로 변환하여 브라우저 TTS에 전달한다. 코드 블록과 인라인 코드는 낭독하지 않는다. 화면의 답변 텍스트 자체는 변경하지 않는다. 기호를 포함한 수식·특수 표기는 완전한 자연어 변환을 지원하지 않는다.
-
-
-### 연속 음성 대화
-
-마이크로 음성모드를 한 번 켜면 음성 인식과 자동 전송 뒤 MAI의 모델 답변이 완료되기를 기다린다. 답변을 브라우저 TTS로 읽는 동안에는 녹음하지 않고, **TTS 재생이 끝나면 다시 자동으로 듣기 시작한다.** 같은 흐름을 음성모드를 끌 때까지 반복한다. 답변에서 읽을 문장이 없는 경우에는 재생 없이 다음 녹음을 시작한다. 음성인식·화자 검증·TTS 오류는 숨기지 않으며, 오류가 난 턴을 성공으로 간주해 반복하지 않는다. 브라우저에서 TTS를 지원해야 음성 답변을 읽을 수 있다.
-
-
-### 화자 검증 실패 후 재녹음 확인
-
-음성모드가 유지되는 상태에서 `speaker_mismatch`(HTTP 403)가 발생하면 거부된 음성은 전송하지 않고 오류를 표시한 뒤 다시 마이크를 연다. 재시작 과정을 기다려 성공 시 `듣고 있어` 상태를 표시하며, 마이크 시작 자체가 실패하면 별도 오류를 보여준다. 마이크 버튼을 눌러 **음성모드를 직접 종료한 경우에는** 자동으로 다시 켜지 않는다. 네트워크·권한 및 기타 서버 오류는 화자 불일치와 구별한다.
-
-
-### 음성모드와 TTS 스피커 버튼
-
-마이크 버튼은 음성모드를 켜거나 끄는 토글이다. 음성모드에서 녹음은 마지막 발화 뒤 `VOICE_SILENCE_SECONDS`(기본 5초) 경과 시 자동 종료한다. 마이크를 눌러 음성모드를 끄는 순간 현재 녹음은 **전송 없이 취소**된다. 음성모드가 켜져 있다면 답변 완료 뒤 자동으로 다시 듣는 동작을 유지한다.
-
-입력창 옆 스피커 아이콘은 TTS 읽기 켜기/끄기 토글이다. TTS를 끄면 현재 재생도 즉시 중단하고 이후 답변도 읽지 않으며, 음성모드는 그대로 유지한다. TTS를 켜면 이후 답변부터 읽는다. 이 토글은 해당 페이지를 열어 둔 동안 유지된다.
+MAI의 라이선스는 AGPL-3.0-only이며 최초 개발자는 신재용임. 자세한 사항은 [LICENSE](LICENSE), [NOTICE](NOTICE)를 참조.
