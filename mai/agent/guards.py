@@ -74,8 +74,6 @@ class AgentGuard:
         self._identical_rounds = 0
         self._previous_verification_signature: str | None = None
         self._identical_verification_rejections = 0
-        self._previous_missing_requirements: frozenset[str] | None = None
-        self._identical_requirement_rejections = 0
 
     def before_tool_call(self, name: str, arguments: Mapping[str, Any]) -> str:
         fingerprint = call_fingerprint(name, arguments)
@@ -137,22 +135,6 @@ class AgentGuard:
                 f"{self.config.max_no_progress_rounds} times"
             )
 
-    def after_requirement_rejection(self, missing: frozenset[str]) -> None:
-        """Stop only when the same frozen requirement omission keeps repeating."""
-
-        if not missing:
-            raise ValueError("missing requirements must be non-empty")
-        if missing == self._previous_missing_requirements:
-            self._identical_requirement_rejections += 1
-        else:
-            self._previous_missing_requirements = missing
-            self._identical_requirement_rejections = 1
-        if self._identical_requirement_rejections > self.config.max_no_progress_rounds:
-            raise NoProgressError(
-                "model repeatedly attempted a final answer with the same unsatisfied tool requirements more than "
-                f"{self.config.max_no_progress_rounds} times"
-            )
-
     def after_verification_rejection(self, issues: Sequence[Mapping[str, Any]]) -> None:
         """Detect repeated verifier defects independently of tool-round progress.
 
@@ -172,12 +154,6 @@ class AgentGuard:
                 "verifier rejected the same structured defects more than "
                 f"{self.config.max_no_progress_rounds} consecutive times"
             )
-
-    def note_requirement_progress(self) -> None:
-        """Reset requirement-omission no-progress state after a required handler starts."""
-
-        self._previous_missing_requirements = None
-        self._identical_requirement_rejections = 0
 
 
 def call_fingerprint(name: str, arguments: Mapping[str, Any]) -> str:
