@@ -6,6 +6,7 @@ public HTTP(S) destinations and validates every redirect target before access.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import math
 import socket
 from typing import Any
@@ -19,6 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from .registry import ToolRegistry
 
 
+_LOG = logging.getLogger("uvicorn.error")
+
 WEB_SEARCH_PAGE_COUNT = 3
 WEB_SEARCH_DEFAULT_RESULTS = 10
 WEB_SEARCH_MAX_RESULTS = 15
@@ -26,7 +29,23 @@ WEB_SEARCH_SNIPPET_CHARS = 160
 
 
 class WebSearchError(RuntimeError):
-    """The configured web-search provider failed."""
+    """Search failure with structured provider and request-stage diagnostics."""
+
+    def __init__(
+        self, *, query: str, page: int | None, completed_pages: int,
+        original: Exception,
+    ) -> None:
+        self.query = query
+        self.provider = "ddgs"
+        self.page = page
+        self.completed_pages = completed_pages
+        self.cause_type = type(original).__name__
+        self.cause_message = str(original)
+        super().__init__(
+            f"web search failed: provider={self.provider} page={page} "
+            f"completed_pages={completed_pages} cause_type={self.cause_type} "
+            f"cause={self.cause_message!r} query={query!r}"
+        )
 
 
 class WebFetchError(RuntimeError):
@@ -72,6 +91,8 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
     merged: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
 
+    page: int | None = None
+    completed_pages = 0
     try:
         with DDGS(timeout=10) as ddgs:
             for page in range(1, WEB_SEARCH_PAGE_COUNT + 1):
@@ -98,8 +119,19 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
                             max_chars=WEB_SEARCH_SNIPPET_CHARS,
                         ),
                     })
+                completed_pages = page
+                _LOG.info(
+                    "MAI web_search page completed provider=ddgs page=%d total_pages=%d unique_results=%d",
+                    page, WEB_SEARCH_PAGE_COUNT, len(merged),
+                )
     except Exception as exc:
-        raise WebSearchError(f"web search failed for query {clean_query!r}") from exc
+        _LOG.exception(
+            "MAI web_search failed provider=ddgs page=%s completed_pages=%d query=%r",
+            page, completed_pages, clean_query,
+        )
+        raise WebSearchError(
+            query=clean_query, page=page, completed_pages=completed_pages, original=exc,
+        ) from exc
 
     results = [
         {"rank": rank, **item}
