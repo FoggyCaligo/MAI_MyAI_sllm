@@ -44,6 +44,8 @@ def test_owner_can_have_only_one_live_remote_session():
     async def exercise():
         manager = RemoteSessionManager()
         first = await manager.create("one-owner")
+        assert await manager.create("one-owner") is first
+        first.connected = True
         with pytest.raises(RemoteExecutionError, match="already has"):
             await manager.create("one-owner")
         await manager.close(first.session_id)
