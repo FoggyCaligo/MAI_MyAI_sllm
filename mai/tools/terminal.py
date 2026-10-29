@@ -46,14 +46,6 @@ class TerminalOutputLimitError(TerminalRunError):
     """The command produced more output than the configured collection budget."""
 
 
-class TerminalStepsInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    commands: list[str] = Field(min_length=1)
-    cwd: str | None = None
-    shell: Literal['default', 'powershell'] = 'default'
-
-
 def _shell_description() -> str:
     if os.name == "nt":
         return os.environ.get("COMSPEC") or "cmd.exe"
@@ -234,34 +226,6 @@ async def terminal_run(
 
 
 
-async def terminal_run_steps(
-    *,
-    commands: list[str],
-    cwd: str | None = None,
-    default_cwd: str | Path | None = None,
-    default_timeout_seconds: float | None = None,
-    shell: Literal["default", "powershell"] = "default",
-) -> dict[str, Any]:
-    if not commands:
-        raise ValueError("commands must not be empty")
-    if any(not command.strip() for command in commands):
-        raise ValueError("each command must be nonempty")
-    results: list[dict[str, Any]] = []
-    for index, command in enumerate(commands):
-        try:
-            result = await terminal_run(
-                command=command, cwd=cwd, default_cwd=default_cwd,
-                default_timeout_seconds=default_timeout_seconds, shell=shell,
-            )
-        except TerminalRunError as exc:
-            raise TerminalRunError(
-                "terminal command step failed",
-                {"step_index": index, "completed_steps": results, "failed_step": exc.result},
-            ) from exc
-        results.append(result)
-    return {"steps": results, "completed_steps": len(results)}
-
-
 def register_terminal_tools(
     registry: ToolRegistry,
     *,
@@ -280,17 +244,6 @@ def register_terminal_tools(
             command=command,
             cwd=cwd,
             shell=shell,
-            default_cwd=register_default_cwd,
-            default_timeout_seconds=register_default_timeout,
-        )
-
-    async def steps_handler(
-        commands: list[str],
-        cwd: str | None = None,
-        shell: Literal["default", "powershell"] = "default",
-    ) -> dict[str, Any]:
-        return await terminal_run_steps(
-            commands=commands, cwd=cwd, shell=shell,
             default_cwd=register_default_cwd,
             default_timeout_seconds=register_default_timeout,
         )
@@ -332,22 +285,4 @@ def register_terminal_tools(
                 "posix_shell_syntax": shell_family == "sh",
             }
         },
-    )
-
-    registry.add(
-        name="terminal_run_steps",
-        description=(
-            "Run an ordered sequence of independent shell commands, stopping on the "
-            "first nonzero exit, timeout, or output-limit failure. Each command has "
-            "a separate exit status. Use when success of every step matters; unlike "
-            "a compound shell script this does not conceal an earlier step failure."
-        ),
-        input_model=TerminalStepsInput,
-        handler=steps_handler,
-        timeout_seconds=None,
-        category="terminal",
-        metadata={"model_context": {
-            "shell": shell_description, "shell_family": shell_family,
-            "default_cwd": str(register_default_cwd),
-        }},
     )
