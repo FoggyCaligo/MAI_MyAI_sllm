@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
+from .settings import load_settings
 from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +30,7 @@ from .voice import VoiceService
 
 
 load_dotenv()
+load_settings(Path(__file__).resolve().parents[2] / "settings.yaml")
 
 _STATIC_DIR = Path(__file__).with_name("static")
 _runtime: MAIRuntime | None = None
