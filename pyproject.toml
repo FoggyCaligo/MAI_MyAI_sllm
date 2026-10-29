@@ -2,6 +2,7 @@
 name = "mai-myai-sllm"
 version = "0.1.0"
 description = "Ollama-native personal agent runtime with graph memory"
+license = "AGPL-3.0-only"
 requires-python = ">=3.11"
 dependencies = [
   "beautifulsoup4>=4.13",
