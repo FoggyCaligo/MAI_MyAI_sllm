@@ -29,9 +29,9 @@ def test_session_history_endpoint_uses_same_default_window_as_model_context(tmp_
     payload = run(server.get_session_history("default", authorization="Bearer token"))
 
     messages = payload["messages"]
-    assert len(messages) == 24
+    assert len(messages) == 10
     assert [message["content"] for message in messages] == [
-        f"message-{index}" for index in range(6, 30)
+        f"message-{index}" for index in range(20, 30)
     ]
 
 

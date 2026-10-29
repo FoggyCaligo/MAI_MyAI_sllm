@@ -188,7 +188,7 @@ def test_terminal_run_schema_keeps_timeout_internal(tmp_path: Path) -> None:
     register_terminal_tools(registry, cwd=tmp_path, timeout_seconds=5)
 
     parameters = registry.get("terminal_run").native_schema()["function"]["parameters"]
-    assert set(parameters["properties"]) == {"command", "cwd"}
+    assert set(parameters["properties"]) == {"command", "cwd", "shell"}
 
     with pytest.raises(ToolArgumentsError):
         run(registry.invoke(NativeToolCall(
