@@ -128,14 +128,11 @@ class MAIRuntime:
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
-        enable_tool_requirement_verifier: bool | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
         if max_inline_tool_result_chars is None:
             max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
-        if enable_tool_requirement_verifier is None:
-            enable_tool_requirement_verifier = _env_bool("TOOL_REQUIREMENT_VERIFIER", False)
         if max_inline_tool_result_chars < 1024:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.download_links = DownloadLinkStore()
@@ -148,7 +145,6 @@ class MAIRuntime:
         self.model = model
         self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
-        self.enable_tool_requirement_verifier = enable_tool_requirement_verifier
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
         self.upload_root.mkdir(parents=True, exist_ok=True)
         self.memory_db_path = Path(memory_db_path).expanduser().resolve()
@@ -308,7 +304,6 @@ class MAIRuntime:
             ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
-            enable_tool_requirement_verifier=self.enable_tool_requirement_verifier,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]

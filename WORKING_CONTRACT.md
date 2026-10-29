@@ -34,9 +34,7 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 이 선택은 별도 preflight LLM 호출을 요구하지 않으면서 초기 native tool schema 비용을 줄이기 위한 production 정책이다. 실제 툴이 필요하면 활성화 라운드가 추가된다.
 
-`OllamaToolRequirementPlanner`, `FrozenToolRequirements`, missing-requirement correction support는 코드와 단위 테스트에 남아 있을 수 있지만, production `MAIRuntime.run_user_message()`는 planner를 호출하거나 frozen requirements를 전달하지 않는다.
-
-따라서 production contract는 required-tool gate를 보장하지 않는다. Tool 사용 필요성은 카탈로그 및 main agent prompt가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다. 선택적으로 활성화하는 frozen requirements 검증에서는 누락된 필수 툴 schema만 correction round에 임시 제공할 수 있다.
+Tool Requirement Planner와 frozen requirements 기반 필수 도구 강제 경로는 제거되었다. Tool 사용 필요성은 카탈로그 및 main agent prompt가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
 
 ---
 
