@@ -12,8 +12,6 @@ from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
 from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver, VerificationRejectionObserver
-from .requirements import FrozenToolRequirements, ToolRequirementPlanner
-from .tool_planner import OllamaToolRequirementPlanner
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
@@ -37,8 +35,6 @@ class AgentRuntime:
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
         tool_result_store: ToolResultStore | None = None,
-        tool_requirement_planner: ToolRequirementPlanner | None = None,
-        enable_tool_requirement_verifier: bool = True,
     ) -> None:
         self.loop = AgentLoop(
             adapter,
@@ -48,22 +44,12 @@ class AgentRuntime:
             max_semantic_verification_retries=max_semantic_verification_retries,
             tool_result_store=tool_result_store,
         )
-        if not enable_tool_requirement_verifier:
-            self.tool_requirement_planner = None
-        elif tool_requirement_planner is not None:
-            self.tool_requirement_planner = tool_requirement_planner
-        elif isinstance(adapter, OllamaAdapter):
-            self.tool_requirement_planner = OllamaToolRequirementPlanner(adapter)
-        else:
-            self.tool_requirement_planner = None
-
     async def run(
         self,
         messages: Sequence[Mapping[str, Any]],
         *,
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
-        requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
@@ -80,7 +66,6 @@ class AgentRuntime:
                 effective_messages,
                 think=think,
                 options=options,
-                requirements=requirements,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
                 on_verification_rejection=on_verification_rejection,
@@ -95,29 +80,12 @@ class AgentRuntime:
         prior_messages: Sequence[Mapping[str, Any]] = (),
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
-        requirements: FrozenToolRequirements | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
     ) -> AgentRunResult:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
-
-        # Only the necessity judgment is model-driven. Once frozen, whether each
-        # required tool actually ran is checked structurally by AgentLoop against
-        # handler_started observations; FinalGroundingVerifier is not involved.
-        effective_requirements = requirements
-        if effective_requirements is None and self.tool_requirement_planner is not None:
-            recent_dialogue = [
-                dict(message)
-                for message in prior_messages
-                if message.get("role") in {"user", "assistant"}
-            ]
-            effective_requirements = await self.tool_requirement_planner.plan(
-                user_text=content,
-                recent_dialogue=recent_dialogue,
-                tools=self.loop.registry.definitions(),
-            )
 
         messages: list[Message] = [dict(message) for message in prior_messages]
         messages.append({"role": "system", "content": USER_VISIBLE_RESULT_CONTRACT})
@@ -126,7 +94,6 @@ class AgentRuntime:
             messages,
             think=think,
             options=options,
-            requirements=effective_requirements,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
             on_verification_rejection=on_verification_rejection,
