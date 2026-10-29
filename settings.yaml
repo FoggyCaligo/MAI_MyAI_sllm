@@ -16,6 +16,7 @@ VISION_MODEL: "gemma4:e4b"
 # Changes adjust response behavior, resource use, or supported optional features.
 OLLAMA_REQUEST_TIMEOUT_SECONDS: 500
 OLLAMA_THINK: true
+OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 16384  # per agent model request; .env overrides this
 MAI_DEBUG_MODEL_INPUT: false
 
 # Structural execution guards (no global agent round cap).
