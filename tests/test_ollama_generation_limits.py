@@ -32,3 +32,10 @@ def test_length_terminated_ollama_response_is_failure():
     with pytest.raises(OllamaOutputLimitError):
         asyncio.run(adapter.chat(ChatRequest(messages=({"role": "user", "content": "test"},))))
     assert client.payload["options"]["num_predict"] == 4096
+
+
+def test_agent_output_budget_default_and_environment_override(monkeypatch):
+    monkeypatch.delenv("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", raising=False)
+    assert ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 16384) == 16384
+    monkeypatch.setenv("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", "8192")
+    assert ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 16384) == 8192
