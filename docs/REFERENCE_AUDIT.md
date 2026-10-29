@@ -53,3 +53,28 @@ python -m pytest
 ```
 
 웹 UI 로그인, 새 채팅, 대화 복원 및 이어받기, 감사 로그, 기존 SQLite 데이터 유지 여부를 회귀 검사해야 한다.
+
+## 종합 정적 감사
+
+추가된 읽기 전용 분석:
+
+```bash
+python scripts/audit_codebase.py
+python scripts/audit_codebase.py --json
+python -m pytest tests/test_audit_codebase.py
+```
+
+- Python AST로 모듈 정적 import 참조, 미참조 모듈 후보, docstring-only 파일을 검토한다.
+- 모듈 import 순환(SCC), 대형/분기 집중 함수, 완전히 동일한 함수 AST를 후보로 보고한다.
+- 테스트 모듈에서 직접 import되지 않은 모듈을 별도로 표시한다. **테스트 커버리지 측정이 아니다.**
+- JSON 출력은 자동화용으로 제공하며, 기존 코드나 파일을 수정하지 않는다.
+- 동적 import, UI, 등록 기반 실행, 파일 경로 참조 및 외부 소비는 정적 분석만으로 확정할 수 없다.
+- 실제 커버리지, 실행 시간, 유사 코드(의미상 중복), 외부 라이브러리 감사는 별도 도구와 실행 환경이 필요하다.
+- 구문 분석이나 파일 읽기 실패는 오류로 드러나고 정상 결과로 위장하지 않는다.
+
+### 2026-10-29 감사 기준 보정
+
+- `__init__.py`의 빈 내용이나 docstring-only 상태는 패키지 표시로 간주해 삭제 후보 경고에서 제외함.
+- 함수 분석에는 길이와 추정 decision complexity를 사용함. 이는 런타임 테스트나 실제 순환 복잡도 공식 도구와 동일한 측정이 아님.
+- AST import 기반 미사용 판정과 테스트 직접 import 판정은 계속 **검토 후보**이며, 호출 그래프·실행 커버리지를 증명하지 않음.
+- 전체 회귀 검사: `python -m compileall -q mai scripts tests` 및 `python -m pytest -q`.
