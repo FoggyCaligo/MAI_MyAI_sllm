@@ -50,3 +50,13 @@ def test_powershell_native_exit_code_is_preserved(tmp_path):
             shell="powershell",
         ))
     assert exc.value.result["returncode"] == 17
+
+
+def test_cmd_batch_path_is_quoted_as_an_executable_command(tmp_path):
+    from mai.tools.terminal import _windows_cmd_args
+
+    script = tmp_path / "한글 작업" / "command.cmd"
+    args = _windows_cmd_args(script)
+    assert args[:4] == ["cmd.exe", "/d", "/s", "/c"]
+    assert args[4] == f'""{script}""'
+
