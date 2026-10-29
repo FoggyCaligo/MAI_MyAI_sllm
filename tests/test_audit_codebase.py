@@ -31,6 +31,7 @@ def test_audit_reports_candidates_without_mutation(tmp_path: Path) -> None:
     kinds = {finding["kind"] for finding in result["findings"]}
     assert "docstring_only" in kinds
     assert "import_cycle" in kinds
+    assert not any(f["path"] == "mai/__init__.py" and f["kind"] == "docstring_only" for f in result["findings"])
     assert before == {p: p.read_bytes() for p in root.rglob("*.py")}
 
 
