@@ -296,9 +296,9 @@ def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
     reviewer = ReviewerAdapter([
         ("unsupported", "aligned", ("Unsupported claim.",)),
         ("unsupported", "aligned", ("Still unsupported.",)),
-        ("unsupported", "misaligned", ("Requested result missing.",)),
-        ("unsupported", "misaligned", ("Requested result still missing.",)),
-        ("unsupported", "misaligned", ("Both budgets exhausted.",)),
+        ("supported", "misaligned", ("Requested result missing.",)),
+        ("supported", "misaligned", ("Requested result still missing.",)),
+        ("supported", "misaligned", ("Alignment correction budget exhausted.",)),
     ])
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
         run(AgentRuntime(
