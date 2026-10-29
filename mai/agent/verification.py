@@ -251,7 +251,10 @@ class FinalVerificationResult:
             else:
                 lines.append(f"- {issue.code}: {issue.message}")
         if unsupported:
-            targets = "; ".join(claim["claim"] for claim in unsupported)
+            targets = "; ".join(claim["claim"] for claim in unsupported[:3])
+            remaining = len(unsupported) - 3
+            if remaining > 0:
+                lines.append(f"- {remaining} further unsupported claims retained in structured review details.")
             lines.append(
                 f"수정 지시: {targets} 부분의 근거를 tool 호출을 통해 보강하거나, "
                 "해당 부분 자체를 삭제하라."
