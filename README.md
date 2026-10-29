@@ -143,3 +143,11 @@ python run_server.py
 ### Windows 외장 SSD Portable 모드
 
 외장 SSD에 소스·DB·모델·별도 런타임을 배치하는 방법과 오프라인 백업·복구 안내는 [Portable 사용 가이드](docs/portable-windows.md) 참조. 현재는 실행 파일을 수동으로 준비해야 하며 새 PC에서 무설치 동작까지 검증된 상태는 아님.
+
+## 라이선스 및 저작권
+
+MAI의 최초 개발자는 **신재용**이며, MAI에 대한 본인 저작 부분의 저작권 표기는 `Copyright (C) 2026 신재용`임.
+
+이 프로젝트의 저작권자가 라이선스할 권한을 가진 코드에는 **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**가 적용됨. 라이선스 전문은 [LICENSE](LICENSE), 최초 개발자 표기는 [NOTICE](NOTICE)를 참고.
+
+AGPL-3.0은 수정·재배포와 네트워크를 통한 프로그램 이용 시 관련 소스코드 제공 의무가 발생할 수 있음. 외부 라이브러리와 제3자 기여물의 권리는 각각의 원래 라이선스 및 저작권 고지를 따름.
