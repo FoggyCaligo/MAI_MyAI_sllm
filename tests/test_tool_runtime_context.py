@@ -39,13 +39,15 @@ def test_terminal_declares_authoritative_shell_runtime_context(tmp_path: Path) -
     register_terminal_tools(registry, cwd=tmp_path)
 
     contexts = registry.model_context()
-    assert len(contexts) == 1
-    assert contexts[0]["tool"] == "terminal_run"
-    context = contexts[0]["context"]
-    assert context["shell"]
-    assert context["shell_family"] in {"cmd", "sh"}
-    assert context["default_cwd"] == str(tmp_path.resolve())
-    assert context["posix_shell_syntax"] is (context["shell_family"] == "sh")
+    assert [entry["tool"] for entry in contexts] == ["terminal_run", "terminal_run_steps"]
+    single_context, steps_context = (entry["context"] for entry in contexts)
+    assert single_context["shell"]
+    assert single_context["shell_family"] in {"cmd", "sh"}
+    assert single_context["default_cwd"] == str(tmp_path.resolve())
+    assert single_context["posix_shell_syntax"] is (single_context["shell_family"] == "sh")
+    assert steps_context["shell"] == single_context["shell"]
+    assert steps_context["shell_family"] == single_context["shell_family"]
+    assert steps_context["default_cwd"] == single_context["default_cwd"]
 
 
 def test_agent_runtime_injects_declared_tool_context_as_system_message() -> None:
