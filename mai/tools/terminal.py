@@ -54,7 +54,7 @@ def _shell_family() -> str:
 
 def _windows_cmd_args(command_file: Path) -> list[str]:
     """Launch UTF-8 CMD script under a UTF-8 code page, preserving its exit status."""
-    return ["cmd.exe", "/d", "/s", "/c", f'chcp 65001>nul && call "{command_file}"']
+    return ["cmd.exe", "/d", "/c", f'chcp 65001>nul && call "{command_file}"']
 
 
 def _powershell_command(command: str) -> list[str]:
