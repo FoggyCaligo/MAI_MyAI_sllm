@@ -42,6 +42,18 @@ class TerminalTimeoutError(TerminalRunError):
     """The shell command exceeded its configured timeout."""
 
 
+class TerminalOutputLimitError(TerminalRunError):
+    """The command produced more output than the configured collection budget."""
+
+
+class TerminalStepsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    commands: list[str] = Field(min_length=1)
+    cwd: str | None = None
+    shell: Literal['default', 'powershell'] = 'default'
+
+
 def _shell_description() -> str:
     if os.name == "nt":
         return os.environ.get("COMSPEC") or "cmd.exe"
@@ -93,6 +105,41 @@ def _terminate_process_tree(pid: int) -> None:
         pass
 
 
+async def _communicate_bounded(process: asyncio.subprocess.Process, *, limit_bytes: int) -> tuple[bytes, bytes]:
+    output = [bytearray(), bytearray()]
+    total = 0
+
+    async def collect(stream: asyncio.StreamReader, destination: int) -> None:
+        nonlocal total
+        while chunk := await stream.read(65536):
+            total += len(chunk)
+            if total > limit_bytes:
+                raise TerminalOutputLimitError(
+                    "terminal output collection limit exceeded",
+                    {"output_bytes": total, "max_output_bytes": limit_bytes, "output_limit_exceeded": True},
+                )
+            output[destination].extend(chunk)
+
+    readers = [
+        asyncio.create_task(collect(process.stdout, 0)),
+        asyncio.create_task(collect(process.stderr, 1)),
+    ]
+    waiter = asyncio.create_task(process.wait())
+    tasks = [*readers, waiter]
+    try:
+        pending = set(tasks)
+        while pending:
+            finished, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_EXCEPTION)
+            for task in finished:
+                task.result()
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return bytes(output[0]), bytes(output[1])
+
+
 async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, shell: Literal['default', 'powershell'] = 'default') -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     if os.name == "nt":
@@ -126,19 +173,26 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs,
             )
 
+        max_output_bytes = int(os.environ.get("TERMINAL_MAX_OUTPUT_BYTES", "1048576"))
+        if max_output_bytes < 1:
+            raise ValueError("TERMINAL_MAX_OUTPUT_BYTES must be positive")
         timed_out = False
+        collector = asyncio.create_task(_communicate_bounded(process, limit_bytes=max_output_bytes))
         try:
             if timeout_seconds is None:
-                stdout_bytes, stderr_bytes = await process.communicate()
+                stdout_bytes, stderr_bytes = await collector
             else:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(collector, timeout=timeout_seconds)
         except asyncio.TimeoutError:
             timed_out = True
             await asyncio.to_thread(_terminate_process_tree, process.pid)
-            stdout_bytes, stderr_bytes = await process.communicate()
-        except asyncio.CancelledError:
+            stdout_bytes, stderr_bytes = await _communicate_bounded(process, limit_bytes=max_output_bytes)
+        except BaseException:
+            if not collector.done():
+                collector.cancel()
+                await asyncio.gather(collector, return_exceptions=True)
             await asyncio.to_thread(_terminate_process_tree, process.pid)
-            await process.communicate()
+            await process.wait()
             raise
 
     # Child CMD uses chcp 65001; PowerShell uses UTF-8 OutputEncoding.
@@ -179,6 +233,35 @@ async def terminal_run(
     return result
 
 
+
+async def terminal_run_steps(
+    *,
+    commands: list[str],
+    cwd: str | None = None,
+    default_cwd: str | Path | None = None,
+    default_timeout_seconds: float | None = None,
+    shell: Literal["default", "powershell"] = "default",
+) -> dict[str, Any]:
+    if not commands:
+        raise ValueError("commands must not be empty")
+    if any(not command.strip() for command in commands):
+        raise ValueError("each command must be nonempty")
+    results: list[dict[str, Any]] = []
+    for index, command in enumerate(commands):
+        try:
+            result = await terminal_run(
+                command=command, cwd=cwd, default_cwd=default_cwd,
+                default_timeout_seconds=default_timeout_seconds, shell=shell,
+            )
+        except TerminalRunError as exc:
+            raise TerminalRunError(
+                "terminal command step failed",
+                {"step_index": index, "completed_steps": results, "failed_step": exc.result},
+            ) from exc
+        results.append(result)
+    return {"steps": results, "completed_steps": len(results)}
+
+
 def register_terminal_tools(
     registry: ToolRegistry,
     *,
@@ -197,6 +280,17 @@ def register_terminal_tools(
             command=command,
             cwd=cwd,
             shell=shell,
+            default_cwd=register_default_cwd,
+            default_timeout_seconds=register_default_timeout,
+        )
+
+    async def steps_handler(
+        commands: list[str],
+        cwd: str | None = None,
+        shell: Literal["default", "powershell"] = "default",
+    ) -> dict[str, Any]:
+        return await terminal_run_steps(
+            commands=commands, cwd=cwd, shell=shell,
             default_cwd=register_default_cwd,
             default_timeout_seconds=register_default_timeout,
         )
@@ -238,4 +332,22 @@ def register_terminal_tools(
                 "posix_shell_syntax": shell_family == "sh",
             }
         },
+    )
+
+    registry.add(
+        name="terminal_run_steps",
+        description=(
+            "Run an ordered sequence of independent shell commands, stopping on the "
+            "first nonzero exit, timeout, or output-limit failure. Each command has "
+            "a separate exit status. Use when success of every step matters; unlike "
+            "a compound shell script this does not conceal an earlier step failure."
+        ),
+        input_model=TerminalStepsInput,
+        handler=steps_handler,
+        timeout_seconds=None,
+        category="terminal",
+        metadata={"model_context": {
+            "shell": shell_description, "shell_family": shell_family,
+            "default_cwd": str(register_default_cwd),
+        }},
     )
