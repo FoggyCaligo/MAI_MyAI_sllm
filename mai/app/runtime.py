@@ -15,7 +15,6 @@ import httpx
 from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver
 from ..agent.runtime import AgentRuntime
-from ..agent.task_state import TaskState
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig, ollama_generation_limit
@@ -106,7 +105,6 @@ class MAIRunResult:
     model: str
     model_rounds: int
     tools: tuple[dict[str, object], ...]
-    task_state: TaskState | None = None
 
 
 class FileDownloadLinkInput(BaseModel):
@@ -348,7 +346,7 @@ class MAIRuntime:
             lambda completed, user_id=principal.memory_user_id: self._forget_memory_task(user_id, completed)
         )
 
-        return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools, task_state=result.task_state)
+        return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools)
 
     async def _await_pending_memory_update(self, user_id: str) -> None:
         task = self._memory_tasks_by_user.get(user_id)
