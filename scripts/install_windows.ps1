@@ -71,16 +71,13 @@ try {
     $envPath = Join-Path $InstallPath '.env'
     if (-not (Test-Path -LiteralPath $envPath)) {
         $source = Get-Content '.env.example' -Raw -Encoding UTF8
-        $mainModelSetting = @($source -split "\r?\n" | Where-Object { $_ -match '^MAIN_MODEL=' })
-        $visionModelSetting = @($source -split "\r?\n" | Where-Object { $_ -match '^VISION_MODEL=' })
-        if ($mainModelSetting.Count -ne 1 -or $visionModelSetting.Count -ne 1) {
-            throw '.env.example must contain exactly one MAIN_MODEL and VISION_MODEL setting'
-        }
-        $defaultModel = ($mainModelSetting[0] -split '=', 2)[1].Trim()
-        $visionModel = ($visionModelSetting[0] -split '=', 2)[1].Trim()
-        if (-not $defaultModel -or -not $visionModel) {
-            throw 'MAIN_MODEL and VISION_MODEL in .env.example must be non-empty'
-        }
+        # PyYAML is installed by pip install -e . above.
+        # Read model defaults from the same settings.yaml as MAI runtime.
+        $modelDefaultsJson = & $venvPython -c "import json, pathlib; from mai.app.settings import load_settings; s = load_settings(pathlib.Path('settings.yaml'), environ={}); print(json.dumps({'main': s['MAIN_MODEL'], 'vision': s['VISION_MODEL']}))"
+        if ($LASTEXITCODE -ne 0) { throw 'Could not read settings.yaml model defaults' }
+        $modelDefaults = $modelDefaultsJson | ConvertFrom-Json
+        $defaultModel = [string]$modelDefaults.main
+        $visionModel = [string]$modelDefaults.vision
         $model = Read-Host "Main Ollama model [$defaultModel] (press Enter for default)"
         if ([string]::IsNullOrWhiteSpace($model)) { $model = $defaultModel }
         Run-Command 'ollama' @('pull', $model)
@@ -102,14 +99,13 @@ try {
         }
         $lines = @(
             $source -split "\r?\n" | ForEach-Object {
-                if ($_ -match '^MAIN_MODEL=') { 'MAIN_MODEL=' + $model }
-                elseif ($_ -match '^OWNER_USERS=') { 'OWNER_USERS=' + $ownerJson }
+                if ($_ -match '^OWNER_USERS=') { 'OWNER_USERS=' + $ownerJson }
                 elseif ($_ -match '^TRIAL_USERS=') { 'TRIAL_USERS=[]' }
                 elseif ($_ -match '^TAILSCALE_FUNNEL=') { 'TAILSCALE_FUNNEL=false' }
-                elseif ($_ -match '^VISION_MODEL=') { 'VISION_MODEL=' + $visionModel }
                 else { $_ }
             }
         )
+        $lines += 'MAIN_MODEL=' + $model
         [System.IO.File]::WriteAllText($envPath, ($lines -join [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
         Write-Host 'Created .env: local-only, Trial disabled, Funnel disabled, vision enabled.'
     }
