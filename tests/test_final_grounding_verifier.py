@@ -181,7 +181,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 4  # numeric, then factual + quality after correction
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     assert rejected in str(main.requests[1].messages)
@@ -207,7 +207,8 @@ def test_verification_rejection_observer_receives_same_feedback_sent_to_model() 
     assert len(observed) == 1
     assert observed[0][0] == 1
     assert "numeric_grounding_failed" in observed[0][1]
-    assert observed[0][1] == main.requests[1].messages[-1]["content"]
+    assert observed[0][1] in main.requests[1].messages[-1]["content"]
+    assert "correction_contract" in main.requests[1].messages[-1]["content"]
 
 
 def test_numeric_verification_retries_are_bounded() -> None:
@@ -363,9 +364,9 @@ def test_task_misalignment_rejects_deflection_and_retries(caplog) -> None:
     assert result.content.startswith("확인한 스크린샷은 4장이고")
     assert result.model_rounds == 2
     assert "task_alignment_failed" in main.requests[1].messages[-1]["content"]
-    assert "MAI final reviewer start" in caplog.text
+    assert "MAI provisional answer verification round=1" in caplog.text
     assert "MAI final verification numeric=pass evidence=supported alignment=misaligned" in caplog.text
-    assert "MAI final rejected round=1 issues=task_alignment_failed" in caplog.text
+    assert "MAI provisional answer rejected round=1 issues=task_alignment_failed" in caplog.text
     assert "MAI final accepted round=2" in caplog.text
 
 
@@ -385,7 +386,7 @@ def test_reviewer_parse_failure_blocks_release() -> None:
     broken_reviewer = SequenceAdapter(["not-json"] * 3)
     verifier = FinalGroundingVerifier(reviewer_adapter=broken_reviewer)
 
-    with pytest.raises(AgentRunFailure, match="structured output schema"):
+    with pytest.raises(AgentRunFailure, match="ValidationError"):
         run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("설명해줘"))
 
 
@@ -398,7 +399,7 @@ def test_reviewer_timeout_blocks_release_without_hanging(caplog) -> None:
     )
     caplog.set_level(logging.WARNING, logger="uvicorn.error")
 
-    with pytest.raises(AgentRunFailure, match="final reviewer"):
+    with pytest.raises(AgentRunFailure, match="TimeoutError"):
         run(AgentRuntime(main, ToolRegistry(), final_verifier=verifier).run_user_message("결과를 알려줘"))
 
 
@@ -426,7 +427,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 6  # three factual and three quality reviews
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -498,7 +499,7 @@ def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
     ))
 
     assert result.ok is True
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 3  # numeric, factual, quality
     numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert numeric_payload["flagged_numeric_or_date_values"] == ["2026"]
     assert reviewer.requests[0].response_format["properties"]["numeric_verdict"]
@@ -644,19 +645,14 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == {
-        "evidence_verdict",
-        "alignment_verdict",
-        "coverage_verdict",
-        "coverage_reasons",
-        "reasons",
-        "claims",
-        "action_verdict",
-        "retry_summary",
+        "evidence_verdict", "reasons", "claims", "action_verdict", "retry_summary",
     }
     assert "claims" in schema["properties"]
-    assert "coverage_verdict" in schema["properties"]
-    assert "coverage_reasons" in schema["properties"]
     assert "action_verdict" in schema["properties"]
+    quality_schema = reviewer.requests[1].response_format
+    assert set(quality_schema["required"]) == {
+        "alignment_verdict", "coverage_verdict", "coverage_reasons", "reasons", "retry_summary",
+    }
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
@@ -700,7 +696,7 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
     correction = main.requests[1].messages[-1]["content"]
     assert "evidence_scope_expansion" in correction
     assert "action_outcome_unverified" in correction
-    assert "Preserve supported findings" in correction
+    assert "Keep supported findings" in correction
     assert "obtain evidence or narrow unsupported claims" in correction
 
 
@@ -859,7 +855,7 @@ def test_reviewer_has_no_default_deadline() -> None:
     assert verifier.reviewer_timeout_seconds is None
     result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
     assert result.ok
-    assert len(reviewer.requests) == 1
+    assert len(reviewer.requests) == 2  # factual and quality checks
 
 
 def test_reviewer_recovers_after_two_invalid_outputs() -> None:

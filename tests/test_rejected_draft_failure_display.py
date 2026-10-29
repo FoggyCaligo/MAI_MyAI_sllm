@@ -91,9 +91,10 @@ def test_verifier_feedback_ends_with_actionable_claim_correction():
     )
     feedback = result.feedback_message()
     assert feedback.endswith(
-        "수정 지시: 배송이 완료됨 부분의 근거를 tool 호출을 통해 보강하거나, 해당 부분 자체를 삭제하라."
+        "수정 지시: 위에 나열된 모든 주장의 근거를 tool 호출로 보강하거나, 주장 범위를 좁히거나, 해당 주장을 삭제하라."
     )
     assert "No correction needed." not in feedback
+    assert "배송이 완료됨 — 완료 확인 기록 없음" in feedback
 
 
 def test_verifier_feedback_for_non_claim_issue_never_invents_missing_claim():
