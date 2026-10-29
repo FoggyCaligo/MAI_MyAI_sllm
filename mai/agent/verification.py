@@ -70,6 +70,12 @@ Do not judge coverage or task alignment. Reject unsupported factual expansion.
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
+- Distinguish stable, widely accepted explanatory knowledge (such as general programming concepts and ordinary configuration-file conventions) from claims about this particular MAI implementation, a particular user's system, third-party actions, or changing current events. Stable general knowledge can be grounded in established domain knowledge without a tool result. Do not reject it solely because there was no tool call or citation, but do not use general knowledge to invent implementation-specific facts.
+- Judge whether a claim actually needs external observation based on its meaning and epistemic context, not on word presence, pre-listed topics, or special-case text matching. Mark a material claim unsupported only when a real grounding gap or contradiction exists, with a precise explanation.
+- When a web_search snippet explicitly reports a specific figure or event from a clearly identified source, treat that snippet as observed evidence for what the source reports; the absence of a separate web_fetch is not itself a reason to reject. Do not extrapolate beyond the observed text or claim the source has independently been verified.
+- Compare quantities together with their units, time periods, aggregation levels and subjects. Six quarters is not six months; quarterly results do not establish monthly results. Even when the same numeral appears, changed units or intervals are a material factual difference.
+- Ground relative dates, weekdays, today's date, and time ranges against authoritative_current_time with its actual timezone, and distinguish the runtime timezone from any user timezone not established.
+- Each revised provisional answer is a new candidate: re-evaluate every material claim against the actual accepted evidence and current time, including entirely new errors created during correction. Do not accept merely because an earlier rejected claim was removed or rephrased.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
@@ -244,18 +250,12 @@ class FinalVerificationResult:
                 if not related:
                     lines.append(f"- {issue.code}: {issue.message}")
                     continue
-                for claim in related[:3]:
+                for claim in related:
                     lines.append(f"- {issue.code}: {claim['claim']} — {claim['reason']}")
-                if len(related) > 3:
-                    lines.append(f"- {issue.code}: {len(related) - 3} further detailed findings retained in the audit log.")
             else:
                 lines.append(f"- {issue.code}: {issue.message}")
         if unsupported:
-            targets = "; ".join(claim["claim"] for claim in unsupported)
-            lines.append(
-                f"수정 지시: {targets} 부분의 근거를 tool 호출을 통해 보강하거나, "
-                "해당 부분 자체를 삭제하라."
-            )
+            lines.append("수정 지시: 위에 나열된 모든 주장 각각에 대해 근거를 보강하거나, 주장 범위를 줄이거나, 해당 주장을 삭제하라.")
         else:
             targets = "; ".join(issue.message for issue in self.issues)
             lines.append(
