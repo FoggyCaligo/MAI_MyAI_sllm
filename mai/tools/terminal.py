@@ -54,7 +54,9 @@ def _shell_family() -> str:
 
 def _windows_cmd_args(command_file: Path) -> list[str]:
     """Launch UTF-8 CMD script under a UTF-8 code page, preserving its exit status."""
-    return ["cmd.exe", "/d", "/c", f'chcp 65001>nul && call "{command_file}"']
+    # /s removes the outer quoted command-string wrapper while preserving
+    # the inner quotes around a batch path containing spaces or Unicode.
+    return ["cmd.exe", "/d", "/s", "/c", f'""{command_file}""']
 
 
 def _powershell_command(command: str) -> list[str]:
@@ -111,7 +113,8 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
             )
         elif os.name == "nt":
             command_file = Path(temp_dir) / "command.cmd"
-            command_file.write_bytes(command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n").encode("utf-8"))
+            normalized_command = command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+            command_file.write_bytes(("@chcp 65001>nul\r\n" + normalized_command + "\r\n").encode("utf-8"))
             process = await asyncio.create_subprocess_exec(
                 *_windows_cmd_args(command_file), cwd=str(cwd),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs,

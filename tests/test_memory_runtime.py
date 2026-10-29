@@ -119,7 +119,7 @@ def test_auto_recall_returns_only_anchor_and_fact_nodes(tmp_path):
             final_answer="기억할게.",
             user_evidence=evidence,
         ))
-        working = memory.auto_recall(user_id="alice", user_text="MAI")
+        working = memory.auto_recall(user_id="alice", user_text="MAI는")
         anchor = graph.get_user_anchor("alice")
         assert anchor is not None
         assert anchor.id in working.nodes
