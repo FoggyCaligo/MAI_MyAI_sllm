@@ -221,7 +221,7 @@ def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
     assert result.content == "done"
     assert 'MAI tool call round=2 name=echo args={"text":"hello"}' in caplog.text
     assert "MAI tool result round=2 name=echo ok=true handler_started=true error_type=-" in caplog.text
-    assert "MAI final candidate round=3" in caplog.text
+    assert "MAI provisional answer verification round=3" in caplog.text
     assert "MAI final accepted round=3" in caplog.text
 
 
@@ -273,11 +273,11 @@ def test_rejected_draft_replay_keeps_chronology_and_only_latest_body() -> None:
     messages = adapter.requests[2].messages
     joined = str(messages)
     assert "obsolete draft one" not in joined
-    assert joined.count("latest draft two") == 1
+    assert "latest draft two" not in joined
     assert "reasoning one" not in joined and "reasoning two" not in joined
     assert "grounding defect 1" not in joined
     assert "grounding defect 2" in joined
-    assert '"rejected_draft": "latest draft two"' in joined
+    assert '"correction_contract"' in joined
     assert '"verifier_feedback"' in joined
 
 
