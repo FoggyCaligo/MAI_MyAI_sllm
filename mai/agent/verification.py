@@ -70,6 +70,11 @@ Do not judge coverage or task alignment. Reject unsupported factual expansion.
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
+- General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity alone does not establish them. Claims about the user's own statements may be grounded in current user input or previously verified conversation. Do not waive the tool-evidence requirement merely because knowledge is widely known.
+- Evaluate whether the actual evidence establishes each claim by meaning and context, not by word presence, pre-listed topics, or text heuristics. Explain concrete missing evidence or contradiction for each rejected material claim.
+- Compare quantities with their units, time periods, aggregation levels, and subjects: six quarters cannot be silently changed into six months even if both use the numeral six.
+- Ground relative dates and weekdays against authoritative_current_time and its timezone. Distinguish the runtime's timezone from a user timezone that has not been established.
+- Treat every revised provisional answer as a new candidate and verify all material claims again. Rephrasing without additional evidence does not make an unsupported claim grounded.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
 - Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
@@ -244,21 +249,12 @@ class FinalVerificationResult:
                 if not related:
                     lines.append(f"- {issue.code}: {issue.message}")
                     continue
-                for claim in related[:3]:
+                for claim in related:
                     lines.append(f"- {issue.code}: {claim['claim']} — {claim['reason']}")
-                if len(related) > 3:
-                    lines.append(f"- {issue.code}: {len(related) - 3} further detailed findings retained in the audit log.")
             else:
                 lines.append(f"- {issue.code}: {issue.message}")
         if unsupported:
-            targets = "; ".join(claim["claim"] for claim in unsupported[:3])
-            remaining = len(unsupported) - 3
-            if remaining > 0:
-                lines.append(f"- {remaining} further unsupported claims retained in structured review details.")
-            lines.append(
-                f"수정 지시: {targets} 부분의 근거를 tool 호출을 통해 보강하거나, "
-                "해당 부분 자체를 삭제하라."
-            )
+            lines.append("수정 지시: 위에 나열된 모든 주장의 근거를 tool 호출로 보강하거나, 주장 범위를 좁히거나, 해당 주장을 삭제하라.")
         else:
             targets = "; ".join(issue.message for issue in self.issues)
             lines.append(
