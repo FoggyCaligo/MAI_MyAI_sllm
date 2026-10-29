@@ -13,6 +13,9 @@ def test_remote_target_context_is_explicit_and_unified(tmp_path):
     assert model.model_fields["is_remote"].default is False
     assert "path" in model.model_fields
     assert not registry.has("remote_file_read")
+    assert registry.get("file_read").description == registry.get("file_read").description.strip()
+    assert "Set is_remote=true" not in registry.get("file_read").description
+    assert "is_remote=true" in target["context"]["remote"]
 
 
 def test_no_remote_context_without_pc_registration():
