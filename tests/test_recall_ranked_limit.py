@@ -63,9 +63,8 @@ def test_verifier_does_not_truncate_selected_tool_evidence():
 
 
 def test_recall_tool_schema_exposes_optional_limit_to_model():
-    from mai.memory.tools import MemoryRecallInput
-    schema = MemoryRecallInput.model_json_schema()
+    from mai.memory.tools import MemorySearchInput
+    schema = MemorySearchInput.model_json_schema()
     assert "limit" in schema["properties"]
     assert "limit" not in schema.get("required", [])
-    assert "highest" in schema["properties"]["limit"]["description"] or "ranked" in schema["properties"]["limit"]["description"]
-    assert "Omit" in schema["properties"]["limit"]["description"]
+    assert "keyword recall" in schema["properties"]["limit"]["description"]
