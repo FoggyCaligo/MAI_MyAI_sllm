@@ -13,8 +13,8 @@ from mai.tools.terminal import (
 
 def test_encoded_powershell_command_preserves_unicode():
     args = _powershell_command("Write-Output '한글 경로'")
-    assert args[:6] == ["powershell.exe", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand"]
-    script = base64.b64decode(args[6]).decode("utf-16-le")
+    assert args[:8] == ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-OutputFormat", "Text", "-EncodedCommand"]
+    script = base64.b64decode(args[8]).decode("utf-16-le")
     assert "Write-Output '한글 경로'" in script
     assert "$ErrorActionPreference = 'Stop'" in script
     assert "LASTEXITCODE" in script

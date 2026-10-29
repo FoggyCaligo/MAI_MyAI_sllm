@@ -74,7 +74,7 @@ def _powershell_command(command: str) -> list[str]:
         "if (-not $maiSucceeded) { exit 1 }"
     )
     payload = base64.b64encode((prefix + command + suffix).encode("utf-16-le")).decode("ascii")
-    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-EncodedCommand", payload]
+    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-OutputFormat", "Text", "-EncodedCommand", payload]
 
 
 def _terminate_process_tree(pid: int) -> None:

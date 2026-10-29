@@ -45,6 +45,6 @@ def test_default_file_write_is_powershell_51_compatible(tmp_path):
 def test_default_shell_powershell_file_reads_unicode_script(tmp_path):
     script = tmp_path / "한글 스크립트.ps1"
     file_write(path=str(script), content="Write-Output '실행 완료'")
-    cmd = 'powershell.exe -NoProfile -NonInteractive -File "' + str(script) + '"'
+    cmd = 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + str(script) + '"'
     result = asyncio.run(terminal_run(command=cmd, cwd=str(tmp_path)))
     assert result["returncode"] == 0

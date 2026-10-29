@@ -13,6 +13,7 @@ from mai.tools.terminal import TerminalCommandError, _powershell_command, _run_c
 def test_powershell_launch_contract_uses_text_output():
     argv = _powershell_command("Write-Output '한글'")
     assert argv[argv.index("-OutputFormat") + 1] == "Text"
+    assert argv[argv.index("-ExecutionPolicy") + 1] == "Bypass"
     import base64
     decoded = base64.b64decode(argv[-1]).decode("utf-16-le")
     assert "$ProgressPreference = 'SilentlyContinue'" in decoded
