@@ -49,7 +49,7 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
             user_text="고양이 이름은 모카",
             final_answer="알겠어.",
             user_evidence=evidence,
-            fact_texts=("사용자의 고양이 이름은 모카다",),
+            fact_texts=("사용자의 고양이 이름은 모카",),
         ))
         working = WorkingGraph()
         registry = ToolRegistry()
@@ -60,8 +60,8 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
             name="memory_search",
             arguments={"keyword": "모카"},
         )))
-        assert all(node["type"] in {"anchor", "fact"} for node in recalled["nodes"])
-        assert any(node["type"] == "fact" and "모카" in node["text"] for node in recalled["nodes"])
+        assert all(node["node_type"] in {"anchor", "fact"} for node in recalled["nodes"])
+        assert any(node["node_type"] == "fact" and "모카" in node["data"] for node in recalled["nodes"])
 
         overview = asyncio.run(registry.invoke(NativeToolCall(
             name="memory_search",
@@ -88,7 +88,7 @@ def test_memory_recall_returns_fact_only_current_call_while_working_graph_accumu
             user_text="모카 고양이",
             final_answer="알겠어.",
             user_evidence=first_evidence,
-            fact_texts=("사용자의 고양이 이름은 모카다",),
+            fact_texts=("사용자의 고양이 이름은 모카",),
         ))
         second_evidence = memory.record_raw_user_evidence("alice", "산책 공원")
         asyncio.run(memory.finish_turn(
@@ -112,11 +112,11 @@ def test_memory_recall_returns_fact_only_current_call_while_working_graph_accumu
             arguments={"keyword": "공원"},
         )))
 
-        assert all(node["type"] in {"anchor", "fact"} for node in first["nodes"])
-        assert all(node["type"] in {"anchor", "fact"} for node in second["nodes"])
-        assert any(node["type"] == "fact" and "모카" in node["text"] for node in first["nodes"])
-        assert any(node["type"] == "fact" and "공원" in node["text"] for node in second["nodes"])
-        assert not any(node["type"] == "fact" and "모카" in node["text"] for node in second["nodes"])
+        assert all(node["node_type"] in {"anchor", "fact"} for node in first["nodes"])
+        assert all(node["node_type"] in {"anchor", "fact"} for node in second["nodes"])
+        assert any(node["node_type"] == "fact" and "모카" in node["data"] for node in first["nodes"])
+        assert any(node["node_type"] == "fact" and "공원" in node["data"] for node in second["nodes"])
+        assert not any(node["node_type"] == "fact" and "모카" in node["data"] for node in second["nodes"])
         assert any(node.node_type == "fact" and "모카" in node.canonical_text for node in working.nodes.values())
         assert any(node.node_type == "fact" and "공원" in node.canonical_text for node in working.nodes.values())
         assert all(node.node_type in {"anchor", "fact"} for node in working.nodes.values())
