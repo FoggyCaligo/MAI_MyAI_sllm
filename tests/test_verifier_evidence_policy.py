@@ -9,8 +9,8 @@ from mai.agent.verification import (
 
 
 def test_factual_reviewer_requires_observed_evidence_even_for_general_knowledge() -> None:
-    assert "including general programming knowledge" in _FACTUAL_REVIEW_SYSTEM
-    assert "Model familiarity alone does not establish factual grounding" in _FACTUAL_REVIEW_SYSTEM
+    assert "General technical or encyclopedic claims require observed tool evidence" in _FACTUAL_REVIEW_SYSTEM
+    assert "model familiarity alone does not establish them" in _FACTUAL_REVIEW_SYSTEM
     assert "Rewording a claim without any additional evidence" in _FACTUAL_REVIEW_SYSTEM
 
 
