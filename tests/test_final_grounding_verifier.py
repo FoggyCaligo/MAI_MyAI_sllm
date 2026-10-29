@@ -38,43 +38,91 @@ class SequenceAdapter:
         return turn(self.contents.pop(0))
 
 
+from mai.agent.verification import _FactualReviewPayload, _QualityReviewPayload, _NumericReviewPayload
+
+
+def _kind(request):
+    schema = request.response_format
+    if schema == _FactualReviewPayload.model_json_schema():
+        return "factual"
+    if schema == _QualityReviewPayload.model_json_schema():
+        return "quality"
+    if schema == _NumericReviewPayload.model_json_schema():
+        return "numeric"
+    raise AssertionError("unexpected structured review schema")
+
+
+def _split_legacy_review(review):
+    """Legacy test vectors contain factual and quality verdicts in one record."""
+    fact = {
+        "evidence_verdict": review["evidence_verdict"],
+        "reasons": review.get("reasons", []),
+        "claims": review.get("claims", []),
+        "action_verdict": review.get("action_verdict", "not_applicable"),
+        "retry_summary": review.get("retry_summary", "Correct the listed material defects using observed evidence."),
+    }
+    quality = {
+        "alignment_verdict": review.get("alignment_verdict", "aligned"),
+        "coverage_verdict": review.get("coverage_verdict", "sufficient"),
+        "coverage_reasons": review.get("coverage_reasons", []),
+        "reasons": review.get("reasons", []),
+        "retry_summary": review.get("retry_summary", "Correct the listed material defects using observed evidence."),
+    }
+    return fact, quality
+
+
 class ReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
+        self._quality = None
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
+        kind = _kind(request)
+        if kind == "quality":
+            if self._quality is None:
+                raise AssertionError("quality review without accepted factual review")
+            result = self._quality
+            self._quality = None
+            return turn(json.dumps(result))
+        if kind != "factual":
+            raise AssertionError("legacy reviewer does not supply numeric verdicts")
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        evidence_verdict, alignment_verdict, reasons = self.reviews.pop(0)
-        return turn(json.dumps({
-            "evidence_verdict": evidence_verdict,
-            "alignment_verdict": alignment_verdict,
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
+        evidence, alignment, reasons = self.reviews.pop(0)
+        fact, quality = _split_legacy_review({
+            "evidence_verdict": evidence,
+            "alignment_verdict": alignment,
             "reasons": list(reasons),
-            "claims": [],
-            "action_verdict": "not_applicable",
-            "retry_summary": "Correct the listed material defects using observed evidence.",
-        }))
+        })
+        self._quality = quality if evidence == "supported" else None
+        return turn(json.dumps(fact))
 
 
 class StructuredReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
+        self._quality = None
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
+        kind = _kind(request)
+        if kind == "quality" and self._quality is not None:
+            result = self._quality
+            self._quality = None
+            return turn(json.dumps(result, ensure_ascii=False))
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         review = dict(self.reviews.pop(0))
-        if "numeric_verdict" not in review:
-            review.setdefault("coverage_verdict", "sufficient")
-            review.setdefault("coverage_reasons", [])
-            review.setdefault("retry_summary", "Correct the listed material defects using observed evidence.")
-        return turn(json.dumps(review, ensure_ascii=False))
+        if kind == "numeric":
+            return turn(json.dumps(review, ensure_ascii=False))
+        if kind == "quality":
+            return turn(json.dumps(review, ensure_ascii=False))
+        fact, quality = _split_legacy_review(review)
+        self._quality = quality if fact["evidence_verdict"] == "supported" else None
+        return turn(json.dumps(fact, ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -85,16 +133,18 @@ class SlowReviewerAdapter:
     async def chat(self, request):
         self.requests.append(deepcopy(request))
         await asyncio.sleep(self.delay_seconds)
-        return turn(json.dumps({
-            "evidence_verdict": "supported",
-            "alignment_verdict": "aligned",
-            "coverage_verdict": "sufficient",
-            "coverage_reasons": [],
-            "reasons": [],
-            "claims": [],
-            "action_verdict": "not_applicable",
-            "retry_summary": "Correct the listed material defects using observed evidence.",
-        }))
+        kind = _kind(request)
+        if kind == "factual":
+            return turn(json.dumps({
+                "evidence_verdict": "supported", "reasons": [], "claims": [],
+                "action_verdict": "not_applicable", "retry_summary": "No correction needed.",
+            }))
+        if kind == "quality":
+            return turn(json.dumps({
+                "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
+                "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
+            }))
+        raise AssertionError("unsupported numeric review request")
 
 
 def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None:
