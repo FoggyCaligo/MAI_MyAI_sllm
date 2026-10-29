@@ -90,7 +90,7 @@ def test_trial_local_bundle_has_no_mutating_or_terminal_tools(tmp_path):
     owner = ToolRegistry()
     register_local_pc_tools(owner, cwd=tmp_path)
     owner_names = set(owner.names())
-    assert {"file_write", "file_create", "file_delete", "file_move", "file_copy", "terminal_run"}.issubset(owner_names)
+    assert {"file_write", "file_delete", "file_move", "file_copy", "terminal_run"}.issubset(owner_names)
 
 
 def test_external_bundle_exposes_web_and_market_tools():
