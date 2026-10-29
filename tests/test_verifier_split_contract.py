@@ -49,7 +49,7 @@ class StrictSplitReviewer:
 
 def test_factual_pass_runs_quality_review() -> None:
     reviewer = StrictSplitReviewer()
-    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=True).verify(
         candidate="A supported statement.",
         messages=({"role": "user", "content": "Summarize."},),
         tool_results=(),
@@ -63,7 +63,7 @@ def test_factual_pass_runs_quality_review() -> None:
 
 def test_factual_rejection_does_not_run_quality_review() -> None:
     reviewer = StrictSplitReviewer(evidence="unsupported")
-    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=True).verify(
         candidate="An unsupported statement.",
         messages=({"role": "user", "content": "Summarize."},),
         tool_results=(),
@@ -74,7 +74,7 @@ def test_factual_rejection_does_not_run_quality_review() -> None:
 
 def test_quality_misalignment_blocks_release_after_factual_pass() -> None:
     reviewer = StrictSplitReviewer(alignment="misaligned")
-    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
+    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=True).verify(
         candidate="Off-topic statement.",
         messages=({"role": "user", "content": "Answer the question."},),
         tool_results=(),
