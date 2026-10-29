@@ -488,9 +488,6 @@ class FinalGroundingVerifier:
                 continue
             evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
-        if not evidence:
-            return ()
-
         candidate_facts = _extract_material_numeric_facts(candidate)
         return tuple(sorted(
             fact for fact in candidate_facts
