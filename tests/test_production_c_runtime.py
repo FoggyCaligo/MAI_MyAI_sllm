@@ -54,17 +54,17 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
         working = WorkingGraph()
         registry = ToolRegistry()
         register_memory_tools(registry, memory, working, user_id="alice")
-        assert registry.names() == ("memory_recall", "memory_overview", "memory_search")
+        assert registry.names() == ("memory_search",)
 
         recalled = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_recall",
-            arguments={"query": "모카"},
+            name="memory_search",
+            arguments={"keyword": "모카"},
         )))
         assert all(node["type"] in {"anchor", "fact"} for node in recalled["nodes"])
         assert any(node["type"] == "fact" and "모카" in node["text"] for node in recalled["nodes"])
 
         overview = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_overview",
+            name="memory_search",
             arguments={"limit": 5},
         )))
         assert overview["user_anchor"]["payload"]["user_id"] == "alice"
@@ -104,12 +104,12 @@ def test_memory_recall_returns_fact_only_current_call_while_working_graph_accumu
         register_memory_tools(registry, memory, working, user_id="alice")
 
         first = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_recall",
-            arguments={"query": "모카"},
+            name="memory_search",
+            arguments={"keyword": "모카"},
         )))
         second = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_recall",
-            arguments={"query": "공원"},
+            name="memory_search",
+            arguments={"keyword": "공원"},
         )))
 
         assert all(node["type"] in {"anchor", "fact"} for node in first["nodes"])
