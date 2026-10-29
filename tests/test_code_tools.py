@@ -143,6 +143,6 @@ def test_code_tools_are_native_registry_tools(tmp_path):
 )
 def test_code_symbols_multiple_languages(tmp_path, parser, source, expected):
     path = tmp_path / "sample.src"
-    path.write_text(source.replace("\\\\n", "\\n"), encoding="utf-8")
+    path.write_text(source.replace("\\n", "\n"), encoding="utf-8")
     result = code_symbols(path=str(path), parser=parser)
     assert expected in {(item["qualified_name"], item["kind"]) for item in result["symbols"]}

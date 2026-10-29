@@ -47,8 +47,11 @@ def test_xlsx_cell_edit_and_nonexistent_sheet_preserves_source(tmp_path: Path) -
     book.save(source)
     document_edit(path=str(source), action=XlsxSetCell(
         operation="xlsx_set_cell", sheet="Data", cell="A1", value="new"))
-    with load_workbook(source) as result:
+    result = load_workbook(source)
+    try:
         assert result["Data"]["A1"].value == "new"
+    finally:
+        result.close()
     before = source.read_bytes()
     with pytest.raises(KeyError):
         document_edit(path=str(source), action=XlsxSetCell(
@@ -145,4 +148,4 @@ def test_registry_invocation_preserves_discriminated_action(tmp_path: Path) -> N
         },
     )))
     assert result["operation"] == "csv_set_cell"
-    assert source.read_text(encoding="utf-8") == "x,changed\\n"
+    assert source.read_text(encoding="utf-8") == "x,changed\n"
