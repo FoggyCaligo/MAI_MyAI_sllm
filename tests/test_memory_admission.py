@@ -22,7 +22,6 @@ class Execution:
 def test_successful_memory_recall_tools_detects_persistent_memory_reads() -> None:
     executions = (
         Execution("memory_search", True),
-        Execution("memory_search", True),
         Execution("file_search", True),
         Execution("file_read", False),
     )
@@ -52,7 +51,7 @@ def test_successful_non_recall_tool_results_excludes_recall_results() -> None:
 
 def test_pure_recall_with_no_new_facts_is_skipped() -> None:
     executions = (
-        Execution("memory_overview", True, "old memories"),
+        Execution("memory_search", True, "old memories"),
         Execution("memory_search", True, "expanded old memories"),
     )
     assert should_skip_recall_without_new_facts(
@@ -73,7 +72,7 @@ def test_recall_only_tool_usage_does_not_drop_new_user_fact() -> None:
 
 def test_recall_plus_non_recall_tool_can_store_extracted_fact() -> None:
     executions = (
-        Execution("memory_recall", True, "old memory"),
+        Execution("memory_search", True, "old memory"),
         Execution("document_read", True, "new document evidence"),
     )
     assert should_skip_recall_without_new_facts(
@@ -84,7 +83,7 @@ def test_recall_plus_non_recall_tool_can_store_extracted_fact() -> None:
 
 
 def test_extraction_failure_fails_safe_and_preserves_recall_turn() -> None:
-    executions = (Execution("memory_recall", True, "old memory"),)
+    executions = (Execution("memory_search", True, "old memory"),)
     assert should_skip_recall_without_new_facts(
         executions,
         extracted_facts=(),
