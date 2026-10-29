@@ -64,8 +64,8 @@ def test_package_initializer_is_not_reported_as_unused_placeholder(tmp_path: Pat
 def test_complexity_report_includes_decisions(tmp_path: Path) -> None:
     root = _sample(tmp_path)
     (root / "mai" / "branching.py").write_text(
-        "def choose(x):\\n" + "".join("    if x == %d:\\n        return x\\n" % n for n in range(22))
-        + "    return -1\\n", encoding="utf-8",
+        "def choose(x):\n" + "".join("    if x == %d:\n        return x\n" % n for n in range(22))
+        + "    return -1\n", encoding="utf-8",
     )
     findings = audit(root)["findings"]
     assert any(item["kind"] == "complex_function" and item["path"] == "mai/branching.py"
