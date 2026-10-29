@@ -60,7 +60,6 @@ def audit(root: Path) -> dict[str, object]:
     incoming: dict[str, set[str]] = defaultdict(set)
     findings: list[Finding] = []
     fingerprints: dict[str, list[tuple[str, int, str]]] = defaultdict(list)
-    functions: dict[str, set[str]] = defaultdict(set)
     test_files: set[str] = set()
     for path in all_sources:
         rel = path.relative_to(root).as_posix()
@@ -68,7 +67,7 @@ def audit(root: Path) -> dict[str, object]:
         tree = ast.parse(source, filename=rel)
         if path in sources and not source.strip():
             findings.append(Finding("empty_module", rel, "Empty source file"))
-        if path in sources and len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr) and isinstance(tree.body[0].value, ast.Constant) and isinstance(tree.body[0].value.value, str):
+        if path in sources and path.name != "__init__.py" and len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr) and isinstance(tree.body[0].value, ast.Constant) and isinstance(tree.body[0].value.value, str):
             findings.append(Finding("docstring_only", rel, "Module has no executable declarations"))
         if path.parts and "tests" in path.parts:
             test_files.add(rel)
@@ -85,12 +84,9 @@ def audit(root: Path) -> dict[str, object]:
                     break
         if path not in sources:
             continue
-        lines = source.splitlines()
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            qualified = f"{rel}:{node.lineno}:{node.name}"
-            functions[rel].add(node.name)
             length = node.end_lineno - node.lineno + 1 if node.end_lineno else 0
             branches = sum(isinstance(child, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.ExceptHandler, ast.IfExp, ast.Match, ast.BoolOp)) for child in ast.walk(node))
             if length >= 80 or branches >= 20:
@@ -142,7 +138,7 @@ def audit(root: Path) -> dict[str, object]:
             visit(v)
     for cycle in cycles:
         findings.append(Finding("import_cycle", modules[cycle[0]].relative_to(root).as_posix(), " -> ".join(cycle)))
-    # Association by AST-import references is a hint, NEVER measured coverage.
+    # Direct test imports are only a heuristic; actual coverage requires execution.
     for name, path in modules.items():
         related = sorted(p for p in incoming[name] if p.startswith("tests/"))
         if not related and path.name != "__init__.py":
