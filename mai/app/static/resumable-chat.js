@@ -33,6 +33,28 @@
     return wraps.length ? wraps[wraps.length - 1] : null;
   }
 
+  function pendingRowForJob(jobId) {
+    const host = document.getElementById('messages');
+    if (!host) return null;
+    return Array.from(host.querySelectorAll('[data-chat-job-id]'))
+      .find(row => row.dataset.chatJobId === jobId) || null;
+  }
+
+  function pendingForJob(jobId) {
+    let row = pendingRowForJob(jobId);
+    if (!row) {
+      if (typeof addThinking !== 'function') return null;
+      const created = addThinking();
+      row = created?.row;
+      if (!row) throw new Error('addThinking must return a row for job recovery');
+      row.dataset.chatJobId = jobId;
+    }
+    const wrap = row.querySelector('.content-wrap');
+    const bubble = row.querySelector('.bubble');
+    if (!wrap || !bubble) throw new Error('recovered chat row has no content wrapper or bubble');
+    return {row, wrap, bubble};
+  }
+
   function setLiveProgressWrap(wrap) {
     clearLiveProgress();
     liveProgressWrap = wrap || null;
@@ -324,7 +346,10 @@
     if (!data.job_id) return jsonResponse({detail: 'chat job id가 반환되지 않았습니다.'}, 500);
 
     const jobId = data.job_id;
-    setLiveProgressWrap(latestMaiWrap());
+    const liveWrap = latestMaiWrap();
+    const liveRow = liveWrap?.closest('.msg-row');
+    if (liveRow) liveRow.dataset.chatJobId = jobId;
+    setLiveProgressWrap(liveWrap);
     setCurrentJob(jobId);
     localStorage.setItem(storageKey, JSON.stringify({job_id: jobId, created_at: Date.now()}));
     try {
@@ -421,9 +446,12 @@
       recoveredJobId = await resolveRecoveryJobId(saved);
       if (!recoveredJobId) return;
 
+      // Recovery is keyed by the server job, not by the number of focus or
+      // pageshow events. Never create two pending rows for the same job.
+      if (currentSubmissionJobId && currentSubmissionJobId !== recoveredJobId) return;
       setCurrentJob(recoveredJobId);
-      if (typeof addThinking === 'function') pending = addThinking();
-      setLiveProgressWrap(pending?.wrap || latestMaiWrap());
+      pending = pendingForJob(recoveredJobId);
+      setLiveProgressWrap(pending?.wrap || null);
       const response = await pollJob(recoveredJobId);
       const data = await response.json().catch(() => ({}));
 
