@@ -2,7 +2,7 @@
 
 **사용법: [setup.md — 설치부터 실행까지](setup.md)**
 
-**외장 SSD Portable 설치·실행: [setup_portable.md](setup_portable.md)**
+**일반/Portable 설치 및 고급 설정: [setup.md](setup.md)**
 
 MAI는 본인의 개인 컴퓨터에서 실행되어 해당 컴퓨터 전반을 관리하는 인공지능 비서이다. 대화만 하는 것이 아니라, 사용자가 허용한 범위에서 웹을 검색하고, 문서를 읽고, 파일과 코드를 다루고, 터미널 명령도 실행할 수 있다. 답변 생성에는 **Ollama로 실행하는 로컬 언어 모델**을 사용한다.
 
@@ -144,7 +144,7 @@ python run_server.py
 
 ### 외장 SSD Portable 모드 (Windows / Linux 공용 구성 목표)
 
-**외장 SSD는 NTFS로 준비함.** 포맷 전에 모든 파일을 외장 HDD 등 별도 디스크에 백업해야 하며, 포맷은 데이터를 삭제함. [Portable 최초 설정 및 NTFS 포맷 가이드](setup-portable.md) 참조. **현재 실행 자동화는 Windows용만 구현되어 있고 Linux SSD 직접 실행은 미구현임.**
+**외장 SSD는 NTFS로 준비함.** 포맷 전에 모든 파일을 외장 HDD 등 별도 디스크에 백업해야 하며, 포맷은 데이터를 삭제함. [통합 설치 가이드](setup.md) 참조. **Windows Portable 실행과 Ubuntu 실험적 준비 스크립트가 제공되며, Linux 환경별 추가 설정 및 검증이 필요함.**
 
 ### Windows 외장 SSD Portable 모드
 
