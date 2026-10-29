@@ -54,9 +54,10 @@ def _shell_family() -> str:
 
 def _windows_cmd_args(command_file: Path) -> list[str]:
     """Launch UTF-8 CMD script under a UTF-8 code page, preserving its exit status."""
-    # /s removes the outer quoted command-string wrapper while preserving
-    # the inner quotes around a batch path containing spaces or Unicode.
-    return ["cmd.exe", "/d", "/s", "/c", f'""{command_file}""']
+    # subprocess.list2cmdline quotes argv on Windows already. Supplying a
+    # double-quoted string adds another quoting layer and makes CMD treat the
+    # quotes themselves as part of the batch filename.
+    return ["cmd.exe", "/d", "/c", str(command_file)]
 
 
 def _powershell_command(command: str) -> list[str]:
