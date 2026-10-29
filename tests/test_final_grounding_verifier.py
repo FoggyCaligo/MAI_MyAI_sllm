@@ -184,7 +184,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert len(reviewer.requests) == 4  # numeric, then factual + quality after correction
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
-    assert rejected in str(main.requests[1].messages)
+    assert rejected not in str(main.requests[1].messages)  # rejected drafts remain quarantined
     assert all(message.get("content") != rejected for message in result.messages)
 
 
@@ -207,7 +207,8 @@ def test_verification_rejection_observer_receives_same_feedback_sent_to_model() 
     assert len(observed) == 1
     assert observed[0][0] == 1
     assert "numeric_grounding_failed" in observed[0][1]
-    assert observed[0][1] in main.requests[1].messages[-1]["content"]
+    correction_payload = main.requests[1].messages[-1]["content"]
+    assert observed[0][1] == json.loads(correction_payload.split("\\n", 1)[1])["verifier_feedback"]
     assert "correction_contract" in main.requests[1].messages[-1]["content"]
 
 
