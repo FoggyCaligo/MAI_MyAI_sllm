@@ -871,8 +871,14 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
         "reasons": [],
         "claims": [],
         "action_verdict": "not_applicable",
+        "retry_summary": "No correction needed.",
     })
-    reviewer = SequenceAdapter(["not-json", "{}", valid])
+    factual = json.loads(valid)
+    for field in ("alignment_verdict", "coverage_verdict", "coverage_reasons"):
+        factual.pop(field)
+    quality = json.dumps({"alignment_verdict": "aligned", "coverage_verdict": "sufficient",
+                          "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed."})
+    reviewer = SequenceAdapter(["not-json", "{}", json.dumps(factual), quality])
 
     result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
         candidate="설명",
@@ -881,7 +887,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
     ))
 
     assert result.ok
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 4
 
 
 @pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
@@ -901,7 +907,7 @@ def test_reviewer_retries_only_transient_server_statuses(status, attempts) -> No
                 raise OllamaRequestError("request failed") from exc
 
     reviewer = FailingReviewer()
-    with pytest.raises(RuntimeError, match="release was not verified"):
+    with pytest.raises(OllamaRequestError, match="request failed"):
         run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
             candidate="설명",
             messages=[],
@@ -1018,7 +1024,7 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
 
     assert result.content == "이제 근거에 맞는 답변입니다."
     assert result.model_rounds == 6
-    assert len(reviewer.requests) == 6
+    assert len(reviewer.requests) == 7  # six factual rounds plus final quality review
 
 
 
