@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -70,3 +71,38 @@ def test_tailscale_funnel_status_failure_is_visible(monkeypatch):
     funnel = TailscaleFunnel(port=8000)
     with pytest.raises(TailscaleFunnelError, match="status failed"):
         funnel.start()
+
+
+def test_funnel_failure_does_not_block_local_server(monkeypatch, tmp_path, caplog):
+    import mai.app.server as server
+
+    class FailingFunnel:
+        def __init__(self, *, port):
+            assert port == 8000
+
+        def start(self):
+            raise TailscaleFunnelError("unexpected state: NoState")
+
+    runtime = SimpleNamespace(close=lambda: None, model="test-model", vision_model=None)
+    policy = SimpleNamespace(user_to_db_ids=lambda: {})
+    monkeypatch.setattr(server, "VoiceService", lambda: object())
+    monkeypatch.setattr(
+        server.AccessPolicy, "from_env_values", lambda **kwargs: policy
+    )
+    monkeypatch.setattr(server, "ChatSessionStore", lambda path: object())
+    monkeypatch.setattr(server, "LoginRateLimiter", lambda path: object())
+    monkeypatch.setattr(server, "MAIRuntime", lambda **kwargs: runtime)
+    monkeypatch.setattr(server, "TailscaleFunnel", FailingFunnel)
+    monkeypatch.setenv("TAILSCALE_FUNNEL", "true")
+    monkeypatch.delenv("TAILSCALE_SERVE", raising=False)
+
+    async def check_startup():
+        async with server.lifespan(server.app):
+            assert server._runtime is runtime
+            assert server._tailscale is None
+            assert (await server.health())["tailscale_funnel"] is False
+        assert server._runtime is None
+
+    asyncio.run(check_startup())
+    assert "unexpected state: NoState" in caplog.text
+    assert "local server remains available" in caplog.text
