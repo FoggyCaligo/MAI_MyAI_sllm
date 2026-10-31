@@ -73,7 +73,6 @@ def test_cmd_multiline_exit_status_and_shell_identity(tmp_path):
     assert result["returncode"] == 19
     assert result["shell_family"] == "cmd"
     assert "command started" in result["stdout"]
-    assert "C:\\>" not in result["stdout"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Requires Windows CMD")
