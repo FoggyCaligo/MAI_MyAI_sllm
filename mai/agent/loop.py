@@ -223,6 +223,8 @@ class AgentLoop:
         latest_verification_rejection: tuple[int, int] | None = None
         latest_correction_contract: dict[str, Any] | None = None
         latest_verifier_feedback: str | None = None
+        consecutive_grounding_rejections = 0
+        hypothesis_reconsideration_pending = False
 
         try:
             while True:
@@ -246,9 +248,19 @@ class AgentLoop:
                             "Continue the SAME agent run with the existing native tools: "
                             "re-observe the unsupported facts using tools or remove/narrow them. "
                             "Do not treat any rejected draft or verifier diagnosis as evidence. "
+                            + (
+                                "Repeated factual grounding failures: reconsider the central assumption "
+                                "behind the previous answer, independently of that answer. "
+                                "Return to the original user request and observed evidence; "
+                                "consider alternative hypotheses instead of only defending or "
+                                "rephrasing the rejected one. Do not assume any alternative is true "
+                                "without evidence. "
+                                if hypothesis_reconsideration_pending else ""
+                            )
                             "This is the ONLY retained verifier rejection feedback; earlier "
                             "feedback is in the audit log, not this model context.\\n"
                             + json.dumps({
+                                "reconsider_initial_hypothesis": hypothesis_reconsideration_pending,
                                 "correction_contract": latest_correction_contract,
                                 "verifier_feedback": history[latest_feedback].get("content", ""),
                             }, ensure_ascii=False)
@@ -334,6 +346,17 @@ class AgentLoop:
                                 }
                                 for issue in verification.issues
                             )
+                            # A repeated factual-grounding rejection is a signal to
+                            # reconsider the answer hypothesis, not merely reword it.
+                            # This is task-agnostic and does not prescribe tool queries.
+                            if any(issue.code in {
+                                "claim_grounding_failed", "evidence_grounding_failed",
+                                "evidence_scope_expansion",
+                            } for issue in verification.issues):
+                                consecutive_grounding_rejections += 1
+                            else:
+                                consecutive_grounding_rejections = 0
+                            hypothesis_reconsideration_pending = consecutive_grounding_rejections >= 2
                             coverage_failure = any(
                                 issue.code == "evidence_coverage_insufficient"
                                 for issue in verification.issues
