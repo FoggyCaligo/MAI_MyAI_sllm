@@ -154,7 +154,7 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
         elif os.name == "nt":
             command_file = Path(temp_dir) / "command.cmd"
             normalized_command = command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
-            command_file.write_bytes(("@chcp 65001>nul\r\n" + normalized_command + "\r\n").encode("utf-8"))
+            command_file.write_bytes(("@echo off\r\n@chcp 65001>nul\r\n" + normalized_command + "\r\nexit /b %errorlevel%\r\n").encode("utf-8"))
             process = await asyncio.create_subprocess_exec(
                 *_windows_cmd_args(command_file), cwd=str(cwd),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs,
@@ -195,6 +195,7 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
         "command": command,
         "cwd": str(cwd),
         "shell": "powershell.exe" if shell == "powershell" else _shell_description(),
+        "shell_family": "powershell" if shell == "powershell" else _shell_family(),
         "stdout": stdout_bytes.decode(output_encoding, errors="strict"),
         "stderr": stderr_bytes.decode(output_encoding, errors="strict"),
         "returncode": process.returncode,
@@ -253,25 +254,30 @@ def register_terminal_tools(
     registry.add(
         name="terminal_run",
         description=(
-            "Run a shell command on the local PC with MAI process permissions. "
-            "Use the actual shell and default_cwd from the authoritative runtime context; "
-            "set cwd only when needed. The runtime controls timeouts. Preserve non-zero exits, "
-            "stderr, permission failures and timeouts as real failures. "
-            "Paths outside the repository are allowed. For Unicode Windows PowerShell commands, "
-            "select shell=powershell explicitly to use UTF-16LE EncodedCommand. "
-            "The runner configures UTF-8 output and decodes it strictly. "
-            "PowerShell treats nonterminating errors as failures; native process nonzero "
-            "exit codes are preserved. Invoke sc.exe rather than the PowerShell sc alias "
-            "when querying Windows services. "
-            "Windows CMD supports & (always continue), && (continue on success), "
-            "and || (continue on failure). CMD is already the default Windows shell: "
-            "do not nest cmd /c unnecessarily. Quote paths containing spaces with "
-            "ordinary double quotes; backslash does not escape double quotes in CMD. "
-            "A chain of commands reports the final process exit status, not proof "
-            "that every earlier command succeeded: check individual results when "
-            "each step matters. CMD uses an explicit UTF-8 code page and a temporary "
-            "UTF-8 batch file for multiline commands. External commands emitting "
-            "non-UTF-8 bytes fail decoding rather than being silently reinterpreted."
+            "Execute a shell script on the local PC with MAI process permissions. "
+            "On Windows shell=default uses CMD (cmd.exe), NOT Bash or PowerShell. "
+            "CMD uses && for success-dependent execution, || for failure-dependent execution, "
+            "& for unconditional execution, and separate lines for sequential commands. "
+            "CMD does not use semicolons as command separators, backslashes to escape quotes, "
+            "or POSIX 'for ... do ... done' syntax. In a CMD batch script, use %%V for "
+            "FOR variables (not %V), and quote executable paths containing spaces. "
+            "On Windows shell=powershell uses Windows PowerShell 5.1 with Unicode-safe "
+            "UTF-16LE EncodedCommand and child-only ExecutionPolicy Bypass. "
+            "Use PowerShell syntax, including semicolons or newlines, $variables, "
+            "and single quotes for literal strings. For registry writes use native "
+            "PowerShell registry cmdlets with Registry:: paths when appropriate; "
+            "reg.exe requires HKCU\\... paths instead of HKCU:\\... paths. "
+            "PowerShell native program failures are reflected in the shell exit status "
+            "when LASTEXITCODE is nonzero at the end of the script. For multi-step scripts, "
+            "check native $LASTEXITCODE after each step that must succeed; in CMD use && "
+            "or explicit errorlevel checks. A final zero exit does not prove every "
+            "earlier command succeeded. Do not claim success without verifying the "
+            "requested effect. On non-Windows platforms shell=default is /bin/sh; "
+            "shell=powershell is unavailable. Use the authoritative runtime context "
+            "for default shell, cwd and permissions; set cwd only when needed. "
+            "The runner preserves stdout, stderr and shell exit status; nonzero exits, "
+            "timeouts and output limit violations fail visibly. Windows output is "
+            "UTF-8 decoded strictly. No stderr text matching is used to infer failures."
         ),
         input_model=TerminalRunInput,
         handler=handler,
