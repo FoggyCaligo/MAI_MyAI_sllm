@@ -5,6 +5,7 @@ import os
 import secrets
 import io
 import hashlib
+import logging
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,10 +25,12 @@ from .login_rate_limit import LoginRateLimiter
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
-from .tailscale import TailscaleFunnel
+from .tailscale import TailscaleFunnel, TailscaleFunnelError
 from .uploads import principal_upload_directory
 from .voice import VoiceService
 
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 load_settings(Path(__file__).resolve().parents[2] / "settings.yaml")
@@ -187,10 +190,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     print(f"MAI local: http://{host}:{port}", flush=True)
     if _env_bool("TAILSCALE_FUNNEL", False):
-        _tailscale = TailscaleFunnel(port=port)
-        status_text = _tailscale.start()
-        print("MAI Tailscale Funnel (public internet):", flush=True)
-        print(status_text, flush=True)
+        funnel = TailscaleFunnel(port=port)
+        try:
+            status_text = funnel.start()
+        except TailscaleFunnelError:
+            logger.exception("MAI Tailscale Funnel startup failed; local server remains available")
+            _tailscale = None
+        else:
+            _tailscale = funnel
+            print("MAI Tailscale Funnel (public internet):", flush=True)
+            print(status_text, flush=True)
     else:
         print("MAI Tailscale Funnel: disabled (set TAILSCALE_FUNNEL=true to enable)", flush=True)
     try:
