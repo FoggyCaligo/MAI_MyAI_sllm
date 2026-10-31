@@ -257,7 +257,7 @@ class AgentLoop:
                                 "without evidence. "
                                 if hypothesis_reconsideration_pending else ""
                             )
-                            "This is the ONLY retained verifier rejection feedback; earlier "
+                            + "This is the ONLY retained verifier rejection feedback; earlier "
                             "feedback is in the audit log, not this model context.\\n"
                             + json.dumps({
                                 "reconsider_initial_hypothesis": hypothesis_reconsideration_pending,
