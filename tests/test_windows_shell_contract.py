@@ -60,3 +60,52 @@ def test_cmd_batch_path_is_passed_as_single_argument(tmp_path):
     assert args[:3] == ["cmd.exe", "/d", "/c"]
     assert args[3] == str(script)
 
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires Windows CMD")
+def test_cmd_multiline_exit_status_and_shell_identity(tmp_path):
+    with pytest.raises(TerminalCommandError) as exc:
+        asyncio.run(terminal_run(
+            command="echo command started\ncmd.exe /d /c exit 19",
+            cwd=str(tmp_path),
+        ))
+    result = exc.value.result
+    assert result["returncode"] == 19
+    assert result["shell_family"] == "cmd"
+    assert "command started" in result["stdout"]
+    assert "C:\\>" not in result["stdout"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires Windows CMD")
+def test_cmd_native_failure_does_not_become_success(tmp_path):
+    with pytest.raises(TerminalCommandError) as exc:
+        asyncio.run(terminal_run(
+            command="reg.exe query HKCU\\Software\\MAI_Nonexistent_Contract_Test",
+            cwd=str(tmp_path),
+        ))
+    assert exc.value.result["returncode"] != 0
+    assert exc.value.result["stderr"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires Windows PowerShell 5.1")
+def test_powershell_native_exit_persists_after_successful_cmdlet(tmp_path):
+    with pytest.raises(TerminalCommandError) as exc:
+        asyncio.run(terminal_run(
+            command="cmd.exe /d /c exit 23; Write-Output 'follow-up output'",
+            cwd=str(tmp_path),
+            shell="powershell",
+        ))
+    assert exc.value.result["returncode"] == 23
+    assert exc.value.result["shell_family"] == "powershell"
+    assert "follow-up output" in exc.value.result["stdout"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Requires Windows PowerShell 5.1")
+def test_powershell_registry_query_failure_is_not_hidden(tmp_path):
+    with pytest.raises(TerminalCommandError) as exc:
+        asyncio.run(terminal_run(
+            command="reg.exe query HKCU\\Software\\MAI_Nonexistent_Contract_Test",
+            cwd=str(tmp_path),
+            shell="powershell",
+        ))
+    assert exc.value.result["returncode"] != 0
