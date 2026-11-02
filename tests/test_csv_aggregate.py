@@ -80,3 +80,16 @@ def test_verifier_csv_contract_requires_matching_computed_lineage():
     assert "source SHA-256" in _FACTUAL_REVIEW_SYSTEM
     assert "matching result" in _FACTUAL_REVIEW_SYSTEM
     assert "do not independently recount" in _FACTUAL_REVIEW_SYSTEM
+
+
+def test_csv_aggregate_accepts_registry_serialized_arguments(tmp_path):
+    file = _sample(tmp_path)
+    result = csv_aggregate(
+        path=str(file),
+        filters=[{"column": "실수익금", "operator": "nonempty", "value": None}],
+        metrics=[
+            {"name": "rows", "operation": "count_rows", "column": None},
+            {"name": "net", "operation": "sum", "column": "실수익금"},
+        ],
+    )
+    assert result["groups"][0]["metrics"] == {"rows": "7", "net": "-18900"}
