@@ -68,7 +68,9 @@ def csv_aggregate(
 ) -> dict[str, Any]:
     candidate = Path(path).expanduser()
     target = (Path(cwd or Path.cwd()) / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
-    filters = filters or []
+    # Registry model_dump() serializes nested input models to dictionaries.
+    filters = [CsvFilter.model_validate(item) for item in (filters or [])]
+    metrics = [CsvMetric.model_validate(item) for item in metrics]
     group_by = group_by or []
     if len({metric.name for metric in metrics}) != len(metrics):
         raise ValueError("metric names must be unique")
@@ -119,7 +121,7 @@ def csv_aggregate(
                 if metric.operation == "count_rows":
                     delta = Decimal(1)
                 elif metric.operation == "count_nonempty":
-                    delta = Decimal(bool(value.strip()))
+                    delta = Decimal(1) if value.strip() else Decimal(0)
                 elif metric.operation == "sum":
                     delta = _decimal(value, column=metric.column, csv_row=record_number) if value.strip() else Decimal(0)
                 elif not value.strip():
@@ -131,7 +133,7 @@ def csv_aggregate(
                         "count_negative": number < 0,
                         "count_zero": number == 0,
                     }
-                    delta = Decimal(predicate[metric.operation])
+                    delta = Decimal(1) if predicate[metric.operation] else Decimal(0)
                 item["metrics"][metric.name] += delta
     return {
         "source": {"path": str(target), "sha256": raw_hash, "encoding": encoding, "delimiter": delimiter},
