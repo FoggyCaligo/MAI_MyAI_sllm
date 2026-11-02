@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .code import register_code_edit_tool, register_code_tools
+from .csv_aggregate import register_csv_aggregate_tool
 from .document_edit import register_document_edit_tool
 from .filesystem import (
     register_filesystem_read_tools,
@@ -24,6 +25,7 @@ def register_readonly_local_tools(
 ) -> None:
     """Register read-only local capabilities plus optional trial upload-scoped file_write."""
     register_filesystem_read_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
+    register_csv_aggregate_tool(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
     if upload_root is not None:
         register_trial_file_write(
             registry,
@@ -43,6 +45,7 @@ def register_local_pc_tools(
 ) -> None:
     """Register all currently implemented PC-wide tools into one registry."""
     register_filesystem_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
+    register_csv_aggregate_tool(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
     register_code_tools(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
     register_code_edit_tool(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
     register_document_edit_tool(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
