@@ -132,3 +132,17 @@ def test_terminal_description_requires_selected_shell_syntax(tmp_path):
     assert "do NOT wrap them in powershell -Command" in description
     assert "powershell.exe -Command" in description
     assert "another nested PowerShell invocation" in description
+
+
+def test_terminal_description_recommends_structured_counting(tmp_path):
+    from mai.tools.registry import ToolRegistry
+    from mai.tools.terminal import register_terminal_tools
+
+    registry = ToolRegistry()
+    register_terminal_tools(registry, cwd=tmp_path)
+    description = registry.get("terminal_run").native_schema()["function"]["description"]
+    assert "Group-Object" in description
+    assert "Measure-Object" in description
+    assert "ConvertTo-Json" in description
+    assert "distinct entities" not in description or "unique-item count" in description
+    assert "row count, unique-item count and grouped counts" in description

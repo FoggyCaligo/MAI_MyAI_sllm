@@ -1088,3 +1088,22 @@ def test_rejected_feedback_never_uses_misleading_no_correction_needed() -> None:
     assert "Only a JavaScript shell was fetched" in feedback
     assert "No correction needed." not in feedback
     assert result.review_details["claims"][0]["reason"].startswith("Only a JavaScript")
+
+
+def test_count_review_contract_requires_source_based_recount():
+    from mai.agent.verification import _FACTUAL_REVIEW_SYSTEM, _NUMERIC_REVIEW_SYSTEM, FinalVerificationResult, VerificationIssue
+
+    assert "grouping key" in _FACTUAL_REVIEW_SYSTEM
+    assert "reviewer-invented count" in _FACTUAL_REVIEW_SYSTEM
+    assert "precise source location" in _FACTUAL_REVIEW_SYSTEM
+    assert "never invent a counter-total" in _NUMERIC_REVIEW_SYSTEM
+
+    result = FinalVerificationResult(
+        ok=False,
+        issues=(VerificationIssue(code="claim_grounding_failed", message="Disputed registration count"),),
+        review_details={"claims": [{"claim": "19 registrations", "verdict": "unsupported", "defect": "contradiction", "reason": "Source: terminal_run / records[0:18]. Count: 18 rows."}]},
+    )
+    feedback = result.feedback_message()
+    assert "original tool result" in feedback
+    assert "grouping key" in feedback
+    assert "Source: terminal_run / records[0:18]" in feedback
