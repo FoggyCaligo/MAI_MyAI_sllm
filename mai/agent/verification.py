@@ -238,6 +238,7 @@ class FinalVerificationResult:
         lines = [
             "Rejected final answer. Correct the specific defects below and provide the full answer.",
             "Keep supported findings; obtain evidence or narrow unsupported claims.",
+            "For disputed totals, use the original tool result and identify the source records, grouping key, and calculation before changing a number; verifier feedback is not independent evidence.",
         ]
         claims = () if self.review_details is None else self.review_details.get("claims", ())
         unsupported = [
