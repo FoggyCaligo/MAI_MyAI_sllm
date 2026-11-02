@@ -40,7 +40,6 @@ _NUMBER_RE = re.compile(
 )
 _KOREAN_UNIT_RE = re.compile(r"(?<![A-Za-z0-9_.])([-+]?\d+(?:\.\d+)?)\s*(만|억)(?=원|\b)")
 _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
-_REVIEW_TOOL_RESULT_LIMIT = 20
 _LOG = logging.getLogger("uvicorn.error")
 
 _NUMERIC_REVIEW_SYSTEM = """
@@ -764,20 +763,13 @@ def _review_payload(
 
 def _select_review_tool_results(
     tool_results: Sequence[ToolVerificationResult],
-    *,
-    limit: int = _REVIEW_TOOL_RESULT_LIMIT,
 ) -> tuple[tuple[int, ToolVerificationResult], ...]:
-    if limit <= 0:
-        raise ValueError("limit must be positive")
-    indexed = tuple(enumerate(tool_results))
-    selected: dict[int, ToolVerificationResult] = {}
-    for index, result in reversed(indexed):
-        _, ok, _, _ = result
-        if ok:
-            selected[index] = result
-            if len(selected) >= limit:
-                break
-    return tuple((index, selected[index]) for index in sorted(selected))
+    """Return every successful tool result in original execution order."""
+    return tuple(
+        (index, result)
+        for index, result in enumerate(tool_results)
+        if result[1]
+    )
 
 
 def _tool_evidence_metadata(*, name: str, ok: bool) -> dict[str, str]:
