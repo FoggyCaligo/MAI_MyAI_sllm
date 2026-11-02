@@ -1107,3 +1107,17 @@ def test_count_review_contract_requires_source_based_recount():
     assert "original tool result" in feedback
     assert "grouping key" in feedback
     assert "Source: terminal_run / records[0:18]" in feedback
+
+def test_verifier_keeps_every_successful_tool_result_in_execution_order():
+    from mai.agent.verification import _select_review_tool_results
+
+    results = tuple(
+        ("terminal_run", i % 7 != 0, None, f"result-{i}")
+        for i in range(45)
+    )
+    selected = _select_review_tool_results(results)
+    assert [index for index, _ in selected] == [
+        index for index, result in enumerate(results) if result[1]
+    ]
+    assert len(selected) > 20
+    assert all(result[1] for _, result in selected)
