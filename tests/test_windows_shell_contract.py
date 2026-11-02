@@ -4,9 +4,12 @@ import os
 
 import pytest
 
+from mai.tools.registry import ToolRegistry
+
 from mai.tools.terminal import (
     TerminalCommandError,
     _powershell_command,
+    register_terminal_tools,
     terminal_run,
 )
 
@@ -108,3 +111,24 @@ def test_powershell_registry_query_failure_is_not_hidden(tmp_path):
             shell="powershell",
         ))
     assert exc.value.result["returncode"] != 0
+
+
+def test_terminal_description_explains_query_exit_status_without_masking_failures(tmp_path):
+    registry = ToolRegistry()
+    register_terminal_tools(registry, cwd=tmp_path)
+    description = registry.get("terminal_run").native_schema()["function"]["description"]
+    for required in ("findstr", "reg.exe query", "CMD dir", "no-match", "&&", "/ve"):
+        assert required in description
+    assert "preserve unexpected errors and their nonzero exit codes" in description
+    assert "globally coerce return codes to zero" in description
+
+
+def test_terminal_description_requires_selected_shell_syntax(tmp_path):
+    registry = ToolRegistry()
+    register_terminal_tools(registry, cwd=tmp_path)
+    description = registry.get("terminal_run").native_schema()["function"]["description"]
+    assert "syntax of the selected shell only" in description
+    assert "shell=powershell" in description
+    assert "do NOT wrap them in powershell -Command" in description
+    assert "powershell.exe -Command" in description
+    assert "another nested PowerShell invocation" in description
