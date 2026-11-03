@@ -248,7 +248,7 @@ browser session은 요청 종료 시 성공/실패와 관계없이 `close_all()`
 
 첫 main model round에는 상세 native tool schema 전체가 아니라 다음 두 가지가 제공된다.
 
-1. 등록된 도구의 `name`과 `category` 카탈로그.
+1. 등록된 도구의 `name`, `category`, 용도 `description` 카탈로그. 작성된 `catalog_description`이 있으면 짧은 용도를 사용하며, 활성화된 도구는 native schema에 설명이 있으므로 카탈로그에서 중복하지 않는다.
 2. run-local activation tool인 `tool_manual` schema.
 
 모델이 도구가 필요하다고 판단하면 예를 들어 `tool_manual(tools=["memory_recall","web_search"])`처럼 정확한 이름을 활성화한다. 다음 round부터 그 도구들의 native schema가 추가되고 직접 호출할 수 있다. 활성화된 schema는 해당 run 동안 유지된다.
@@ -1410,7 +1410,7 @@ active = {"tool_manual"}
 loop:
     send:
       - conversation
-      - tool catalog(name, category)
+      - tool catalog(name, category, description for unactivated tools)
       - tool_manual schema
       - schemas for already activated tools
       - latest correction context, if any
