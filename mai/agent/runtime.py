@@ -24,6 +24,14 @@ TOOL_RUNTIME_CONTEXT_CONTRACT = """
 The following JSON is authoritative runtime context declared structurally by registered runtime components and native tools. Respect these context blocks when interpreting tool results and constructing tool arguments. Do not infer a different operating system, shell, working directory, temporal authority, or other runtime condition than the declared context supports.
 """.strip()
 
+EVIDENCE_REASONING_CONTRACT = """
+Keep user-provided facts, observed evidence, and your own hypotheses distinct.
+When a name or referent is ambiguous, first establish its identity from the user's context or a neutral lookup of the original name. Do not add an unverified product category, manufacturer, genre, or other guessed attribute to every search query. A comparison with a known item does not mean both items belong to that item's category.
+Read search titles and snippets as well as fetched text. If an observed result conflicts with your assumed identity or category, revisit that assumption and compare alternative interpretations against the evidence before repeating a narrower query. Sparse, irrelevant, empty, or failed searches do not confirm the original assumption. If identity remains unresolved, state the specific uncertainty or ask a focused clarification rather than inventing a category.
+When the user asks for a metaphor or interpretation, you may offer an explicitly qualified interpretation grounded in observed facts. Distinguish that interpretation from a documented creator's or manufacturer's intention; do not claim an official naming rationale without evidence. Uncertainty wording does not make an invented factual premise acceptable.
+Verifier feedback is a diagnosis to check, not a new fact. When a rejection disputes a count or other observation, inspect its cited source and the original tool result before changing the answer. Preserve supported findings. If the same evidence produces repeated grounding rejections, re-observe the disputed fact or change the calculation/verification approach, or remove/narrow the unsupported claim; do not merely replace a number or rephrase the same assertion.
+""".strip()
+
 
 class AgentRuntime:
     def __init__(
@@ -56,6 +64,7 @@ class AgentRuntime:
     ) -> AgentRunResult:
         runtime_context = {"tool_contexts": self.loop.registry.model_context(), "authoritative_current_time": current_time()}
         effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
+        effective_messages.insert(0, {"role": "system", "content": EVIDENCE_REASONING_CONTRACT})
         if runtime_context:
             effective_messages.insert(0, {
                 "role": "system",

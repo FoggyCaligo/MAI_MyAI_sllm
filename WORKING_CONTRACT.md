@@ -111,6 +111,25 @@ unsupported_inference
 missing_evidence
 ```
 
+각 claim에는 `evidence_refs`(source_id, location, quote)를 포함할 수 있다.
+`contradiction`, `scope_expansion`, `unsupported_inference` 반려에는 실제 출처와
+인용이 필수다. `missing_evidence`는 빈 목록을 허용하며, 없는 근거를 반대 사실이나
+대체 수치로 발명하면 안 된다. Runtime은 성공한 tool의 원래 실행 index와 user/검증된
+이전 대화/current time 출처를 기준으로 source ID 및 인용문의 존재를 확인한다.
+인용 위치의 의미적 정확성과 계산의 정확성까지 보장하는 검사는 아니다.
+근거 인용 계약 위반은 기존 최대 3회 reviewer 요청 한도 안에서 수정하도록 안내하고,
+실패 시 명시적 `ReviewerEvidenceError`로 전파한다. 유효하지 않은 진단을 main model의
+수정 근거로 전달하거나 검증 통과로 바꾸지 않는다. 유효한 인용은 correction contract와
+audit에 보존한다. 상세 source ID 형식과 제한은 [`docs/verifier.md`](docs/verifier.md)를 따른다.
+
+같은 성공 evidence 상태로 grounding 반려가 반복되면 단순 문장/수치 교체 대신 원본
+재확인, 계산/검증 접근 변경, 또는 주장 축소/삭제를 지시한다. 동일 결과를 다시 호출한
+것은 새 evidence로 세지 않는다. 별도 의미 분류기나 강제 검색 라운드는 추가하지 않는다.
+
+Main runtime과 factual reviewer는 이름의 정체를 미리 단정하지 않고, 검색 결과가 가정과
+충돌하면 가정을 재검토하도록 안내한다. 사용자가 요청한 근거 기반 해석/은유와 저자/제조사가
+공식적으로 밝힌 의도는 구분한다. 이는 prompt 정책이며 실제 모델의 준수율은 별도 평가한다.
+
 ### 6.3 Temporal consistency
 
 각 material claim의 시간적 framing이 current date/time 및 supplied evidence의 날짜/타임스탬프와 일관되는지 reviewer가 의미적으로 판단한다.

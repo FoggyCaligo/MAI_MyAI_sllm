@@ -14,13 +14,13 @@ string-marker heuristics for causal, semantic, action, or coverage relations.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 import json
 import os
 import logging
 import re
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
@@ -92,6 +92,8 @@ Claim-level evidence grounding:
 - Previous assistant answers are factual evidence only when provided in verified_prior_conversation, which contains answers previously accepted by the final verifier. Treat these as evidence of what was established at that time, not proof that changing external state remains current. Other assistant text is context only. Current user messages and observed tool results are evidence.
 - The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
 - A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
+- Check the identity of the subject against all supplied results, including titles and snippets that contradict the draft's initial category or identity assumption. An earlier accepted answer or repeated search query does not override newly observed contrary evidence or a user's correction. Do not endorse an invented entity, category, or attribute to preserve the draft's premise.
+- Distinguish an explicitly qualified, evidence-based interpretation or metaphor requested by the user from a claim about an author's or manufacturer's documented intention. An interpretation need not have been stated verbatim by that author; its factual premises must still be grounded and it must not be presented as an official naming rationale. Hedging does not excuse invented factual premises.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 - For contradictory persistent-memory Fact nodes about the same subject, property, and time scope, prefer the node with the latest created_at as the authoritative remembered state. A newer retrieved Fact overrides an older conflicting Fact even when the older one appears earlier in search results or a different tool response. Do not use retrieval order, relevance score, occurrence_count, or last_seen_at to decide temporal precedence.
 - Do not mistake a memory tool's fresh execution time for the creation time of the historical Fact it returned. Distinguish changes in current state from accounts of different historical periods. If created_at is tied or unavailable, do not assert that either incompatible memory Fact wins merely by order; report uncertainty or seek additional evidence.
@@ -120,6 +122,8 @@ Action outcome verification:
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
 Set evidence_verdict=supported only when no material factual claim is unsupported.
+Every factual rejection must identify the affected claim in claims[], with a concrete reason and defect. For contradiction, scope_expansion, and unsupported_inference, include evidence_refs with source_id, location (field, section or record), and a short verbatim quote from the actual source. Source IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time for authoritative_current_time. Never cite candidate_final, conversation assistant drafts, or verifier feedback as sources.
+For missing_evidence, evidence_refs may be empty: state precisely what is unestablished, without inventing an opposing fact or replacement total. Do not classify a source conflict as missing_evidence just to avoid citing it. A quote proves only that text was observed, not that your interpretation of it is correct.
 If no requested external state change is claimed, action_verdict=not_applicable.
 Return the required structured schema. retry_summary is concise, actionable English.
 """.strip()
@@ -155,10 +159,22 @@ For rejected verdicts provide actionable reasons without proposing unsupported n
 """.strip()
 
 
+class _EvidenceReferencePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(min_length=1, max_length=80)
+    location: str = Field(min_length=1, max_length=240)
+    quote: str = Field(min_length=1, max_length=600)
+
+
+class ReviewerEvidenceError(ValueError):
+    """A reviewer cited absent evidence or supplied an untraceable rejection."""
+
+
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim: str
+    claim: str = Field(min_length=1)
     verdict: Literal["supported", "unsupported", "uncertain"]
     defect: Literal[
         "none",
@@ -168,6 +184,7 @@ class _ClaimReviewPayload(BaseModel):
         "missing_evidence",
     ]
     reason: str
+    evidence_refs: list[_EvidenceReferencePayload] = Field(default_factory=list)
 
 
 class _FactualReviewPayload(BaseModel):
@@ -223,6 +240,7 @@ class FinalVerificationResult:
                     "claim": claim["claim"],
                     "defect": claim["defect"],
                     "reason": claim["reason"],
+                    "evidence_refs": claim.get("evidence_refs", []),
                 }
                 for claim in claims
                 if claim["verdict"] == "unsupported"
@@ -256,6 +274,11 @@ class FinalVerificationResult:
                     continue
                 for claim in related:
                     lines.append(f"- {issue.code}: {claim['claim']} — {claim['reason']}")
+                    for reference in claim.get("evidence_refs", ()):
+                        lines.append(
+                            f"  Source {reference['source_id']} / {reference['location']}: "
+                            + json.dumps(reference['quote'], ensure_ascii=False)
+                        )
             else:
                 lines.append(f"- {issue.code}: {issue.message}")
         if unsupported:
@@ -275,6 +298,7 @@ class ClaimReview:
     verdict: str
     defect: str = "none"
     reason: str = ""
+    evidence_refs: tuple[Mapping[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,7 +488,8 @@ class FinalGroundingVerifier:
                 "reasons": list(review.reasons),
                 "coverage_reasons": list(review.coverage_reasons),
                 "claims": [
-                    {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect, "reason": claim.reason}
+                    {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect,
+                     "reason": claim.reason, "evidence_refs": list(claim.evidence_refs)}
                     for claim in review.claims
                 ],
             },
@@ -566,11 +591,13 @@ class FinalGroundingVerifier:
             tools=(), think=False, response_format=_FactualReviewPayload.model_json_schema(),
         )
         facts = await self._request_structured_review(
-            fact_request, _FactualReviewPayload, label="factual"
+            fact_request, _FactualReviewPayload, label="factual",
+            validate_evidence=lambda review: _validate_factual_evidence(review, payload),
         )
         claims = tuple(ClaimReview(
             claim=item.claim.strip(), verdict=item.verdict,
             defect=item.defect, reason=item.reason.strip(),
+            evidence_refs=tuple(reference.model_dump() for reference in item.evidence_refs),
         ) for item in facts.claims)
         evidence_verdict = (
             "unsupported" if any(item.verdict == "unsupported" for item in claims)
@@ -639,22 +666,28 @@ class FinalGroundingVerifier:
         payload_model: type[BaseModel],
         *,
         label: str,
+        validate_evidence: Callable[[BaseModel], None] | None = None,
     ) -> BaseModel:
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
+        effective_request = request
         for attempt in range(1, 4):
             try:
                 turn = await asyncio.wait_for(
-                    self.reviewer_adapter.chat(request),
+                    self.reviewer_adapter.chat(effective_request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return payload_model.model_validate_json(turn.content, strict=True)
+                result = payload_model.model_validate_json(turn.content, strict=True)
+                if validate_evidence is not None:
+                    validate_evidence(result)
+                return result
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
                     OllamaChatTimeoutError,
                     OllamaProtocolError,
                     ValidationError,
+                    ReviewerEvidenceError,
                     httpx.NetworkError,
                     httpx.TimeoutException,
                     httpx.RemoteProtocolError,
@@ -673,6 +706,17 @@ class FinalGroundingVerifier:
                 )
                 if not retryable or attempt == 3:
                     raise
+                if isinstance(exc, ReviewerEvidenceError):
+                    effective_request = replace(request, messages=(
+                        *request.messages,
+                        {"role": "system", "content": (
+                            "Your last review violated the evidence-reference contract: " + str(exc)
+                            + ". Recheck the original supplied evidence. Return the complete review "
+                            "with real source IDs and verbatim quotes. If evidence is missing, "
+                            "identify the unestablished claim without inventing a counterfact. "
+                            "Do not accept or reject merely to avoid this validation error."
+                        )},
+                    ))
                 await asyncio.sleep(0.25 * attempt)
         raise AssertionError(f"unreachable {label} reviewer retry state")
 
@@ -744,6 +788,7 @@ def _review_payload(
     tool_evidence = [
         {
             "index": index,
+            "source_id": f"tool:{index}",
             "tool": name,
             "ok": ok,
             "error_type": error_type,
@@ -756,10 +801,70 @@ def _review_payload(
         "authoritative_current_time": current_time(),
         "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
         "conversation_context": context_messages,
+        "user_evidence": user_messages,
         "verified_prior_conversation": accepted_messages,
         "tool_results_in_execution_order": tool_evidence,
         "candidate_final": _clip_text(candidate, 6000),
     }
+
+
+def _source_texts(content: str) -> tuple[str, ...]:
+    """Permit quotes from serialized JSON or its decoded text fields."""
+    texts = [content]
+    try:
+        value = json.loads(content)
+    except (ValueError, TypeError):
+        return tuple(texts)
+
+    def visit(item: Any) -> None:
+        if isinstance(item, str):
+            texts.append(item)
+        elif isinstance(item, dict):
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return tuple(texts)
+
+
+def _validate_factual_evidence(review: BaseModel, payload: Mapping[str, Any]) -> None:
+    """Check source/quote provenance, not the semantic truth of a verdict."""
+    if not isinstance(review, _FactualReviewPayload):
+        raise TypeError("expected factual review")
+    sources = {
+        f"user:{index}": _source_texts(text)
+        for index, text in enumerate(payload["user_evidence"])
+    }
+    sources.update({
+        f"prior:{index}": _source_texts(message["content"])
+        for index, message in enumerate(payload["verified_prior_conversation"])
+    })
+    sources.update({
+        item["source_id"]: _source_texts(item["result"])
+        for item in payload["tool_results_in_execution_order"]
+    })
+    sources["time"] = _source_texts(json.dumps(payload["authoritative_current_time"], ensure_ascii=False))
+    unsupported = [claim for claim in review.claims if claim.verdict == "unsupported"]
+    if review.evidence_verdict == "unsupported" and not unsupported:
+        raise ReviewerEvidenceError("factual rejection must identify an unsupported claim")
+    for claim in review.claims:
+        if claim.verdict == "unsupported":
+            if not claim.claim.strip() or not claim.reason.strip() or claim.defect == "none":
+                raise ReviewerEvidenceError("unsupported claim must identify a defect and reason")
+            if claim.defect != "missing_evidence" and not claim.evidence_refs:
+                raise ReviewerEvidenceError("source-based rejection requires evidence_refs")
+        for reference in claim.evidence_refs:
+            texts = sources.get(reference.source_id)
+            quote = " ".join(reference.quote.split())
+            if not reference.location.strip() or not quote or texts is None or not any(
+                quote in " ".join(text.split()) for text in texts
+            ):
+                raise ReviewerEvidenceError(
+                    f"reviewer reference does not match observed evidence: {reference.source_id}"
+                )
 
 
 def _select_review_tool_results(

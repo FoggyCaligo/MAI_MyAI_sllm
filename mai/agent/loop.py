@@ -225,6 +225,8 @@ class AgentLoop:
         latest_verifier_feedback: str | None = None
         consecutive_grounding_rejections = 0
         hypothesis_reconsideration_pending = False
+        rejected_evidence_snapshot: frozenset[tuple[str, str]] | None = None
+        unchanged_evidence_rejections = 0
 
         try:
             while True:
@@ -249,6 +251,13 @@ class AgentLoop:
                             "re-observe the unsupported facts using tools or remove/narrow them. "
                             "Do not treat any rejected draft or verifier diagnosis as evidence. "
                             + (
+                                "Grounding was rejected repeatedly with unchanged successful evidence. "
+                                "Re-observe the disputed facts or change the calculation/verification approach, "
+                                "or remove/narrow unsupported claims. Do not merely replace a number "
+                                "or paraphrase the same assertion based on the verifier's diagnosis. "
+                                if unchanged_evidence_rejections >= 2 else ""
+                            )
+                            + (
                                 "Repeated factual grounding failures: reconsider the central assumption "
                                 "behind the previous answer, independently of that answer. "
                                 "Return to the original user request and observed evidence; "
@@ -261,6 +270,7 @@ class AgentLoop:
                             "feedback is in the audit log, not this model context.\\n"
                             + json.dumps({
                                 "reconsider_initial_hypothesis": hypothesis_reconsideration_pending,
+                                "unchanged_evidence_rejections": unchanged_evidence_rejections,
                                 "correction_contract": latest_correction_contract,
                                 "verifier_feedback": history[latest_feedback].get("content", ""),
                             }, ensure_ascii=False)
@@ -357,6 +367,21 @@ class AgentLoop:
                             else:
                                 consecutive_grounding_rejections = 0
                             hypothesis_reconsideration_pending = consecutive_grounding_rejections >= 2
+                            if numeric_failure or evidence_failure:
+                                evidence_snapshot = frozenset(
+                                    (execution.name, execution.source_content_fingerprint
+                                     or content_fingerprint(execution.content))
+                                    for execution in executions
+                                    if execution.ok and execution.name != "tool_manual"
+                                )
+                                unchanged_evidence_rejections = (
+                                    unchanged_evidence_rejections + 1
+                                    if evidence_snapshot == rejected_evidence_snapshot else 1
+                                )
+                                rejected_evidence_snapshot = evidence_snapshot
+                            else:
+                                unchanged_evidence_rejections = 0
+                                rejected_evidence_snapshot = None
                             coverage_failure = any(
                                 issue.code == "evidence_coverage_insufficient"
                                 for issue in verification.issues
