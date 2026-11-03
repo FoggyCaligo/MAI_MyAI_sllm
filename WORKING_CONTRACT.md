@@ -30,16 +30,11 @@ Framework는 사람/정체성/주제/관계/tool 필요 여부/correction 의도
 
 ## 2. Direct native-tool selection
 
-현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent에는 등록된 도구의 **이름/카테고리/용도 설명 카탈로그**와 `tool_manual`의 native schema만 먼저 노출된다. 용도 설명은 등록된 description을 사용하며, metadata의 `catalog_description`이 유효한 문자열이면 작성자가 제공한 짧은 설명을 사용한다. Main agent가 필요한 툴 이름을 `tool_manual(tools=[...])`로 지정해 활성화하면, **다음 model round부터** 활성화한 툴의 전체 native schema가 노출된다. 이후 해당 도구의 카탈로그 설명은 생략해 native schema와 중복하지 않는다. 한 번 활성화된 툴은 해당 run 동안 유지된다.
+현재 production composition은 main agent 전에 별도의 tool-requirement planner를 호출하지 않는다. Main agent에는 등록된 도구의 **이름/카테고리 카탈로그**와 `tool_manual`의 native schema만 먼저 노출된다. Main agent가 필요한 툴 이름을 `tool_manual(tools=[...])`로 지정해 활성화하면, **다음 model round부터** 활성화한 툴의 전체 native schema가 노출된다. 한 번 활성화된 툴은 해당 run 동안 유지된다.
 
 이 선택은 별도 preflight LLM 호출을 요구하지 않으면서 초기 native tool schema 비용을 줄이기 위한 production 정책이다. 실제 툴이 필요하면 활성화 라운드가 추가된다.
 
 Tool Requirement Planner와 frozen requirements 기반 필수 도구 강제 경로는 제거되었다. Tool 사용 필요성은 카탈로그 및 main agent prompt가 안내하며, final candidate의 근거성은 release 전 verifier가 별도로 검토한다.
-
-오류 예방은 기존 도구의 용도·인자 설명과 관찰된 값 재사용 지침을 통해 안내한다.
-CSV 집계에는 이미 등록된 `csv_aggregate`를 사용하고, 추가 산술에는 `calculator`를 사용하도록
-구분한다. 등록 도구 이름, 권한, 필수 인자, 실행 제한을 추가하지 않고 별도 LLM 계획 호출도
-넣지 않는다. Prompt 준수와 실제 정확도·지연 개선은 로컬 모델에서 별도로 평가해야 한다.
 
 ---
 
@@ -69,13 +64,6 @@ category
 Registry와 AgentLoop는 tool 이름의 의미를 문자열로 해석하지 않는다. `tool_manual`은 카탈로그에서 정확히 일치하는 등록 이름만 허용하며, 미등록 도구/계약 위반은 명시적 실패로 반환한다. 일반적인 validation error, unknown tool, handler exception, timeout도 구조화된 실패로 반환한다.
 
 큰 tool output은 `ToolResultStore`가 bounded model view로 축약할 수 있다. 원본의 추가 범위가 필요하면 model은 `tool_result_read(result_id, offset, limit)`를 사용한다.
-
-`file_list`/`file_search`는 긴 항목 배열보다 collection 건수와 완전성 정보를 먼저 직렬화한다.
-구조화 `file_read`도 본문보다 truncated/details를 먼저 제공한다. CSV details의 기존 row_count는
-첫 레코드를 포함한 전체 파싱 레코드 수이며, 실제 첫 레코드와 이 계산 범위를 함께 제공한다.
-첫 레코드가 헤더인지는 자동 추정하지 않으며, CSV의 레코드 수는 물리적 줄 수와 다를 수 있다.
-이는 반환 순서와 보조 정보 개선이고, 모든 메타데이터가 임의로 작은 페이지에 항상 들어간다는
-보장은 아니다. 전체 데이터나 원본이 필요하면 기존 페이지 읽기를 사용한다.
 
 ---
 
