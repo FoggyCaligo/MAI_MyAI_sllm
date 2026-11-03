@@ -127,6 +127,8 @@ def document_read(
         text_parts = ["\t".join(row) for row in structured["rows"]]
         details = {
             "row_count": len(structured["rows"]),
+            "row_count_scope": "All parsed CSV records, including the first record; header presence is not inferred.",
+            "first_record": structured["rows"][0] if structured["rows"] else [],
             "encoding": structured["encoding"],
         }
     elif kind == "pptx":

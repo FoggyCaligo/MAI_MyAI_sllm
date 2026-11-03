@@ -15,24 +15,24 @@ class _Strict(BaseModel):
 
 
 class CsvFilter(_Strict):
-    column: str
-    operator: Literal["eq", "ne", "empty", "nonempty"]
-    value: str | None = None
+    column: str = Field(description="Exact header from the observed first CSV record; do not invent a column name.")
+    operator: Literal["eq", "ne", "empty", "nonempty"] = Field(description="eq/ne compare the source string exactly; empty/nonempty test whitespace-stripped emptiness.")
+    value: str | None = Field(default=None, description="Required string for eq/ne. Omit or use null for empty/nonempty.")
 
 
 class CsvMetric(_Strict):
-    name: str
+    name: str = Field(description="Unique output key for this metric in the request.")
     operation: Literal["count_rows", "count_nonempty", "sum", "count_positive", "count_negative", "count_zero"]
-    column: str | None = None
+    column: str | None = Field(default=None, description="Omit or use null for count_rows; every other operation requires an exact observed column header.")
 
 
 class CsvAggregateInput(_Strict):
-    path: str
-    encoding: str = "utf-8-sig"
+    path: str = Field(description="Observed CSV file path. This tool treats the first CSV record as the header; confirm that format before using it.")
+    encoding: str = Field(default="utf-8-sig", description="Use the source file's observed encoding; match file_read when inspecting the same CSV.")
     delimiter: str = Field(default=",", min_length=1, max_length=1)
-    filters: list[CsvFilter] = Field(default_factory=list)
-    group_by: list[str] = Field(default_factory=list)
-    metrics: list[CsvMetric] = Field(min_length=1)
+    filters: list[CsvFilter] = Field(default_factory=list, description="All filters must match (AND). Empty list includes every data record after the header.")
+    group_by: list[str] = Field(default_factory=list, description="Exact header names. Empty list gives an overall aggregate; nonempty gives one result per distinct key tuple.")
+    metrics: list[CsvMetric] = Field(min_length=1, description="Named calculations over matching data records. count_rows counts rows, not unique names or entities.")
 
 
 def _decimal(raw: str, *, column: str, csv_row: int) -> Decimal:
@@ -170,4 +170,8 @@ def register_csv_aggregate_tool(registry: Any, *, cwd: str | Path | None = None,
         handler=handler,
         timeout_seconds=timeout_seconds,
         category="filesystem",
+        metadata={"catalog_description": (
+            "Compute CSV row counts, exact sums and grouped/sign counts from source records. "
+            "Use observed headers and explicit filters; returns computed values and row provenance."
+        )},
     )
