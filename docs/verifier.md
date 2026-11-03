@@ -30,12 +30,12 @@ Older tests expecting exactly one integrated reviewer call require migration to 
 ## Traceable factual rejections and correction
 
 Factual claim findings can include `evidence_refs`, each with `source_id`,
-`location`, and a short verbatim `quote`. A rejection for `contradiction`,
-`scope_expansion`, or `unsupported_inference` requires at least one reference.
-`missing_evidence` may have an empty reference list: absence of support must not
-be disguised as an observed opposing fact or a replacement count. An overall
-factual rejection must identify an unsupported claim rather than provide only
-an unlocated diagnosis.
+`location`, and a short verbatim `quote`. References are optional supporting
+metadata for every defect, including `contradiction`, `scope_expansion`, and
+`unsupported_inference`. Absence of support must not be disguised as an observed
+opposing fact or a replacement count. The reviewer is asked to identify rejected
+claims and give concrete reasons; an overall rejection can still use the existing
+semantic-feedback fallback when claim-level findings are unavailable.
 
 Sources use run-local IDs: `tool:<original execution index>` for successful tool
 results, `user:<user_evidence index>`, `prior:<verified_prior_conversation index>`,
@@ -44,12 +44,15 @@ and verifier diagnoses are not citation sources. Index gaps from failed calls
 are preserved. JSON tool outputs may be quoted as serialized text or from their
 decoded string fields, with whitespace normalization only.
 
-The runtime checks source existence and quote provenance before accepting the
-review. This does **not** prove that the reviewer's interpretation, record
-location, or calculation is correct. Invalid references use the existing bounded
-reviewer-contract retry path (at most three calls), with a repair instruction;
-they do not become correction facts for the main model. Exhaustion remains an
-explicit reviewer error and does not release the candidate as verified.
+The runtime checks source existence and quote provenance on a best-effort basis.
+This does **not** prove that the reviewer's interpretation, record location, or
+calculation is correct. Omitted, null, or malformed reference metadata becomes an
+empty list; invalid individual references are dropped while valid ones survive.
+Warnings are logged, and provenance warnings are recorded in review details.
+Reference problems do not cause reviewer retries, HTTP errors, or an automatic
+change to the factual verdict. The ordinary factual correction loop continues,
+and supported answers can be delivered even when reference metadata is invalid.
+Core verdict/schema and provider failures retain their existing handling.
 
 Validated references are preserved in review details, audit rejection records,
 the correction contract, and the latest correction feedback. Two grounding
