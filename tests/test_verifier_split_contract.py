@@ -32,7 +32,11 @@ class StrictSplitReviewer:
             return _turn({
                 "evidence_verdict": self.evidence,
                 "reasons": [] if self.evidence == "supported" else ["Evidence missing"],
-                "claims": [],
+                "claims": [] if self.evidence == "supported" else [{
+                    "claim": "An unsupported statement.", "verdict": "unsupported",
+                    "defect": "missing_evidence", "reason": "Evidence missing",
+                    "evidence_refs": [],
+                }],
                 "action_verdict": "not_applicable",
                 "retry_summary": "Obtain evidence" if self.evidence != "supported" else "No correction needed.",
             })

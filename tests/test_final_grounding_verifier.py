@@ -17,6 +17,13 @@ def run(coro):
     return asyncio.run(coro)
 
 
+@pytest.fixture(autouse=True)
+def enable_quality_for_legacy_combined_review_vectors(monkeypatch):
+    # These vectors exercise both stages. Importing app settings in another test
+    # must not silently disable their quality/alignment assertions.
+    monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "true")
+
+
 def turn(content: str) -> ModelTurn:
     return ModelTurn(
         content=content,
@@ -61,6 +68,13 @@ def _split_legacy_review(review):
         "action_verdict": review.get("action_verdict", "not_applicable"),
         "retry_summary": review.get("retry_summary", "Correct the listed material defects using observed evidence."),
     }
+    if fact["evidence_verdict"] == "unsupported" and not fact["claims"]:
+        fact["claims"] = [{
+            "claim": "The candidate's material assertion",
+            "verdict": "unsupported", "defect": "missing_evidence",
+            "reason": "; ".join(fact["reasons"]) or "No supporting observation.",
+            "evidence_refs": [],
+        }]
     quality = {
         "alignment_verdict": review.get("alignment_verdict", "aligned"),
         "coverage_verdict": review.get("coverage_verdict", "sufficient"),
@@ -242,7 +256,7 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
 
     assert result.content.startswith("두 화면은 산식이 다르므로")
     assert result.model_rounds == 2
-    assert "evidence_grounding_failed" in main.requests[1].messages[-1]["content"]
+    assert "claim_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
 def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
@@ -317,7 +331,7 @@ def test_alignment_budget_exhaustion_still_checks_evidence() -> None:
         allow_semantic_review=False,
         allow_evidence_review=True,
     ))
-    assert [issue.code for issue in result.issues] == ["evidence_grounding_failed"]
+    assert [issue.code for issue in result.issues] == ["claim_grounding_failed"]
 
 
 def test_claim_grounding_failures_consume_evidence_budget() -> None:
@@ -544,7 +558,7 @@ def test_failed_tool_outputs_are_omitted_from_review_evidence() -> None:
     assert payload["tool_results_in_execution_order"] == []
 
 
-def test_review_payload_keeps_recent_twenty_successful_results_and_omits_failures() -> None:
+def test_review_payload_keeps_all_successful_results_and_omits_failures() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     tool_results = tuple(
@@ -566,8 +580,8 @@ def test_review_payload_keeps_recent_twenty_successful_results_and_omits_failure
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
     evidence = payload["tool_results_in_execution_order"]
-    assert len(evidence) == 20
-    assert [item["index"] for item in evidence] == list(range(10, 50, 2))
+    assert len(evidence) == 25
+    assert [item["index"] for item in evidence] == list(range(0, 50, 2))
     assert all(item["ok"] is True for item in evidence)
 
 
@@ -671,6 +685,10 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
                 "verdict": "unsupported",
                 "defect": "scope_expansion",
                 "reason": "The evidence shows deletion of refs/remotes/origin entries, not GitHub server branches.",
+                "evidence_refs": [{
+                    "source_id": "user:0", "location": "reported local outcome",
+                    "quote": "로컬의 origin remote-tracking ref 16개는 삭제됐습니다",
+                }],
             }],
             "action_verdict": "unverified",
         },
@@ -690,7 +708,10 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
-    result = run(runtime.run_user_message("main 제외하고 모든 브랜치를 origin에서 없애줘."))
+    result = run(runtime.run_user_message(
+        "main 제외하고 모든 브랜치를 origin에서 없애줘.",
+        prior_messages=[{"role": "user", "content": "로컬의 origin remote-tracking ref 16개는 삭제됐습니다"}],
+    ))
 
     assert result.model_rounds == 2
     assert result.content.startswith("로컬의 origin remote-tracking ref")
@@ -711,6 +732,8 @@ def test_claim_level_unsupported_inference_is_reported_with_claim_text() -> None
             "verdict": "unsupported",
             "defect": "unsupported_inference",
             "reason": "Observed price and flow data do not establish this cause.",
+            "evidence_refs": [{"source_id": "tool:0", "location": "snapshot",
+                               "quote": "price up; foreign net buying"}],
         }],
         "action_verdict": "not_applicable",
     }])
@@ -955,6 +978,8 @@ def test_claim_level_unsupported_overrides_inconsistent_supported_overall_verdic
             "verdict": "unsupported",
             "defect": "unsupported_inference",
             "reason": "The evidence only establishes that the user uses Pilot black ink.",
+            "evidence_refs": [{"source_id": "user:0", "location": "user statement",
+                               "quote": "나는 Pilot 검은색 잉크를 사용해."}],
         }],
         "action_verdict": "not_applicable",
     }])
