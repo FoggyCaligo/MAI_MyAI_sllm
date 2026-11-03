@@ -112,14 +112,14 @@ missing_evidence
 ```
 
 각 claim에는 `evidence_refs`(source_id, location, quote)를 포함할 수 있다.
-`contradiction`, `scope_expansion`, `unsupported_inference` 반려에는 실제 출처와
-인용이 필수다. `missing_evidence`는 빈 목록을 허용하며, 없는 근거를 반대 사실이나
-대체 수치로 발명하면 안 된다. Runtime은 성공한 tool의 원래 실행 index와 user/검증된
+인용은 선택적 보조 정보이며, 없거나 형식이 틀려도 답변 생성을 중단하지 않는다.
+없는 근거를 반대 사실이나 대체 수치로 발명하면 안 된다.
+Runtime은 성공한 tool의 원래 실행 index와 user/검증된
 이전 대화/current time 출처를 기준으로 source ID 및 인용문의 존재를 확인한다.
 인용 위치의 의미적 정확성과 계산의 정확성까지 보장하는 검사는 아니다.
-근거 인용 계약 위반은 기존 최대 3회 reviewer 요청 한도 안에서 수정하도록 안내하고,
-실패 시 명시적 `ReviewerEvidenceError`로 전파한다. 유효하지 않은 진단을 main model의
-수정 근거로 전달하거나 검증 통과로 바꾸지 않는다. 유효한 인용은 correction contract와
+누락·잘못된 형식의 인용은 빈 목록으로 처리하고, 원문과 일치하지 않는 인용은 개별적으로
+제외해 경고를 기록한다. 인용 메타데이터 때문에 reviewer를 재호출하거나 예외를 발생시키지
+않으며, 원래 사실 판정과 수정 흐름을 유지한다. 유효한 인용은 correction contract와
 audit에 보존한다. 상세 source ID 형식과 제한은 [`docs/verifier.md`](docs/verifier.md)를 따른다.
 
 같은 성공 evidence 상태로 grounding 반려가 반복되면 단순 문장/수치 교체 대신 원본

@@ -1,4 +1,4 @@
-"""Reject fabricated verifier evidence without giving it to the answering model."""
+"""Citation metadata is best-effort and must not abort answer generation."""
 import asyncio
 from copy import deepcopy
 import json
@@ -6,7 +6,7 @@ import json
 import pytest
 
 from mai.agent.runtime import AgentRuntime
-from mai.agent.verification import FinalGroundingVerifier, ReviewerEvidenceError
+from mai.agent.verification import FinalGroundingVerifier
 from mai.llm.models import ModelTurn
 from mai.tools.registry import ToolRegistry
 
@@ -76,23 +76,26 @@ def test_source_quote_and_original_execution_id_survive_feedback_and_contract():
     [{"source_id": "candidate_final", "location": "draft", "quote": "eighteen"}],
     [{"source_id": "tool:1", "location": "stdout", "quote": "   "}],
 ])
-def test_missing_fabricated_failed_or_draft_sources_never_become_accepted_findings(refs):
+def test_missing_or_invalid_sources_are_dropped_without_reviewer_retry(refs, caplog):
     response = rejection(refs=refs)
-    reviewer = Reviewer([response] * 3)
-    with pytest.raises(ReviewerEvidenceError):
-        verify(reviewer)
-    assert len(reviewer.requests) == 3
-    assert "last review violated the evidence-reference contract" in reviewer.requests[1].messages[-1]["content"]
+    reviewer = Reviewer([response])
+    result = verify(reviewer)
+    assert not result.ok  # Factual rejection survives; metadata is not the verdict.
+    assert len(reviewer.requests) == 1
+    assert result.review_details["claims"][0]["evidence_refs"] == []
+    assert result.review_details["reference_warnings"]
+    assert "reference_warning=" in caplog.text
 
 
-def test_invalid_provenance_can_be_repaired_before_rejection_reaches_main_model():
+def test_mixed_references_keep_only_observed_quotes_without_an_extra_model_call():
     fabricated = rejection(refs=[{
         "source_id": "tool:1", "location": "RawData.Count", "quote": "RawData Count=16",
     }])
-    reviewer = Reviewer([fabricated, rejection()])
+    fabricated["claims"][0]["evidence_refs"] += rejection()["claims"][0]["evidence_refs"]
+    reviewer = Reviewer([fabricated])
     result = verify(reviewer)
     assert not result.ok
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 1
     assert "RawData" not in result.feedback_message()
     assert "nineteen" in result.feedback_message()
 
@@ -104,12 +107,15 @@ def test_missing_evidence_does_not_require_inventing_an_opposing_source():
     assert len(reviewer.requests) == 1
 
 
-def test_unlocated_overall_rejection_is_a_reviewer_contract_error():
+def test_unlocated_overall_rejection_uses_existing_semantic_feedback_without_error():
     response = rejection()
     response["claims"] = []
-    reviewer = Reviewer([response] * 3)
-    with pytest.raises(ReviewerEvidenceError, match="identify an unsupported claim"):
-        verify(reviewer)
+    response["reasons"] = ["The candidate lacks a supporting observation."]
+    reviewer = Reviewer([response])
+    result = verify(reviewer)
+    assert not result.ok
+    assert result.issues[0].code == "evidence_grounding_failed"
+    assert len(reviewer.requests) == 1
 
 
 @pytest.mark.parametrize("source_id,kwargs", [
@@ -132,20 +138,59 @@ def test_user_and_verified_prior_text_are_valid_sources(source_id, kwargs):
     assert not result.ok
 
 
-def test_failed_review_provenance_does_not_trigger_main_answer_rewrites():
+@pytest.mark.parametrize("metadata", [
+    None, {}, "not a list", [None], [{}],
+    [{"source_id": "tool:1", "location": "stdout", "quote": 16}],
+    [{"source_id": "tool:1", "location": "stdout", "quote": "x" * 601}],
+])
+def test_malformed_optional_metadata_cannot_become_a_schema_failure(metadata):
+    response = rejection()
+    response["claims"][0]["evidence_refs"] = metadata
+    reviewer = Reviewer([response])
+    result = verify(reviewer)
+    assert not result.ok
+    assert len(reviewer.requests) == 1
+    assert result.review_details["claims"][0]["evidence_refs"] == []
+
+
+def test_omitted_references_do_not_block_correction_and_final_answer_delivery():
     class Main:
         calls = 0
 
         async def chat(self, request):
             self.calls += 1
-            text = "There are eighteen startup registrations."
+            text = ("There are eighteen startup registrations." if self.calls == 1
+                    else "The total is not established by the available evidence.")
             return ModelTurn(text, "", (), {"role": "assistant", "content": text})
 
-    from mai.agent.loop import AgentRunFailure
     main = Main()
-    reviewer = Reviewer([rejection()] * 3)  # tool:1 does not exist in this run
-    with pytest.raises(AgentRunFailure, match="ReviewerEvidenceError"):
-        asyncio.run(AgentRuntime(main, ToolRegistry(), final_verifier=FinalGroundingVerifier(
-            reviewer_adapter=reviewer, quality_review_enabled=False,
-        )).run_user_message("List startup registrations."))
-    assert main.calls == 1
+    missing = rejection()
+    del missing["claims"][0]["evidence_refs"]
+    accepted = {
+        "evidence_verdict": "supported", "reasons": [], "claims": [],
+        "action_verdict": "not_applicable", "retry_summary": "No correction needed.",
+    }
+    reviewer = Reviewer([missing, accepted])
+    result = asyncio.run(AgentRuntime(main, ToolRegistry(), final_verifier=FinalGroundingVerifier(
+        reviewer_adapter=reviewer, quality_review_enabled=False,
+    )).run_user_message("List startup registrations."))
+    assert result.content == "The total is not established by the available evidence."
+    assert main.calls == 2
+    assert len(reviewer.requests) == 2
+
+
+def test_bad_reference_does_not_flip_supported_verdict_or_leak_into_quality_input():
+    response = rejection()
+    response["evidence_verdict"] = "supported"
+    response["claims"][0].update(verdict="supported", defect="none")
+    reviewer = Reviewer([response, {
+        "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
+        "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
+    }])
+    result = asyncio.run(FinalGroundingVerifier(
+        reviewer_adapter=reviewer, quality_review_enabled=True,
+    ).verify(candidate="The observed claim.", messages=[], tool_results=()))
+    assert result.ok
+    assert len(reviewer.requests) == 2
+    quality_input = json.loads(reviewer.requests[1].messages[1]["content"])
+    assert quality_input["factual_review"]["claims"][0]["evidence_refs"] == []

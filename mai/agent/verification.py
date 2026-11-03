@@ -14,18 +14,18 @@ string-marker heuristics for causal, semantic, action, or coverage relations.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import json
 import os
 import logging
 import re
-from typing import Any, Callable, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
@@ -122,7 +122,7 @@ Action outcome verification:
 - Do not demand extra verification for a task that did not request or claim an external state change.
 
 Set evidence_verdict=supported only when no material factual claim is unsupported.
-Every factual rejection must identify the affected claim in claims[], with a concrete reason and defect. For contradiction, scope_expansion, and unsupported_inference, include evidence_refs with source_id, location (field, section or record), and a short verbatim quote from the actual source. Source IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time for authoritative_current_time. Never cite candidate_final, conversation assistant drafts, or verifier feedback as sources.
+Identify rejected factual claims in claims[], with a concrete reason and defect. When a relevant source is available, include evidence_refs with source_id, location (field, section or record), and a short verbatim quote from the actual source. References are optional supporting metadata: do not invent a source or quote just to fill them. Source IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time for authoritative_current_time. Never cite candidate_final, conversation assistant drafts, or verifier feedback as sources.
 For missing_evidence, evidence_refs may be empty: state precisely what is unestablished, without inventing an opposing fact or replacement total. Do not classify a source conflict as missing_evidence just to avoid citing it. A quote proves only that text was observed, not that your interpretation of it is correct.
 If no requested external state change is claimed, action_verdict=not_applicable.
 Return the required structured schema. retry_summary is concise, actionable English.
@@ -167,10 +167,6 @@ class _EvidenceReferencePayload(BaseModel):
     quote: str = Field(min_length=1, max_length=600)
 
 
-class ReviewerEvidenceError(ValueError):
-    """A reviewer cited absent evidence or supplied an untraceable rejection."""
-
-
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -185,6 +181,22 @@ class _ClaimReviewPayload(BaseModel):
     ]
     reason: str
     evidence_refs: list[_EvidenceReferencePayload] = Field(default_factory=list)
+
+    @field_validator("evidence_refs", mode="before")
+    @classmethod
+    def read_optional_references(cls, value: Any) -> list[_EvidenceReferencePayload]:
+        # Citation metadata must not turn an otherwise usable reviewer verdict
+        # into a schema error, repeated LLM calls, or an HTTP 500.
+        if not isinstance(value, list):
+            _LOG.warning("MAI factual reviewer reference_warning=invalid_reference_list")
+            return []
+        references = []
+        for index, item in enumerate(value):
+            try:
+                references.append(_EvidenceReferencePayload.model_validate(item, strict=True))
+            except ValidationError:
+                _LOG.warning("MAI factual reviewer reference_warning=invalid_reference_shape index=%d", index)
+        return references
 
 
 class _FactualReviewPayload(BaseModel):
@@ -311,6 +323,7 @@ class FinalReview:
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
     retry_summary: str = ""
+    reference_warnings: tuple[str, ...] = ()
 
 
 class FinalGroundingVerifier:
@@ -487,6 +500,7 @@ class FinalGroundingVerifier:
                 "action_verdict": review.action_verdict,
                 "reasons": list(review.reasons),
                 "coverage_reasons": list(review.coverage_reasons),
+                "reference_warnings": list(review.reference_warnings),
                 "claims": [
                     {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect,
                      "reason": claim.reason, "evidence_refs": list(claim.evidence_refs)}
@@ -592,13 +606,8 @@ class FinalGroundingVerifier:
         )
         facts = await self._request_structured_review(
             fact_request, _FactualReviewPayload, label="factual",
-            validate_evidence=lambda review: _validate_factual_evidence(review, payload),
         )
-        claims = tuple(ClaimReview(
-            claim=item.claim.strip(), verdict=item.verdict,
-            defect=item.defect, reason=item.reason.strip(),
-            evidence_refs=tuple(reference.model_dump() for reference in item.evidence_refs),
-        ) for item in facts.claims)
+        claims, reference_warnings = _filter_factual_references(facts, payload)
         evidence_verdict = (
             "unsupported" if any(item.verdict == "unsupported" for item in claims)
             else facts.evidence_verdict
@@ -618,6 +627,7 @@ class FinalGroundingVerifier:
                 reasons=factual_reasons, claims=claims,
                 action_verdict=facts.action_verdict,
                 retry_summary=facts.retry_summary,
+                reference_warnings=reference_warnings,
             )
 
         quality_input = {
@@ -627,7 +637,11 @@ class FinalGroundingVerifier:
             "factual_review": {
                 "evidence_verdict": evidence_verdict,
                 "action_verdict": facts.action_verdict,
-                "claims": [item.model_dump() for item in facts.claims],
+                "claims": [
+                    {"claim": item.claim, "verdict": item.verdict, "defect": item.defect,
+                     "reason": item.reason, "evidence_refs": list(item.evidence_refs)}
+                    for item in claims
+                ],
             },
         }
         quality_request = ChatRequest(
@@ -652,6 +666,7 @@ class FinalGroundingVerifier:
             )),
             claims=claims, action_verdict=facts.action_verdict,
             retry_summary=quality.retry_summary,
+            reference_warnings=reference_warnings,
         )
 
     async def _request_numeric_review(self, request: ChatRequest) -> _NumericReviewPayload:
@@ -666,28 +681,22 @@ class FinalGroundingVerifier:
         payload_model: type[BaseModel],
         *,
         label: str,
-        validate_evidence: Callable[[BaseModel], None] | None = None,
     ) -> BaseModel:
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
-        effective_request = request
         for attempt in range(1, 4):
             try:
                 turn = await asyncio.wait_for(
-                    self.reviewer_adapter.chat(effective_request),
+                    self.reviewer_adapter.chat(request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                result = payload_model.model_validate_json(turn.content, strict=True)
-                if validate_evidence is not None:
-                    validate_evidence(result)
-                return result
+                return payload_model.model_validate_json(turn.content, strict=True)
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
                     OllamaChatTimeoutError,
                     OllamaProtocolError,
                     ValidationError,
-                    ReviewerEvidenceError,
                     httpx.NetworkError,
                     httpx.TimeoutException,
                     httpx.RemoteProtocolError,
@@ -706,17 +715,6 @@ class FinalGroundingVerifier:
                 )
                 if not retryable or attempt == 3:
                     raise
-                if isinstance(exc, ReviewerEvidenceError):
-                    effective_request = replace(request, messages=(
-                        *request.messages,
-                        {"role": "system", "content": (
-                            "Your last review violated the evidence-reference contract: " + str(exc)
-                            + ". Recheck the original supplied evidence. Return the complete review "
-                            "with real source IDs and verbatim quotes. If evidence is missing, "
-                            "identify the unestablished claim without inventing a counterfact. "
-                            "Do not accept or reject merely to avoid this validation error."
-                        )},
-                    ))
                 await asyncio.sleep(0.25 * attempt)
         raise AssertionError(f"unreachable {label} reviewer retry state")
 
@@ -830,10 +828,10 @@ def _source_texts(content: str) -> tuple[str, ...]:
     return tuple(texts)
 
 
-def _validate_factual_evidence(review: BaseModel, payload: Mapping[str, Any]) -> None:
-    """Check source/quote provenance, not the semantic truth of a verdict."""
-    if not isinstance(review, _FactualReviewPayload):
-        raise TypeError("expected factual review")
+def _filter_factual_references(
+    review: _FactualReviewPayload, payload: Mapping[str, Any],
+) -> tuple[tuple[ClaimReview, ...], tuple[str, ...]]:
+    """Keep observed citations; missing/invalid metadata never blocks a verdict."""
     sources = {
         f"user:{index}": _source_texts(text)
         for index, text in enumerate(payload["user_evidence"])
@@ -847,24 +845,28 @@ def _validate_factual_evidence(review: BaseModel, payload: Mapping[str, Any]) ->
         for item in payload["tool_results_in_execution_order"]
     })
     sources["time"] = _source_texts(json.dumps(payload["authoritative_current_time"], ensure_ascii=False))
-    unsupported = [claim for claim in review.claims if claim.verdict == "unsupported"]
-    if review.evidence_verdict == "unsupported" and not unsupported:
-        raise ReviewerEvidenceError("factual rejection must identify an unsupported claim")
-    for claim in review.claims:
-        if claim.verdict == "unsupported":
-            if not claim.claim.strip() or not claim.reason.strip() or claim.defect == "none":
-                raise ReviewerEvidenceError("unsupported claim must identify a defect and reason")
-            if claim.defect != "missing_evidence" and not claim.evidence_refs:
-                raise ReviewerEvidenceError("source-based rejection requires evidence_refs")
+    claims = []
+    warnings = []
+    for index, claim in enumerate(review.claims):
+        references = []
         for reference in claim.evidence_refs:
             texts = sources.get(reference.source_id)
             quote = " ".join(reference.quote.split())
             if not reference.location.strip() or not quote or texts is None or not any(
                 quote in " ".join(text.split()) for text in texts
             ):
-                raise ReviewerEvidenceError(
-                    f"reviewer reference does not match observed evidence: {reference.source_id}"
-                )
+                warnings.append(f"claim:{index}:unmatched_reference")
+                continue
+            references.append(reference.model_dump())
+        if claim.verdict == "unsupported" and claim.defect != "missing_evidence" and not references:
+            warnings.append(f"claim:{index}:missing_reference")
+        claims.append(ClaimReview(
+            claim=claim.claim.strip(), verdict=claim.verdict, defect=claim.defect,
+            reason=claim.reason.strip(), evidence_refs=tuple(references),
+        ))
+    for warning in warnings:
+        _LOG.warning("MAI factual reviewer reference_warning=%s", warning)
+    return tuple(claims), tuple(warnings)
 
 
 def _select_review_tool_results(
