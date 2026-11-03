@@ -54,7 +54,7 @@ class WebFetchError(RuntimeError):
 
 class WebSearchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    query: str = Field(min_length=1, description="Public web query. For an ambiguous name, start with the original name and established user context; do not add guessed categories as facts.")
+    query: str = Field(min_length=1, description="Web search query")
     max_results: int = Field(
         default=WEB_SEARCH_DEFAULT_RESULTS,
         ge=1,
@@ -65,7 +65,7 @@ class WebSearchInput(BaseModel):
 
 class WebFetchInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    url: str = Field(min_length=1, description="Specific public HTTP(S) URL supplied by the user or observed in a tool result; preserve its exact path and query rather than inventing one.")
+    url: str = Field(min_length=1, description="Public HTTP or HTTPS URL to read")
     max_chars: int = Field(default=33333, ge=1, le=500000)
 
 
@@ -275,7 +275,6 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
         handler=web_search,
         timeout_seconds=timeout_seconds,
         category="web",
-        metadata={"catalog_description": "Search public web facts, names, news and sources. Returns ranked titles, URLs and snippets; use web_fetch to read an observed page URL."},
     )
     registry.add(
         name="web_fetch",
@@ -287,5 +286,4 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
         handler=web_fetch,
         timeout_seconds=timeout_seconds,
         category="web",
-        metadata={"catalog_description": "Read an observed public HTTP(S) page without JavaScript. Returns page text and links; use browser tools for pages that require JavaScript."},
     )

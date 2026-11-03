@@ -60,23 +60,10 @@ def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
 
 
 
-def _insert_tool_catalog(
-    model_history: list[Message], registry: ToolRegistry,
-    activated_names: Sequence[str] = (),
-) -> None:
+def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry) -> None:
     """Expose catalog metadata without exposing unactivated tool schemas."""
-    # Purposes are authored registry metadata, not a query/intent classifier.
+    # Catalog names and categories are structural registry metadata.
     # Full parameter schemas are available after explicit activation.
-    activated = frozenset(activated_names)
-    catalog = []
-    for definition in registry.definitions():
-        entry = {"name": definition.name, "category": definition.category}
-        if definition.name not in activated:
-            summary = definition.metadata.get("catalog_description")
-            entry["description"] = (
-                summary if isinstance(summary, str) and summary.strip() else definition.description
-            )
-        catalog.append(entry)
     catalog_position = next(
         (index for index, message in enumerate(model_history) if message.get("role") != "system"),
         len(model_history),
@@ -91,11 +78,12 @@ def _insert_tool_catalog(
             "Activated tools remain available throughout this run. "
             "Do not call an unactivated tool or invent its arguments. "
             "You may activate multiple tools in one tool_manual call. "
-            "Use the descriptions to choose tools by purpose, not by guessed meaning of names. "
-            "Descriptions for activated tools are in their native schemas. "
             "If tools are unnecessary, answer normally. "
             "Tool catalog (JSON): "
-            + json.dumps(catalog, ensure_ascii=False, separators=(",", ":"))
+            + json.dumps([
+                {"name": definition.name, "category": definition.category}
+                for definition in registry.definitions()
+            ], ensure_ascii=False, separators=(",", ":"))
         ),
     })
 
@@ -288,7 +276,7 @@ class AgentLoop:
                             }, ensure_ascii=False)
                         ),
                     })
-                _insert_tool_catalog(model_history, self.registry, tuple(activated_tool_names))
+                _insert_tool_catalog(model_history, self.registry)
                 activated_order = [
                     name for name in self.registry.names()
                     if name in activated_tool_names

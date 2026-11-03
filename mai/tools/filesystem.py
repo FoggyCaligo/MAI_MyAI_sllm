@@ -31,15 +31,15 @@ class FileListInput(_StrictModel):
 
 
 class FileSearchInput(_StrictModel):
-    root: str = Field(default=".", description="Existing directory to search; relative paths use the declared runtime cwd.")
-    pattern: str = Field(description="Glob for file/directory names or relative paths, e.g. *.csv; this does not search document contents or the web.")
+    root: str = "."
+    pattern: str
     max_results: int = Field(default=200, ge=1, le=5000)
 
 
 class FileReadInput(_StrictModel):
-    path: str = Field(description="Exact observed local file path; do not substitute a URL or invent a filename.")
-    encoding: str = Field(default="utf-8-sig", description="Text/CSV encoding. Use an evidenced encoding such as cp949 when needed; this does not translate content.")
-    max_chars: int | None = Field(default=None, ge=1, description="Optional text limit. A truncated body is a partial view; use returned metadata and computed results for totals.")
+    path: str
+    encoding: str = "utf-8-sig"
+    max_chars: int | None = Field(default=None, ge=1)
 
 
 class FileWriteInput(_StrictModel):
@@ -111,9 +111,9 @@ def file_list(*, path: str = ".", recursive: bool = False, directories_only: boo
         items.append({"path": str(entry), "name": entry.name, "type": "directory" if is_dir else "file", "size": None if is_dir else stat.st_size, "modified_ns": stat.st_mtime_ns})
     return {
         "root": str(root),
+        "items": items,
         "truncated": truncated,
         "collection": _collection_window(returned_count=len(items), truncated=truncated),
-        "items": items,
     }
 
 
@@ -139,9 +139,9 @@ def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: s
     return {
         "root": str(base),
         "pattern": pattern,
+        "results": results,
         "truncated": truncated,
         "collection": _collection_window(returned_count=len(results), truncated=truncated),
-        "results": results,
     }
 
 
@@ -160,11 +160,11 @@ def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None =
         )
         return {
             "path": result["path"],
+            "content": result["text"],
             "truncated": result["truncated"],
             "encoding": encoding if result["extension"] == ".csv" else None,
             "extension": result["extension"],
             "details": result["details"],
-            "content": result["text"],
         }
 
     text = target.read_text(encoding=encoding)

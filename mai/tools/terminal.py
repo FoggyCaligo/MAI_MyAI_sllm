@@ -21,9 +21,9 @@ from .registry import ToolRegistry
 class TerminalRunInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    command: str = Field(min_length=1, description="Command in the selected shell's syntax. For record queries, compute/filter/group structured objects before serializing; do not count Format-List/Format-Table display lines.")
-    cwd: str | None = Field(default=None, description="Existing working directory for this command; omit to use the declared runtime default. Use observed paths.")
-    shell: Literal['default', 'powershell'] = Field(default='default', description="default uses the runtime-declared shell (CMD on Windows, /bin/sh on POSIX). powershell explicitly selects Windows PowerShell; do not mix their syntax.")
+    command: str = Field(min_length=1)
+    cwd: str | None = None
+    shell: Literal['default', 'powershell'] = 'default'
 
 
 class TerminalRunError(RuntimeError):
@@ -276,7 +276,6 @@ def register_terminal_tools(
             "when LASTEXITCODE is nonzero at the end of the script. For multi-step scripts, "
             "check native $LASTEXITCODE after each step that must succeed; in CMD use && "
             "or explicit errorlevel checks. A final zero exit does not prove every "
-            "earlier command succeeded. Do not claim success without verifying the requested effect. "
             "For counting or deduplicating structured records, prefer native structured "
             "objects and explicit aggregation in the selected shell over manually counting "
             "formatted text lines. In PowerShell, retain objects until Select-Object, "
@@ -285,7 +284,8 @@ def register_terminal_tools(
             "row count, unique-item count and grouped counts, and report their scope "
             "separately. Format-List and Format-Table are display formatting, not "
             "reliable machine-readable records for counting. "
-            "On non-Windows platforms shell=default is /bin/sh; "
+            "earlier command succeeded. Do not claim success without verifying the "
+            "requested effect. On non-Windows platforms shell=default is /bin/sh; "
             "shell=powershell is unavailable. Use the authoritative runtime context "
             "for default shell, cwd and permissions; set cwd only when needed. "
             "The runner preserves stdout, stderr and shell exit status. "
@@ -314,10 +314,6 @@ def register_terminal_tools(
         timeout_seconds=None,
         category="terminal",
         metadata={
-            "catalog_description": (
-                "Run a command on the declared PC target using its actual shell and cwd. "
-                "Prefer existing file/data tools for supported operations; preserve structured records when counting."
-            ),
             "model_context": {
                 "shell": shell_description,
                 "shell_family": shell_family,
