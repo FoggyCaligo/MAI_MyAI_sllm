@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from mai.agent import AgentRuntime
+from tests.reviewer_fixtures import with_claim_units
 from mai.agent.verification import FinalGroundingVerifier, _NUMERIC_REVIEW_SYSTEM
 from mai.llm.models import ModelTurn
 from mai.tools.registry import ToolRegistry
@@ -44,7 +45,7 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(request)
-        return turn(json.dumps(next(self.responses)))
+        return turn(json.dumps(with_claim_units(next(self.responses), request)))
 
 
 def test_reviewer_failure_preserves_unverified_draft_with_the_error():
