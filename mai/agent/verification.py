@@ -750,6 +750,49 @@ def _clip_text(text: str, limit: int) -> str:
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
+def _candidate_review_units(candidate: str) -> tuple[str, ...]:
+    """Structural paragraphs, not semantic keyword or sentence heuristics."""
+    return tuple(
+        unit.strip() for unit in re.split(r"\n\s*\n", candidate) if unit.strip()
+    )
+
+
+def _check_claim_unit_coverage(
+    reviews: Sequence[_UnitReviewPayload], *, unit_count: int, claim_count: int,
+) -> tuple[str, ...]:
+    """Validate completeness of reported units and claim links; never infer semantics."""
+    failures: list[str] = []
+    seen_units: set[int] = set()
+    referenced_claims: set[int] = set()
+    for review in reviews:
+        index = review.unit_index
+        if index >= unit_count:
+            failures.append(f"unit {index} is outside candidate_units")
+            continue
+        if index in seen_units:
+            failures.append(f"unit {index} was reviewed more than once")
+            continue
+        seen_units.add(index)
+        if len(set(review.claim_indices)) != len(review.claim_indices):
+            failures.append(f"unit {index} repeats a claim index")
+        invalid = [i for i in review.claim_indices if i < 0 or i >= claim_count]
+        if invalid:
+            failures.append(f"unit {index} refers to unknown claim indices: {invalid}")
+        else:
+            referenced_claims.update(review.claim_indices)
+        if review.classification == "factual" and not review.claim_indices:
+            failures.append(f"factual unit {index} has no extracted claim")
+        if review.classification == "nonfactual" and review.claim_indices:
+            failures.append(f"nonfactual unit {index} lists factual claims")
+    missing = sorted(set(range(unit_count)) - seen_units)
+    if missing:
+        failures.append(f"candidate units not reviewed: {missing}")
+    unassigned = sorted(set(range(claim_count)) - referenced_claims)
+    if unassigned:
+        failures.append(f"extracted claims not assigned to candidate units: {unassigned}")
+    return tuple(failures)
+
+
 def _review_payload(
     *,
     candidate: str,
