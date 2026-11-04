@@ -179,7 +179,7 @@ def test_omitted_references_do_not_block_correction_and_final_answer_delivery():
     assert len(reviewer.requests) == 2
 
 
-def test_bad_reference_does_not_flip_supported_verdict_or_leak_into_quality_input():
+def test_supported_claim_without_valid_reference_blocks_acceptance_and_quality():
     response = rejection()
     response["evidence_verdict"] = "supported"
     response["claims"][0].update(verdict="supported", defect="none")
@@ -190,7 +190,10 @@ def test_bad_reference_does_not_flip_supported_verdict_or_leak_into_quality_inpu
     result = asyncio.run(FinalGroundingVerifier(
         reviewer_adapter=reviewer, quality_review_enabled=True,
     ).verify(candidate="The observed claim.", messages=[], tool_results=()))
-    assert result.ok
-    assert len(reviewer.requests) == 2
-    quality_input = json.loads(reviewer.requests[1].messages[1]["content"])
-    assert quality_input["factual_review"]["claims"][0]["evidence_refs"] == []
+    assert not result.ok
+    assert len(reviewer.requests) == 1
+    assert [issue.code for issue in result.issues] == ["supported_claim_source_unverified"]
+    assert result.review_details["claims"][0]["evidence_refs"] == []
+    assert result.review_details["unanchored_supported_claims"] == [
+        "There are eighteen startup registrations."
+    ]
