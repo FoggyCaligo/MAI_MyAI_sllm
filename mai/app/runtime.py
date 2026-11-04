@@ -13,7 +13,7 @@ from ollama import AsyncClient
 import httpx
 
 from ..agent.guards import GuardConfig
-from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver
+from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver, VerificationAuditObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
@@ -269,6 +269,7 @@ class MAIRuntime:
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
+        on_verification_audit: VerificationAuditObserver | None = None,
     ) -> MAIRunResult:
         if not prompt.strip():
             raise ValueError("prompt must be non-empty")
@@ -315,6 +316,14 @@ class MAIRuntime:
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
                 on_verification_rejection=on_verification_rejection,
+                on_verification_audit=(
+                    (lambda round_number, event, data: on_verification_audit(
+                        round_number, event, {
+                            "verifier_model": verifier_adapter.config.model,
+                            "data": dict(data),
+                        },
+                    )) if on_verification_audit is not None else None
+                ),
             )
         finally:
             await browser_manager.close_all()

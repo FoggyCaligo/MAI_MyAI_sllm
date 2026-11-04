@@ -33,6 +33,7 @@ async def _execute_chat(
     on_tool_execution=None,
     on_model_turn=None,
     on_verification_rejection=None,
+    on_verification_audit=None,
 ) -> tuple[int, dict[str, object]]:
     runtime = server._get_runtime()
     try:
@@ -57,6 +58,7 @@ async def _execute_chat(
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
             on_verification_rejection=on_verification_rejection,
+            on_verification_audit=on_verification_audit,
         )
     except AgentRunFailure as exc:
         return 500, {
@@ -130,6 +132,17 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                     ]},
                 )
 
+            def publish_verification_audit(round_number: int, event: str, details: object) -> None:
+                # Full reviewer inputs and output are audit-only and never enter agent history.
+                audit.append(
+                    job_id, "verifier_step", event, round_number=round_number,
+                    status="TRACE", details={
+                        "event": event,
+                        "verifier_model": details["verifier_model"],
+                        "data": details["data"],
+                    },
+                )
+
             def publish_verification_rejection(round_number: int, verification: object) -> None:
                 feedback = verification.feedback_message()
                 if not isinstance(feedback, str) or not feedback.strip():
@@ -151,6 +164,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 on_tool_execution=publish_tool,
                 on_model_turn=publish_model_turn,
                 on_verification_rejection=publish_verification_rejection,
+                on_verification_audit=publish_verification_audit,
             )
         if status_code == 200:
             audit.append(job_id, "verifier_step", "Final answer accepted.",

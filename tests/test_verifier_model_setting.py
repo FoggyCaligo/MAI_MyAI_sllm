@@ -50,14 +50,29 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
 
     async def check():
         main = selected_model or "ornith-1.5:9b"
+        audit_events = []
+        record = lambda round_number, event, details: audit_events.append((round_number, event, details))
         if reviewer_fails:
             with pytest.raises(AgentRunFailure, match="configured reviewer is unavailable"):
-                await runtime.run_user_message("안녕", principal=principal, model=selected_model)
+                await runtime.run_user_message(
+                    "안녕", principal=principal, model=selected_model,
+                    on_verification_audit=record,
+                )
         else:
-            result = await runtime.run_user_message("안녕", principal=principal, model=selected_model)
+            result = await runtime.run_user_message(
+                    "안녕", principal=principal, model=selected_model,
+                    on_verification_audit=record,
+                )
             await asyncio.gather(*runtime._background_tasks)
             assert result.model == main
         assert [name for name, request in requests] == [main, verifier_model or main]
+        assert audit_events
+        assert all(entry[0] == 1 for entry in audit_events)
+        assert all(entry[2]["verifier_model"] == (verifier_model or main) for entry in audit_events)
+        assert [entry[1] for entry in audit_events] == (
+            ["request", "error"] if reviewer_fails
+            else ["request", "raw_response", "validated_response", "decision"]
+        )
         assert set(runtime._fact_extractors) == {main}
 
     try:

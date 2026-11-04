@@ -135,6 +135,7 @@ class ToolExecution:
 ToolExecutionObserver = Callable[[ToolExecution], None]
 ModelTurnObserver = Callable[[int, ModelTurn], None]
 VerificationRejectionObserver = Callable[[int, FinalVerificationResult], None]
+VerificationAuditObserver = Callable[[int, str, Mapping[str, Any]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +210,7 @@ class AgentLoop:
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
+        on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
@@ -345,6 +347,10 @@ class AgentLoop:
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
+                            ),
+                            on_audit_event=(
+                                (lambda event, details: on_verification_audit(round_number, event, details))
+                                if on_verification_audit is not None else None
                             ),
                         )
                         pending_verification_candidate = None
