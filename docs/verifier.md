@@ -4,7 +4,7 @@
 
 ## 검증 순서와 설정
 
-`settings.yaml`의 `VERIFIER_MODEL`로 검증 전용 모델을 지정한다. 기본 구성은 본 모델 `ornith-1.5:9b`, 검증 모델 `lfm2.5:8b`다. 같은 이름의 환경변수·`.env` 값이 YAML보다 우선하며, 설정을 생략하면 요청의 본 모델을 사용한다. 명시한 모델의 실패는 오류로 유지한다.
+`settings.yaml`의 `VERIFIER_MODEL`로 검증 전용 모델을 지정한다. 기본 구성은 본 모델 `ornith-1.5:9b`, 검증 모델 `granite4:3b-h`다. 같은 이름의 환경변수·`.env` 값이 YAML보다 우선하며, 설정을 생략하면 요청의 본 모델을 사용한다. 명시한 모델의 실패는 오류로 유지한다.
 
 1. **수치 사전 검사:** Python이 사용자·전달된 도구 결과·승인된 이전 대화의 숫자와 날짜를 대조한다. 단순 표기 불일치는 의미상 동등성 검토 대상으로 보내며 Python 예외는 오류로 유지한다.
 2. **사실·수치 통합 검토:** 모델이 주장, 출처 범위, 시각, 외부 작업 성공 여부를 확인한다. 수치가 표시되면 같은 호출에 동등성 검토를 포함하고 `numeric_verdict`와 `numeric_reason`을 필수로 받는다. 별도 숫자 전용 모델 호출은 없다.
@@ -12,7 +12,7 @@
 
 수치 정규화는 `Decimal`의 문맥 정밀도에 의존하지 않는다. 큰 정수·긴 소수의 유효 자릿수를 유지하고, `만·억` 환산은 십진 지수만 이동한다. 소수부 끝의 불필요한 0만 제거하며 큰 숫자를 생략하거나 정규화 예외를 성공으로 처리하지 않는다.
 
-`MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성하면 기본값은 `true`다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
+`MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `true`이며 설정을 로드하지 않고 검증기를 직접 생성하면 기본값은 `true`다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 품질 검토는 사실 검증 통과 뒤 추가 모델 호출을 수행하므로 응답 지연이 발생할 수 있다. 기존 `.env` 또는 프로세스 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 배포 기본값보다 우선한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
 사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
 
