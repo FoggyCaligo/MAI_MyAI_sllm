@@ -812,12 +812,11 @@ def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = F
 
     for match in _KOREAN_UNIT_RE.finditer(cleaned):
         raw, unit = match.groups()
-        multiplier = Decimal("10000") if unit == "만" else Decimal("100000000")
         try:
-            value = Decimal(raw) * multiplier
+            value = Decimal(raw)
         except InvalidOperation:
             continue
-        facts.add(_decimal_key(value))
+        facts.add(_decimal_key(value, decimal_shift=4 if unit == "만" else 8))
         occupied.append(match.span())
 
     for match in _NUMBER_RE.finditer(cleaned):
@@ -834,7 +833,7 @@ def _extract_material_numeric_facts(text: str, *, include_date_aliases: bool = F
 
         is_decimal = "." in raw
         is_comma_grouped = "," in token
-        if not is_percent and not is_decimal and not is_comma_grouped and abs(value) < 100:
+        if not is_percent and not is_decimal and not is_comma_grouped and value.copy_abs() < 100:
             continue
         key = _decimal_key(value)
         facts.add(f"percent:{key}" if is_percent else key)
@@ -862,7 +861,12 @@ def _supported_as_month_day_alias(fact: str, evidence: set[str]) -> bool:
     return f"monthday:{month:02d}-{day:02d}" in evidence
 
 
-def _decimal_key(value: Decimal) -> str:
-    if value == value.to_integral():
-        return format(value.quantize(Decimal("1")), "f")
-    return format(value.normalize(), "f")
+def _decimal_key(value: Decimal, *, decimal_shift: int = 0) -> str:
+    """Canonicalize finite decimals exactly, independent of Decimal context precision."""
+    if not value.is_finite():
+        raise ValueError("numeric facts must be finite")
+    sign, digits, exponent = value.as_tuple()
+    # Changing the tuple's exponent scales units without context-sensitive arithmetic.
+    scaled = Decimal((sign, digits, exponent + decimal_shift))
+    fixed = format(scaled, "f")
+    return fixed.rstrip("0").rstrip(".") if "." in fixed else fixed

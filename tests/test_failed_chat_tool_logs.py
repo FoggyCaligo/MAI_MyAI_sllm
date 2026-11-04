@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 
 from mai.agent import AgentFailureContext, AgentRunFailure, NoProgressError, ToolExecution
 from mai.app import server
@@ -35,7 +36,7 @@ class FailingRuntime:
         )
 
 
-def test_failed_chat_response_preserves_tool_log(tmp_path, monkeypatch) -> None:
+def test_failed_chat_response_preserves_tool_log(tmp_path, monkeypatch, audit_db_path) -> None:
     monkeypatch.setattr(server, "_runtime", FailingRuntime())
     monkeypatch.setattr(server, "_chat_session_store", ChatSessionStore(tmp_path / "chat.sqlite3"))
     monkeypatch.setattr(
@@ -63,3 +64,8 @@ def test_failed_chat_response_preserves_tool_log(tmp_path, monkeypatch) -> None:
             "result": '{"ok":false,"error_type":"TerminalCommandError","message":"failed"}',
         }
     ]
+    with sqlite3.connect(audit_db_path) as conn:
+        assert conn.execute("SELECT status,error_type FROM runs").fetchall() == [
+            ("failed", "NoProgressError"),
+        ]
+        assert conn.execute("SELECT role,content FROM steps").fetchall() == [("user", "do it")]
