@@ -15,6 +15,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
+from ddgs.exceptions import DDGSException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .registry import ToolRegistry
@@ -59,7 +60,7 @@ class WebSearchInput(BaseModel):
         default=WEB_SEARCH_DEFAULT_RESULTS,
         ge=1,
         le=WEB_SEARCH_MAX_RESULTS,
-        description="Maximum number of merged ranked results returned across three provider pages",
+        description="Maximum number of merged ranked results returned across up to three provider pages",
     )
 
 
@@ -93,16 +94,33 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
 
     page: int | None = None
     completed_pages = 0
+    stopped_on_empty_page: int | None = None
     try:
         with DDGS(timeout=10) as ddgs:
             for page in range(1, WEB_SEARCH_PAGE_COUNT + 1):
-                raw_results = list(ddgs.text(
-                    clean_query,
-                    max_results=results_per_page,
-                    page=page,
-                    region="kr-ko",
-                    safesearch="moderate",
-                ))
+                try:
+                    raw_results = list(ddgs.text(
+                        clean_query,
+                        max_results=results_per_page,
+                        page=page,
+                        region="kr-ko",
+                        safesearch="moderate",
+                    ))
+                except DDGSException as exc:
+                    # DDGS has no dedicated no-results type. Recognize only its
+                    # exact empty-result sentinel at this provider boundary;
+                    # subclasses, wrapped errors and other messages remain failures.
+                    if (page == 1 or not merged or type(exc) is not DDGSException
+                            or exc.args != ("No results found.",)):
+                        raise
+                    raw_results = []
+                if page > 1 and merged and not raw_results:
+                    stopped_on_empty_page = page
+                    _LOG.info(
+                        "MAI web_search pagination ended provider=ddgs empty_page=%d completed_pages=%d unique_results=%d",
+                        page, completed_pages, len(merged),
+                    )
+                    break
                 for raw in raw_results:
                     url_value = raw.get("href") or raw.get("url")
                     if not isinstance(url_value, str) or not url_value.strip():
@@ -140,7 +158,8 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
     return {
         "query": clean_query,
         "provider": "ddgs",
-        "provider_pages": WEB_SEARCH_PAGE_COUNT,
+        "provider_pages": completed_pages,
+        "stopped_on_empty_page": stopped_on_empty_page,
         "results": results,
     }
 
@@ -268,8 +287,10 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
         description=(
             "Search the current public web. Use this for information that may have changed, recent news, "
             "external facts not present in memory or local files, or when the user explicitly asks to search "
-            "the web. Queries three provider result pages in one call and returns one compact merged list "
-            "of ranked titles, URLs, and short snippets; use web_fetch for page contents."
+            "the web. Queries up to three provider result pages in one call and returns one compact merged list "
+            "of ranked titles, URLs, and short snippets. If a later page has no results, earlier results remain "
+            "valid; provider_pages reports completed pages and stopped_on_empty_page identifies that stop. "
+            "Use web_fetch for page contents."
         ),
         input_model=WebSearchInput,
         handler=web_search,

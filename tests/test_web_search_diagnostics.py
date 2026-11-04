@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 
 from mai.tools import web as web_module
 
@@ -70,3 +71,69 @@ def test_web_search_success_retains_ranked_results(monkeypatch):
     result = web_module.web_search("test news")
     assert result["provider_pages"] == 3
     assert [item["rank"] for item in result["results"]] == [1, 2, 3]
+    assert result["stopped_on_empty_page"] is None
+
+
+@pytest.mark.parametrize("empty_page", [2, 3])
+@pytest.mark.parametrize("raises", [False, True])
+def test_later_empty_page_returns_existing_results_and_stops(monkeypatch, caplog, empty_page, raises):
+    calls = []
+
+    class EmptyLaterDDGS(FakeDDGS):
+        def text(self, query, *, page, **kwargs):
+            calls.append(page)
+            if page == empty_page:
+                if raises:
+                    raise DDGSException("No results found.")
+                return []
+            return [{"href": f"https://example.com/{page}", "title": f"Page {page}", "body": "Observed"}]
+
+    monkeypatch.setattr(web_module, "DDGS", EmptyLaterDDGS)
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    result = web_module.web_search("test news")
+    assert calls == list(range(1, empty_page + 1))
+    assert result["provider_pages"] == empty_page - 1
+    assert result["stopped_on_empty_page"] == empty_page
+    assert [item["url"] for item in result["results"]] == [
+        f"https://example.com/{page}" for page in range(1, empty_page)
+    ]
+    assert [item["rank"] for item in result["results"]] == list(range(1, empty_page))
+    assert "pagination ended" in caplog.text
+
+
+@pytest.mark.parametrize("error,failure_page", [
+    (DDGSException("No results found."), 1),
+    *((error, page) for error in [
+        DDGSException("No results found. Provider request failed."),
+        DDGSException(TimeoutError("No results found.")),
+        TimeoutException("No results found."),
+        RatelimitException("No results found."),
+        ValueError("No results found."),
+    ] for page in [1, 2]),
+])
+def test_first_page_and_non_empty_result_errors_remain_failures(monkeypatch, error, failure_page):
+    class BrokenDDGS(FakeDDGS):
+        def text(self, query, *, page, **kwargs):
+            if page == failure_page:
+                raise error
+            return [{"href": "https://example.com/first", "title": "First", "body": "Observed"}]
+
+    monkeypatch.setattr(web_module, "DDGS", BrokenDDGS)
+    with pytest.raises(web_module.WebSearchError) as caught:
+        web_module.web_search("test news")
+    assert caught.value.page == failure_page
+    assert caught.value.completed_pages == failure_page - 1
+    assert caught.value.__cause__ is error
+
+
+def test_empty_later_page_without_usable_previous_results_is_not_success(monkeypatch):
+    class NoUsableDDGS(FakeDDGS):
+        def text(self, query, *, page, **kwargs):
+            if page == 1:
+                return [{"title": "Missing URL", "body": "Cannot form a result"}]
+            raise DDGSException("No results found.")
+
+    monkeypatch.setattr(web_module, "DDGS", NoUsableDDGS)
+    with pytest.raises(web_module.WebSearchError) as caught:
+        web_module.web_search("test news")
+    assert caught.value.page == 2
