@@ -34,6 +34,7 @@ from .tool_results import ToolResultStore
 
 
 ToolVerificationResult = tuple[str, bool, str | None, str]
+_MAX_NO_PROGRESS_READ_ROUNDS = 2
 
 _DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
 _NUMBER_RE = re.compile(
@@ -631,11 +632,15 @@ class FinalGroundingVerifier:
             "source_id must be one of the supplied successful tool source IDs. Character offsets are zero-based "
             "Python Unicode code points. limit must respect the result's max_read_chars. "
             "The runtime returns original text under reread_excerpts on the SAME source, not as a new observation. "
-            "Return read_requests=[] with the complete review to finish. Do not request the same range twice."
+            "Return read_requests=[] with the complete review to finish. Duplicate/overlapping requests are "
+            "deduplicated. original_read_status reports which requested characters were already provided. "
+            "For already_provided ranges, use the existing reread_excerpts; return a verdict or request missing "
+            "ranges instead. Repeated read rounds without new characters exhaust the progress budget."
         )
         step_model = _EvidenceReviewStep[payload_model]
         observed_ranges: dict[str, list[tuple[int, int]]] = {}
         read_round = 0
+        no_progress_rounds = 0
         while True:
             request = ChatRequest(messages=(
                 {"role": "system", "content": system},
@@ -647,6 +652,7 @@ class FinalGroundingVerifier:
             if step.review is not None:
                 return step.review
             updates = []
+            read_results = []
             for read in step.read_requests:
                 if read.source_id not in readable:
                     raise ReviewerEvidenceReadError("unknown or failed original source")
@@ -655,17 +661,28 @@ class FinalGroundingVerifier:
                 )
                 start, end = read.offset, excerpt["next_offset"]
                 previous = observed_ranges.setdefault(read.source_id, [])
-                cursor = start
-                for left, right in sorted(previous):
-                    if left > cursor:
-                        break
-                    cursor = max(cursor, right)
-                if cursor >= end:
-                    raise ReviewerEvidenceReadError("original read adds no new source characters")
-                previous.append((start, end))
-                _LOG.info("MAI reviewer original read source_id=%s offset=%d returned_chars=%d",
-                          read.source_id, start, excerpt["returned_chars"])
-                updates.append((sources[read.source_id], excerpt))
+                unseen = _unread_source_ranges(start, end, previous)
+                for left, right in unseen:
+                    fragment = evidence_store.excerpt(
+                        result_id=readable[read.source_id], offset=left, limit=right - left,
+                    )
+                    updates.append((sources[read.source_id], fragment))
+                previous.extend(unseen)
+                new_chars = sum(right - left for left, right in unseen)
+                read_results.append({**read.model_dump(), "new_chars": new_chars,
+                                     "status": "read" if new_chars else "already_provided"})
+            no_progress_rounds = 0 if updates else no_progress_rounds + 1
+            payload["original_read_status"] = {
+                "round": read_round + 1, "results": read_results,
+                "consecutive_no_progress_rounds": no_progress_rounds,
+            }
+            _LOG.info("MAI reviewer original reads %s",
+                      json.dumps(payload["original_read_status"], ensure_ascii=False))
+            if no_progress_rounds >= _MAX_NO_PROGRESS_READ_ROUNDS:
+                raise ReviewerEvidenceReadError(
+                    "original read progress budget exhausted after already_provided notice: "
+                    + json.dumps(payload["original_read_status"], ensure_ascii=False)
+                )
             for item, excerpt in updates:
                 item.setdefault("reread_excerpts", []).append(excerpt)
             read_round += 1
@@ -733,6 +750,27 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
+
+
+def _unread_source_ranges(
+    start: int, end: int, observed: Sequence[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Subtract observed half-open intervals; no content/meaning heuristics."""
+    unseen = []
+    cursor = start
+    for left, right in sorted(observed):
+        if right <= cursor:
+            continue
+        if left >= end:
+            break
+        if left > cursor:
+            unseen.append((cursor, left))
+        cursor = max(cursor, right)
+        if cursor >= end:
+            break
+    if cursor < end:
+        unseen.append((cursor, end))
+    return unseen
 
 
 def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str:

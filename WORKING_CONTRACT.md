@@ -92,7 +92,7 @@ Material numeric fact가 current user messages 또는 tool evidence에 존재하
 
 원본은 ToolResultStore와 web chat의 기존 tool_log 감사 기록에 보존한다. Main model에는 bounded page를 한 번 보여준 뒤, 기존 tool_manual.retain_evidence로 지정한 원문 범위와 원본 참조만 유지한다. 선택/발췌에 별도 LLM이나 문자열 의미 heuristic을 사용하지 않는다. 잘못된 ID/범위/예산 위반은 명시적 실패이며 선택과 활성화에 부분 반영하지 않는다.
 
-Verifier는 같은 발췌를 기본 입력으로 받고 필요하면 read_requests로 성공한 원래 source_id의 범위를 다시 읽는다. 재열람은 새 관측이 아니며 외부 tool을 재실행하지 않는다. 실패한 출처, 잘못된 범위, 새 문자를 추가하지 않는 반복 읽기는 오류다. 구조 및 제한은 docs/verifier.md와 docs/TOOL_RESULT_PAGINATION.md에 따른다.
+Verifier는 같은 발췌를 기본 입력으로 받고 필요하면 read_requests로 성공한 원래 source_id의 범위를 다시 읽는다. 재열람은 새 관측이 아니며 외부 tool을 재실행하지 않는다. 한 요청 묶음의 중복·중첩 범위는 제거하여 아직 제공하지 않은 원문만 추가한다. 전부 이미 제공한 범위라면 already_provided 상태를 명시하고 판정 또는 다른 범위 요청을 요구한다. 새 문자가 없는 요청이 2라운드 연속 이어지면 오류이며, 새 범위가 추가되면 해당 budget을 초기화한다. 실패한 출처와 잘못된 범위는 즉시 오류다. Reviewer 오류 시 초안은 검증 미통과 진단 출력으로만 보존하고 원래 실패를 유지한다. 구조 및 제한은 docs/verifier.md와 docs/TOOL_RESULT_PAGINATION.md에 따른다.
 
 ### 6.2 Model semantic review
 

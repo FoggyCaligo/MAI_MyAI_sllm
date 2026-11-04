@@ -53,8 +53,16 @@ The runtime serves only successful sources from this run, within the existing
 read budget, and puts exact original text in that source's `reread_excerpts`.
 It then asks the reviewer to continue. Original reads may add model calls; they
 are not new observations and never rerun an external tool or action. Unknown or
-failed sources, invalid ranges and reads adding no new original characters are
-errors. Source quotes may be validated against retained or reread original text.
+failed sources and invalid ranges are errors. Duplicate/contained/overlapping
+ranges in a request batch are deduplicated; only previously unprovided original
+characters are appended. A wholly cached read round returns an explicit
+`original_read_status` with `already_provided` results so the reviewer can use
+existing text and finish. Two consecutive rounds without new characters exhaust
+the progress budget and raise an error; new original characters reset it.
+This never changes an unsupported verdict into supported. Source quotes may be
+validated against retained or reread original text. Fatal reviewer errors preserve
+the last draft only as explicitly unverified diagnostic output, alongside the
+original error; they do not release it as a verified final answer.
 
 Numeric token matching scans original text in Python, not compaction metadata.
 The LLM still receives only retained/reopened evidence. This avoids treating

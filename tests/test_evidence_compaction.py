@@ -181,20 +181,94 @@ def test_reviewer_cannot_read_failed_or_unknown_sources(source_id):
 
 
 @pytest.mark.parametrize("second_offset,second_limit", [(0, 5), (1, 3)])
-def test_repeated_reviewer_read_fails_without_rerolling_verdict(second_offset, second_limit):
+def test_persistent_no_progress_read_fails_after_an_explicit_notice(second_offset, second_limit):
     store = ToolResultStore(max_inline_chars=1024)
     result_id = store.capture("original source").result_id
     read = {"review": None, "read_requests": [{"source_id": "tool:0", "offset": 0, "limit": 5}]}
     repeated = {"review": None, "read_requests": [
         {"source_id": "tool:0", "offset": second_offset, "limit": second_limit},
     ]}
-    reviewer = Reviewer([read, repeated])
+    reviewer = Reviewer([read, repeated, repeated])
     with pytest.raises(ReviewerEvidenceReadError):
         asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
             candidate="A claim.", messages=[], tool_results=[("web_fetch", True, None, store.retained_view(result_id))],
             evidence_store=store, tool_result_ids=[result_id],
         ))
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 3
+    notice = json.loads(reviewer.requests[2].messages[1]["content"])["original_read_status"]
+    assert notice["results"][0]["status"] == "already_provided"
+    assert notice["consecutive_no_progress_rounds"] == 1
+
+
+def test_duplicate_and_overlapping_requests_in_one_batch_are_deduplicated():
+    store = ToolResultStore(max_inline_chars=1024)
+    source = "original source with conditions"
+    result_id = store.capture(source).result_id
+    reviewer = Reviewer([
+        {"review": None, "read_requests": [
+            {"source_id": "tool:0", "offset": 0, "limit": 10},
+            {"source_id": "tool:0", "offset": 0, "limit": 10},
+            {"source_id": "tool:0", "offset": 1, "limit": 3},
+            {"source_id": "tool:0", "offset": 8, "limit": 10},
+        ]},
+        {"review": factual(), "read_requests": []},
+    ])
+    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
+        candidate="A claim.", messages=[], tool_results=[("web_fetch", True, None, store.retained_view(result_id))],
+        evidence_store=store, tool_result_ids=[result_id],
+    ))
+    assert result.ok and len(reviewer.requests) == 2
+    payload = json.loads(reviewer.requests[1].messages[1]["content"])
+    excerpts = payload["tool_results_in_execution_order"][0]["reread_excerpts"]
+    assert [(item["offset"], item["returned_chars"]) for item in excerpts] == [(0, 10), (10, 8)]
+    assert "".join(item["content"] for item in excerpts) == source[:18]
+    assert [item["new_chars"] for item in payload["original_read_status"]["results"]] == [10, 0, 0, 8]
+
+
+def test_one_cached_read_notice_can_be_followed_by_a_valid_verdict():
+    store = ToolResultStore(max_inline_chars=1024)
+    result_id = store.capture("complete source").result_id
+    read = {"review": None, "read_requests": [{"source_id": "tool:0", "offset": 0, "limit": 512}]}
+    reviewer = Reviewer([read, read, {"review": factual(), "read_requests": []}])
+    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
+        candidate="A claim.", messages=[], tool_results=[("web_fetch", True, None, store.retained_view(result_id))],
+        evidence_store=store, tool_result_ids=[result_id],
+    ))
+    assert result.ok and len(reviewer.requests) == 3
+    payload = json.loads(reviewer.requests[2].messages[1]["content"])
+    assert len(payload["tool_results_in_execution_order"][0]["reread_excerpts"]) == 1
+    assert payload["original_read_status"]["results"][0]["status"] == "already_provided"
+
+
+def test_new_source_characters_reset_the_no_progress_budget():
+    store = ToolResultStore(max_inline_chars=1024)
+    result_id = store.capture("complete source").result_id
+    def read(offset):
+        return {"review": None, "read_requests": [{"source_id": "tool:0", "offset": offset, "limit": 5}]}
+    reviewer = Reviewer([read(0), read(0), read(5), read(5), {"review": factual(), "read_requests": []}])
+    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
+        candidate="A claim.", messages=[], tool_results=[("web_fetch", True, None, store.retained_view(result_id))],
+        evidence_store=store, tool_result_ids=[result_id],
+    ))
+    assert result.ok
+    progressed = json.loads(reviewer.requests[3].messages[1]["content"])
+    assert progressed["original_read_status"]["consecutive_no_progress_rounds"] == 0
+
+
+def test_reviewer_failure_preserves_unverified_draft_with_the_error():
+    from mai.agent import AgentRunFailure
+    class Main:
+        async def chat(self, request):
+            return turn("The provisional explanation.")
+    class FailingVerifier:
+        async def verify(self, **kwargs):
+            raise ReviewerEvidenceReadError("original read progress budget exhausted")
+    with pytest.raises(AgentRunFailure) as failure:
+        asyncio.run(AgentRuntime(Main(), ToolRegistry(), final_verifier=FailingVerifier()).run_user_message("Explain."))
+    assert failure.value.error_type == "ReviewerEvidenceReadError"
+    assert failure.value.context.last_rejected_draft == "The provisional explanation."
+    assert "The provisional explanation." in failure.value.user_visible_error
+    assert "확정 답변이 아닙니다" in failure.value.user_visible_error
 
 
 def test_flagged_numeric_and_factual_verdicts_share_one_model_call():
