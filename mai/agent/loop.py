@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
@@ -19,7 +19,7 @@ from .guards import (
     call_fingerprint,
     content_fingerprint,
 )
-from .tool_results import ToolResultStore
+from .tool_results import EvidenceSelection, ToolResultStore
 from .verification import FinalGroundingVerifier, FinalVerificationResult
 
 
@@ -31,9 +31,16 @@ _MAX_EVIDENCE_VERIFICATION_RETRIES = 5
 
 
 class ToolManualInput(BaseModel):
-    """Request activation of one or more registered native tools in this run."""
+    """Activate native tools or retain exact ranges of observed evidence."""
     model_config = ConfigDict(extra="forbid")
-    tools: list[str] = Field(min_length=1)
+    tools: list[str] = Field(default_factory=list)
+    retain_evidence: list[EvidenceSelection] | None = None
+
+    @model_validator(mode="after")
+    def require_action(self):
+        if not self.tools and self.retain_evidence is None:
+            raise ValueError("activate tools or explicitly select evidence ranges")
+        return self
 
 
 _TOOL_MANUAL_SCHEMA = {
@@ -44,6 +51,10 @@ _TOOL_MANUAL_SCHEMA = {
             "Activate one or more tools from the tool catalog in the system message. "
             "The next model round will expose their full native schemas. "
             "Activated tools stay available for this run; call this tool again to activate more."
+            " When retain_evidence is supplied, preserve exact original character ranges for later rounds "
+            "and verification. Each selection replaces that result's retained ranges; [] ranges clears them. "
+            "Use result_id from tool output, zero-based Unicode character offset and length. "
+            "You can select evidence alongside other native calls in the same round; tools may be empty."
         ),
         "parameters": ToolManualInput.model_json_schema(),
     },
@@ -60,7 +71,9 @@ def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
 
 
 
-def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry) -> None:
+def _insert_tool_catalog(
+    model_history: list[Message], registry: ToolRegistry, *, evidence_compaction: bool = False,
+) -> None:
     """Expose catalog metadata without exposing unactivated tool schemas."""
     # Catalog names and categories are structural registry metadata.
     # Full parameter schemas are available after explicit activation.
@@ -79,7 +92,15 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry) -
             "Do not call an unactivated tool or invent its arguments. "
             "You may activate multiple tools in one tool_manual call. "
             "If tools are unnecessary, answer normally. "
-            "Tool catalog (JSON): "
+            + (
+                "After reading a tool output, use tool_manual.retain_evidence to retain the original ranges "
+                "needed for your answer, including relevant qualifiers or conflicting observations. "
+                "Results are shown for one round, then replaced by retained excerpts and source references. "
+                "Unselected original text is still available through tool_result_read; absence from excerpts "
+                "does not establish absence from the original. Retain ranges, not rewritten summaries. "
+                if evidence_compaction else ""
+            )
+            + "Tool catalog (JSON): "
             + json.dumps([
                 {"name": definition.name, "category": definition.category}
                 for definition in registry.definitions()
@@ -118,6 +139,12 @@ class ToolExecution:
     handler_started: bool = False
     source_content_fingerprint: str | None = None
     compact_history_content: str | None = None
+    result_id: str | None = None
+    source_content: str | None = None
+
+    @property
+    def audit_content(self) -> str:
+        return self.content if self.source_content is None else self.source_content
 
     @property
     def context_content(self) -> str:
@@ -218,6 +245,7 @@ class AgentLoop:
         coverage_verification_retries = 0
         empty_final_retries = 0
         pending_history_compactions: dict[int, str] = {}
+        history_result_ids: dict[int, str] = {}
         rejected_final_indices: list[int] = []
         rejection_feedback_indices: list[int] = []
         latest_verification_rejection: tuple[int, int] | None = None
@@ -230,6 +258,10 @@ class AgentLoop:
 
         try:
             while True:
+                for history_index, result_id in history_result_ids.items():
+                    if history_index not in pending_history_compactions:
+                        history[history_index] = {**history[history_index], "content":
+                            self.tool_result_store.retained_view(result_id)}
                 _LOG.info("MAI model round start round=%d", round_number)
                 # Keep the latest rejected draft and its corresponding verifier
                 # feedback together. Older rejected drafts, reasoning, and
@@ -276,7 +308,8 @@ class AgentLoop:
                             }, ensure_ascii=False)
                         ),
                     })
-                _insert_tool_catalog(model_history, self.registry)
+                _insert_tool_catalog(model_history, self.registry,
+                                     evidence_compaction=self.tool_result_store is not None)
                 activated_order = [
                     name for name in self.registry.names()
                     if name in activated_tool_names
@@ -291,7 +324,10 @@ class AgentLoop:
                 ))
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
-                    history[history_index] = {**previous, "content": compact_content}
+                    history[history_index] = {**previous, "content": (
+                        self.tool_result_store.retained_view(history_result_ids[history_index])
+                        if history_index in history_result_ids else compact_content
+                    )}
                 pending_history_compactions.clear()
                 if on_model_turn is not None:
                     on_model_turn(round_number, turn)
@@ -333,9 +369,14 @@ class AgentLoop:
                             candidate=turn.content,
                             messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
                             tool_results=tuple(
-                                (execution.name, execution.ok, execution.error_type, execution.content)
+                                (execution.name, execution.ok, execution.error_type,
+                                 self.tool_result_store.retained_view(execution.result_id)
+                                 if execution.result_id is not None else execution.content)
                                 for execution in executions
                             ),
+                            **({"evidence_store": self.tool_result_store,
+                                "tool_result_ids": tuple(execution.result_id for execution in executions)}
+                               if self.tool_result_store is not None else {}),
                         )
                         if not verification.ok:
                             rejected_final_indices.append(len(history) - 1)
@@ -372,7 +413,7 @@ class AgentLoop:
                                     (execution.name, execution.source_content_fingerprint
                                      or content_fingerprint(execution.content))
                                     for execution in executions
-                                    if execution.ok and execution.name != "tool_manual"
+                                    if execution.ok and execution.name not in {"tool_manual", "tool_result_read"}
                                 )
                                 unchanged_evidence_rejections = (
                                     unchanged_evidence_rejections + 1
@@ -485,6 +526,8 @@ class AgentLoop:
                     history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
                     if execution.compact_history_content is not None:
                         pending_history_compactions[len(history) - 1] = execution.compact_history_content
+                    if execution.result_id is not None:
+                        history_result_ids[len(history) - 1] = execution.result_id
                     observation = ExecutionObservation(
                         call_fingerprint=call_fp,
                         ok=execution.ok,
@@ -549,7 +592,7 @@ class AgentLoop:
             )
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
             source_content = _serialize_tool_content(payload)
-            model_content, compact_content = self._model_contents(source_content)
+            model_content, compact_content, result_id = self._model_contents(source_content)
             return ToolExecution(
                 name=call.name,
                 arguments=dict(call.arguments),
@@ -559,6 +602,7 @@ class AgentLoop:
                 handler_started=False,
                 source_content_fingerprint=content_fingerprint(source_content),
                 compact_history_content=compact_content,
+                result_id=result_id, source_content=source_content,
             )
         try:
             if call.name == "tool_manual":
@@ -578,7 +622,7 @@ class AgentLoop:
                         "available_tools": list(self.registry.names()),
                     }
                     source_content = _serialize_tool_content(payload)
-                    model_content, compact_content = self._model_contents(source_content)
+                    model_content, compact_content, result_id = self._model_contents(source_content)
                     return ToolExecution(
                         name=call.name,
                         arguments=dict(call.arguments),
@@ -588,15 +632,21 @@ class AgentLoop:
                         handler_started=False,
                         source_content_fingerprint=content_fingerprint(source_content),
                         compact_history_content=compact_content,
+                        result_id=result_id, source_content=source_content,
                     )
-                activated_tool_names.update(requested)
                 value = {"activated_tools": requested, "available_next_round": True}
+                if request.retain_evidence is not None:
+                    if self.tool_result_store is None:
+                        raise ToolArgumentsError("evidence selection requires an active result store")
+                    self.tool_result_store.retain(request.retain_evidence)
+                    value["retained_result_ids"] = [item.result_id for item in request.retain_evidence]
+                activated_tool_names.update(requested)
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
             source_content = _serialize_tool_content(payload)
-            model_content, compact_content = self._model_contents(source_content)
+            model_content, compact_content, result_id = self._model_contents(source_content)
             return ToolExecution(
                 name=call.name,
                 arguments=dict(call.arguments),
@@ -606,9 +656,18 @@ class AgentLoop:
                 handler_started=not isinstance(exc, (UnknownToolError, ToolArgumentsError)),
                 source_content_fingerprint=content_fingerprint(source_content),
                 compact_history_content=compact_content,
+                result_id=result_id, source_content=source_content,
             )
         source_content = _serialize_tool_content(value)
-        model_content, compact_content = self._model_contents(source_content)
+        if self.tool_result_store is not None and call.name == "tool_result_read":
+            # A read is another view of the original, never a new stored source.
+            result_id = call.arguments["result_id"]
+            model_content = source_content
+            compact_content = self.tool_result_store.retained_view(result_id)
+        elif call.name == "tool_manual":
+            model_content, compact_content, result_id = source_content, None, None
+        else:
+            model_content, compact_content, result_id = self._model_contents(source_content)
         return ToolExecution(
             name=call.name,
             arguments=dict(call.arguments),
@@ -617,12 +676,13 @@ class AgentLoop:
             handler_started=True,
             source_content_fingerprint=content_fingerprint(source_content),
             compact_history_content=compact_content,
+            result_id=result_id, source_content=source_content,
         )
 
     def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:
         payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
         source_content = _serialize_tool_content(payload)
-        model_content, compact_content = self._model_contents(source_content)
+        model_content, compact_content, result_id = self._model_contents(source_content)
         return ToolExecution(
             name=call.name,
             arguments=dict(call.arguments),
@@ -632,13 +692,14 @@ class AgentLoop:
             handler_started=False,
             source_content_fingerprint=content_fingerprint(source_content),
             compact_history_content=compact_content,
+            result_id=result_id, source_content=source_content,
         )
 
-    def _model_contents(self, content: str) -> tuple[str, str | None]:
+    def _model_contents(self, content: str) -> tuple[str, str | None, str | None]:
         if self.tool_result_store is None:
-            return content, None
-        views = self.tool_result_store.model_views(content)
-        return views.initial_content, views.compact_history_content
+            return content, None, None
+        views = self.tool_result_store.capture(content)
+        return views.initial_content, views.compact_history_content, views.result_id
 
 
 def _format_log_arguments(arguments: Mapping[str, Any], *, limit: int = _TOOL_ARGS_LOG_LIMIT) -> str:

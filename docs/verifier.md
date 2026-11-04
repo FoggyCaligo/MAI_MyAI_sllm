@@ -1,10 +1,10 @@
 # Final answer verification
 
-This branch restores the original integrated review policy from the current main
-commit, but divides its responsibility into two ordered reviewer calls.
+Verification has a deterministic numeric precheck, one combined factual/numeric
+model review, and an optional answer-quality review.
 
-1. The historical **Numeric Reviewer** is retained, including deterministic numeric/date checks and optional semantic equivalence review.
-2. The **Factual Reviewer** checks candidate claims against observed user/tool evidence, source scope, timestamps, and claimed external action outcomes. This reviewer receives the full evidence payload. It does not judge completeness or task alignment.
+1. Python checks numeric/date values against original user/tool evidence. A failed token match identifies values needing semantic equivalence review; a Python exception remains an error.
+2. The **Factual Reviewer** checks claims, source scope, timestamps and claimed external action outcomes. When Python flags values, the same request includes the numeric-equivalence instructions and flagged values, and the structured response requires `numeric_verdict` and `numeric_reason`. There is no separate numeric-model request. The reviewer initially receives retained verbatim excerpts and source references, and can request original ranges as described below. It does not judge completeness or task alignment.
 3. Only after factual grounding and action-outcome checks pass does the **Answer Quality Reviewer** assess evidence coverage, alignment with the user's request, and truthful partial-answer policy. It receives the candidate, conversational request/context, and factual findings, not the entire tool-result payload.
 
 Both stages review the *already-created provisional final answer*. After both pass, the provisional answer is returned unchanged. On rejection the existing agent loop returns control to a model round with tool access and correction feedback. The next candidate is rechecked from the beginning.
@@ -17,15 +17,67 @@ Both stages review the *already-created provisional final answer*. After both pa
 
 The setting accepts the exact values `true` and `false` (case insensitive). Invalid values fail at verifier initialization.
 
-This toggle does not disable numeric or factual grounding checks.
+This toggle does not disable numeric or factual grounding checks. A missing
+combined numeric verdict is a schema violation, not numeric success. Quality is
+skipped when numeric or factual grounding fails.
+
+## Retained evidence and original reads
+
+Each ordinary tool result is stored immutably with a run-local `result_id` and
+SHA-256. The main model first receives a bounded page. After consuming it, that
+page is replaced by selected verbatim excerpts plus the original reference.
+The main model uses the existing `tool_manual.retain_evidence` argument to select
+`{result_id, ranges: [{offset, length}]}`. Offsets count zero-based Python Unicode
+code points. Selection replaces ranges for that result; empty ranges clear them.
+Selection can accompany other native calls in the same main-model round. There
+is no separate summarization model. Without a selection, only the source
+reference survives; this is explicitly partial evidence, not an empty original.
+
+Ranges are extracted by the runtime, never rewritten by a helper. Unknown IDs,
+overlapping/out-of-bounds ranges or selections over the result budget fail
+explicitly without partial activation or selection changes. Originals stay
+available through `tool_result_read`. Pagination reads keep the original ID and
+are not recaptured as new observations. Activation/selection acknowledgments and
+pagination reads are excluded from factual evidence; original execution indices
+are preserved for actual observations.
+
+The factual reviewer still has no native execution tools. When stored sources
+are present, its structured response is either:
+
+```json
+{"read_requests": [{"source_id": "tool:1", "offset": 100, "limit": 500}], "review": null}
+```
+
+or `{"read_requests": [], "review": { ... complete factual/numeric verdict ... }}`.
+The runtime serves only successful sources from this run, within the existing
+read budget, and puts exact original text in that source's `reread_excerpts`.
+It then asks the reviewer to continue. Original reads may add model calls; they
+are not new observations and never rerun an external tool or action. Unknown or
+failed sources, invalid ranges and reads adding no new original characters are
+errors. Source quotes may be validated against retained or reread original text.
+
+Numeric token matching scans original text in Python, not compaction metadata.
+The LLM still receives only retained/reopened evidence. This avoids treating
+metadata lengths or offsets as observed factual quantities.
+
+Both synchronous and detached web-chat audit logs preserve complete original
+tool results and `result_id` in the existing `tool_log` steps. UI/model result
+budgets do not truncate these audit originals. Audit storage does not provide
+cross-run retrieval; original reads remain scoped to the running agent.
 
 ## Scope and limitations
 
-The factual grounding and quality sections preserve the original integrated prompt's policies as closely as possible, with separate structured response schemas. Action-outcome evidence validation stays with factual review; user-request alignment stays with quality review. The existing per-axis retry budgets remain the same.
+Action-outcome evidence validation stays with factual review; user-request
+alignment stays with quality review. Existing per-axis correction budgets and
+provider/schema retry budgets remain unchanged. Valid supported/unsupported
+verdicts are not rerolled. Original-read failures propagate as errors.
 
 Quality review no longer sees raw tool logs. It can judge whether the draft addresses the request, but assessing **omitted facts present only in tool results** may be less reliable than with the original integrated reviewer. This is a deliberate speed/coverage tradeoff to measure, not a guarantee of equal accuracy. Two full LLM stages can still be slower than the integrated reviewer, although Quality receives a smaller input.
 
-Older tests expecting exactly one integrated reviewer call require migration to the two-stage contract. No claim of end-to-end Ollama test success is made.
+Neither unit tests nor fewer input characters guarantee end-to-end Ollama
+latency or accuracy gains. Retention quality depends on the main model;
+independent original reads are available to check omitted qualifiers or contrary
+evidence and may offset savings if many ranges need reopening.
 
 ## Traceable factual rejections and correction
 

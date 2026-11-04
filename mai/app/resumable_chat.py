@@ -105,10 +105,10 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 payload = server._tool_payload(execution)
                 chat_job_store.append_tool(job_id, payload)
                 audit.append(
-                    job_id, "tool_log", str(payload["result"]), round_number=current_round,
+                    job_id, "tool_log", execution.audit_content, round_number=current_round,
                     status="ok" if payload["ok"] else "failed",
                     details={"name": payload["name"], "arguments": payload["arguments"],
-                             "error_type": payload["error_type"]},
+                             "error_type": payload["error_type"], "result_id": execution.result_id},
                 )
 
             def publish_model_turn(round_number: int, turn: object) -> None:

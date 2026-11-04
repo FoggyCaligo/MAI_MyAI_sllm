@@ -1,6 +1,6 @@
 # Tool result pagination contract
 
-MAI는 큰 tool output 전체를 model history에 그대로 누적하지 않는다. `ToolResultStore`가 full content를 run-local store에 보존하고 model에는 bounded page를 보여준다.
+MAI는 tool output 전체를 model history에 계속 누적하지 않는다. Production에서는 `ToolResultStore`가 크기에 관계없이 관측 결과 원본과 SHA-256을 run-local store에 보존하고, model에는 bounded page를 한 라운드 보여준다. 소비한 뒤에는 선택한 원문 발췌와 참조만 남긴다. 감사 로그의 `tool_log`에는 원본과 result_id를 보존한다.
 
 ## Large tool-result page metadata
 
@@ -30,7 +30,11 @@ MAI는 큰 tool output 전체를 model history에 그대로 누적하지 않는�
 
 다음 범위는 `tool_result_read`에 같은 `result_id`와 `pagination.next_offset`을 사용해 읽는다.
 
-History에는 큰 첫 page 자체 대신 compact reference를 남긴다. 이 reference에도 initial page와 max read size 기준 총 page 수가 포함된다.
+Model은 기존 `tool_manual`의 `retain_evidence` 인자로 `{result_id, ranges: [{offset, length}]}`를 지정한다. 다음 history에는 source SHA-256, total_chars, max_read_chars, 원문 범위별 excerpts만 남긴다. 별도 요약 LLM은 호출하지 않는다. 선택하지 않은 내용은 입력에서 빠지지만 원본에서 삭제되지 않는다. 선택이 없으면 발췌는 비어 있고 원본 참조만 남는다.
+
+offset/length는 0-based Python Unicode 문자 단위다. 범위를 벗어나거나 겹치는 선택, 예산을 초과하는 발췌는 잘라내지 않고 실패한다. `tool_result_read`는 같은 result_id의 원문 범위를 다시 보여주며, 이 읽기 결과를 또 다른 원본으로 중첩 저장하지 않는다.
+
+Verifier도 같은 발췌를 기본 근거로 받고, 필요하면 구조화된 read_requests를 통해 성공한 원래 출처의 범위를 재열람한다. 자세한 요청/판정 계약은 [verifier.md](verifier.md)를 따른다.
 
 ## Collection-producing tools
 

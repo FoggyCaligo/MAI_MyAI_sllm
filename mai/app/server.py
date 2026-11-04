@@ -580,11 +580,12 @@ async def chat(
     def publish_tool(execution: object) -> None:
         payload = _tool_payload(execution)
         audit.append(
-            run_id, "tool_log", str(payload["result"]), round_number=current_round,
+            run_id, "tool_log", execution.audit_content, round_number=current_round,
             status="ok" if payload["ok"] else "failed",
             details={
                 "name": payload["name"], "arguments": payload["arguments"],
                 "error_type": payload["error_type"],
+                "result_id": execution.result_id,
             },
         )
 
