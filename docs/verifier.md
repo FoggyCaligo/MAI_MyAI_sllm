@@ -8,6 +8,8 @@
 2. **사실·수치 통합 검토:** 모델이 주장, 출처 범위, 시각, 외부 작업 성공 여부를 확인한다. 수치가 표시되면 같은 호출에 동등성 검토를 포함하고 `numeric_verdict`와 `numeric_reason`을 필수로 받는다. 별도 숫자 전용 모델 호출은 없다.
 3. **선택적 답변 품질 검토:** 앞 단계가 통과한 경우에만 요청 부합도·정보 충족도·정직한 부분 답변 여부를 검사한다. 초안, 대화 요청, 사실 검토 결과를 받으며 도구 원문 전체는 받지 않는다.
 
+수치 정규화는 `Decimal`의 문맥 정밀도에 의존하지 않는다. 큰 정수·긴 소수의 유효 자릿수를 유지하고, `만·억` 환산은 십진 지수만 이동한다. 소수부 끝의 불필요한 0만 제거하며 큰 숫자를 생략하거나 정규화 예외를 성공으로 처리하지 않는다.
+
 `MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성하면 기본값은 `true`다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
 사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.

@@ -96,6 +96,8 @@ python scripts/audit_references.py
 python scripts/audit_codebase.py
 ```
 
+pytest는 각 테스트의 `LOG_DB_PATH`를 임시 DB로 지정한다. 기존 환경변수나 `.env`의 실제 감사 DB에 테스트 실행 기록을 추가하지 않으며, 실패 기록도 임시 DB에 남긴다. 감사 경로를 따로 검증하는 테스트는 자체 임시 경로로 재지정할 수 있다.
+
 정적 미참조와 직접 테스트 import 여부는 미사용 확정이나 커버리지 측정이 아니다. [정적 감사](REFERENCE_AUDIT.md)를 따른다.
 
 장기기억의 원문 연결·계정 격리·충돌 처리 한계는 [장기기억](memory.md), 검증 범위·비용의 절충은 [답변 검증](verifier.md)에 모았다. 품질 검토는 도구 원문 전체를 보지 않고, 화자 비교 임계값은 보안 인증 수준이 보장된 값이 아니다. 실제 모델 정확도·지연, 마이크·GPU·원격·Portable 실행은 해당 환경에서 별도 확인해야 한다.
