@@ -102,8 +102,6 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
         async with chat_job_store.lock_for(principal.user_id):
             chat_job_store.mark_running(job_id)
             current_round: int | None = None
-            configured_runtime = server._get_runtime()
-            runtime_verifier_model = getattr(configured_runtime, "verifier_model", None) or configured_runtime.model
 
             def publish_tool(execution: object) -> None:
                 payload = server._tool_payload(execution)
@@ -140,8 +138,8 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                     job_id, "verifier_step", event, round_number=round_number,
                     status="TRACE", details={
                         "event": event,
-                        "verifier_model": runtime_verifier_model,
-                        "data": dict(details),
+                        "verifier_model": details["verifier_model"],
+                        "data": details["data"],
                     },
                 )
 
