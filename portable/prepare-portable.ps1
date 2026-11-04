@@ -162,9 +162,9 @@ if ($CopyLocalModels) {
     }
 }
 if ($PullModels) {
-    if ($null -eq $config.models -or @($config.models).Count -eq 0) {
-        throw 'Manifest must list exact Ollama model tags when -PullModels is specified'
-    }
+    $requiredModelsJson = & $python 'portable/model_requirements.py' --manifest $manifestPath --settings (Join-Path $root 'settings.yaml')
+    if ($LASTEXITCODE -ne 0) { throw 'Portable Ollama model requirements could not be resolved' }
+    $requiredModels = @($requiredModelsJson | ConvertFrom-Json)
     if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) {
         throw 'Port 11434 is already in use; stop the existing Ollama service before model provisioning'
     }
@@ -183,10 +183,7 @@ if ($PullModels) {
             Start-Sleep -Milliseconds 500
         }
         if (-not $ready) { throw 'Ollama service did not start' }
-        foreach ($model in $config.models) {
-            if (-not ($model -is [string]) -or [string]::IsNullOrWhiteSpace($model)) {
-                throw 'Model tags must be non-empty strings'
-            }
+        foreach ($model in $requiredModels) {
             & $ollamaExe pull $model
             if ($LASTEXITCODE -ne 0) { throw "Model pull failed: $model" }
             & $ollamaExe show $model
