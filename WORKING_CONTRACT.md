@@ -40,7 +40,7 @@ Tool Requirement Planner와 frozen requirements 기반 필수 도구 강제 경�
 
 ## 3. Native tool contract
 
-MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. `tool_manual`은 AgentLoop가 제공하는 run-local native activation tool이다. 상세 인자 계약은 활성화 이후 native schema로 전달되며, 독자적인 JSON 텍스트 실행 프로토콜을 도입하지 않는다.
+MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. `tool_manual`은 AgentLoop가 제공하는 run-local native tool로 활성화와 관측 원문 범위 선택을 담당한다. 상세 실행 도구 인자는 활성화 이후 native schema로 전달되며, 독자적인 JSON 텍스트 실행 프로토콜을 도입하지 않는다.
 
 `OllamaAdapter`는 protocol translation만 담당한다. Tool call을 임의 텍스트 JSON으로 복원하거나 `<think>` 문자열을 파싱해 의미를 추정하지 않는다.
 
@@ -61,7 +61,7 @@ timeout
 category
 ```
 
-Registry와 AgentLoop는 tool 이름의 의미를 문자열로 해석하지 않는다. `tool_manual`은 카탈로그에서 정확히 일치하는 등록 이름만 허용하며, 미등록 도구/계약 위반은 명시적 실패로 반환한다. 일반적인 validation error, unknown tool, handler exception, timeout도 구조화된 실패로 반환한다.
+Registry와 AgentLoop는 tool 이름의 의미를 문자열로 해석하지 않는다. `tool_manual` 활성화는 카탈로그에서 정확히 일치하는 등록 이름만 허용하며, 원문 선택은 해당 run의 result_id와 문자 범위만 허용한다. 미등록 도구/계약 위반은 명시적 실패로 반환한다. 일반적인 validation error, unknown tool, handler exception, timeout도 구조화된 실패로 반환한다.
 
 큰 tool output은 `ToolResultStore`가 bounded model view로 축약할 수 있다. 원본의 추가 범위가 필요하면 model은 `tool_result_read(result_id, offset, limit)`를 사용한다.
 
@@ -79,13 +79,20 @@ Guard는 semantic router가 아니다. Tool 실패 문자열을 보고 의미를
 
 ## 6. Final verification
 
-`FinalGroundingVerifier`는 candidate final을 release 전에 검증한다. Verifier는 tool을 호출하거나 답안을 재작성하지 않는다.
+`FinalGroundingVerifier`는 candidate final을 release 전에 검증한다. Verifier는 외부 실행 tool을 호출하거나 답안을 재작성하지 않는다. 보존된 원문은 구조화된 read_requests로 재열람할 수 있다.
 
-Numeric grounding은 deterministic하다. Semantic review는 현재 chat에 선택된 동일 Ollama model을 `think=False`, `tools=()` 및 strict structured output으로 추가 호출한다. 정상적인 candidate 하나에는 semantic reviewer 호출 1회가 추가되며, candidate가 거절되어 main agent가 재작성하면 각 새 candidate에 reviewer 호출이 다시 발생할 수 있다.
+숫자 token 대조는 Python에서 원본 근거로 수행한다. 불일치 값의 의미적 동등성은 별도 숫자 LLM이 아니라 동일 factual reviewer 요청에서 함께 판정한다. Reviewer는 현재 선택된 동일 model을 `think=False`, `tools=()` 및 strict structured output으로 호출한다. 원문 재열람이나 선택적 품질검증에는 추가 호출이 발생할 수 있다. 새 candidate는 다시 검증한다.
 
 ### 6.1 Numeric grounding
 
 Material numeric fact가 current user messages 또는 tool evidence에 존재하는지 deterministic 검사한다.
+불일치가 있으면 숫자검증 지침과 flagged values를 factual request에 추가하고 numeric_verdict/numeric_reason을 필수로 받는다. Python 예외나 필수 판정 누락을 성공으로 처리하지 않는다.
+
+### 6.1.1 Retained evidence
+
+원본은 ToolResultStore와 web chat의 기존 tool_log 감사 기록에 보존한다. Main model에는 bounded page를 한 번 보여준 뒤, 기존 tool_manual.retain_evidence로 지정한 원문 범위와 원본 참조만 유지한다. 선택/발췌에 별도 LLM이나 문자열 의미 heuristic을 사용하지 않는다. 잘못된 ID/범위/예산 위반은 명시적 실패이며 선택과 활성화에 부분 반영하지 않는다.
+
+Verifier는 같은 발췌를 기본 입력으로 받고 필요하면 read_requests로 성공한 원래 source_id의 범위를 다시 읽는다. 재열람은 새 관측이 아니며 외부 tool을 재실행하지 않는다. 실패한 출처, 잘못된 범위, 새 문자를 추가하지 않는 반복 읽기는 오류다. 구조 및 제한은 docs/verifier.md와 docs/TOOL_RESULT_PAGINATION.md에 따른다.
 
 ### 6.2 Model semantic review
 
@@ -163,7 +170,7 @@ Mutation tool invocation의 success는 그 tool contract가 성공했다는 evid
 
 Reviewer timeout, structured-output schema violation, reviewer exception은 명시적으로 log하고 semantic 내용을 문자열 fallback으로 복원하지 않는다.
 
-이 경우 reviewer 결과는 `uncertain`으로 취급하고 candidate를 **fail-open**한다. Reviewer 장애 때문에 전체 요청을 service error로 종료하지 않고 사용자에게 답을 반환하는 가용성 우선 정책이다. 이 fail-open은 deterministic numeric grounding 실패를 성공으로 바꾸는 문자열 fallback이 아니다.
+Provider/structured-output 오류에는 구현된 retry budget을 적용한다. 소진 후 오류는 전파하며, 원문 재열람 계약 위반도 실패로 드러낸다. 장애를 supported 판정으로 바꾸거나 문자열 fallback으로 성공을 만들지 않는다.
 
 ---
 

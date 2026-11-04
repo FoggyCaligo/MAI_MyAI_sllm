@@ -182,4 +182,6 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
     compact = json.loads(third_request_tools[0]["content"])
     assert compact["result_id"] == first_metadata["result_id"]
     assert compact["content_compacted"] is True
-    assert third_request_tools[1]["content"] == "small"
+    small_metadata, small_content = split_page(third_request_tools[1]["content"])
+    assert small_content == "small"
+    assert store.original(small_metadata["result_id"]).content == "small"

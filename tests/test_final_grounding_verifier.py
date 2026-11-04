@@ -45,7 +45,7 @@ class SequenceAdapter:
         return turn(self.contents.pop(0))
 
 
-from mai.agent.verification import _FactualReviewPayload, _QualityReviewPayload, _NumericReviewPayload
+from mai.agent.verification import _FactualReviewPayload, _QualityReviewPayload, _FactualNumericReviewPayload
 
 
 def _kind(request):
@@ -54,8 +54,8 @@ def _kind(request):
         return "factual"
     if schema == _QualityReviewPayload.model_json_schema():
         return "quality"
-    if schema == _NumericReviewPayload.model_json_schema():
-        return "numeric"
+    if schema == _FactualNumericReviewPayload.model_json_schema():
+        return "combined"
     raise AssertionError("unexpected structured review schema")
 
 
@@ -130,11 +130,11 @@ class StructuredReviewerAdapter:
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         review = dict(self.reviews.pop(0))
-        if kind == "numeric":
-            return turn(json.dumps(review, ensure_ascii=False))
         if kind == "quality":
             return turn(json.dumps(review, ensure_ascii=False))
         fact, quality = _split_legacy_review(review)
+        if kind == "combined":
+            fact.update(numeric_verdict=review["numeric_verdict"], numeric_reason=review["numeric_reason"])
         self._quality = quality if fact["evidence_verdict"] == "supported" else None
         return turn(json.dumps(fact, ensure_ascii=False))
 
@@ -168,15 +168,13 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     ])
     reviewer = StructuredReviewerAdapter([
         {
-            "numeric_verdict": "unsupported",
-            "reason": "The evidence says 70,000, not 72,000.",
-        },
-        {
             "evidence_verdict": "supported",
             "alignment_verdict": "aligned",
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
+            "numeric_verdict": "unsupported",
+            "numeric_reason": "The evidence says 70,000, not 72,000."
         },
         {
             "evidence_verdict": "supported",
@@ -195,7 +193,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 4  # numeric, then factual + quality after correction
+    assert len(reviewer.requests) == 3  # combined rejection, then factual + quality after correction
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     assert rejected not in str(main.requests[1].messages)  # rejected drafts remain quarantined
@@ -259,23 +257,19 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert "claim_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
-def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
+def test_numeric_budget_exhaustion_uses_combined_reviews() -> None:
     main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
     reviewer = StructuredReviewerAdapter([
         {
-            "numeric_verdict": "unsupported",
-            "reason": "The evidence says 70,000, not 72,000.",
-        },
-        {
             "evidence_verdict": "supported",
             "alignment_verdict": "misaligned",
-            "reasons": ["The requested comparison is missing."],
+            "reasons": [
+                "The requested comparison is missing."
+            ],
             "claims": [],
             "action_verdict": "not_applicable",
-        },
-        {
             "numeric_verdict": "unsupported",
-            "reason": "The evidence says 70,000, not 72,000.",
+            "numeric_reason": "The evidence says 70,000, not 72,000."
         },
         {
             "evidence_verdict": "supported",
@@ -283,10 +277,8 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
-        },
-        {
             "numeric_verdict": "unsupported",
-            "reason": "The evidence says 70,000, not 72,000.",
+            "numeric_reason": "The evidence says 70,000, not 72,000."
         },
         {
             "evidence_verdict": "supported",
@@ -294,6 +286,8 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
+            "numeric_verdict": "unsupported",
+            "numeric_reason": "The evidence says 70,000, not 72,000."
         },
     ])
     with pytest.raises(AgentRunFailure, match="VerificationRetriesExhausted"):
@@ -302,7 +296,7 @@ def test_numeric_budget_exhaustion_still_runs_alignment_review() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 6
+    assert len(reviewer.requests) == 3
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -489,15 +483,13 @@ def test_image_full_dates_ground_short_month_day_forms() -> None:
 def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
     reviewer = StructuredReviewerAdapter([
         {
-            "numeric_verdict": "supported",
-            "reason": "The Korean date phrase is equivalent to the full dates in the tool result.",
-        },
-        {
             "evidence_verdict": "supported",
             "alignment_verdict": "aligned",
             "reasons": [],
             "claims": [],
             "action_verdict": "not_applicable",
+            "numeric_verdict": "supported",
+            "numeric_reason": "The Korean date phrase is equivalent to the full dates in the tool result."
         },
     ])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
@@ -514,7 +506,7 @@ def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
     ))
 
     assert result.ok is True
-    assert len(reviewer.requests) == 3  # numeric, factual, quality
+    assert len(reviewer.requests) == 2  # combined numeric/factual, quality
     numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert numeric_payload["flagged_numeric_or_date_values"] == ["2026"]
     assert reviewer.requests[0].response_format["properties"]["numeric_verdict"]
