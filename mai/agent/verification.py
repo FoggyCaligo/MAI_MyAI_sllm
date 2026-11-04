@@ -195,7 +195,7 @@ class FinalVerificationResult:
     def correction_contract(self) -> dict[str, Any]:
         """Return all verifier findings as structured retry input, without truncation."""
         if self.ok:
-            return {"issues": [], "unsupported_claims": []}
+            return {"issues": [], "unsupported_claims": [], "uncertain_claims": []}
         details = self.review_details or {}
         claims = details.get("claims", ())
         return {
@@ -209,6 +209,11 @@ class FinalVerificationResult:
                 }
                 for claim in claims
                 if claim["verdict"] == "unsupported"
+            ],
+            "uncertain_claims": [
+                {"claim": claim["claim"], "reason": claim["reason"],
+                 "evidence_refs": claim.get("evidence_refs", [])}
+                for claim in claims if claim["verdict"] == "uncertain"
             ],
         }
 
@@ -389,9 +394,21 @@ class FinalGroundingVerifier:
                         fallback="The candidate contains a material factual claim not established by the evidence.",
                     ),
                 ))
+            uncertain_claims = tuple(claim for claim in review.claims if claim.verdict == "uncertain")
+            if uncertain_claims:
+                issues.append(VerificationIssue(
+                    code="claim_grounding_uncertain",
+                    message=_claim_issue_message(
+                        uncertain_claims,
+                        fallback="A material factual claim has unresolved grounding.",
+                    ),
+                ))
             if review.evidence_verdict == "unsupported" and not unsupported_claims:
                 reason = "; ".join(review.reasons) or "The reviewer identified a material unsupported factual claim."
                 issues.append(VerificationIssue(code="evidence_grounding_failed", message=reason))
+            elif review.evidence_verdict == "uncertain" and not uncertain_claims:
+                reason = "; ".join(review.reasons) or "Factual grounding remains unresolved."
+                issues.append(VerificationIssue(code="evidence_grounding_uncertain", message=reason))
 
             if review.action_verdict == "unverified":
                 reason = "; ".join(review.reasons) or (
@@ -526,8 +543,11 @@ class FinalGroundingVerifier:
         numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
         claims, reference_warnings = _filter_factual_references(facts, payload)
         evidence_verdict = (
-            "unsupported" if any(item.verdict == "unsupported" for item in claims)
-            else facts.evidence_verdict
+            "unsupported" if facts.evidence_verdict == "unsupported"
+            or any(item.verdict == "unsupported" for item in claims)
+            else "uncertain" if facts.evidence_verdict == "uncertain"
+            or any(item.verdict == "uncertain" for item in claims)
+            else "supported"
         )
         factual_reasons = tuple(dict.fromkeys(
             reason.strip() for reason in facts.reasons if reason.strip()
