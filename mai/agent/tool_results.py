@@ -90,19 +90,43 @@ class ToolResultStore:
     def retained_view(self, result_id: str, *, ranges: tuple[EvidenceRange, ...] | None = None) -> str:
         stored = self.original(result_id)
         selections = self._retained.get(result_id, ()) if ranges is None else ranges
+        selected_chars = sum(item.length for item in selections)
+        # Find the first omitted character structurally, without interpreting text.
+        next_offset = 0
+        for item in selections:
+            if item.offset != next_offset:
+                break
+            next_offset += item.length
+        total_chars = len(stored.content)
+        original_read = None
+        if total_chars:
+            offset = next_offset if next_offset < total_chars else 0
+            original_read = {
+                "tool": "tool_result_read",
+                "arguments": {"result_id": result_id, "offset": offset,
+                              "limit": min(self.max_read_chars, total_chars - offset)},
+            }
         return json.dumps({
+            "view_type": "selected_verbatim_evidence",
             "result_id": result_id,
             "source_sha256": stored.source_sha256,
             "total_chars": len(stored.content),
             "content_compacted": True,
             "read_with": "tool_result_read",
             "max_read_chars": self.max_read_chars,
+            "selection": {
+                "status": ("complete" if selected_chars == total_chars
+                           else "partial" if selections else "none"),
+                "selected_chars": selected_chars,
+                "omitted_chars": total_chars - selected_chars,
+            },
+            "original_read": original_read,
             "excerpts": [
                 {"offset": item.offset, "length": item.length,
                  "content": stored.content[item.offset:item.offset + item.length]}
                 for item in selections
             ],
-        }, ensure_ascii=False, separators=(",", ":"))
+        }, ensure_ascii=False, indent=2)
 
     def retain(self, selections: list[EvidenceSelection]) -> None:
         """Atomically replace explicit per-result selections with exact ranges."""
@@ -223,8 +247,12 @@ def register_tool_result_tools(registry: ToolRegistry, store: ToolResultStore) -
     registry.add(
         name="tool_result_read",
         description=(
-            "Read another character range from a large tool result that was stored because its full output "
-            "would exceed the model-facing result budget. The first output line is JSON pagination/range metadata; "
+            "Reopen a stored original tool result, including short results whose text was replaced by selected "
+            "excerpts. A selected_verbatim_evidence bundle contains an original_read tool/arguments reference "
+            "to the first omitted range (or the beginning when fully selected). Activate this tool through "
+            "tool_manual if necessary, then use that reference; do not rerun the source action just to read it. "
+            "Missing text in selected excerpts is not proof of absence from the original. "
+            "The first output line is JSON pagination/range metadata; "
             "pagination.has_more=true means the visible content is only a partial result and must not be treated "
             "as the complete collection. Use the exact result_id returned by the original tool and pagination.next_offset "
             "to continue. limit must be at most "

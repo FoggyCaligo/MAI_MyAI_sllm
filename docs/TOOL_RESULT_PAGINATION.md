@@ -38,6 +38,18 @@ offset/length는 0-based Python Unicode 문자 단위다. 범위를 벗어나거
 
 Verifier도 같은 발췌를 기본 근거로 받고, 필요하면 구조화된 read_requests를 통해 성공한 원래 출처의 범위를 재열람한다. 자세한 요청/판정 계약은 [verifier.md](verifier.md)를 따른다.
 
+## 발췌 근거 묶음과 원문 참조
+
+후속 문맥의 JSON은 `view_type=selected_verbatim_evidence`인 근거 묶음이다. `excerpts`에는 모델이 선택한 원문만 담으며 별도 생성 요약은 만들지 않는다. 읽기 쉽도록 필드와 발췌를 들여쓰기로 구분한다.
+
+- `selection.status`: 미선택 `none`, 일부 선택 `partial`, 전체 선택 `complete`를 구분한다. 빈 원문은 `complete`다.
+- `selected_chars`와 `omitted_chars`: 선택한 문자 수와 묶음에 없는 문자 수다. 누락은 원문에 해당 정보가 없다는 뜻이 아니다.
+- `original_read`: `tool_result_read` 이름과 바로 사용할 `arguments`를 제공하는 원문 참조다. 첫 누락 위치에서 읽으며 전체 선택 시 처음부터 재확인할 수 있다. 빈 원문에는 `null`이다.
+
+모델은 필요하면 `tool_manual`로 `tool_result_read`를 활성화한 뒤 참조의 인자를 사용한다. 원문은 해당 실행 동안 보관한 관측 결과이며, 웹 검색이나 터미널 작업을 다시 실행하지 않는다. 발췌 좌표는 JSON으로 직렬화된 도구 원문 기준이며 파일 자체의 줄 번호와 다르다.
+
+Verifier에는 실행 순서에 따른 `source_id`, 도구 이름, 같은 근거 묶음을 전달한다. `original_read_state.next_read_request`에는 verifier의 `source_id`에 맞춘 첫 미제공 구간의 읽기 인자가 들어간다. 이를 `read_requests`에 넣고 `review=null`로 요청할 수 있다. 추가 열람 후 참조도 남은 구간으로 갱신하며, 모두 제공되면 `null`이다. 이는 선택적인 재열람 안내이며 모든 원문을 읽도록 강제하지 않는다.
+
 ## Collection-producing tools
 
 `file_list`, `file_search`, `code_search`는 자체 `max_items` / `max_results` 제한에 걸릴 수 있다. 이 경우 결과에 `collection` metadata를 포함한다.

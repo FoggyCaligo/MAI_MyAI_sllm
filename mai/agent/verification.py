@@ -650,6 +650,9 @@ class FinalGroundingVerifier:
             "For already_provided ranges, use the existing reread_excerpts; return a verdict or request missing "
             "ranges instead. original_read_state lists unread original ranges for each source. Start a new read "
             "inside one of those ranges; complete=true means that source has no unread characters. "
+            "original_read_state.next_read_request supplies ready-to-use read_requests arguments for the "
+            "first unread range, using this review's source_id rather than the main agent's result_id. "
+            "It is a source link, not a requirement to read every omitted range. "
             "When all sources are complete, return the review using the supplied text, including unsupported "
             "or uncertain findings where appropriate. Reading more text cannot be required once it is all supplied. "
             "Repeated read rounds without new characters exhaust the progress budget."
@@ -671,6 +674,11 @@ class FinalGroundingVerifier:
                     "max_read_chars": evidence_store.max_read_chars,
                     "unread_ranges": [{"offset": left, "length": right - left} for left, right in unread],
                     "complete": not unread,
+                    "next_read_request": (
+                        {"source_id": source_id, "offset": unread[0][0],
+                         "limit": min(evidence_store.max_read_chars, unread[0][1] - unread[0][0])}
+                        if unread else None
+                    ),
                 }
                 read_options.extend((source_id, left, right, evidence_store.max_read_chars)
                                     for left, right in unread)

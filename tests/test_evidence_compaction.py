@@ -63,6 +63,44 @@ def test_retained_budget_is_an_error_instead_of_silent_truncation():
     assert len(store.original(result_id).content) == 3000
 
 
+def test_bundle_source_link_reopens_omitted_unicode_without_new_source():
+    store = ToolResultStore(max_inline_chars=2048)
+    source = "앞말🙂선택한 원문\n뒤의 조건"
+    result_id = selected(store, source, 3, 6)
+    bundle = json.loads(store.retained_view(result_id))
+    assert bundle["view_type"] == "selected_verbatim_evidence"
+    assert bundle["selection"] == {
+        "status": "partial", "selected_chars": 6, "omitted_chars": len(source) - 6,
+    }
+    link = bundle["original_read"]
+    assert link["tool"] == "tool_result_read"
+    header, text = store.read(**link["arguments"]).split("\n", 1)
+    assert json.loads(header)["result_id"] == result_id
+    assert text == source
+    assert bundle["excerpts"][0]["content"] == source[3:9]
+
+
+def test_bundle_distinguishes_no_selection_partial_and_complete():
+    store = ToolResultStore(max_inline_chars=2048)
+    result_id = store.capture("abcdefghij").result_id
+    bundle = json.loads(store.retained_view(result_id))
+    assert bundle["selection"]["status"] == "none"
+    assert bundle["excerpts"] == []
+    store.retain([EvidenceSelection(result_id=result_id, ranges=[
+        EvidenceRange(offset=0, length=3), EvidenceRange(offset=6, length=4),
+    ])])
+    bundle = json.loads(store.retained_view(result_id))
+    assert bundle["original_read"]["arguments"]["offset"] == 3
+    assert bundle["selection"]["omitted_chars"] == 3
+    store.retain([EvidenceSelection(result_id=result_id, ranges=[EvidenceRange(offset=0, length=10)])])
+    bundle = json.loads(store.retained_view(result_id))
+    assert bundle["selection"]["status"] == "complete"
+    assert bundle["original_read"]["arguments"]["offset"] == 0
+    empty = json.loads(store.retained_view(store.capture("").result_id))
+    assert empty["selection"]["status"] == "complete"
+    assert empty["original_read"] is None
+
+
 def test_main_round_and_verifier_receive_only_retained_ranges():
     class EchoInput(BaseModel):
         text: str
@@ -159,6 +197,8 @@ def test_reviewer_can_find_omitted_contradiction_under_original_source_id():
     assert "Only for existing customers." not in first["tool_results_in_execution_order"][0]["result"]
     assert second["tool_results_in_execution_order"][0]["reread_excerpts"][0]["content"] == source[17:45]
     assert len(second["tool_results_in_execution_order"]) == 1
+    state = first["tool_results_in_execution_order"][0]["original_read_state"]
+    assert state["next_read_request"] == {"source_id": "tool:0", "offset": 16, "limit": len(source) - 16}
     assert all(request.tools == () and request.think is False for request in reviewer.requests)
 
 

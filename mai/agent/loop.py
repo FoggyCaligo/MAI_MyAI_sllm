@@ -105,6 +105,10 @@ def _insert_tool_catalog(
                 '"ranges":[{"offset":0,"length":100}]}]}; choose actual in-bounds ranges. '
                 "Unselected original text is still available through tool_result_read; absence from excerpts "
                 "does not establish absence from the original. Retain ranges, not rewritten summaries. "
+                "The selected_verbatim_evidence bundle reports selection.status (none/partial/complete), "
+                "selected and omitted character counts, and original_read with executable tool arguments. "
+                "Use that source reference when more context is needed; activate tool_result_read first if "
+                "necessary. It reopens the stored observation without repeating the original action. "
                 if evidence_compaction else ""
             )
             + "Tool catalog (JSON): "
