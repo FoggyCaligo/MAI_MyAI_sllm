@@ -1,6 +1,8 @@
 # MAI MyAI sLLM — Working Contract
 
-이 문서는 현재 MAI production runtime이 지켜야 하는 **구조적 구현 계약**을 기록한다. 소개는 [`README.md`](README.md), memory 세부 구조는 [`MEMORY_V1.md`](MEMORY_V1.md), Web UI 실행은 [`setup.md`](setup.md)를 기준으로 한다.
+확인 기준: 2026-11-04, `dev`의 `ef4833078349a3799881d2307b5d0e8b00164ee7`.
+
+이 문서는 현재 MAI production runtime이 지켜야 하는 **구조적 구현 계약**을 기록한다. 소개는 [`README.md`](README.md), memory 세부 구조는 [`MEMORY_V1.md`](docs/MEMORY_V1.md), Web UI 실행은 [`setup.md`](setup.md)를 기준으로 한다.
 
 ---
 
@@ -40,7 +42,7 @@ Tool Requirement Planner와 frozen requirements 기반 필수 도구 강제 경�
 
 ## 3. Native tool contract
 
-MAI는 Ollama native `tools` / `tool_calls`를 직접 사용한다. `tool_manual`은 AgentLoop가 제공하는 run-local native tool로 활성화와 관측 원문 범위 선택을 담당한다. 상세 실행 도구 인자는 활성화 이후 native schema로 전달되며, 독자적인 JSON 텍스트 실행 프로토콜을 도입하지 않는다.
+MAI는 기본 Ollama 또는 명시적으로 선택한 llama.cpp adapter의 native `tools` / `tool_calls`를 사용한다. 자동 provider 전환은 없다. `tool_manual`은 AgentLoop가 제공하는 run-local native tool로 활성화와 관측 원문 범위 선택을 담당한다. 상세 실행 도구 인자는 활성화 이후 native schema로 전달되며, 독자적인 JSON 텍스트 실행 프로토콜을 도입하지 않는다.
 
 `OllamaAdapter`는 protocol translation만 담당한다. Tool call을 임의 텍스트 JSON으로 복원하거나 `<think>` 문자열을 파싱해 의미를 추정하지 않는다.
 
@@ -50,7 +52,7 @@ Tool schema/protocol 위반은 자동 보정하지 않고 명확하게 실패한
 
 ## 4. ToolRegistry
 
-실행 가능한 도구는 `ToolRegistry`의 `ToolDefinition`으로 등록한다. 예외적으로 `tool_manual`은 AgentLoop에서 직접 제공하는 활성화 전용 native tool이며, Registry의 도구를 추가하거나 외부 동작을 수행하지 않고 해당 run의 노출 schema 집합만 갱신한다.
+실행 가능한 도구는 `ToolRegistry`의 `ToolDefinition`으로 등록한다. 예외적으로 `tool_manual`은 AgentLoop에서 직접 제공하는 native tool이며, Registry의 도구를 추가하거나 외부 동작을 수행하지 않고 해당 run의 노출 schema 집합과 선택한 원문 발췌를 갱신한다.
 
 ```text
 name
@@ -71,7 +73,7 @@ Registry와 AgentLoop는 tool 이름의 의미를 문자열로 해석하지 않�
 
 AgentLoop는 multi-round model/tool 실행을 담당한다.
 
-구조적 guard는 identical call, identical failure, no-progress repetition 등을 제한한다. 현재 production contract에 별도의 global maximum model-round ceiling을 전제로 문서화하지 않는다.
+구조적 guard는 identical failure와 no-progress repetition을 제한한다. 동일한 성공 호출의 누적 횟수만으로 중단하지 않는다. `AGENT_MAX_IDENTICAL_CALLS`는 현재 동일 실패 경고 시점을 정하는 입력이며 고정 성공 호출 상한이 아니다. 현재 production contract에 별도의 global maximum model-round ceiling을 전제로 문서화하지 않는다.
 
 Guard는 semantic router가 아니다. Tool 실패 문자열을 보고 의미를 추측해 다른 route로 바꾸지 않는다.
 
@@ -85,7 +87,7 @@ Guard는 semantic router가 아니다. Tool 실패 문자열을 보고 의미를
 
 ### 6.1 Numeric grounding
 
-Material numeric fact가 current user messages 또는 tool evidence에 존재하는지 deterministic 검사한다.
+Material numeric fact가 current user messages, 성공한 원문 tool evidence 또는 이전 승인 대화에 존재하는지 deterministic 검사한다.
 불일치가 있으면 숫자검증 지침과 flagged values를 factual request에 추가하고 numeric_verdict/numeric_reason을 필수로 받는다. Python 예외나 필수 판정 누락을 성공으로 처리하지 않는다.
 
 ### 6.1.1 Retained evidence
@@ -96,7 +98,7 @@ Verifier는 같은 발췌를 기본 입력으로 받고 필요하면 read_reques
 
 ### 6.2 Model semantic review
 
-Reviewer는 strict structured output으로 다음 축을 반환한다.
+Factual reviewer는 `evidence_verdict`, `claims[]`, `action_verdict`, `reasons`, `retry_summary`를 반환한다. 숫자 검토가 추가되면 `numeric_verdict`·`numeric_reason`도 필수다. 선택적 quality reviewer는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons`, `reasons`를 반환한다. 두 호출의 결과를 합쳐 다음 축으로 다룬다.
 
 ```text
 evidence_verdict
@@ -160,7 +162,7 @@ Coverage는 “더 많은 정보를 찾아올 수 있었는가”가 아니다.
 - optional background 생략
 - evidence 밖의 추정 미제공
 
-Coverage correction budget은 grounding/semantic budget과 별도이며 **최대 2회**다. Budget 소진 후에는 coverage 부족만으로 더 block하지 않는다.
+Coverage correction budget은 grounding/semantic budget과 별도이며 **최대 2회**다. 소진 후에도 coverage가 미달이면 명시적으로 실패한다. 검증 축을 끄거나 실패 후보를 통과시키지 않는다. Numeric 2회, semantic 기본 2회, evidence/action 5회 예산도 각각 적용한다. 배포 `settings.yaml`은 quality review를 끄므로 coverage 검토도 기본 실행하지 않는다.
 
 ### 6.5 Action outcome
 
@@ -174,22 +176,11 @@ Provider/structured-output 오류에는 구현된 retry budget을 적용한다. 
 
 ---
 
-## 7. Failure recovery finalization
+## 7. Fatal failure와 진단 출력
 
-Main agent 실행이 fatal exception으로 종료되면 production composition root는 `FailureAnswerFinalizer`를 한 번 호출할 수 있다.
+Fatal failure는 `AgentRunFailure`로 원래 오류 종류·라운드·관측된 tool execution을 보존한다. Verifier 장애 중의 현재 후보 또는 마지막 거절 후보가 있으면 검증 미통과 진단으로 함께 보존할 수 있다.
 
-Recovery contract:
-
-- no tools
-- `think=False`
-- 실제 failure를 숨기지 않음
-- tool evidence 없이 성공을 발명하지 않음
-- confirmed / failed / unknown을 구분
-- 가능한 supported partial result를 사용자에게 반환
-
-Recovery finalizer 자체가 실패하면 원래 exception을 다시 raise한다.
-
----
+Web 응답/job에는 오류와 `unverified_answer`, `verifier_feedback` 등을 표시할 수 있지만 승인된 최종 답변으로 취급하지 않는다. 별도 failure finalizer 모델 호출로 성공 답변을 만드는 경로는 현재 없다.
 
 ## 8. Memory identity / account identity
 
@@ -227,7 +218,7 @@ Owner와 Trial 모두 ID + password 로그인이다.
 - 같은 `user_id`의 새 로그인은 기존 token을 폐기함
 - 다른 계정 token에는 영향 없음
 
-브라우저는 마지막 성공 `user_id`만 localStorage에 저장한다. Password는 browser storage에 저장하지 않는다.
+브라우저는 Bearer token과 로그인 전 실패 횟수 구분용 token을 `sessionStorage`에 저장한다. Password와 마지막 성공 `user_id`를 localStorage에 보관하는 경로는 현재 없다. 로그인 전 token은 `GET /login/session`의 JSON 응답으로 받고 `X-MAI-Preauth-Session` 헤더로 전송한다. 쿠키 방식이 아니다. 같은 세션의 인증 실패 10회는 1시간 잠금을 만들며, 실패 기록은 로그 DB에 해시로 보존한다. 상세는 [로그인 제한](docs/login-ip-lockout.md)을 따른다.
 
 ---
 
@@ -247,78 +238,44 @@ Running resumable chat job은 process memory에 있다. Browser/device disconnec
 
 ## 11. Permanent memory graph
 
-Permanent memory는 chat history나 vector store 자체가 아니다.
+새 생산 경로는 `anchor`, `fact`, `concept` 노드를 만들며 다음 연결을 사용한다.
 
 ```text
-User Anchor
-Utterance
-Fact
-Concept
+user_anchor -> fact : asserted_fact (user_assertion)
+fact -> concept    : mentions (fact_index)
 ```
 
-Relations:
+사용자 원문은 별도 `evidence` 테이블에 보관한다. 현재 새 Fact에서 원문 번호로 가는 연결은 만들지 않는다. `utterance` 타입과 `spoke`·`derived_fact` 같은 옛 관계는 기존 DB/저장소 API에 남아 있지만 매 턴 새 Utterance를 생성하지 않는다.
 
-```text
-user_anchor -> utterance : spoke
-user_anchor -> fact      : asserted_fact
-utterance   -> fact      : derived_fact
-utterance   -> concept   : mentions
-fact        -> concept   : mentions
-```
-
-Utterance는 source evidence로 보존하고 Fact가 원문을 덮어쓰지 않는다.
-
-Concept identity는 Sentence_Breaker canonical segment가 결정한다. FTS 결과가 Concept identity를 합치지 않는다.
-
-Persistent retrieval:
-
-```text
-query
-  ↓ Sentence_Breaker
-canonical segments
-  ↓
-exact hash lookup
-  ↓ miss
-SQLite FTS5 lexical retrieval
-  ↓
-Concept Node
-```
-
-Legacy vector/sqlite-vec table이 DB에 남아 있어도 자동 삭제하지 않는다.
-
----
+저장 시 Sentence_Breaker가 Fact를 canonical segment로 나누며 Concept identity를 정한다. 조회 시에는 검색어를 공백으로 나눠 exact hash와 SQLite FTS5로 검색한다. 검색에서 Sentence_Breaker를 다시 호출하지 않으며 FTS 결과로 Concept identity를 합치지 않는다. 옛 vector/sqlite-vec 테이블도 자동 삭제하지 않는다.
 
 ## 12. Memory tool contract
 
-Model-visible memory entry:
+단일 native 도구 `memory_search`가 세 모드를 제공한다.
 
-```text
-memory_overview(limit)
-memory_recall(query)
-memory_search(node_id)
-```
+| 입력 | 동작 |
+|---|---|
+| `keyword`, 선택적 양수 `limit` | 주제 검색. 최종 Fact 수에 limit 적용 |
+| 선택자 없이 `limit` | 최근 목록. 필수 1~50이며 기본값 없음 |
+| `node_id`만 | one-hop 확장과 현재 anchor까지 경로. `limit`·`keyword` 동시 지정 불가 |
 
-`memory_search`는 one-hop 확장이다. Helper가 숨겨진 arbitrary-depth traversal을 수행하지 않는다.
+주제 검색은 chunk별·전체 Concept seed 기본 최대 12개를 사용하고 현재 사용자 Fact를 필터링한다. 자신의 anchor 확장은 기본 5개 Fact이며 다른 사용자 anchor는 거부한다. 일반 노드 확장의 모든 이웃·경로에 동일한 소유권 필터가 있는 것은 아니다.
 
----
+모델용 snapshot에는 Fact/Utterance의 내용·번호·생성 시각·출처 정보만 담고 Concept/edges는 숨긴다. 내부 그래프와 모델 출력은 다르다. 상세는 [MEMORY_V1](docs/MEMORY_V1.md)을 따른다.
 
 ## 13. Post-response memory write
 
-Long-term graph mutation은 main agent/tool loop 뒤의 background lifecycle이다.
+승인된 답변을 얻은 뒤 같은 서버의 background 작업으로 장기기억을 기록한다. 같은 `db_id`의 다음 요청은 이전 작업을 기다린다. 종료 시 취소하며 durable queue로 재개하지 않는다.
 
-선택된 chat model과 동일한 모델을 `think=False` `OllamaFactExtractor`로 사용한다. 별도 `MEMORY_MODEL`은 없다.
+선택된 chat model을 `think=False`, 도구 없음으로 호출한다. 입력은 최신 사용자 원문, 직전 assistant 메시지, 현재 최종 답변, 성공한 비기억조회 실행의 최초 `context_content`다. 현재 최종 답변은 문맥 전용이며, 사용자의 폭넓은 동의는 같은 주제의 직전 답변에만 적용할 수 있다.
 
-Fact extraction input은 raw user turn, final answer context, successful non-recall tool evidence를 사용한다. `memory_overview`, `memory_recall`, `memory_search`로 읽어온 과거 memory는 새 world fact evidence처럼 재저장하지 않는다.
+출력은 `{"facts": [string, ...]}`다. 별도 사용자 발췌 선별·허용 출처 번호·검증된 최종 주장 목록을 전달하지 않는다. 성공한 `memory_search` 결과는 제외하며, 현재 admission 필터는 `tool_manual`·`tool_result_read`를 별도로 제외하지 않는다.
 
-Recall-only + extraction success + new fact 없음이면 persistent write를 skip할 수 있다.
-
-Extraction failure는 log에 드러내고 raw user turn 보존 방향으로 admission한다.
-
----
+`memory_search` 성공 + extraction 성공 + 새 Fact 없음이면 원문·그래프 쓰기를 생략한다. 추출 실패는 경고로 드러내고 원문 보관을 시도한다. 원문·Fact·Concept·색인 전체를 한 트랜잭션으로 묶지는 않는다.
 
 ## 14. Owner / Trial model contract
 
-Owner는 설치된 Ollama model을 선택할 수 있다.
+Owner는 선택한 백엔드가 제공하는 모델 목록에서 선택할 수 있다. Ollama는 설치 모델, llama.cpp는 `/v1/models` 목록을 사용한다.
 
 Trial은 configured `MAIN_MODEL` 하나로 고정한다. UI 제한에 의존하지 않고 server boundary에서 다른 model request를 거부한다.
 
@@ -337,10 +294,11 @@ Trial read
   file_list / file_search / file_read
     └─ text / PDF / DOCX / XLSX / CSV / PPTX
   code_search / code_read / code_symbols
+  csv_aggregate
   image_analyze  # configured only
 
 Trial mutation
-  file_write / file_create
+  file_write
   └─ own upload directory boundary only
 
 Trial unavailable
@@ -385,7 +343,7 @@ Remote public access는 `TAILSCALE_FUNNEL=true`로 구성한다.
 
 Legacy `TAILSCALE_SERVE=true`는 retired config이며 조용히 다른 의미로 처리하지 않는다.
 
-Funnel CLI/config/status failure는 startup failure로 드러낸다.
+Funnel 시작의 `TailscaleFunnelError`는 예외 로그에 남기고 로컬 서버는 계속 실행한다. `/health`의 `tailscale_funnel`은 `false`이며 공개 연결 성공으로 처리하지 않는다.
 
 ---
 
@@ -400,4 +358,12 @@ Funnel CLI/config/status failure는 startup failure로 드러낸다.
 - helper가 main response contract를 우회
 - 특정 주제/관계/identity를 문자열 rule로 판정
 
-허용되는 recovery는 **실패 사실을 유지한 채 이미 확보된 evidence로 truthful partial answer를 만드는 것**이다.
+본 모델이 근거 범위에 맞는 부분 답변으로 교정하여 검증을 통과할 수는 있다. Fatal failure 뒤에 helper가 승인된 답변을 대신 생성하는 경로는 없다.
+
+## 19. 설정의 실제 적용 범위
+
+배포 기본값은 `settings.yaml`, 개인 계정·경로·공개 설정은 `.env`에 둔다. 기존 프로세스 환경변수 > `.env` > YAML 순으로 적용한다. YAML의 timeout은 500초, main Ollama 출력 한도는 32,768토큰, 한 번의 도구 결과 입력은 8,000자, 최근 대화는 메시지 10개, quality review는 `false`다.
+
+`OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 현재 설정 로더가 허용하지만 실행 경로에 값을 읽는 소비자가 없다. 값을 바꾸면 동작이 바뀐다고 안내해서는 안 된다. Main adapter는 `think=True`로 구성하고 구체적 도구 timeout은 등록 함수 인자로 정한다.
+
+Owner PC 도구는 같은 이름에 `is_remote`를 추가한다. 생략/`false`는 MAI 호스트, `true`는 해당 계정의 활성 원격 세션에서 실행한다. 세션이 없으면 오류이며 로컬로 대체하지 않는다. [원격 연결](docs/remote-powershell-connection.md)을 참고한다.

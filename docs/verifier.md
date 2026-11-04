@@ -3,7 +3,7 @@
 Verification has a deterministic numeric precheck, one combined factual/numeric
 model review, and an optional answer-quality review.
 
-1. Python checks numeric/date values against original user/tool evidence. A failed token match identifies values needing semantic equivalence review; a Python exception remains an error.
+1. Python checks numeric/date values against original user/tool evidence and previously accepted conversation. A failed token match identifies values needing semantic equivalence review; a Python exception remains an error.
 2. The **Factual Reviewer** checks claims, source scope, timestamps and claimed external action outcomes. When Python flags values, the same request includes the numeric-equivalence instructions and flagged values, and the structured response requires `numeric_verdict` and `numeric_reason`. There is no separate numeric-model request. The reviewer initially receives retained verbatim excerpts and source references, and can request original ranges as described below. It does not judge completeness or task alignment.
 3. Only after factual grounding and action-outcome checks pass does the **Answer Quality Reviewer** assess evidence coverage, alignment with the user's request, and truthful partial-answer policy. It receives the candidate, conversational request/context, and factual findings, not the entire tool-result payload.
 
@@ -11,15 +11,37 @@ Both stages review the *already-created provisional final answer*. After both pa
 
 ## Configuration
 
-`MAI_ANSWER_QUALITY_REVIEW=true` (default): run Answer Quality after Factual passes.
+`MAI_ANSWER_QUALITY_REVIEW=true`: run Answer Quality after Factual passes.
 
 `MAI_ANSWER_QUALITY_REVIEW=false`: skip Answer Quality and release after Factual passes, assuming Numeric also passes.
+
+The shipped `settings.yaml` sets this to `false`. If the verifier is instantiated
+directly without loading settings or setting the environment variable, its
+constructor default is `true`. Process environment values override `.env`, and
+`.env` values override YAML defaults.
 
 The setting accepts the exact values `true` and `false` (case insensitive). Invalid values fail at verifier initialization.
 
 This toggle does not disable numeric or factual grounding checks. A missing
 combined numeric verdict is a schema violation, not numeric success. Quality is
 skipped when numeric or factual grounding fails.
+
+## Input size and correction limits
+
+The factual payload clips `current_user_request` to 4,000 characters and
+`candidate_final` to 6,000. It also carries `conversation_context`, `user_evidence`
+and `verified_prior_conversation` separately, so some history is duplicated.
+These fields are not a single global character/token budget. Production normally
+loads the latest 10 messages (`SESSION_HISTORY_MESSAGES`); system instructions and
+THINK output are excluded from conversation evidence. Each ordinary source starts
+with selected excerpts and reference metadata, subject to the per-result budget
+in [TOOL_RESULT_PAGINATION.md](TOOL_RESULT_PAGINATION.md).
+
+Main-model correction budgets are numeric 2, semantic 2 by default, evidence/action
+5, and coverage 2. Exhaustion raises an error; it does not disable an axis or
+release a failing candidate. Structured reviewer/provider calls have a separate
+maximum of 3 attempts for retryable errors. Valid verdicts are not retried just
+to obtain a different judgment.
 
 ## Retained evidence and original reads
 

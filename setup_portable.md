@@ -14,7 +14,8 @@
 ```text
 MAI_MyAI_sllm/
 ├── mai/                            # MAI 코드
-├── .env                            # 로그인 및 실행 설정(공개 금지)
+├── .env                            # 로그인 및 개인 설정(공개 금지)
+├── settings.yaml                   # 비밀이 아닌 동작 기본값
 ├── data/                           # 기억·대화·로그 SQLite DB
 ├── portable-sources.json           # 검증된 다운로드 URL 및 SHA-256 (직접 생성)
 ├── portable-downloads/            # 다운로드 아카이브 캐시
@@ -67,7 +68,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Mani
 
 - `-CopyLocalModels`: 현재 PC의 `OLLAMA_MODELS` 경로(없으면 사용자 프로필의 `.ollama/models`)를 SSD로 복사함. 복사 전 기존 Ollama의 모델 기록 작업을 종료할 것.
 - `-InstallChromium`: Playwright가 사용하는 Chromium을 별도로 다운로드함.
-- `-PullModels`: 로컬 모델 복사 대신 manifest의 모델을 다운로드할 때 선택하는 옵션임. 이 옵션에는 모델용 Ollama 서버 실행 조건이 필요함.
+- `-PullModels`: 로컬 모델 복사 대신 manifest의 모델을 다운로드할 때 선택하는 옵션임. SSD의 Ollama를 임시 서버로 시작하므로 기존 Ollama 설치는 필요하지 않으나 포트 충돌은 오류임.
 - `--include-llamacpp`: **목록 생성 스크립트에만** 전달하는 옵션임. 설치 스크립트 옵션이 아님.
 
 런타임이 이미 설치되어 있고 출처 기록이 일치하면 `Reusing verified runtime`이라고 출력함. 설치 기록이 없는 **이전 설치본**은 자동으로 덮어쓰지 않음. 기존 폴더를 보존한 뒤 새로 설치하려는 경우에만 명시적으로 아래 옵션을 사용함.
@@ -149,7 +150,7 @@ powershell -NoProfile -Command '$env:PLAYWRIGHT_BROWSERS_PATH=(Join-Path (Get-Lo
 - SQLite의 DB 복사 시점에는 쓰기 프로세스를 모두 종료해야 함.
 - Windows용 실행 환경과 Ubuntu 24.04 x86-64용 실험적 실행 환경은 분리됨. Linux에서는 Python/Ollama를 PC의 로컬 캐시에 준비해 실행함. **Ubuntu 호스트에서 최초 준비 작업이 필요하고 완전 오프라인 플러그 앤 플레이는 아직 보장하지 않음.**
 
-추가 설명: [기존 Portable 디스크 준비 문서](setup-portable.md), [Windows Portable 기술 문서](docs/portable-windows.md).
+추가 설명: [통합 설치 가이드](setup.md), [Windows Portable 기술 문서](docs/portable-windows.md).
 
 ## 8. Ubuntu 24.04 LTS x86-64 첫 지원 (실험적)
 
@@ -199,12 +200,12 @@ Chromium 사용 시 Ubuntu 시스템 의존 라이브러리가 없으면 별도 
 bash ./start-portable-linux.sh
 ```
 
-이 명령은 Ubuntu PC의 캐시에서 Linux Python과 Ollama를 실행하면서 SSD에 있는 `portable-models/ollama` 및 `data/`를 사용함. `.env`는 SSD에서 읽음. 모델과 DB 복사본을 PC별로 만들지 않음. **기존 Ollama가 11434 포트를 점유한다면 오류로 중단하며 임의로 기존 서버를 재사용하지 않음.** MAI 웹 UI는 `http://127.0.0.1:8000`에서 확인함.
+이 명령은 Ubuntu PC의 캐시에서 Linux Python과 Ollama를 실행하면서 SSD에 있는 `portable-models/ollama` 및 `data/`를 사용함. `.env`와 `settings.yaml`은 SSD에서 읽음. 모델과 DB 복사본을 PC별로 만들지 않음. **기존 Ollama가 11434 포트를 점유한다면 오류로 중단하며 임의로 기존 서버를 재사용하지 않음.** MAI 웹 UI는 `http://127.0.0.1:8000`에서 확인함.
 
 ### 제한 및 검증
 
 - 최초 Ubuntu PC에서는 Linux 실행 환경 준비가 필요하며, **아카이브만 가지고 새 Ubuntu PC에서 완전 오프라인 최초 실행까지 보장하는 기능은 아직 미구현**임.
 - Ubuntu PC 로컬 캐시가 삭제되거나 SSD 경로가 바뀌면 해당 PC에서 준비 스크립트를 다시 실행해야 할 수 있음.
-- AMD/NVIDIA GPU 추론은 호스트 드라이버와 엔진 지원에 따라 달라짐. 본 PR은 GPU 드라이버를 설치하거나 GPU 실행을 보장하지 않음.
+- AMD/NVIDIA GPU 추론은 호스트 드라이버와 엔진 지원에 따라 달라짐. 준비 스크립트는 GPU 드라이버를 설치하거나 GPU 실행을 보장하지 않음.
 - Ollama 모델 목록 확인, 한 차례 텍스트 추론, 대화 DB 쓰기, Windows로 돌아온 뒤 DB 읽기, Chromium 웹도구, Tailscale 접근을 각각 실제 PC에서 시험해야 함.
 - Tailscale/Funnel은 PC별 설치·인증·기기 등록·설정이 필요하며 외장 SSD에 있는 MAI 코드만으로 자동 복원되지 않음.
