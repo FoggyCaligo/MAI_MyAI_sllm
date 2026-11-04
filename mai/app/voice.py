@@ -52,7 +52,6 @@ class VoiceService:
     def _waveform(self, payload: bytes, *, minimum_seconds: float):
         import numpy as np
         from scipy.signal import resample_poly
-        from vadonnx import load_vad
         from math import gcd
 
         if len(payload) > 20 * 1024 * 1024:
@@ -74,6 +73,7 @@ class VoiceService:
         divisor = gcd(rate, 16000)
         processed = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
         if self._vad is None:
+            from vadonnx import load_vad
             self._vad = load_vad("silero")
         vad = self._vad
         timestamps = vad.get_speech_segments(processed, sample_rate=16000)

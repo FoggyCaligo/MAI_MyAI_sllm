@@ -56,8 +56,36 @@ def test_short_recording_reports_structured_insufficient_speech(tmp_path, monkey
         output.setnchannels(1)
         output.setsampwidth(2)
         output.setframerate(16000)
-        output.writeframes(bytes(16000))
+        output.writeframes(bytes(8000))  # 0.25 seconds of 16-bit mono PCM
     with pytest.raises(HTTPException) as exc:
         voice._waveform(wav.getvalue(), minimum_seconds=0.5)
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == "insufficient_speech"
+    assert voice._vad is None
+
+
+def test_minimum_duration_silence_uses_injected_vad_without_model_download(tmp_path, monkeypatch):
+    import io
+    import wave
+
+    monkeypatch.setenv("VOICE_PROFILE_DIR", str(tmp_path))
+    voice = VoiceService()
+    calls = []
+
+    class SilentVAD:
+        def get_speech_segments(self, audio, *, sample_rate):
+            calls.append((len(audio), sample_rate))
+            return []
+
+    voice._vad = SilentVAD()
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(bytes(16000))  # exactly 0.5 seconds
+    with pytest.raises(HTTPException) as exc:
+        voice._waveform(wav.getvalue(), minimum_seconds=0.5)
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "insufficient_speech"
+    assert calls == [(8000, 16000)]
