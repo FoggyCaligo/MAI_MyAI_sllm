@@ -2,7 +2,7 @@
 # Provision Linux-native MAI into a host-local cache, leaving the NTFS SSD untouched.
 set -euo pipefail
 
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   echo "Ubuntu 24.04 x86-64 is required" >&2; exit 1
 fi
@@ -14,10 +14,10 @@ for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
 if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--install-chromium" ) ]]; then
-  echo "Usage: bash prepare-portable-linux.sh [--install-chromium]" >&2; exit 2
+  echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium]" >&2; exit 2
 fi
-manifest="$root/portable-sources-linux.json"
-[[ -f "$manifest" ]] || { echo "Missing $manifest; create with scripts/resolve_portable_sources_linux.py" >&2; exit 1; }
+manifest="$root/portable/portable-sources-linux.json"
+[[ -f "$manifest" ]] || { echo "Missing $manifest; create with portable/resolve_portable_sources_linux.py" >&2; exit 1; }
 export MAI_LINUX_ROOT="$root"
 export MAI_LINUX_MANIFEST="$manifest"
 cache_base="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable"
@@ -45,7 +45,7 @@ for name in ("python", "uv", "ollama"):
     if url.scheme != "https" or url.hostname != "github.com" or len(entry["sha256"]) != 64 or any(c not in "0123456789abcdefABCDEF" for c in entry["sha256"]):
         raise ValueError(f"Invalid pinned release URL or digest: {name}")
 PY
-archive_dir="$root/portable-downloads/linux"
+archive_dir="$root/portable/portable-downloads/linux"
 mkdir -p "$archive_dir"
 fetch() {
   local name="$1" url hash file actual
@@ -119,4 +119,4 @@ if [[ "${1:-}" == "--install-chromium" ]]; then
   "$python" -m playwright install chromium
 fi
 echo "[Linux Portable] Host runtime prepared: $cache"
-echo "Run: bash '$root/start-portable-linux.sh'"
+echo "Run: bash '$root/portable/start-portable-linux.sh'"

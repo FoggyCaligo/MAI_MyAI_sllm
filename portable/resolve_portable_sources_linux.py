@@ -7,8 +7,11 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
-from scripts.resolve_portable_sources import resolve_one
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from portable.resolve_portable_sources import resolve_one
 
 SOURCES_LINUX = {
     "python": ("astral-sh", "python-build-standalone",
@@ -20,7 +23,7 @@ SOURCES_LINUX = {
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=Path("portable-sources-linux.json"))
+    parser.add_argument("--output", type=Path, default=Path(__file__).resolve().with_name("portable-sources-linux.json"))
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(f"Refusing to overwrite pinned manifest: {args.output}")

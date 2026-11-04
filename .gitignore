@@ -9,21 +9,21 @@ mai_uploads/
 htmlcov/
 data/log.sqlite3*
 
-# Local biometric voice embeddings
+# 로컬 화자 특징 데이터
 data/voice_profiles/
 
-# Externally provisioned portable runtimes and large model weights
-portable-runtimes/
-portable-models/
+# 별도 준비한 Portable 실행 환경과 대형 모델
+portable/portable-runtimes/
+portable/portable-models/
 
-# Downloaded Portable runtime archives and local source pins
-portable-downloads/
-portable-sources.json
+# Portable 원본 다운로드와 로컬 배포 고정 목록
+portable/portable-downloads/
+portable/portable-sources.json
 
-# Linux host-specific pinned release manifest
-portable-sources-linux.json
+# Linux용 배포 고정 목록
+portable/portable-sources-linux.json
 
-# Local Windows Remote Agent packaging artifacts
+# 로컬 Windows 원격 에이전트 패키징 결과
 build/
 dist/
 *.spec

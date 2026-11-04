@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 from mai.app.chat_sessions import ChatSessionStore
-from reset_trial import _reset_chat_history
+from scripts.reset_trial import _reset_chat_history
 
 
 def test_reset_chat_history_removes_only_selected_trial_db_id(tmp_path) -> None:

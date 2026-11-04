@@ -17,11 +17,11 @@
 python scripts/audit_references.py
 ```
 
-이 도구는 `mai/**/*.py` 전체를 대상으로 하며, 루트·`scripts/`·`tests/`의 Python 파일에서 정적 `import`/`from ... import ...` 관계를 수집한다. 구문/파일 읽기에 실패하면 명확하게 실패한다. 출력된 항목은 **삭제 확정이 아니라 검토 후보**다.
+이 도구는 `mai/**/*.py` 전체를 대상으로 하며, 루트·`scripts/`·`portable/`·`tests/`의 Python 파일에서 정적 `import`/`from ... import ...` 관계를 수집한다. 구문/파일 읽기에 실패하면 명확하게 실패한다. 출력된 항목은 **삭제 확정이 아니라 검토 후보**다.
 
 정적 import만으로는 다음 사용을 증명하거나 부정할 수 없다.
 
-- `run_server.py` 같은 직접 실행 진입점
+- `scripts/run_server.py` 같은 직접 실행 진입점
 - FastAPI 데코레이터 및 등록을 통한 간접 호출
 - `importlib` 및 런타임 플러그인 탐색
 - 템플릿/HTML/JS 등의 정적 리소스, 파일명에 의한 런타임 접근
@@ -31,7 +31,7 @@ python scripts/audit_references.py
 
 | 구성 요소 | 확인된 사용처 | 판정 |
 | --- | --- | --- |
-| `run_server.py` | 공식 서버 실행 경로, `resumable_chat.install()` 호출 | 유지 |
+| `scripts/run_server.py` | 공식 서버 실행 경로, `resumable_chat.install()` 호출 | 유지 |
 | `mai/app/server.py` | FastAPI 앱 생성, API·DB·런타임 설정 | 유지 |
 | `mai/app/resumable_chat.py` | 작업 기반 채팅, `/` UI, `/chat/jobs` 라우트 | 유지 |
 | `mai/app/chat_sessions.py` | 세션 저장, 기존 DB 형식 마이그레이션 | 유지 |

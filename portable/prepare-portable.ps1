@@ -10,7 +10,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
+$root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 function Get-Required([object]$obj, [string]$property) {
@@ -25,7 +26,7 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
     $hash = Get-Required $entry 'sha256'
     if ($url -notmatch '^https://') { throw "Only HTTPS release URLs are allowed: $url" }
     if ($hash -notmatch '^[0-9a-fA-F]{64}$') { throw "Invalid SHA-256 for $destination" }
-    $cache = Join-Path $root 'portable-downloads'
+    $cache = Join-Path $root 'portable/portable-downloads'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $archiveName = [IO.Path]::GetFileName(([uri]$url).AbsolutePath)
     if ($archiveName -notmatch '\.(zip|tar\.gz)$') { throw "Unsupported archive type: $archiveName" }
@@ -114,10 +115,9 @@ if ($selectedModels.Count -gt 0 -and -not $CopyLocalModels) {
 if ($CopyLocalModels -and $PullModels) {
     throw '-CopyLocalModels and -PullModels cannot be used together'
 }
-$manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
-$runtimes = Join-Path $root 'portable-runtimes'
+$runtimes = Join-Path $root 'portable/portable-runtimes'
 New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
 Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
 Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
@@ -146,9 +146,9 @@ if ($CopyLocalModels) {
     if (-not (Test-Path -LiteralPath $sourceModels -PathType Container)) {
         throw "Source Ollama models not found: $sourceModels"
     }
-    $targetModels = Join-Path $root 'portable-models\ollama'
+    $targetModels = Join-Path $root 'portable/portable-models\ollama'
     if ($selectedModels.Count -gt 0) {
-        $copyArgs = @('scripts/copy_ollama_models.py', '--source', $sourceModels, '--destination', $targetModels)
+        $copyArgs = @('portable/copy_ollama_models.py', '--source', $sourceModels, '--destination', $targetModels)
         foreach ($model in $selectedModels) {
             $copyArgs += @('--model', $model)
         }
@@ -168,7 +168,7 @@ if ($PullModels) {
     if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) {
         throw 'Port 11434 is already in use; stop the existing Ollama service before model provisioning'
     }
-    $env:OLLAMA_MODELS = Join-Path $root 'portable-models\ollama'
+    $env:OLLAMA_MODELS = Join-Path $root 'portable/portable-models\ollama'
     New-Item -ItemType Directory -Path $env:OLLAMA_MODELS -Force | Out-Null
     $ollamaExe = Join-Path $runtimes 'ollama\ollama.exe'
     $process = Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollamaExe) -PassThru -NoNewWindow
@@ -197,4 +197,4 @@ if ($PullModels) {
     }
 }
 Write-Host "Portable installation prepared under $root"
-Write-Host 'Verify all model tags and run start-portable.ps1; this script does not fabricate missing models.'
+Write-Host 'Verify all model tags and run portable/start-portable.ps1; this script does not fabricate missing models.'

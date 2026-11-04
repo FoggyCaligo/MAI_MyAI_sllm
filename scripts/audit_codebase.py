@@ -52,7 +52,7 @@ def audit(root: Path) -> dict[str, object]:
     sources = sorted(package_dir.rglob("*.py"))
     if not sources:
         raise ValueError("no MAI Python modules found")
-    auxiliaries = sorted([*root.glob("*.py"), *(root / "scripts").rglob("*.py"),
+    auxiliaries = sorted([*root.glob("*.py"), *(root / "scripts").rglob("*.py"), *(root / "portable").glob("*.py"),
                           *(root / "tests").rglob("*.py")])
     all_sources = sorted(set(sources + auxiliaries))
     modules = {_module_name(root, path): path for path in sources}

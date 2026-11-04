@@ -90,41 +90,14 @@ ollama list
 5. 실행 후 `http://127.0.0.1:8000` 접속.
 
 ```powershell
-python run_server.py
+python scripts/run_server.py
 ```
 
 자동 설치를 선호하면 `scripts/install_windows.ps1`을 확인한 뒤 사용할 수 있음. 이 스크립트는 시스템 Git·Python·Ollama 설치 및 초기 `.env` 생성을 자동화함. **이미 `.env`가 있으면 초기 계정 재설정을 하지 않음.**
 
-### 2-B. Portable 설치 — Ollama 미설치 PC 및 외장 SSD
+### 2-B. 외장 SSD Portable 설치
 
-**전제:** 처음 준비하는 Windows PC에 Ollama가 설치되어 있지 않음. 프로그램 자체는 외장 SSD의 `portable-runtimes/`에 배치됨. 그러나 최초 준비를 위한 Git, PowerShell 및 Python 런처는 필요하며, 다운로드 시 인터넷이 필요함. 외장 SSD는 프로젝트 운영 정책상 NTFS를 사용하고, 포맷 시 모든 기존 데이터가 삭제되므로 **포맷 대상/백업 확인 후 Windows 파일 탐색기에서 사용자가 수동 포맷**해야 함. 설치 스크립트는 디스크를 포맷하지 않음.
-
-1. **1장 공통 절차를 외장 SSD의 프로젝트 폴더에서 실행**하고, SSD에서 `settings.yaml`과 `.env`를 설정함.
-2. 별도 PC Python이 필요한 최초 매니페스트 생성: `py --version` 또는 `python --version`으로 사용 가능한 Python 확인. Python이 없다면 먼저 설치해야 함(이는 Portable 런타임 준비 과정의 부트스트랩 요구사항임). Git Bash에서:
-
-```bash
-python scripts/resolve_portable_sources.py
-```
-
-이 명령은 공식 배포 자산 URL 및 SHA-256을 기록한 `portable-sources.json`을 생성하며, **기본 모델 목록을 `ornith-1.5:9b`, `gemma4:e4b` 두 개로 지정함.** 이미 매니페스트가 존재하면 자동으로 덮어쓰지 않음. GitHub API 한도를 초과하거나 게시자가 검증 가능한 SHA-256을 제공하지 않으면 실패함.
-
-3. **기존 Ollama 모델 복사 옵션을 사용하지 않고**, Portable Python/uv/Ollama 런타임 준비와 두 모델 다운로드를 실행함.
-
-```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File ./prepare-portable.ps1 -Manifest ./portable-sources.json -PullModels -InstallChromium
-```
-
-`-PullModels`는 외장 SSD의 Ollama 실행 파일을 서버로 시작하여 매니페스트의 **두 모델만** 내려받음. 별도의 Ollama가 PC에 설치되어 있을 필요가 없지만, 11434 포트 충돌이나 다운로드 오류가 있으면 설치가 명확히 실패함. `-CopyLocalModels`는 사용하지 않음.
-
-4. 필요한 파일의 준비 상태와 두 모델의 설치가 끝난 것을 확인한 뒤 서버 실행.
-
-```bash
-powershell -NoProfile -ExecutionPolicy Bypass -File ./start-portable.ps1 -Backend ollama
-```
-
-5. `http://127.0.0.1:8000`에서 로그인해 테스트. 종료한 뒤 SSD를 안전하게 분리. 다른 PC에서는 호환되는 Windows x64 환경, 드라이버, 파일 접근 권한과 포트 상태를 확인해야 함. **Portable이라고 GPU 드라이버까지 포함되거나 모든 PC에서 무설치 실행이 보장되는 것은 아님.**
-
-현재 Windows Portable 실행 경로가 제공되며, Ubuntu/Linux는 별도 실험적 준비와 호스트 종속성이 필요함. 상세 진단/추가 백엔드 기능은 [Portable 참고 문서](setup_portable.md) 및 [Portable 기술 설명](docs/portable-windows.md)을 참고할 수 있음.
+준비·실행·모델 선택 복사·Ubuntu·백업은 [Portable 안내](portable/README.md) 한곳에서 관리한다. 일반 설치와 달리 `portable/` 아래 별도 실행 환경을 사용한다. 계정과 Tailscale·음성 설정은 아래 공통 안내를 따른다.
 
 ## 3. 고급 설정 (선택)
 
@@ -166,9 +139,20 @@ python scripts/audit_codebase.py
 - Ollama 연결 실패: 서버 실행, `OLLAMA_HOST`, 모델 이름 및 `ollama list` 확인.
 - 모델 미존재: 사용할 모델이 실제 Ollama 모델 저장소에 설치됐는지 확인.
 - 기존 설정과 YAML이 다르게 동작: `.env`의 동일 키 또는 환경변수 우선순위 확인.
-- Portable 준비 오류: `portable-sources.json`의 제공자 SHA-256, 11434 포트, SSD 사용 권한 및 디스크 여유 공간 확인.
+- Portable 준비 오류: `portable/portable-sources.json`의 제공자 SHA-256, 11434 포트, SSD 사용 권한 및 디스크 여유 공간 확인.
 - MAI DB 백업: 먼저 서버와 모델·기억 저장 작업을 종료하고 `.env`, `settings.yaml`, `data/`를 포함한 백업을 다른 저장장치에 보존할 것.
 
 ## 5. 라이선스
 
 MAI의 라이선스는 AGPL-3.0-only이며 최초 개발자는 신재용임. 자세한 사항은 [LICENSE](LICENSE), [NOTICE](NOTICE)를 참조.
+
+## 6. 체험 계정 초기화
+
+서버를 종료하고 프로젝트 루트에서 실행한다. 실제 삭제 전 `--dry-run`으로 대상 계정과 DB·업로드 경로를 확인한다.
+
+```powershell
+python scripts/reset_trial.py 체험판 --dry-run
+python scripts/reset_trial.py 체험판
+```
+
+`TRIAL_USERS`에 설정된 정확한 `user_id`만 받으며 안정적인 `db_id` 기준으로 해당 계정의 기억·대화·업로드를 초기화한다. 실제 실행에는 확인 입력이 필요하고 `--yes`로 생략할 수 있다. 경로를 별도 지정하려면 `--db`, `--chat-db`, `--upload-root`를 사용한다. 상대경로는 프로젝트 루트 기준이다.

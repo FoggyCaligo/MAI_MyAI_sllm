@@ -89,7 +89,7 @@ def resolve_one(owner: str, repo: str, asset_pattern: str) -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=Path("portable-sources.json"))
+    parser.add_argument("--output", type=Path, default=Path(__file__).resolve().with_name("portable-sources.json"))
     parser.add_argument("--include-llamacpp", action="store_true")
     args = parser.parse_args()
     if args.output.exists():

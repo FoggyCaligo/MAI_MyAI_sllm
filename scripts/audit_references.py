@@ -27,7 +27,7 @@ def main() -> None:
 
     incoming: dict[str, set[str]] = defaultdict(set)
     parse_errors: list[str] = []
-    for source in sorted((*sources, *root.glob("*.py"), *(root / "scripts").glob("*.py"),
+    for source in sorted((*sources, *root.glob("*.py"), *(root / "scripts").glob("*.py"), *(root / "portable").glob("*.py"),
                           *(root / "tests").rglob("*.py"))):
         try:
             tree = ast.parse(source.read_text(encoding="utf-8-sig"), filename=str(source))

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.copy_ollama_models import copy_models
+from portable.copy_ollama_models import copy_models
 
 
 def add_model(root: Path, name: str, blob: bytes) -> Path:

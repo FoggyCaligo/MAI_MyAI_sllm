@@ -15,6 +15,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from dotenv import load_dotenv
 
 from mai.app.access import AccessPolicy, AccessRole
@@ -46,7 +49,7 @@ def _load_trial_principal(trial_id: str):
     )
     principal = policy.configured_principal(trial_id)
     if principal.role is not AccessRole.TRIAL:
-        raise ValueError("reset_trial.py only accepts user_id values configured in TRIAL_USERS")
+        raise ValueError("scripts/reset_trial.py only accepts user_id values configured in TRIAL_USERS")
     return principal
 
 
@@ -241,7 +244,7 @@ def _reset_uploads(upload_dir: Path, *, dry_run: bool) -> dict[str, int]:
 
 
 def main() -> int:
-    load_dotenv()
+    load_dotenv(PROJECT_ROOT / ".env")
     args = _parse_args()
     listening, host, port = _server_is_listening()
     if listening:
@@ -311,4 +314,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    os.chdir(PROJECT_ROOT)
     raise SystemExit(main())

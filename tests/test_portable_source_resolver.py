@@ -1,7 +1,7 @@
 """Release resolver checks official asset-bearing releases, not just /releases/latest."""
 from unittest.mock import patch
 
-from scripts.resolve_portable_sources import resolve_one
+from portable.resolve_portable_sources import resolve_one
 
 
 def test_llamacpp_skips_non_binary_latest_release():
@@ -17,7 +17,7 @@ def test_llamacpp_skips_non_binary_latest_release():
             ]
         raise AssertionError(path)
 
-    with patch("scripts.resolve_portable_sources.github_json", side_effect=github_json):
+    with patch("portable.resolve_portable_sources.github_json", side_effect=github_json):
         result = resolve_one("ggml-org", "llama.cpp", r"llama-.*-bin-win-vulkan-x64\.zip")
     assert result["sha256"] == "a" * 64
     assert "/download/b12345/" in result["url"]

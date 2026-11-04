@@ -1,179 +1,71 @@
-# Final answer verification
+# 최종 답변 검증
 
-Verification has a deterministic numeric precheck, one combined factual/numeric
-model review, and an optional answer-quality review.
+검증은 이미 생성된 답변 초안을 검사한다. 승인되면 그 초안을 그대로 전달하고, 반려되면 도구를 사용할 수 있는 본 모델 차례로 돌아가 수정한다. 검증기를 통과하지 않은 초안을 보조 경로로 성공 처리하지 않는다.
 
-1. Python checks numeric/date values against original user/tool evidence and previously accepted conversation. A failed token match identifies values needing semantic equivalence review; a Python exception remains an error.
-2. The **Factual Reviewer** checks claims, source scope, timestamps and claimed external action outcomes. When Python flags values, the same request includes the numeric-equivalence instructions and flagged values, and the structured response requires `numeric_verdict` and `numeric_reason`. There is no separate numeric-model request. The reviewer initially receives retained verbatim excerpts and source references, and can request original ranges as described below. It does not judge completeness or task alignment.
-3. Only after factual grounding and action-outcome checks pass does the **Answer Quality Reviewer** assess evidence coverage, alignment with the user's request, and truthful partial-answer policy. It receives the candidate, conversational request/context, and factual findings, not the entire tool-result payload.
+## 검증 순서와 설정
 
-Both stages review the *already-created provisional final answer*. After both pass, the provisional answer is returned unchanged. On rejection the existing agent loop returns control to a model round with tool access and correction feedback. The next candidate is rechecked from the beginning.
+1. **수치 사전 검사:** Python이 사용자·도구 원문·승인된 이전 대화의 숫자와 날짜를 대조한다. 단순 표기 불일치는 의미상 동등성 검토 대상으로 보내며 Python 예외는 오류로 유지한다.
+2. **사실·수치 통합 검토:** 모델이 주장, 출처 범위, 시각, 외부 작업 성공 여부를 확인한다. 수치가 표시되면 같은 호출에 동등성 검토를 포함하고 `numeric_verdict`와 `numeric_reason`을 필수로 받는다. 별도 숫자 전용 모델 호출은 없다.
+3. **선택적 답변 품질 검토:** 앞 단계가 통과한 경우에만 요청 부합도·정보 충족도·정직한 부분 답변 여부를 검사한다. 초안, 대화 요청, 사실 검토 결과를 받으며 도구 원문 전체는 받지 않는다.
 
-## Configuration
+`MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성하면 기본값은 `true`다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
-`MAI_ANSWER_QUALITY_REVIEW=true`: run Answer Quality after Factual passes.
+사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
 
-`MAI_ANSWER_QUALITY_REVIEW=false`: skip Answer Quality and release after Factual passes, assuming Numeric also passes.
+## 입력 범위와 교정 제한
 
-The shipped `settings.yaml` sets this to `false`. If the verifier is instantiated
-directly without loading settings or setting the environment variable, its
-constructor default is `true`. Process environment values override `.env`, and
-`.env` values override YAML defaults.
+현재 요청은 4,000자, 초안은 6,000자까지 사실 검토 입력에 넣는다. 대화 문맥, 사용자 근거, 승인된 이전 대화는 별도 필드이며 일부 중복된다. 이를 합친 단일 전역 입력 예산은 아니다. 기본 최근 대화는 메시지 10개이며 시스템 지시와 모델 중간 사고 출력은 대화 근거에서 제외한다.
 
-The setting accepts the exact values `true` and `false` (case insensitive). Invalid values fail at verifier initialization.
+기본 교정 예산은 수치 2회, 의미·요청 정렬 2회, 근거·작업 결과 5회, 정보 충족도 2회다. 소진되면 실패하며 해당 검사를 끄거나 반려된 초안을 공개하지 않는다. 교정한 새 초안은 처음부터 다시 검사한다.
 
-This toggle does not disable numeric or factual grounding checks. A missing
-combined numeric verdict is a schema violation, not numeric success. Quality is
-skipped when numeric or factual grounding fails.
+재시도 가능한 통신·형식 오류에는 별도 최대 3회 요청 예산이 있다. 잘못된 형식은 구체적인 검증 위치·유형·오류를 다음 요청에 제공한다. 자동으로 판정을 고치지 않으며, 형식이 맞는 반려 판정을 뒤집으려고 재호출하지 않는다.
 
-## Input size and correction limits
+## 발췌 근거 묶음과 원문 재열람
 
-The factual payload clips `current_user_request` to 4,000 characters and
-`candidate_final` to 6,000. It also carries `conversation_context`, `user_evidence`
-and `verified_prior_conversation` separately, so some history is duplicated.
-These fields are not a single global character/token budget. Production normally
-loads the latest 10 messages (`SESSION_HISTORY_MESSAGES`); system instructions and
-THINK output are excluded from conversation evidence. Each ordinary source starts
-with selected excerpts and reference metadata, subject to the per-result budget
-in [TOOL_RESULT_PAGINATION.md](TOOL_RESULT_PAGINATION.md).
+기본 입력은 본 모델이 선택한 원문 발췌와 출처 참조다. 본 모델이 선택했다는 사실이 독립 검증을 뜻하지 않는다. 발췌에 없는 조건·반대 근거가 원문에 있을 수 있다. [근거 묶음 형식](TOOL_RESULT_PAGINATION.md)을 따른다.
 
-Main-model correction budgets are numeric 2, semantic 2 by default, evidence/action
-5, and coverage 2. Exhaustion raises an error; it does not disable an axis or
-release a failing candidate. Structured reviewer/provider calls have a separate
-maximum of 3 attempts for retryable errors. Valid verdicts are not retried just
-to obtain a different judgment.
+각 성공 출처에는 `source_id`, 실행 도구 이름, 같은 발췌 묶음, `original_read_state`를 붙인다. 상태에는 전체 길이, 한 번의 읽기 상한, 미제공 범위, 완료 여부와 `next_read_request`가 있다. 마지막 필드는 첫 미제공 범위를 읽는 인자이며 모두 제공되면 `null`이다.
 
-## Retained evidence and original reads
-
-Each ordinary tool result is stored immutably with a run-local `result_id` and
-SHA-256. The main model first receives a bounded page. After consuming it, that
-page is replaced by selected verbatim excerpts plus the original reference.
-The main model uses the existing `tool_manual.retain_evidence` argument to select
-`{result_id, ranges: [{offset, length}]}`. Offsets count zero-based Python Unicode
-code points. Selection replaces ranges for that result; empty ranges clear them.
-Selection can accompany other native calls in the same main-model round. There
-is no separate summarization model. Without a selection, only the source
-reference survives; this is explicitly partial evidence, not an empty original.
-The main-model contract explicitly distinguishes writing a fact in an answer
-from selecting its evidence ranges and shows the existing native call format.
-Selections can be batched with other tools; this is prompt guidance, not an
-automatic detector of what the model actually used. Real-model compliance and
-latency must still be measured.
-
-Ranges are extracted by the runtime, never rewritten by a helper. Unknown IDs,
-overlapping/out-of-bounds ranges or selections over the result budget fail
-explicitly without partial activation or selection changes. Originals stay
-available through `tool_result_read`. Pagination reads keep the original ID and
-are not recaptured as new observations. Activation/selection acknowledgments and
-pagination reads are excluded from factual evidence; original execution indices
-are preserved for actual observations.
-
-The factual reviewer still has no native execution tools. When stored sources
-are present, its structured response is either:
+추가 확인이 필요하면 다음 구조로 응답한다.
 
 ```json
-{"read_requests": [{"source_id": "tool:1", "offset": 100, "limit": 500}], "review": null}
+{
+  "read_requests": [{"source_id": "tool:0", "offset": 120, "limit": 500}],
+  "review": null
+}
 ```
 
-or `{"read_requests": [], "review": { ... complete factual/numeric verdict ... }}`.
-These are disjoint schema branches supplied to the decoder, as well as runtime
-validation rules. A response cannot both request reads and return a verdict.
-Each source exposes `original_read_state` with unread ranges, the read limit,
-and whether all original characters have been supplied. Retained excerpts count
-as already supplied. Decoder read choices start inside an unread range and
-exclude fully supplied sources; when none remain, only the verdict branch is
-offered. A verdict can still reject a claim or report uncertainty.
+`read_requests`에는 제공된 `next_read_request` 또는 다른 유효한 미제공 범위를 넣을 수 있다. 읽기는 선택 사항이며 모든 범위를 읽도록 강제하지 않는다. 판정할 때는 `read_requests=[]`와 완전한 `review`를 함께 반환한다. 읽기와 판정을 동시에 반환하거나 둘 다 비우는 응답은 생성용 스키마와 실행 검증에서 거부한다.
 
-The runtime serves only successful sources from this run, within the existing
-read budget, and puts exact original text in that source's `reread_excerpts`.
-It then asks the reviewer to continue. Original reads may add model calls; they
-are not new observations and never rerun an external tool or action. Unknown or
-failed sources and invalid ranges are errors. Duplicate/contained/overlapping
-ranges in a request batch are deduplicated; only previously unprovided original
-characters are appended. A wholly cached read round returns an explicit
-`original_read_status` with `already_provided` results so the reviewer can use
-existing text and finish. Two consecutive rounds without new characters exhaust
-the progress budget and raise an error; new original characters reset it.
-This never changes an unsupported verdict into supported. Source quotes may be
-validated against retained or reread original text. Fatal reviewer errors preserve
-the last draft only as explicitly unverified diagnostic output, alongside the
-original error; they do not release it as a verified final answer.
+오프셋은 0부터 시작하는 Python Unicode 문자 위치다. 검증기는 `result_id`로 도구를 직접 호출하지 않고 자기 입력의 `source_id`로 요청한다. 런타임이 이를 원문 식별자에 연결하며 같은 출처의 `reread_excerpts`에 원문을 추가한다. 외부 작업을 다시 실행하거나 새 관측으로 취급하지 않는다.
 
-If a provider ignores the supplied schema, runtime validation and the existing
-no-progress error budget still apply. Malformed-output retries receive concrete
-validation locations/types/messages with the original evidence, rather than
-silently repairing a response or retrying an identical prompt. Only the latest
-formatting diagnostic is added; the retry budget remains three attempts.
+- 미등록·실패 출처, 잘못된 범위·읽기 상한은 오류다.
+- 한 요청의 중복·중첩 범위는 정리해 아직 제공하지 않은 문자만 추가한다.
+- 이미 제공한 범위만 요청하면 `already_provided` 상태로 안내한다.
+- 새 문자가 없는 요청이 2회 연속이면 진행 예산 소진 오류다. 새 문자가 추가되면 예산을 초기화한다.
+- 각 차례의 스키마와 안내는 제공 완료 범위를 제외해 갱신한다. 전부 제공됐으면 판정한다.
 
-Numeric token matching scans original text in Python, not compaction metadata.
-The LLM still receives only retained/reopened evidence. This avoids treating
-metadata lengths or offsets as observed factual quantities.
+치명적 재열람 오류가 나면 마지막 초안은 **미검증 진단 출력**으로만 보존하고 원래 오류를 유지한다. 수치 사전 검사는 원문을 읽으므로 발췌 메타데이터의 길이·오프셋을 사실 숫자로 오인하지 않는다. 감사 DB에는 도구 원문과 식별자를 보존하지만 실행 간 원문 재열람 기능은 아니다.
 
-Both synchronous and detached web-chat audit logs preserve complete original
-tool results and `result_id` in the existing `tool_log` steps. UI/model result
-budgets do not truncate these audit originals. Audit storage does not provide
-cross-run retrieval; original reads remain scoped to the running agent.
+## 인용과 교정 피드백
 
-## Scope and limitations
+주장별 `evidence_refs`는 선택적인 보조 정보이며 `source_id`, `location`, 짧은 원문 `quote`를 포함한다. 근거 부족을 반대 사실이나 대체 수치로 만들어 내면 안 된다.
 
-Action-outcome evidence validation stays with factual review; user-request
-alignment stays with quality review. Existing per-axis correction budgets and
-provider/schema retry budgets remain unchanged. Valid supported/unsupported
-verdicts are not rerolled. Original-read failures propagate as errors.
+| 출처 ID | 의미 |
+|---|---|
+| `tool:<원래 실행 순서>` | 성공한 도구 결과, 실패로 생긴 번호 공백 유지 |
+| `user:<번호>` | 사용자 근거 |
+| `prior:<번호>` | 승인된 이전 대화 |
+| `time` | 런타임의 실제 현재 시각 |
 
-Quality review no longer sees raw tool logs. It can judge whether the draft addresses the request, but assessing **omitted facts present only in tool results** may be less reliable than with the original integrated reviewer. This is a deliberate speed/coverage tradeoff to measure, not a guarantee of equal accuracy. Two full LLM stages can still be slower than the integrated reviewer, although Quality receives a smaller input.
+실패한 호출·반려 초안·검증 피드백은 인용 출처가 아니다. JSON 원문 자체나 해석한 문자열 필드를 인용할 수 있으며 공백 정규화만 허용한다.
 
-Neither unit tests nor fewer input characters guarantee end-to-end Ollama
-latency or accuracy gains. Retention quality depends on the main model;
-independent original reads are available to check omitted qualifiers or contrary
-evidence and may offset savings if many ranges need reopening.
+런타임은 출처 존재와 인용문 일치를 확인하지만 검증기의 해석·지시 위치·계산까지 증명하지 않는다. 인용 목록이 없거나 형식이 틀리면 빈 목록으로, 개별 인용이 틀리면 그 항목만 제외해 경고한다. 유효한 인용은 유지한다. 이 선택적 메타데이터 오류 때문에 필수 판정을 바꾸거나 재호출하지 않는다. 필수 판정·스키마·통신 실패는 기존 오류 계약을 유지한다.
 
-## Traceable factual rejections and correction
+유효한 인용은 검토 상세·감사 기록·최신 교정 피드백에 남긴다. 같은 성공 근거 상태에서 반려가 반복되면 원문 재확인, 계산 접근 변경 또는 주장 축소·삭제를 지시한다. 같은 결과 재호출은 새 근거가 아니며 추가 도구 호출 자체를 강제하지는 않는다.
 
-Factual claim findings can include `evidence_refs`, each with `source_id`,
-`location`, and a short verbatim `quote`. References are optional supporting
-metadata for every defect, including `contradiction`, `scope_expansion`, and
-`unsupported_inference`. Absence of support must not be disguised as an observed
-opposing fact or a replacement count. The reviewer is asked to identify rejected
-claims and give concrete reasons; an overall rejection can still use the existing
-semantic-feedback fallback when claim-level findings are unavailable.
+## 해석과 검증의 한계
 
-Sources use run-local IDs: `tool:<original execution index>` for successful tool
-results, `user:<user_evidence index>`, `prior:<verified_prior_conversation index>`,
-and `time` for the authoritative runtime clock. Failed calls, rejected drafts,
-and verifier diagnoses are not citation sources. Index gaps from failed calls
-are preserved. JSON tool outputs may be quoted as serialized text or from their
-decoded string fields, with whitespace normalization only.
+모호한 이름은 사용자 문맥이나 중립적 조회로 대상을 확인한다. 추측한 분류를 모든 검색어에 먼저 넣지 않는다. 검색 제목·본문이 가정과 다르면 재검토하며 빈 검색이 가정을 증명하지 않는다. 사용자가 요청한 비유·해석은 근거와 구분해 제시하고 창작자의 공식 의도라고 단정하지 않는다. 이 검사는 품질 검토가 꺼져도 사실 검토에 포함된다.
 
-The runtime checks source existence and quote provenance on a best-effort basis.
-This does **not** prove that the reviewer's interpretation, record location, or
-calculation is correct. Omitted, null, or malformed reference metadata becomes an
-empty list; invalid individual references are dropped while valid ones survive.
-Warnings are logged, and provenance warnings are recorded in review details.
-Reference problems do not cause reviewer retries, HTTP errors, or an automatic
-change to the factual verdict. The ordinary factual correction loop continues,
-and supported answers can be delivered even when reference metadata is invalid.
-Core verdict/schema and provider failures retain their existing handling.
-
-Validated references are preserved in review details, audit rejection records,
-the correction contract, and the latest correction feedback. Two grounding
-rejections against unchanged successful evidence add an instruction to
-re-observe, change the calculation/verification approach, or narrow/remove the
-claim. Repeating an identical successful result does not count as new evidence.
-This is a correction instruction, not a hard requirement for another tool call:
-a properly narrowed supported answer remains possible. Existing retry limits
-and latest-feedback-only behavior are retained.
-
-## Identity assumptions and interpretations
-
-The main runtime asks the model to establish ambiguous referents with user
-context or a neutral lookup before adding guessed categories to queries. It
-instructs the model to revisit assumptions when observed titles, snippets, or
-page text conflict with them. Empty/irrelevant search results do not confirm a
-guess. The factual reviewer receives matching identity checks even when the
-optional quality review is off.
-
-Both prompts distinguish a qualified, evidence-based metaphor or interpretation
-requested by the user from a factual assertion about documented creator intent.
-The factual premises still require evidence. These prompt changes need local
-model evaluation; unit tests do not establish an accuracy or latency gain.
+품질 검토가 도구 원문 전체를 보지 않으므로 원문에만 있는 누락 정보 탐지에 한계가 있다. 선택 발췌의 품질과 원문 재열람 횟수에 따라 정확도·비용이 달라진다. 테스트 통과나 입력 문자 감소만으로 실제 모델의 정확도·속도 개선을 보장하지 않는다.

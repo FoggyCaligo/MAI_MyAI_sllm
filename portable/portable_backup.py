@@ -43,9 +43,9 @@ def create_snapshot(root: Path, destination_root: Path) -> Path:
     destination_root = destination_root.resolve()
     if destination_root == root or root in destination_root.parents or destination_root in root.parents:
         raise ValueError("Backup destination must be on a separate directory tree")
-    if not (root / "run_server.py").is_file() or not (root / ".env").is_file():
-        raise FileNotFoundError("Expected MAI root with run_server.py and .env")
-    if not (root / "portable-runtimes").is_dir() or not (root / "portable-models").is_dir():
+    if not (root / "scripts/run_server.py").is_file() or not (root / ".env").is_file():
+        raise FileNotFoundError("Expected MAI root with scripts/run_server.py and .env")
+    if not (root / "portable/portable-runtimes").is_dir() or not (root / "portable/portable-models").is_dir():
         raise FileNotFoundError("Portable runtime and model directories must exist before backup")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     final = destination_root / f"mai-{stamp}"

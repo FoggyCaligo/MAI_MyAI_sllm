@@ -5,11 +5,11 @@ param(
     [string]$ModelAlias
 )
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-$python = Join-Path $root 'portable-runtimes\python\python.exe'
+$python = Join-Path $root 'portable/portable-runtimes\python\python.exe'
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-    throw "Portable Python not found: $python. Provision the portable runtime following docs/portable-windows.md."
+    throw "Portable Python not found: $python. Provision the portable runtime following portable/README.md."
 }
 $envPath = Join-Path $root '.env'
 if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
@@ -17,8 +17,8 @@ if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
 }
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
-$env:OLLAMA_MODELS = Join-Path $root 'portable-models\ollama'
-$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $root 'portable-runtimes\playwright-browsers'
+$env:OLLAMA_MODELS = Join-Path $root 'portable/portable-models\ollama'
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $root 'portable/portable-runtimes\playwright-browsers'
 $env:MAI_CWD = $root
 $env:MAI_UPLOAD_ROOT = Join-Path $root 'mai_uploads'
 $env:MEMORY_DB_PATH = Join-Path $root 'data\memory.sqlite3'
@@ -26,8 +26,8 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data\sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'data\chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data\log.sqlite3'
 $env:LLM_BACKEND = $Backend
-$ollama = Join-Path $root 'portable-runtimes\ollama\ollama.exe'
-$llama = Join-Path $root 'portable-runtimes\llamacpp\llama-server.exe'
+$ollama = Join-Path $root 'portable/portable-runtimes\ollama\ollama.exe'
+$llama = Join-Path $root 'portable/portable-runtimes\llamacpp\llama-server.exe'
 if ($Backend -eq 'ollama') {
     if (-not (Test-Path -LiteralPath $ollama -PathType Leaf)) { throw "Portable Ollama runtime is missing: $ollama" }
     if (-not (Test-Path -LiteralPath $env:OLLAMA_MODELS -PathType Container)) {
@@ -48,7 +48,7 @@ if ($Backend -eq 'ollama') {
             Start-Sleep -Milliseconds 500
         }
         if (-not $ready) { throw 'Ollama startup did not become ready in 20 seconds' }
-        & $python run_server.py
+        & $python scripts/run_server.py
         if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
     } finally {
         if (-not $ollamaProcess.HasExited) { Stop-Process -Id $ollamaProcess.Id }
@@ -72,7 +72,7 @@ if ($Backend -eq 'ollama') {
             Start-Sleep -Seconds 1
         }
         if (-not $ready) { throw 'llama.cpp did not become ready within 100 seconds' }
-        & $python run_server.py
+        & $python scripts/run_server.py
         if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
     } finally {
         if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
