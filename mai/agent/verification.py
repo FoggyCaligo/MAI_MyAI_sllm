@@ -57,7 +57,7 @@ _FACTUAL_REVIEW_SYSTEM = """
 You are the factual grounding reviewer for a provisional answer. Use the current user request, conversation context and observed evidence. No tools, answer rewriting, coverage/alignment judgments, or demands for optional details. Return claim-level grounding, action-outcome evidence and blocking factual reasons in the required structured schema.
 
 Evidence and verdicts:
-- For each material factual claim, use "supported", "unsupported", or "uncertain". A claim is unsupported when evidence contradicts it, does not support it, or supports only a narrower statement. Use uncertain only when you cannot confidently decide; presenting an unverified proposition as established fact is normally unsupported.
+- Inspect every material factual claim. Unsupported means missing, conflicting, or narrower evidence. Use uncertain only when grounding genuinely cannot be resolved; uncertain is NOT approval. An unverified claim presented as fact is normally unsupported.
 - General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity or widely known knowledge does not establish them. Current user messages and observed successful tool results are evidence.
 - Previous assistant answers are factual evidence only in verified_prior_conversation, which contains previously accepted answers. They establish what was known then, not that changing external state remains current. Other assistant text, candidate_final, and verifier feedback are context only, never evidence.
 - Failed tool calls are omitted from grounding evidence and cannot support factual claims. A successful web_search result is observed search evidence: titles, URLs, and snippets may establish what the identified result/source stated. Prefer fetched page text when available, but do not reject solely because evidence is a snippet rather than a later web_fetch result.
@@ -93,7 +93,8 @@ Action outcomes:
 - Tool success establishes its reported contract, not a broader end state. Use "verified" only when same-scope resulting-state evidence establishes the claimed outcome: a later observation or authoritative mutation result explicitly reporting it. Use "unverified" for claimed completion beyond observed state, and "contradicted" when resulting-state evidence shows failure. Do not demand extra verification absent a requested and claimed state change.
 
 Output and references:
-- Set evidence_verdict="supported" only when no material claim is unsupported. Identify rejected claims in claims[] with concrete reasons and defects; retry_summary is concise, actionable English.
+- Set evidence_verdict="supported" only when all material claims are grounded. Unsupported or unresolved grounding blocks acceptance.
+- Keep rejection output concise: include only unsupported/uncertain claims in claims[], with claim text, verdict, defect and one brief reason per claim. Do not repeat those reasons in reasons[]. Supported claims need not be listed. Factual reasons[] and retry_summary are optional; when a blocking verdict has no claims[], give one short overall reason. Runtime constructs correction feedback from the verdict and defects.
 - When relevant sources exist, include evidence_refs with source_id, location (field/section/record) and a short verbatim quote. IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time.
 - References are optional supporting metadata. For missing_evidence they may be empty: specify what is unestablished without inventing a contrary fact or replacement total. Do not relabel a source conflict as missing_evidence to avoid citing it. Observing a quote does not validate its interpretation.
 """.strip()
@@ -157,10 +158,10 @@ class _ClaimReviewPayload(BaseModel):
 class _FactualReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
-    reasons: list[str]
+    reasons: list[str] = Field(default_factory=list)
     claims: list[_ClaimReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
-    retry_summary: str = Field(min_length=1, max_length=800)
+    retry_summary: str = Field(default="", max_length=800)
 
 
 class _QualityReviewPayload(BaseModel):
