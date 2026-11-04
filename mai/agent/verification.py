@@ -20,7 +20,7 @@ import json
 import os
 import logging
 import re
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
@@ -33,6 +33,7 @@ from ..tools.time import current_time
 
 
 ToolVerificationResult = tuple[str, bool, str | None, str]
+VerificationAuditObserver = Callable[[str, Mapping[str, Any]], None]
 
 _DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
 _NUMBER_RE = re.compile(
@@ -321,6 +322,7 @@ class FinalGroundingVerifier:
         allow_evidence_review: bool | None = None,
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
+        on_audit_event: VerificationAuditObserver | None = None,
     ) -> FinalVerificationResult:
         numeric_facts = self._unsupported_numeric_facts(
             candidate=candidate, messages=messages, tool_results=tool_results,
@@ -338,14 +340,23 @@ class FinalGroundingVerifier:
                 evidence="skipped", alignment="skipped", coverage="skipped", action="skipped",
                 reasons=(),
             )
-            return FinalVerificationResult(ok=not issues, issues=tuple(issues),
+            result = FinalVerificationResult(ok=not issues, issues=tuple(issues),
                 retry_summary=f"{numeric_issue.code}: {numeric_issue.message}" if numeric_issue else "")
+            if on_audit_event is not None:
+                on_audit_event("decision", {
+                    "ok": result.ok,
+                    "issues": [{"code": issue.code, "message": issue.message} for issue in issues],
+                    "review_details": None,
+                    "reviewer_available": self.reviewer_adapter is not None,
+                })
+            return result
 
         review = await self._review_final(
             candidate=candidate, messages=messages, tool_results=tool_results,
             flagged_numeric_facts=numeric_facts,
             run_quality_review=(self.quality_review_enabled and allow_evidence_review
                                 and allow_semantic_review and allow_coverage_review),
+            on_audit_event=on_audit_event,
         )
         if numeric_issue is not None:
             if review.numeric_verdict == "supported":
@@ -412,7 +423,7 @@ class FinalGroundingVerifier:
             action=review.action_verdict if allow_evidence_review else "skipped",
             reasons=review.reasons + review.coverage_reasons,
         )
-        return FinalVerificationResult(
+        result = FinalVerificationResult(
             ok=not issues,
             issues=tuple(issues),
             retry_summary=(
@@ -437,6 +448,13 @@ class FinalGroundingVerifier:
                 ],
             },
         )
+        if on_audit_event is not None:
+            on_audit_event("decision", {
+                "ok": result.ok,
+                "issues": [{"code": issue.code, "message": issue.message} for issue in issues],
+                "review_details": result.review_details,
+            })
+        return result
 
     def _unsupported_numeric_facts(
         self,
@@ -482,6 +500,7 @@ class FinalGroundingVerifier:
         self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
         flagged_numeric_facts: Sequence[str] = (),
+        on_audit_event: VerificationAuditObserver | None = None,
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results,
                                   verified_prior_conversation=self.verified_prior_conversation)
@@ -499,7 +518,9 @@ class FinalGroundingVerifier:
             ),
             tools=(), think=False, response_format=payload_model.model_json_schema(),
         )
-        facts = await self._request_structured_review(fact_request, payload_model, label="factual")
+        facts = await self._request_structured_review(
+            fact_request, payload_model, label="factual", on_audit_event=on_audit_event,
+        )
         numeric_verdict = facts.numeric_verdict if flagged_numeric_facts else None
         numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
         claims, reference_warnings = _filter_factual_references(facts, payload)
@@ -548,7 +569,7 @@ class FinalGroundingVerifier:
             tools=(), think=False, response_format=_QualityReviewPayload.model_json_schema(),
         )
         quality = await self._request_structured_review(
-            quality_request, _QualityReviewPayload, label="quality"
+            quality_request, _QualityReviewPayload, label="quality", on_audit_event=on_audit_event,
         )
         return FinalReview(
             evidence_verdict=evidence_verdict,
@@ -572,17 +593,36 @@ class FinalGroundingVerifier:
         payload_model: type[BaseModel],
         *,
         label: str,
+        on_audit_event: VerificationAuditObserver | None = None,
     ) -> BaseModel:
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
         retry_request = request
         for attempt in range(1, 4):
+            if on_audit_event is not None:
+                on_audit_event("request", {
+                    "stage": label, "attempt": attempt,
+                    "messages": list(retry_request.messages),
+                    "response_schema": retry_request.response_format,
+                    "think": retry_request.think,
+                    "tools": list(retry_request.tools),
+                })
             try:
                 turn = await asyncio.wait_for(
                     self.reviewer_adapter.chat(retry_request),
                     timeout=self.reviewer_timeout_seconds,
                 )
-                return payload_model.model_validate_json(turn.content, strict=True)
+                if on_audit_event is not None:
+                    on_audit_event("raw_response", {
+                        "stage": label, "attempt": attempt, "content": turn.content,
+                    })
+                validated = payload_model.model_validate_json(turn.content, strict=True)
+                if on_audit_event is not None:
+                    on_audit_event("validated_response", {
+                        "stage": label, "attempt": attempt,
+                        "verdict": validated.model_dump(mode="json"),
+                    })
+                return validated
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
@@ -598,6 +638,12 @@ class FinalGroundingVerifier:
                     retryable = isinstance(cause, ResponseError) and (
                         cause.status_code == 429 or 500 <= cause.status_code <= 599
                     )
+                if on_audit_event is not None:
+                    on_audit_event("error", {
+                        "stage": label, "attempt": attempt,
+                        "error_type": type(exc).__name__, "error_message": str(exc),
+                        "retryable": retryable,
+                    })
                 _LOG.warning(
                     "MAI %s reviewer request failed attempt=%d/3 error_type=%s retryable=%s",
                     label,
