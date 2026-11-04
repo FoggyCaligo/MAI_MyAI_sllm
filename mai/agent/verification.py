@@ -369,6 +369,14 @@ class FinalGroundingVerifier:
                 )
                 issues.append(numeric_issue)
         if allow_evidence_review:
+            if review.unanchored_supported_claims:
+                issues.append(VerificationIssue(
+                    code="supported_claim_source_unverified",
+                    message=(
+                        "Claims marked supported without an observed matching source quotation: "
+                        + "; ".join(review.unanchored_supported_claims)
+                    ),
+                ))
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
             other_claims = tuple(claim for claim in unsupported_claims if claim.defect != "scope_expansion")
@@ -442,6 +450,7 @@ class FinalGroundingVerifier:
                 "reasons": list(review.reasons),
                 "coverage_reasons": list(review.coverage_reasons),
                 "reference_warnings": list(review.reference_warnings),
+                "unanchored_supported_claims": list(review.unanchored_supported_claims),
                 "claims": [
                     {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect,
                      "reason": claim.reason, "evidence_refs": list(claim.evidence_refs)}
@@ -525,6 +534,10 @@ class FinalGroundingVerifier:
         numeric_verdict = facts.numeric_verdict if flagged_numeric_facts else None
         numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
         claims, reference_warnings = _filter_factual_references(facts, payload)
+        # Source existence and exact quotes are deterministic; semantic support is an LLM judgment.
+        unanchored_supported_claims = tuple(
+            claim.claim for claim in claims if claim.verdict == "supported" and not claim.evidence_refs
+        )
         evidence_verdict = (
             "unsupported" if any(item.verdict == "unsupported" for item in claims)
             else facts.evidence_verdict
@@ -537,7 +550,7 @@ class FinalGroundingVerifier:
         factual_pass = (not flagged_numeric_facts or numeric_verdict == "supported") and evidence_verdict == "supported" and facts.action_verdict in (
             "not_applicable", "verified"
         )
-        if not (run_quality_review and factual_pass):
+        if not (run_quality_review and factual_pass and not unanchored_supported_claims):
             return FinalReview(
                 evidence_verdict=evidence_verdict, alignment_verdict="aligned",
                 coverage_verdict="sufficient", coverage_reasons=(),
@@ -545,6 +558,7 @@ class FinalGroundingVerifier:
                 action_verdict=facts.action_verdict,
                 retry_summary=facts.retry_summary,
                 reference_warnings=reference_warnings,
+                unanchored_supported_claims=unanchored_supported_claims,
                 numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
             )
 
@@ -585,6 +599,7 @@ class FinalGroundingVerifier:
             claims=claims, action_verdict=facts.action_verdict,
             retry_summary=quality.retry_summary,
             reference_warnings=reference_warnings,
+            unanchored_supported_claims=unanchored_supported_claims,
             numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
         )
 
