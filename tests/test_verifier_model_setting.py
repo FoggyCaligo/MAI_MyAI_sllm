@@ -7,6 +7,7 @@ import pytest
 
 from mai.app import runtime as runtime_module
 from mai.agent import AgentRunFailure
+from tests.reviewer_fixtures import with_claim_units
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.llm.models import ModelTurn
 
@@ -31,8 +32,8 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
             assert request.tools == () and request.think is False
             if reviewer_fails:
                 raise RuntimeError("configured reviewer is unavailable")
-            content = json.dumps({"evidence_verdict": "supported", "action_verdict": "not_applicable",
-                                  "reasons": [], "claims": [], "retry_summary": "No correction needed."})
+            content = json.dumps(with_claim_units({"evidence_verdict": "supported", "action_verdict": "not_applicable",
+                                  "reasons": [], "claims": [], "retry_summary": "No correction needed."}, request))
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 
