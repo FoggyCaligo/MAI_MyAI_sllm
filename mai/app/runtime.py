@@ -76,7 +76,7 @@ Answer the current request fully; do not assume the user knows prior answers or 
 
 Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all native schemas: activate required tools by exact name and use their native schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: memory for user context, local tools for local resources, and information tools for external facts.
 
-Use memory_search for persistent-memory reads: keyword for topics (optional limit), node_id for graph expansion (no limit), or neither for a recent overview (required limit 1–50). Bounded or empty results are not exhaustive proof of absence; search further when justified.
+Use persistent-memory retrieval for missing user context. Activate the appropriate tool and read its schema before choosing arguments. Bounded or empty results are not exhaustive proof of absence; search further when justified.
 
 Pretrained knowledge supports reasoning, not factual evidence. Ground factual claims in user statements or observed tool evidence. Preserve original values, definitions, units, aggregation levels, time ranges, and the distinction between observations and derived calculations. Do not silently change or round source values; transform them only at the user's request or under an evidenced rule. Treat related metrics as distinct unless the evidence establishes equivalence, and do not assert unsupported causal explanations or reconciliations; acknowledge unresolved uncertainty.
 
@@ -84,7 +84,7 @@ For arithmetic that materially affects an answer, activate and use the calculato
 
 The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through file_read. The owner can use document_edit for explicitly supported changes to existing structured files, including PDF page operations; arbitrary PDF text edits are unsupported. There are no separate file_create or model-visible document_read native tools.
 
-Intermediate scripts, probes, debug captures, and scratch files created only for the current user turn are temporary artifacts: create them with file_write(lifecycle=temporary), not shell redirection. The runtime deletes newly created registered temporary artifacts after final answer verification and before returning the answer. Preserve user-requested files as persistent; never mark an existing file as temporary when overwriting it or delete user files during cleanup. Terminal-created files are not automatically registered as temporary.
+Intermediate scripts, probes, debug captures, and scratch files created only for the current user turn are temporary artifacts. Activate the file-writing tool and follow its declared temporary-artifact contract instead of using shell redirection. The runtime deletes newly created registered temporary artifacts after final answer verification and before returning the answer. Preserve user-requested files as persistent; never mark an existing file as temporary when overwriting it or delete user files during cleanup. Terminal-created files are not automatically registered as temporary.
 
 When ready to respond, produce a provisional answer for verification before delivery. If rejected, use the latest verifier feedback to correct unsupported claims through additional evidence or narrower statements; rejected drafts and verifier diagnoses are not factual evidence.
 
@@ -118,12 +118,15 @@ class MAIRuntime:
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
         vision_model: str | None = None,
+        verifier_model: str | None = None,
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
+        if verifier_model is not None and not verifier_model.strip():
+            raise ValueError("verifier_model must be non-empty when configured")
         if max_inline_tool_result_chars is None:
             max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
         if max_inline_tool_result_chars < 1024:
@@ -136,6 +139,7 @@ class MAIRuntime:
         self.llamacpp_host = llamacpp_host
         self.ollama_host = ollama_host
         self.model = model
+        self.verifier_model = verifier_model.strip() if verifier_model is not None else None
         self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
@@ -272,6 +276,7 @@ class MAIRuntime:
 
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
+        verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -292,7 +297,7 @@ class MAIRuntime:
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
             final_verifier=FinalGroundingVerifier(
-                reviewer_adapter=adapter,
+                reviewer_adapter=verifier_adapter,
                 verified_prior_conversation=prior_messages,
             ),
             max_semantic_verification_retries=2,

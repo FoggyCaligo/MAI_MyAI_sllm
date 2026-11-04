@@ -124,6 +124,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
         self._shared_model_contexts: dict[str, dict[str, Any]] = {}
+        self._shared_model_context_tools: dict[str, frozenset[str]] = {}
 
     def register(self, definition: ToolDefinition) -> ToolDefinition:
         """Register exactly one definition and reject duplicate names."""
@@ -158,12 +159,16 @@ class ToolRegistry:
             )
         )
 
-    def add_model_context(self, *, key: str, context: Mapping[str, Any]) -> None:
+    def add_model_context(
+        self, *, key: str, context: Mapping[str, Any], tools: Sequence[str] | None = None,
+    ) -> None:
         """Register one shared authoritative context block for model consumption.
 
         Runtime components can declare context once without attaching identical
         metadata to every tool they register. Keys are structural identifiers,
         not intent-routing labels, and duplicate keys fail explicitly.
+        Invocation guidance must be scoped to its registered tools so it can
+        remain hidden until those tools are activated.
         """
 
         clean_key = key.strip()
@@ -175,7 +180,14 @@ class ToolRegistry:
             )
         if not isinstance(context, Mapping):
             raise TypeError("model context must be a mapping")
-        self._shared_model_contexts[clean_key] = dict(context)
+        prepared_context = dict(context)
+        if tools is not None:
+            if not tools:
+                raise ValueError("scoped model context requires at least one registered tool")
+            for name in tools:
+                self.get(name)
+            self._shared_model_context_tools[clean_key] = frozenset(tools)
+        self._shared_model_contexts[clean_key] = prepared_context
 
     def has(self, name: str) -> bool:
         return name in self._definitions
@@ -203,19 +215,29 @@ class ToolRegistry:
             definitions = (self.get(name) for name in names)
         return tuple(definition.native_schema() for definition in definitions)
 
-    def model_context(self) -> tuple[dict[str, Any], ...]:
+    def model_context(self, names: Sequence[str] | None = None) -> tuple[dict[str, Any], ...]:
         """Return runtime facts explicitly declared for model consumption.
 
         Shared runtime contexts are emitted once. Tool-specific contexts use the
         reserved `model_context` metadata field. The registry does not infer
         meaning from tool names, context keys, or metadata values.
+        With names supplied, return only unscoped facts and matching contexts;
+        omitting names returns the complete registration view for inspection.
         """
 
+        selected = None if names is None else frozenset(names)
+        if selected is not None:
+            for name in selected:
+                self.get(name)
         contexts: list[dict[str, Any]] = [
             {"source": key, "context": dict(context)}
             for key, context in self._shared_model_contexts.items()
+            if selected is None or key not in self._shared_model_context_tools
+            or selected.intersection(self._shared_model_context_tools[key])
         ]
         for definition in self._definitions.values():
+            if selected is not None and definition.name not in selected:
+                continue
             raw_context = definition.metadata.get("model_context")
             if raw_context is None:
                 continue

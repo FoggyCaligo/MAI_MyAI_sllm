@@ -91,7 +91,12 @@ def test_funnel_failure_does_not_block_local_server(monkeypatch, tmp_path, caplo
     )
     monkeypatch.setattr(server, "ChatSessionStore", lambda path: object())
     monkeypatch.setattr(server, "LoginRateLimiter", lambda path: object())
-    monkeypatch.setattr(server, "MAIRuntime", lambda **kwargs: runtime)
+    runtime_options = {}
+    def create_runtime(**kwargs):
+        runtime_options.update(kwargs)
+        return runtime
+    monkeypatch.setattr(server, "MAIRuntime", create_runtime)
+    monkeypatch.setenv("VERIFIER_MODEL", "configured-reviewer")
     monkeypatch.setattr(server, "TailscaleFunnel", FailingFunnel)
     monkeypatch.setenv("TAILSCALE_FUNNEL", "true")
     monkeypatch.delenv("TAILSCALE_SERVE", raising=False)
@@ -99,6 +104,7 @@ def test_funnel_failure_does_not_block_local_server(monkeypatch, tmp_path, caplo
     async def check_startup():
         async with server.lifespan(server.app):
             assert server._runtime is runtime
+            assert runtime_options["verifier_model"] == "configured-reviewer"
             assert server._tailscale is None
             assert (await server.health())["tailscale_funnel"] is False
         assert server._runtime is None

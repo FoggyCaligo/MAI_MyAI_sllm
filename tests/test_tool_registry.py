@@ -129,6 +129,19 @@ def test_duplicate_shared_model_context_key_fails_explicitly() -> None:
         registry.add_model_context(key="same", context={"value": 2})
 
 
+def test_scoped_context_rejects_invalid_registration_without_partial_state():
+    registry = ToolRegistry()
+    with pytest.raises(UnknownToolError):
+        registry.add_model_context(key="scoped", context={"usage": "hidden"}, tools=["missing"])
+    assert registry.model_context() == ()
+    registry.add(name="probe", description="Probe", handler=lambda: {})
+    registry.add_model_context(key="scoped", context={"usage": "hidden"}, tools=["probe"])
+    assert registry.model_context(names=()) == ()
+    assert registry.model_context(names=["probe"]) == registry.model_context()
+    with pytest.raises(UnknownToolError):
+        registry.model_context(names=["missing"])
+
+
 def test_memory_tools_register_one_temporal_precedence_context() -> None:
     registry = ToolRegistry()
 

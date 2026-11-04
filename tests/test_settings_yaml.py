@@ -21,6 +21,7 @@ def test_yaml_populates_defaults_but_preserves_explicit_env(tmp_path: Path) -> N
     ("MAIN_MODEL: one\nMAIN_MODEL: two\n", ValueError),
     ("MAIN_MODEL: [bad]\n", TypeError),
     ("MAIN_MODEL: ''\n", ValueError),
+    ("VERIFIER_MODEL: ''\n", ValueError),
     ("- item\n", TypeError),
 ])
 def test_invalid_settings_fail_explicitly(tmp_path: Path, content: str, error: type[Exception]) -> None:
@@ -35,3 +36,11 @@ def test_invalid_settings_fail_explicitly(tmp_path: Path, content: str, error: t
 def test_missing_settings_fails(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_settings(tmp_path / "settings.yaml", environ={})
+
+
+def test_verifier_model_setting_has_independent_environment_precedence(tmp_path):
+    path = tmp_path / "settings.yaml"
+    path.write_text('MAIN_MODEL: "main"\nVERIFIER_MODEL: "reviewer"\n', encoding="utf-8")
+    env = {"VERIFIER_MODEL": "explicit-reviewer"}
+    load_settings(path, environ=env)
+    assert env == {"MAIN_MODEL": "main", "VERIFIER_MODEL": "explicit-reviewer"}

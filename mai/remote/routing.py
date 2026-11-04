@@ -43,6 +43,7 @@ def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str)
         )
     registry.add_model_context(
         key="remote_execution_target",
+        tools=local.names(),
         context={
             "default": "Every routed PC tool accepts is_remote (boolean, default false). The MAI host PC runs the call when false or omitted.",
             "remote": "Set is_remote=true on any routed PC tool to run on the owner-authorized connected remote PC.",
