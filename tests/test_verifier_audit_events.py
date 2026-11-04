@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 
 import pytest
+
+from mai.app.audit_log import AuditLogStore
 
 from mai.agent.verification import FinalGroundingVerifier
 from mai.llm.models import ModelTurn
@@ -71,11 +74,8 @@ def test_audit_records_exact_factual_and_quality_inputs_outputs_and_decision():
     assert factual_request["messages"] == list(reviewer.calls[0].messages)
     assert factual_request["response_schema"] == reviewer.calls[0].response_format
     assert json.loads(factual_request["messages"][1]["content"])["tool_results_in_execution_order"][0]["result"] == "Ark is an underground shelter."
-    assert events[1][1]["content"] == (awaitless_content := as_turn({
-        "evidence_verdict": "supported", "action_verdict": "not_applicable",
-        "claims": [], "reasons": [], "retry_summary": "No correction needed.",
-    }).content)
-    assert json.loads(awaitless_content) == events[2][1]["verdict"]
+    raw = events[1][1]["content"]
+    assert json.loads(raw) == events[2][1]["verdict"]
     assert events[3][1]["stage"] == "quality"
     assert events[-1][1]["ok"] is True
     assert events[-1][1]["review_details"]["alignment_verdict"] == "aligned"
@@ -123,3 +123,38 @@ def test_audit_callback_failure_is_not_suppressed():
 
     with pytest.raises(OSError, match="audit write failed"):
         asyncio.run(check())
+
+
+def test_audit_trace_can_be_read_from_sqlite_by_run_round_and_model(tmp_path):
+    store = AuditLogStore(tmp_path / "log.sqlite3")
+    store.start("run-1", db_id="owner", session_id="chat", prompt="Explain the Ark")
+    def record(event, details):
+        store.append(
+            "run-1", "verifier_step", event, round_number=2,
+            status="TRACE", details={
+                "event": event, "verifier_model": "granite4:3b-h", "data": dict(details),
+            },
+        )
+
+    result = asyncio.run(FinalGroundingVerifier(
+        reviewer_adapter=Reviewer(), quality_review_enabled=True,
+    ).verify(
+        candidate="The Ark is an underground shelter.",
+        messages=[{"role": "user", "content": "Explain the Ark"}],
+        tool_results=[("web_search", True, None, "Ark is an underground shelter.")],
+        on_audit_event=record,
+    ))
+    assert result.ok
+    store.finish("run-1", status="completed")
+    with sqlite3.connect(store.path) as conn:
+        rows = conn.execute(
+            "SELECT round_number, role, status, details_json FROM steps "
+            "WHERE run_id=? AND role='verifier_step' ORDER BY id", ("run-1",),
+        ).fetchall()
+    assert len(rows) == 7
+    assert all(row[:3] == (2, "verifier_step", "TRACE") for row in rows)
+    parsed = [json.loads(row[3]) for row in rows]
+    assert all(item["verifier_model"] == "granite4:3b-h" for item in parsed)
+    assert parsed[0]["data"]["messages"][1]["content"]
+    assert parsed[-1]["event"] == "decision"
+    assert parsed[-1]["data"]["ok"] is True
