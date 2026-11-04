@@ -17,12 +17,10 @@ from fastapi import HTTPException
 
 class VoiceService:
     _PROFILE_ENCODER = "speakeronnx/wespeaker-resnet34"
+    enrollment_min_speech_seconds = 3.0
     def __init__(self) -> None:
         self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "5"))
         self.match_threshold = float(os.environ.get("VOICE_MATCH_THRESHOLD", "0.75"))
-        self.min_speech_seconds = float(os.environ.get("VOICE_MIN_SPEECH_SECONDS", "0.5"))
-        if not 0 < self.min_speech_seconds <= 120:
-            raise ValueError("VOICE_MIN_SPEECH_SECONDS must be greater than 0 and at most 120")
         if not 1 <= self.silence_seconds <= 120:
             raise ValueError("VOICE_SILENCE_SECONDS must be between 1 and 120")
         if not 0 < self.match_threshold < 1:
@@ -49,7 +47,7 @@ class VoiceService:
             self._encoder = SpeakerEmbedder(model="wespeaker-resnet34", providers=["CPUExecutionProvider"])
         return self._encoder
 
-    def _waveform(self, payload: bytes, *, minimum_seconds: float):
+    def _waveform(self, payload: bytes, *, minimum_seconds: float = 0.0):
         import numpy as np
         from scipy.signal import resample_poly
         from math import gcd
@@ -68,6 +66,8 @@ class VoiceService:
                 pcm = np.frombuffer(file.readframes(count), dtype="<i2").astype("float32") / 32768.0
         except (EOFError, wave.Error, ValueError) as exc:
             raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
+        if not pcm.size:
+            raise HTTPException(422, {"code": "insufficient_speech", "message": "recording contains no audio samples"})
         if count / rate < minimum_seconds:
             raise HTTPException(422, {"code": "insufficient_speech", "message": f"at least {minimum_seconds:g} seconds of recording is required"})
         divisor = gcd(rate, 16000)
@@ -76,11 +76,11 @@ class VoiceService:
             from vadonnx import load_vad
             self._vad = load_vad("silero")
         vad = self._vad
-        timestamps = vad.get_speech_segments(processed, sample_rate=16000)
+        timestamps = vad.get_speech_segments(processed, sample_rate=16000, min_speech_duration=0.0)
         if not timestamps:
             raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
         speech = np.concatenate([processed[int(segment.start * 16000):int(segment.end * 16000)] for segment in timestamps])
-        if len(speech) < 16000 * minimum_seconds:
+        if not speech.size or len(speech) < 16000 * minimum_seconds:
             raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
         return speech
 
@@ -111,7 +111,7 @@ class VoiceService:
                 self._vad = load_vad("silero")
             divisor = gcd(rate, 16000)
             audio = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
-            segments = self._vad.get_speech_segments(audio, sample_rate=16000)
+            segments = self._vad.get_speech_segments(audio, sample_rate=16000, min_speech_duration=0.0)
             if not segments:
                 return None
             return float(max(segment.end for segment in segments))
@@ -141,7 +141,7 @@ class VoiceService:
 
     def enroll(self, db_id: str, recording: bytes) -> None:
         with self._lock:
-            speech = self._waveform(recording, minimum_seconds=3.0)
+            speech = self._waveform(recording, minimum_seconds=self.enrollment_min_speech_seconds)
             embedding = self._embedding(speech)
             self.root.mkdir(parents=True, exist_ok=True)
             path = self._profile_path(db_id)
@@ -155,7 +155,7 @@ class VoiceService:
             path = self._profile_path(db_id)
             if not path.is_file():
                 raise HTTPException(409, "enroll a voice profile before using voice input")
-            speech = self._waveform(recording, minimum_seconds=self.min_speech_seconds)
+            speech = self._waveform(recording, minimum_seconds=0.0)
             actual = self._embedding(speech)
             with np.load(path, allow_pickle=False) as profile:
                 if "encoder" not in profile or str(profile["encoder"].item()) != self._PROFILE_ENCODER:
@@ -184,7 +184,9 @@ class VoiceService:
                     device="cpu",
                     compute_type="int8",
                 )
-            segments, _ = self._transcriber.transcribe(speech, vad_filter=True)
+            # _waveform already selected speech. A second duration-filtering VAD
+            # can discard short utterances that passed the first detector.
+            segments, _ = self._transcriber.transcribe(speech, vad_filter=False)
             text = " ".join(segment.text.strip() for segment in segments).strip()
             if not text:
                 raise HTTPException(422, "no speech recognized")

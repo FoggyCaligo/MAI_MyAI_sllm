@@ -395,7 +395,7 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
     voice = _voice()
     return {
         "silence_seconds": voice.silence_seconds,
-        "min_speech_seconds": voice.min_speech_seconds,
+        "enrollment_min_speech_seconds": voice.enrollment_min_speech_seconds,
         "enrolled": voice.enrolled(principal.db_id),
     }
 

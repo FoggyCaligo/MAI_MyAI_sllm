@@ -1218,7 +1218,8 @@ voice 기능은 owner 전용이며 Web 로그인 인증을 대신하지 않는�
 - recording 길이 최대 120초
 - activity window 최대 2 MB / 10초
 - `VOICE_SILENCE_SECONDS=5`
-- `VOICE_MIN_SPEECH_SECONDS=0.5`
+- 일반 음성 입력은 최소 발화 길이 제한 없음. VAD의 최소 구간 길이 필터를 끄고, 이미 감지된 발화에 Whisper VAD를 중복 적용하지 않음. 무음·화자 불일치·전사 실패는 오류로 처리함.
+- 최초 목소리 등록은 최소 3초의 실제 발화 필요. 브라우저도 서버가 제공한 등록 기준을 사용함.
 - `VOICE_MATCH_THRESHOLD`는 로컬 환경에서 검증해야 하는 heuristic threshold
 - `VOICE_WHISPER_MODEL=small`
 

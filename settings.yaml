@@ -33,6 +33,5 @@ MAI_ANSWER_QUALITY_REVIEW: false
 # Optional voice behavior. Audio availability also depends on installed packages
 # and microphone/browser permissions; changing these values cannot supply them.
 VOICE_SILENCE_SECONDS: 5
-VOICE_MIN_SPEECH_SECONDS: 0.5
 VOICE_MATCH_THRESHOLD: 0.65
 VOICE_WHISPER_MODEL: small

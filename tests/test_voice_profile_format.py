@@ -45,7 +45,7 @@ def test_speaker_mismatch_reports_structured_error_without_transcribing(tmp_path
 
 
 
-def test_short_recording_reports_structured_insufficient_speech(tmp_path, monkeypatch):
+def test_short_enrollment_reports_structured_insufficient_speech(tmp_path, monkeypatch):
     import io
     import wave
 
@@ -58,7 +58,7 @@ def test_short_recording_reports_structured_insufficient_speech(tmp_path, monkey
         output.setframerate(16000)
         output.writeframes(bytes(8000))  # 0.25 seconds of 16-bit mono PCM
     with pytest.raises(HTTPException) as exc:
-        voice._waveform(wav.getvalue(), minimum_seconds=0.5)
+        voice.enroll("owner", wav.getvalue())
     assert exc.value.status_code == 422
     assert exc.value.detail["code"] == "insufficient_speech"
     assert voice._vad is None
@@ -73,7 +73,8 @@ def test_minimum_duration_silence_uses_injected_vad_without_model_download(tmp_p
     calls = []
 
     class SilentVAD:
-        def get_speech_segments(self, audio, *, sample_rate):
+        def get_speech_segments(self, audio, *, sample_rate, min_speech_duration):
+            assert min_speech_duration == 0.0
             calls.append((len(audio), sample_rate))
             return []
 
