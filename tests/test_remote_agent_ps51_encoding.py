@@ -18,3 +18,9 @@ def test_remote_worker_uses_utf8_bytes_for_standard_input():
 def test_remote_worker_does_not_use_unsupported_framework_property():
     script = AGENT_SCRIPT.read_text(encoding="utf-8")
     assert "$psi.StandardInputEncoding =" not in script
+
+
+def test_remote_agent_connects_without_interactive_yes_prompt():
+    script = AGENT_SCRIPT.read_text(encoding="utf-8")
+    assert "Read-Host" not in script
+

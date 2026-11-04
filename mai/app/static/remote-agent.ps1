@@ -10,9 +10,6 @@ if (-not $Server.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase)) 
 $Server = $Server.TrimEnd('/')
 Write-Host "MAI temporary remote management on $env:COMPUTERNAME ($env:USERNAME)"
 Write-Host 'The connected MAI can read, modify and delete files, and execute commands with your Windows account permissions.'
-if ((Read-Host 'Type YES to authorize remote management') -cne 'YES') {
-    throw 'Remote control was not authorized'
-}
 $headers = @{'X-MAI-Agent-Secret'=$Key}
 function Initialize-MaiRemotePython {
     $base = Join-Path $env:LOCALAPPDATA 'MAI\\RemoteWorker'
