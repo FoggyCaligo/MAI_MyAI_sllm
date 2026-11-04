@@ -693,6 +693,10 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
                 "verdict": "supported",
                 "defect": "none",
                 "reason": "",
+                "evidence_refs": [{
+                    "source_id": "user:0", "location": "previous statement",
+                    "quote": "로컬의 origin remote-tracking ref 16개는 삭제됐습니다",
+                }],
             }],
             "action_verdict": "not_applicable",
         },
@@ -773,6 +777,10 @@ def test_truthful_partial_answer_is_releaseable_after_failed_step() -> None:
             "verdict": "supported",
             "defect": "none",
             "reason": "",
+            "evidence_refs": [{
+                "source_id": "tool:0", "location": "result",
+                "quote": "document contents",
+            }],
         }],
         "action_verdict": "not_applicable",
     }])
