@@ -103,7 +103,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
             chat_job_store.mark_running(job_id)
             current_round: int | None = None
             configured_runtime = server._get_runtime()
-            runtime_verifier_model = configured_runtime.verifier_model or configured_runtime.model
+            runtime_verifier_model = getattr(configured_runtime, "verifier_model", None) or configured_runtime.model
 
             def publish_tool(execution: object) -> None:
                 payload = server._tool_payload(execution)
