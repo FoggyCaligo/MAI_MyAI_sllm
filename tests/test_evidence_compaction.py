@@ -153,6 +153,83 @@ def test_main_round_and_verifier_receive_only_retained_ranges():
     assert result.tool_executions[1].audit_content == source
 
 
+@pytest.mark.parametrize("selection_first", [True, False])
+def test_consecutive_rounds_retain_evidence_with_next_calls_without_repeating_reads(selection_first):
+    class ReadInput(BaseModel):
+        name: str
+
+    sources = {
+        "first": "첫 관측🙂 조건은 A. " + "선택하지 않은 문맥 " * 40,
+        "second": "둘째 관측: 조건은 B. " + "그 밖의 문맥 " * 40,
+    }
+    reads = []
+
+    def read(name):
+        reads.append(name)
+        return sources[name]
+
+    registry = ToolRegistry()
+    registry.add(name="read", description="Read an observation", input_model=ReadInput, handler=read)
+    store = ToolResultStore(max_inline_chars=2048)
+    retained = {}
+
+    def selection(message, name):
+        header, body = message["content"].split("\n", 1)
+        assert body == sources[name]
+        result_id = json.loads(header)["result_id"]
+        retained[result_id] = sources[name][:16]
+        return {"result_id": result_id, "ranges": [{"offset": 0, "length": 16}]}
+
+    class Main:
+        calls = 0
+
+        async def chat(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                return turn(calls=[NativeToolCall("tool_manual", {"tools": ["read"]})])
+            if self.calls == 2:
+                return turn(calls=[NativeToolCall("read", {"name": "first"})])
+            observations = [m for m in request.messages if m.get("tool_name") == "read"]
+            if self.calls == 3:
+                calls = [
+                    NativeToolCall("tool_manual", {"retain_evidence": [selection(observations[0], "first")]}),
+                    NativeToolCall("read", {"name": "second"}),
+                ]
+                return turn(calls=calls if selection_first else calls[::-1])
+            first = json.loads(observations[0]["content"])
+            assert [item["content"] for item in first["excerpts"]] == [sources["first"][:16]]
+            if self.calls == 4:
+                # Select the next result while updating the earlier result in the same native call.
+                # This must reach the next context even though compaction runs before tool execution.
+                return turn(calls=[NativeToolCall("tool_manual", {"retain_evidence": [
+                    selection(observations[1], "second"),
+                    {"result_id": first["result_id"], "ranges": [{"offset": 0, "length": 16}]},
+                ]})])
+            assert self.calls == 5
+            for message in observations:
+                bundle = json.loads(message["content"])
+                assert [item["content"] for item in bundle["excerpts"]] == [retained[bundle["result_id"]]]
+            return turn("두 관측의 조건은 각각 A와 B입니다.")
+
+    class Verifier:
+        calls = 0
+
+        async def verify(self, **kwargs):
+            self.calls += 1
+            results = [json.loads(content) for name, ok, error, content in kwargs["tool_results"] if name == "read"]
+            assert len(results) == 2
+            for bundle in results:
+                assert [item["content"] for item in bundle["excerpts"]] == [retained[bundle["result_id"]]]
+            return FinalVerificationResult(ok=True)
+
+    main, verifier = Main(), Verifier()
+    result = asyncio.run(AgentRuntime(main, registry, tool_result_store=store,
+        final_verifier=verifier).run_user_message("두 관측의 조건을 확인해줘"))
+    assert reads == ["first", "second"]
+    assert main.calls == result.model_rounds == 5
+    assert verifier.calls == 1
+
+
 def factual(*, supported=True, quote=None):
     return {
         "evidence_verdict": "supported" if supported else "unsupported",
