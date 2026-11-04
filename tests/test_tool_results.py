@@ -8,6 +8,8 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from mai.agent import AgentRuntime
+from mai.agent.loop import AgentLoop
+from mai.agent.verification import FinalVerificationResult
 from mai.agent.tool_results import (
     ToolResultNotFoundError,
     ToolResultReadLimitError,
@@ -61,6 +63,50 @@ def split_page(text: str) -> tuple[dict[str, object], str]:
     metadata_text, separator, content = text.partition("\n")
     assert separator == "\n"
     return json.loads(metadata_text), content
+
+
+@pytest.mark.parametrize("size", [80, 5000])
+def test_legacy_delivery_keeps_small_bodies_and_gives_verifier_original_visible_output(size):
+    source = "문" * size
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text", input_model=EchoInput, handler=lambda text: text)
+    store = ToolResultStore(max_inline_chars=1024)
+    adapter = FakeAdapter([
+        assistant_turn(calls=[NativeToolCall("tool_manual", {"tools": ["echo"]})]),
+        assistant_turn(calls=[NativeToolCall("echo", {"text": source})]),
+        assistant_turn(calls=[NativeToolCall("echo", {"text": "second observation"})]),
+        assistant_turn(content="The observations are available."),
+    ])
+    observed = []
+
+    class Verifier:
+        async def verify(self, **kwargs):
+            assert kwargs["tool_results"][1][3] == observed[1].content
+            return FinalVerificationResult(ok=True)
+
+    result = run(AgentRuntime(adapter, registry, tool_result_store=store,
+        final_verifier=Verifier()).run_user_message("Check the observations", on_tool_execution=observed.append))
+    later = next(m["content"] for m in adapter.requests[-1].messages if m.get("tool_name") == "echo")
+    assert observed[1].audit_content == source
+    if size < 1024:
+        assert observed[1].content == later == source
+    else:
+        header, body = split_page(observed[1].content)
+        assert body == source[:len(body)] and header["complete"] is False
+        assert json.loads(later)["content_compacted"] is True
+    assert result.model_rounds == len(adapter.requests) == 4
+
+
+def test_removed_evidence_selection_is_rejected_without_activating_tools():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo text", input_model=EchoInput, handler=lambda text: text)
+    activated = set()
+    execution = run(AgentLoop(None, registry)._execute_tool(
+        NativeToolCall("tool_manual", {"tools": ["echo"], "retain_evidence": []}),
+        available_tool_names=frozenset({"tool_manual"}), activated_tool_names=activated,
+    ))
+    assert not execution.ok and execution.error_type == "ToolArgumentsError"
+    assert activated == set()
 
 
 def test_large_result_is_bounded_and_can_be_read_by_range() -> None:
@@ -182,6 +228,4 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
     compact = json.loads(third_request_tools[0]["content"])
     assert compact["result_id"] == first_metadata["result_id"]
     assert compact["content_compacted"] is True
-    small_metadata, small_content = split_page(third_request_tools[1]["content"])
-    assert small_content == "small"
-    assert store.original(small_metadata["result_id"]).content == "small"
+    assert third_request_tools[1]["content"] == "small"

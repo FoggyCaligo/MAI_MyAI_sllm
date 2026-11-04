@@ -21,7 +21,7 @@
 | `mai/app/server.py`, `resumable_chat.py` | 인증, API, 대화 작업, 진행 상황, 기록 |
 | `mai/app/runtime.py` | 모델·검증기·기억·권한별 도구 조립 |
 | `mai/agent/runtime.py`, `loop.py`, `guards.py` | 모델과 도구 반복 실행, 교정, 진행 감시 |
-| `mai/agent/tool_results.py`, `verification.py` | 원문·발췌·재열람, 답변 검증 |
+| `mai/agent/tool_results.py`, `verification.py` | 도구 결과 페이지네이션, 답변 검증 |
 | `mai/tools/` | 파일·문서·코드·웹·계산·터미널 등의 실행 기능 |
 | `mai/memory/` | 사실 추출, 영구 그래프, 개념 색인, 검색 |
 | `mai/remote/` | 소유자가 연결한 원격 실행 대상 |

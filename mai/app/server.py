@@ -585,7 +585,6 @@ async def chat(
             details={
                 "name": payload["name"], "arguments": payload["arguments"],
                 "error_type": payload["error_type"],
-                "result_id": execution.result_id,
             },
         )
 
