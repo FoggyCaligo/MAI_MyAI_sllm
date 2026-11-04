@@ -14,7 +14,9 @@
 
 `MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `true`이며 설정을 로드하지 않고 검증기를 직접 생성하면 기본값은 `true`다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 품질 검토는 사실 검증 통과 뒤 추가 모델 호출을 수행하므로 응답 지연이 발생할 수 있다. 기존 `.env` 또는 프로세스 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 배포 기본값보다 우선한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
-사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
+사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`다. `reasons`와 `retry_summary`는 선택 사항으로 생략할 수 있으며, 미입력 시 기본값을 사용한다. REJECT 때는 모든 주장을 장황하게 열거하는 대신 **근거가 부족하거나 불확실한 문제 주장만** `claims`에 넣고, 각 주장에 짧은 사유 한 번만 적는다. 같은 설명을 `reasons`나 `retry_summary`에 반복할 필요가 없다. 다만 전체 판정이 거절인데 `claims`가 비어 있다면 `reasons`에 짧은 설명을 권장한다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토 계약은 바꾸지 않는다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
+
+**근거 판정의 `uncertain`은 ACCEPT가 아니다.** `evidence_verdict=uncertain` 또는 개별 `claims[].verdict=uncertain`인 경우 모두 근거 부족에 준하는 REJECT를 발생시키고, 기존 사실·근거 교정 예산을 소모한다. 원래 판정을 `supported`로 강제하지 않으며, 거절·감사 추적에는 불확실성을 별도 코드(`evidence_grounding_uncertain`, `claim_grounding_uncertain`)로 보존한다. `claims=[]`가 실제로 검토할 사실 주장이 없음을 증명하는 독립적인 완전성 검사 기능은 이번 수정에 포함하지 않는다.
 
 ## 입력 범위와 교정 제한
 
