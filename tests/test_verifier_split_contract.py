@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+from tests.reviewer_fixtures import with_claim_units
 from mai.agent.verification import (
     FinalGroundingVerifier,
     _FactualReviewPayload,
@@ -29,7 +30,7 @@ class StrictSplitReviewer:
     async def chat(self, request):
         self.schemas.append(request.response_format)
         if request.response_format == _FactualReviewPayload.model_json_schema():
-            return _turn({
+            return _turn(with_claim_units({
                 "evidence_verdict": self.evidence,
                 "reasons": [] if self.evidence == "supported" else ["Evidence missing"],
                 "claims": [] if self.evidence == "supported" else [{
@@ -39,7 +40,7 @@ class StrictSplitReviewer:
                 }],
                 "action_verdict": "not_applicable",
                 "retry_summary": "Obtain evidence" if self.evidence != "supported" else "No correction needed.",
-            })
+            }, request))
         if request.response_format == _QualityReviewPayload.model_json_schema():
             return _turn({
                 "alignment_verdict": self.alignment,
