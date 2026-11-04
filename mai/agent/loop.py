@@ -251,6 +251,7 @@ class AgentLoop:
         latest_verification_rejection: tuple[int, int] | None = None
         latest_correction_contract: dict[str, Any] | None = None
         latest_verifier_feedback: str | None = None
+        pending_verification_candidate: str | None = None
         consecutive_grounding_rejections = 0
         hypothesis_reconsideration_pending = False
         rejected_evidence_snapshot: frozenset[tuple[str, str]] | None = None
@@ -365,6 +366,7 @@ class AgentLoop:
                         coverage_verification_retries,
                     )
                     if self.final_verifier is not None:
+                        pending_verification_candidate = turn.content
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
                             messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
@@ -378,6 +380,7 @@ class AgentLoop:
                                 "tool_result_ids": tuple(execution.result_id for execution in executions)}
                                if self.tool_result_store is not None else {}),
                         )
+                        pending_verification_candidate = None
                         if not verification.ok:
                             rejected_final_indices.append(len(history) - 1)
                             issue_codes = ",".join(issue.code for issue in verification.issues) or "unknown"
@@ -572,8 +575,9 @@ class AgentLoop:
                     tool_executions=tuple(executions),
                     model_rounds=round_number,
                     last_rejected_draft=(
-                        str(history[rejected_final_indices[-1]].get("content", ""))
-                        if rejected_final_indices else None
+                        pending_verification_candidate if pending_verification_candidate is not None
+                        else (str(history[rejected_final_indices[-1]].get("content", ""))
+                              if rejected_final_indices else None)
                     ),
                     last_verifier_feedback=latest_verifier_feedback,
                 ),
