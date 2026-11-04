@@ -12,9 +12,9 @@ from mai.llm.models import ModelTurn
 
 
 @pytest.mark.parametrize("verifier_model,selected_model,reviewer_fails", [
-    (None, None, False), ("lfm2.5:8b", None, False),
-    (None, "ui-selected-model", False), ("lfm2.5:8b", "ui-selected-model", False),
-    ("lfm2.5:8b", None, True),
+    (None, None, False), ("granite4:3b-h", None, False),
+    (None, "ui-selected-model", False), ("granite4:3b-h", "ui-selected-model", False),
+    ("granite4:3b-h", None, True),
 ])
 def test_production_uses_configured_reviewer_without_changing_main_or_extraction(
     tmp_path, monkeypatch, verifier_model, selected_model, reviewer_fails,
