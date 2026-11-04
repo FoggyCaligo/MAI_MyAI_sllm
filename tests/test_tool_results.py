@@ -153,12 +153,12 @@ def test_agent_observer_and_next_round_receive_same_bounded_scope() -> None:
     assert visible_content == source[: len(visible_content)]
 
     stored_tool_message = next(message for message in result.messages if message.get("role") == "tool" and message.get("tool_name") == "echo")
-    compact = json.loads(stored_tool_message["content"])
-    assert compact["result_id"] == metadata["result_id"]
-    assert compact["content_compacted"] is True
+    stored_metadata, stored_visible = split_page(stored_tool_message["content"])
+    assert stored_metadata["result_id"] == metadata["result_id"]
+    assert stored_visible == visible_content
 
 
-def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
+def test_large_tool_page_is_preserved_for_later_model_rounds() -> None:
     source = "z" * 5000
     registry = ToolRegistry()
     registry.add(name="echo", description="Return supplied text.", input_model=EchoInput, handler=lambda text: text)
@@ -179,9 +179,8 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
 
     third_request_tools = [message for message in adapter.requests[3].messages if message.get("tool_name") == "echo"]
     assert len(third_request_tools) == 2
-    compact = json.loads(third_request_tools[0]["content"])
-    assert compact["result_id"] == first_metadata["result_id"]
-    assert compact["content_compacted"] is True
+    # Preserved throughout later rounds for the main model
+    assert third_request_tools[0]["content"] == first_round_tool["content"]
     small_metadata, small_content = split_page(third_request_tools[1]["content"])
     assert small_content == "small"
     assert store.original(small_metadata["result_id"]).content == "small"

@@ -101,7 +101,7 @@ def test_bundle_distinguishes_no_selection_partial_and_complete():
     assert empty["original_read"] is None
 
 
-def test_main_round_and_verifier_receive_only_retained_ranges():
+def test_main_round_preserves_full_tool_results_and_verifier_receives_retained_ranges():
     class EchoInput(BaseModel):
         text: str
 
@@ -133,9 +133,10 @@ def test_main_round_and_verifier_receive_only_retained_ranges():
                     NativeToolCall("echo", {"text": "new observation"}),
                 ])
             assert self.round == 4
-            compact = json.loads(echoes[0]["content"])
-            assert compact["excerpts"][0]["content"] == source[:15]
-            assert "unselected original context" not in echoes[0]["content"]
+            # Main model keeps full tool result content throughout rounds
+            header, body = echoes[0]["content"].split("\n", 1)
+            assert body == source
+            assert "unselected original context" in echoes[0]["content"]
             return turn("kept statement.")
 
     class Verifier:
