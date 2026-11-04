@@ -10,6 +10,7 @@ import pytest
 from mai.app.audit_log import AuditLogStore
 
 from mai.agent.verification import FinalGroundingVerifier
+from tests.reviewer_fixtures import with_claim_units
 from mai.llm.models import ModelTurn
 
 
@@ -32,7 +33,7 @@ class Reviewer:
         if self.fail:
             raise RuntimeError("reviewer unavailable")
         if len(self.calls) == 1:
-            return as_turn({
+            return as_turn(with_claim_units({
                 "evidence_verdict": "unsupported" if self.reject else "supported",
                 "action_verdict": "not_applicable",
                 "claims": ([{
@@ -43,7 +44,7 @@ class Reviewer:
                 }] if self.reject else []),
                 "reasons": ["No observed source"] if self.reject else [],
                 "retry_summary": "Get evidence." if self.reject else "No correction needed.",
-            })
+            }, request))
         return as_turn({
             "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
             "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
@@ -104,10 +105,10 @@ def test_reviewer_failure_keeps_request_and_error_without_false_decision():
 def test_audit_callback_failure_is_not_suppressed():
     async def check():
         async def chat(request):
-            return as_turn({
+            return as_turn(with_claim_units({
                 "evidence_verdict": "supported", "action_verdict": "not_applicable",
                 "claims": [], "reasons": [], "retry_summary": "No correction needed.",
-            })
+            }, request))
 
         class Adapter:
             async def chat(self, request):
