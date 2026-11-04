@@ -367,7 +367,7 @@ class AgentLoop:
                             evidence_failure = any(
                                 issue.code in {
                                     "evidence_grounding_failed", "claim_grounding_failed",
-                                    "evidence_scope_expansion", "supported_claim_source_unverified", "action_outcome_unverified",
+                                    "evidence_scope_expansion", "supported_claim_source_unverified", "claim_coverage_incomplete", "action_outcome_unverified",
                                     "action_outcome_contradicted",
                                 }
                                 for issue in verification.issues
@@ -377,7 +377,7 @@ class AgentLoop:
                             # This is task-agnostic and does not prescribe tool queries.
                             if any(issue.code in {
                                 "claim_grounding_failed", "evidence_grounding_failed",
-                                "evidence_scope_expansion", "supported_claim_source_unverified",
+                                "evidence_scope_expansion", "supported_claim_source_unverified", "claim_coverage_incomplete",
                             } for issue in verification.issues):
                                 consecutive_grounding_rejections += 1
                             else:
