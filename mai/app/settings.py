@@ -10,7 +10,7 @@ import yaml
 # The YAML file is deliberately a flat mapping of existing environment-setting names.
 # This keeps the pre-existing typed validation at each consumer intact.
 _ALLOWED_KEYS = frozenset((
-    "LLM_BACKEND", "LLAMACPP_HOST", "OLLAMA_HOST", "MAIN_MODEL",
+    "LLM_BACKEND", "LLAMACPP_HOST", "OLLAMA_HOST", "MAIN_MODEL", "VERIFIER_MODEL",
     "OLLAMA_REQUEST_TIMEOUT_SECONDS", "OLLAMA_AGENT_MAX_OUTPUT_TOKENS", "VISION_MODEL", "OLLAMA_THINK",
     "MAI_DEBUG_MODEL_INPUT", "AGENT_MAX_IDENTICAL_CALLS",
     "AGENT_MAX_IDENTICAL_FAILURES", "AGENT_MAX_NO_PROGRESS_ROUNDS",

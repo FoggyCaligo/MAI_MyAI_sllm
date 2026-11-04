@@ -185,6 +185,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
         vision_model=os.environ.get("VISION_MODEL") or None,
+        verifier_model=os.environ.get("VERIFIER_MODEL"),
         upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )

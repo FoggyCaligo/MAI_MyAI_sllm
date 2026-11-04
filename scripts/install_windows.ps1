@@ -73,15 +73,19 @@ try {
         $source = Get-Content '.env.example' -Raw -Encoding UTF8
         # PyYAML is installed by pip install -e . above.
         # Read model defaults from the same settings.yaml as MAI runtime.
-        $modelDefaultsJson = & $venvPython -c "import json, pathlib; from mai.app.settings import load_settings; s = load_settings(pathlib.Path('settings.yaml'), environ={}); print(json.dumps({'main': s['MAIN_MODEL'], 'vision': s['VISION_MODEL']}))"
+        $modelDefaultsJson = & $venvPython -c "import json, pathlib; from mai.app.settings import load_settings; s = load_settings(pathlib.Path('settings.yaml'), environ={}); print(json.dumps({'main': s['MAIN_MODEL'], 'vision': s['VISION_MODEL'], 'verifier': s.get('VERIFIER_MODEL')}))"
         if ($LASTEXITCODE -ne 0) { throw 'Could not read settings.yaml model defaults' }
         $modelDefaults = $modelDefaultsJson | ConvertFrom-Json
         $defaultModel = [string]$modelDefaults.main
         $visionModel = [string]$modelDefaults.vision
+        $verifierModel = [string]$modelDefaults.verifier
         $model = Read-Host "Main Ollama model [$defaultModel] (press Enter for default)"
         if ([string]::IsNullOrWhiteSpace($model)) { $model = $defaultModel }
         Run-Command 'ollama' @('pull', $model)
         Run-Command 'ollama' @('pull', $visionModel)
+        if ($verifierModel -and $verifierModel -ne $model -and $verifierModel -ne $visionModel) {
+            Run-Command 'ollama' @('pull', $verifierModel)
+        }
         $userId = Read-RequiredValue 'Owner login ID'
         $secure = Read-Host 'Owner password' -AsSecureString
         $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)

@@ -75,6 +75,9 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry) -
             "available in this run, but their parameter schemas are not initially exposed. "
             "Call tool_manual with exact tool names to activate them. "
             "On the next round, the activated native tools can be called directly. "
+            "The catalog is a discovery list, not a callable-tool list. On the first round, tool_manual "
+            "is the ONLY callable tool. First activate the tool by name, then read its next-round schema; "
+            "never guess its arguments from its name or prior familiarity. "
             "Activated tools remain available throughout this run. "
             "Do not call an unactivated tool or invent its arguments. "
             "You may activate multiple tools in one tool_manual call. "
@@ -554,9 +557,13 @@ class AgentLoop:
     ) -> ToolExecution:
         if call.name not in available_tool_names and (self.registry.has(call.name) or call.name == "tool_manual"):
             exc = ToolUnavailableInRoundError(
-                f"native tool '{call.name}' was not exposed in the current model round"
+                f"native tool '{call.name}' is registered but not activated in the current model round; "
+                "activate it with tool_manual before using its schema. This is not a missing capability."
             )
-            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+            payload = {
+                "ok": False, "error_type": type(exc).__name__, "message": str(exc),
+                "required_activation": {"name": "tool_manual", "arguments": {"tools": [call.name]}},
+            }
             source_content = _serialize_tool_content(payload)
             model_content, compact_content = self._model_contents(source_content)
             return ToolExecution(
@@ -598,8 +605,11 @@ class AgentLoop:
                         source_content_fingerprint=content_fingerprint(source_content),
                         compact_history_content=compact_content, source_content=source_content,
                     )
-                activated_tool_names.update(requested)
+                contexts = self.registry.model_context(names=requested)
                 value = {"activated_tools": requested, "available_next_round": True}
+                if contexts:
+                    value["tool_contexts"] = contexts
+                activated_tool_names.update(requested)
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:

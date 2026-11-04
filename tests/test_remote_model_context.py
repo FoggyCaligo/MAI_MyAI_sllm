@@ -14,6 +14,8 @@ def test_remote_target_context_is_explicit_and_unified(tmp_path):
     assert model.model_fields["is_remote"].annotation is bool
     assert "path" in model.model_fields
     assert not registry.has("remote_file_read")
+    assert not any(item.get("source") == "remote_execution_target" for item in registry.model_context(names=()))
+    assert target in registry.model_context(names=["file_read"])
 
 
 def test_no_remote_context_without_pc_registration():
