@@ -317,7 +317,7 @@ class FinalGroundingVerifier:
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
         if quality_review_enabled is None:
-            raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "true").lower()
+            raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "false").lower()
             if raw not in {"true", "false"}:
                 raise ValueError("MAI_ANSWER_QUALITY_REVIEW must be true or false")
             quality_review_enabled = raw == "true"
