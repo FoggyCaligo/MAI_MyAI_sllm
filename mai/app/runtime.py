@@ -316,7 +316,14 @@ class MAIRuntime:
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
                 on_verification_rejection=on_verification_rejection,
-                on_verification_audit=on_verification_audit,
+                on_verification_audit=(
+                    (lambda round_number, event, data: on_verification_audit(
+                        round_number, event, {
+                            "verifier_model": verifier_adapter.config.model,
+                            "data": dict(data),
+                        },
+                    )) if on_verification_audit is not None else None
+                ),
             )
         finally:
             await browser_manager.close_all()
