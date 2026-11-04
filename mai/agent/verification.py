@@ -57,6 +57,7 @@ _FACTUAL_REVIEW_SYSTEM = """
 You are the factual grounding reviewer for a provisional answer. Use the current user request, conversation context and observed evidence. No tools, answer rewriting, coverage/alignment judgments, or demands for optional details. Return claim-level grounding, action-outcome evidence and blocking factual reasons in the required structured schema.
 
 Evidence and verdicts:
+- Review every candidate_units entry, including mixed factual/nonfactual prose. Return one unit_reviews entry per unit, mark factual whenever a material factual assertion occurs, and link every factual unit to its extracted claims[] by index. Do not omit any unit or classify factual material as nonfactual to avoid scrutiny.
 - For each material factual claim, use "supported", "unsupported", or "uncertain". A claim is unsupported when evidence contradicts it, does not support it, or supports only a narrower statement. Use uncertain only when you cannot confidently decide; presenting an unverified proposition as established fact is normally unsupported.
 - General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity or widely known knowledge does not establish them. Current user messages and observed successful tool results are evidence.
 - Previous assistant answers are factual evidence only in verified_prior_conversation, which contains previously accepted answers. They establish what was known then, not that changing external state remains current. Other assistant text, candidate_final, and verifier feedback are context only, never evidence.
@@ -154,11 +155,19 @@ class _ClaimReviewPayload(BaseModel):
         return references
 
 
+class _UnitReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    unit_index: int = Field(ge=0)
+    classification: Literal["factual", "nonfactual"]
+    claim_indices: list[int] = Field(default_factory=list)
+
+
 class _FactualReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
+    unit_reviews: list[_UnitReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
 
@@ -277,6 +286,7 @@ class FinalReview:
     retry_summary: str = ""
     reference_warnings: tuple[str, ...] = ()
     unanchored_supported_claims: tuple[str, ...] = ()
+    claim_coverage_issues: tuple[str, ...] = ()
     numeric_verdict: str | None = None
     numeric_reason: str = ""
 
@@ -307,7 +317,7 @@ class FinalGroundingVerifier:
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
         if quality_review_enabled is None:
-            raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "true").lower()
+            raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "false").lower()
             if raw not in {"true", "false"}:
                 raise ValueError("MAI_ANSWER_QUALITY_REVIEW must be true or false")
             quality_review_enabled = raw == "true"
@@ -369,6 +379,11 @@ class FinalGroundingVerifier:
                 )
                 issues.append(numeric_issue)
         if allow_evidence_review:
+            if review.claim_coverage_issues:
+                issues.append(VerificationIssue(
+                    code="claim_coverage_incomplete",
+                    message="; ".join(review.claim_coverage_issues),
+                ))
             if review.unanchored_supported_claims:
                 issues.append(VerificationIssue(
                     code="supported_claim_source_unverified",
@@ -451,6 +466,7 @@ class FinalGroundingVerifier:
                 "coverage_reasons": list(review.coverage_reasons),
                 "reference_warnings": list(review.reference_warnings),
                 "unanchored_supported_claims": list(review.unanchored_supported_claims),
+                "claim_coverage_issues": list(review.claim_coverage_issues),
                 "claims": [
                     {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect,
                      "reason": claim.reason, "evidence_refs": list(claim.evidence_refs)}
@@ -514,6 +530,11 @@ class FinalGroundingVerifier:
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results,
                                   verified_prior_conversation=self.verified_prior_conversation)
+        candidate_units = _candidate_review_units(payload["candidate_final"])
+        payload["candidate_units"] = [
+            {"index": index, "content": unit}
+            for index, unit in enumerate(candidate_units)
+        ]
         system = _FACTUAL_REVIEW_SYSTEM
         payload_model = _FactualReviewPayload
         if flagged_numeric_facts:
@@ -534,6 +555,9 @@ class FinalGroundingVerifier:
         numeric_verdict = facts.numeric_verdict if flagged_numeric_facts else None
         numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
         claims, reference_warnings = _filter_factual_references(facts, payload)
+        claim_coverage_issues = _check_claim_unit_coverage(
+            facts.unit_reviews, unit_count=len(candidate_units), claim_count=len(claims),
+        )
         # Source existence and exact quotes are deterministic; semantic support is an LLM judgment.
         unanchored_supported_claims = tuple(
             claim.claim for claim in claims if claim.verdict == "supported" and not claim.evidence_refs
@@ -550,7 +574,7 @@ class FinalGroundingVerifier:
         factual_pass = (not flagged_numeric_facts or numeric_verdict == "supported") and evidence_verdict == "supported" and facts.action_verdict in (
             "not_applicable", "verified"
         )
-        if not (run_quality_review and factual_pass and not unanchored_supported_claims):
+        if not (run_quality_review and factual_pass and not unanchored_supported_claims and not claim_coverage_issues):
             return FinalReview(
                 evidence_verdict=evidence_verdict, alignment_verdict="aligned",
                 coverage_verdict="sufficient", coverage_reasons=(),
@@ -559,6 +583,7 @@ class FinalGroundingVerifier:
                 retry_summary=facts.retry_summary,
                 reference_warnings=reference_warnings,
                 unanchored_supported_claims=unanchored_supported_claims,
+                claim_coverage_issues=claim_coverage_issues,
                 numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
             )
 
@@ -600,6 +625,7 @@ class FinalGroundingVerifier:
             retry_summary=quality.retry_summary,
             reference_warnings=reference_warnings,
             unanchored_supported_claims=unanchored_supported_claims,
+            claim_coverage_issues=claim_coverage_issues,
             numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
         )
 
@@ -722,6 +748,49 @@ def _clip_text(text: str, limit: int) -> str:
     head = (limit * 2) // 3
     tail = limit - head - 24
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
+
+
+def _candidate_review_units(candidate: str) -> tuple[str, ...]:
+    """Structural paragraphs, not semantic keyword or sentence heuristics."""
+    return tuple(
+        unit.strip() for unit in re.split(r"\n\s*\n", candidate) if unit.strip()
+    )
+
+
+def _check_claim_unit_coverage(
+    reviews: Sequence[_UnitReviewPayload], *, unit_count: int, claim_count: int,
+) -> tuple[str, ...]:
+    """Validate completeness of reported units and claim links; never infer semantics."""
+    failures: list[str] = []
+    seen_units: set[int] = set()
+    referenced_claims: set[int] = set()
+    for review in reviews:
+        index = review.unit_index
+        if index >= unit_count:
+            failures.append(f"unit {index} is outside candidate_units")
+            continue
+        if index in seen_units:
+            failures.append(f"unit {index} was reviewed more than once")
+            continue
+        seen_units.add(index)
+        if len(set(review.claim_indices)) != len(review.claim_indices):
+            failures.append(f"unit {index} repeats a claim index")
+        invalid = [i for i in review.claim_indices if i < 0 or i >= claim_count]
+        if invalid:
+            failures.append(f"unit {index} refers to unknown claim indices: {invalid}")
+        else:
+            referenced_claims.update(review.claim_indices)
+        if review.classification == "factual" and not review.claim_indices:
+            failures.append(f"factual unit {index} has no extracted claim")
+        if review.classification == "nonfactual" and review.claim_indices:
+            failures.append(f"nonfactual unit {index} lists factual claims")
+    missing = sorted(set(range(unit_count)) - seen_units)
+    if missing:
+        failures.append(f"candidate units not reviewed: {missing}")
+    unassigned = sorted(set(range(claim_count)) - referenced_claims)
+    if unassigned:
+        failures.append(f"extracted claims not assigned to candidate units: {unassigned}")
+    return tuple(failures)
 
 
 def _review_payload(

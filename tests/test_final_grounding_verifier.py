@@ -6,6 +6,7 @@ import json
 import logging
 import pytest
 from mai.agent.loop import AgentRunFailure
+from tests.reviewer_fixtures import with_claim_units
 
 from mai.agent.runtime import AgentRuntime
 from mai.agent.verification import FinalGroundingVerifier
@@ -111,7 +112,7 @@ class ReviewerAdapter:
             "reasons": list(reasons),
         })
         self._quality = quality if evidence == "supported" else None
-        return turn(json.dumps(fact))
+        return turn(json.dumps(with_claim_units(fact, request)))
 
 
 class StructuredReviewerAdapter:
@@ -136,7 +137,7 @@ class StructuredReviewerAdapter:
         if kind == "combined":
             fact.update(numeric_verdict=review["numeric_verdict"], numeric_reason=review["numeric_reason"])
         self._quality = quality if fact["evidence_verdict"] == "supported" else None
-        return turn(json.dumps(fact, ensure_ascii=False))
+        return turn(json.dumps(with_claim_units(fact, request), ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -149,10 +150,10 @@ class SlowReviewerAdapter:
         await asyncio.sleep(self.delay_seconds)
         kind = _kind(request)
         if kind == "factual":
-            return turn(json.dumps({
+            return turn(json.dumps(with_claim_units({
                 "evidence_verdict": "supported", "reasons": [], "claims": [],
                 "action_verdict": "not_applicable", "retry_summary": "No correction needed.",
-            }))
+            }, request)))
         if kind == "quality":
             return turn(json.dumps({
                 "alignment_verdict": "aligned", "coverage_verdict": "sufficient",

@@ -7,6 +7,7 @@ import pytest
 
 from mai.agent.runtime import AgentRuntime
 from mai.agent.verification import FinalGroundingVerifier
+from tests.reviewer_fixtures import with_claim_units
 from mai.llm.models import ModelTurn
 from mai.tools.registry import ToolRegistry
 
@@ -34,7 +35,7 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
-        body = json.dumps(next(self.responses))
+        body = json.dumps(with_claim_units(next(self.responses), request))
         return ModelTurn(body, "", (), {"role": "assistant", "content": body})
 
 
