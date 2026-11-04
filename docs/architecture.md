@@ -1,4 +1,4 @@
-# MAI 실행 구조와 개발 계약
+dev# MAI 실행 구조와 개발 계약
 
 2026-11-04 정리. 기존 실행 계약과 전체 재구성 명세서의 공통 내용을 통합했다. 실행 코드가 현재 동작의 기준이며, 과거 작업 기록은 [인계 기록](history/MAI_CODEX_HANDOFF_2026-11-04.md)으로 분리한다.
 
@@ -81,7 +81,6 @@ Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool
 
 설정 우선순위는 **기존 프로세스 환경변수 > `.env` > `settings.yaml`**이다. 일반 실행은 프로젝트 루트에서 `python run_server.py`다. 다른 폴더에서 절대경로로 실행해도 이 진입점은 프로젝트 루트로 이동한다. API를 별도로 직접 구동하는 경우 상대경로는 해당 프로세스의 작업 폴더 기준이다.
 
-배포 기본값은 요청 제한 500초, 본 모델 출력 한도 32,768토큰, 도구 결과 입력 8,000자, 최근 대화 10개 메시지, 별도 답변 품질 검토 비활성화다. `MAIN_MODEL`은 본 모델이며 `VERIFIER_MODEL`은 최종 사실·수치 의미 검증과 선택적 품질 검토에 사용하는 모델이다. 기본값은 각각 `ornith-1.5:9b`, `lfm2.5:8b`다. Verifier 설정을 생략한 구성에서는 기존처럼 해당 요청의 선택 모델을 사용하며, 명시한 빈 값은 오류다. UI에서 본 모델을 바꿔도 명시한 Verifier 모델은 유지한다. 기억 추출은 본 모델을 `think=False`로 호출한다. 별도 Verifier의 실패를 본 모델로 재시도하지 않는다.
 
 `OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 설정 로더가 허용하지만 현재 실행 소비자가 없다. 값을 바꿔 동작이 달라진다고 안내하지 않는다. 본 모델은 `think=True`이며 개별 도구 제한 시간은 등록 인자로 정한다.
 
