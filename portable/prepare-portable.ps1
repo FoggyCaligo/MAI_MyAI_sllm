@@ -165,6 +165,8 @@ if ($PullModels) {
     $requiredModelsJson = & $python 'portable/model_requirements.py' --manifest $manifestPath --settings (Join-Path $root 'settings.yaml')
     if ($LASTEXITCODE -ne 0) { throw 'Portable Ollama model requirements could not be resolved' }
     $requiredModels = @($requiredModelsJson | ConvertFrom-Json)
+    if ($requiredModels.Count -eq 0) { throw 'Portable model resolver returned no models' }
+    Write-Host ('Provisioning configured Ollama models: ' + ($requiredModels -join ', '))
     if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) {
         throw 'Port 11434 is already in use; stop the existing Ollama service before model provisioning'
     }
