@@ -81,7 +81,6 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry) -
             "Activated tools remain available throughout this run. "
             "Do not call an unactivated tool or invent its arguments. "
             "You may activate multiple tools in one tool_manual call. "
-            "If tools are unnecessary, answer normally. "
             "Tool catalog (JSON): "
             + json.dumps([
                 {"name": definition.name, "category": definition.category}

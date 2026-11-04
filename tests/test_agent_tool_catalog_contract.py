@@ -31,6 +31,7 @@ def test_catalog_is_inserted_after_system_messages_before_user_messages() -> Non
     catalog_message = history[2]
     assert catalog_message["role"] == "system"
     assert "Call tool_manual" in catalog_message["content"]
+    assert "If tools are unnecessary, answer normally." not in catalog_message["content"]
     serialized = catalog_message["content"].split("Tool catalog (JSON): ", 1)[1]
     assert json.loads(serialized) == [
         {"name": "read_document", "category": "document"},
