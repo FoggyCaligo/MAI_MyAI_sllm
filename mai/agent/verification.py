@@ -20,21 +20,19 @@ import json
 import os
 import logging
 import re
-from typing import Any, Generic, Literal, Mapping, Sequence, TypeVar
+from typing import Any, Literal, Mapping, Sequence
 
 import httpx
 from ollama import ResponseError
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
 from ..tools.time import current_time
-from .tool_results import ToolResultStore
 
 
 ToolVerificationResult = tuple[str, bool, str | None, str]
-_MAX_NO_PROGRESS_READ_ROUNDS = 2
 
 _DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
 _NUMBER_RE = re.compile(
@@ -177,46 +175,6 @@ class _FactualNumericReviewPayload(_FactualReviewPayload):
     """One factual verdict also resolves every flagged numeric/date value."""
     numeric_verdict: Literal["supported", "unsupported", "uncertain"]
     numeric_reason: str = Field(max_length=240)
-
-
-class _EvidenceReadRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    source_id: str = Field(min_length=1)
-    offset: int = Field(ge=0)
-    limit: int = Field(gt=0)
-
-
-_ReviewT = TypeVar("_ReviewT", bound=BaseModel)
-
-
-class _EvidenceReadStep(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    read_requests: list[_EvidenceReadRequest] = Field(min_length=1)
-    review: None
-
-
-class _EvidenceVerdictStep(BaseModel, Generic[_ReviewT]):
-    model_config = ConfigDict(extra="forbid")
-    read_requests: list[_EvidenceReadRequest] = Field(max_length=0)
-    review: _ReviewT
-
-
-class _EvidenceReviewStep(
-    RootModel[_EvidenceReadStep | _EvidenceVerdictStep[_ReviewT]], Generic[_ReviewT],
-):
-    """Encode exclusive actions in both decoder schema and runtime validation."""
-
-    @property
-    def read_requests(self) -> list[_EvidenceReadRequest]:
-        return self.root.read_requests
-
-    @property
-    def review(self) -> _ReviewT | None:
-        return self.root.review
-
-
-class ReviewerEvidenceReadError(ValueError):
-    """Reviewer requested an unavailable, failed, or repeated source range."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,14 +321,9 @@ class FinalGroundingVerifier:
         allow_evidence_review: bool | None = None,
         allow_semantic_review: bool = True,
         allow_coverage_review: bool = True,
-        evidence_store: ToolResultStore | None = None,
-        tool_result_ids: Sequence[str | None] = (),
     ) -> FinalVerificationResult:
-        if evidence_store is not None and len(tool_result_ids) != len(tool_results):
-            raise ValueError("tool result IDs must match original execution order")
         numeric_facts = self._unsupported_numeric_facts(
             candidate=candidate, messages=messages, tool_results=tool_results,
-            evidence_store=evidence_store, tool_result_ids=tool_result_ids,
         ) if allow_numeric_review else ()
         numeric_issue = self._numeric_issue_from_facts(numeric_facts) if numeric_facts else None
         if allow_evidence_review is None:
@@ -391,7 +344,6 @@ class FinalGroundingVerifier:
         review = await self._review_final(
             candidate=candidate, messages=messages, tool_results=tool_results,
             flagged_numeric_facts=numeric_facts,
-            evidence_store=evidence_store, tool_result_ids=tool_result_ids,
             run_quality_review=(self.quality_review_enabled and allow_evidence_review
                                 and allow_semantic_review and allow_coverage_review),
         )
@@ -492,8 +444,6 @@ class FinalGroundingVerifier:
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
-        evidence_store: ToolResultStore | None = None,
-        tool_result_ids: Sequence[str | None] = (),
     ) -> tuple[str, ...]:
         evidence: set[str] = set()
         for message in messages:
@@ -505,11 +455,9 @@ class FinalGroundingVerifier:
         for message in self.verified_prior_conversation:
             if message["role"] == "assistant":
                 evidence.update(_extract_material_numeric_facts(message["content"], include_date_aliases=True))
-        for index, (name, ok, _, content) in enumerate(tool_results):
-            if not ok or name in {"tool_manual", "tool_result_read"}:
+        for _, ok, _, content in tool_results:
+            if not ok:
                 continue
-            if evidence_store is not None:
-                content = evidence_store.original(tool_result_ids[index]).content
             evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
         candidate_facts = _extract_material_numeric_facts(candidate)
@@ -534,8 +482,6 @@ class FinalGroundingVerifier:
         self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
         flagged_numeric_facts: Sequence[str] = (),
-        evidence_store: ToolResultStore | None = None,
-        tool_result_ids: Sequence[str | None] = (),
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results,
                                   verified_prior_conversation=self.verified_prior_conversation)
@@ -546,10 +492,14 @@ class FinalGroundingVerifier:
             system += "\nReturn numeric_verdict and numeric_reason in addition to the factual verdict."
             payload["flagged_numeric_or_date_values"] = list(flagged_numeric_facts)
             payload_model = _FactualNumericReviewPayload
-        facts = await self._review_evidence(
-            payload=payload, system=system, payload_model=payload_model,
-            evidence_store=evidence_store, tool_result_ids=tool_result_ids,
+        fact_request = ChatRequest(
+            messages=(
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(), think=False, response_format=payload_model.model_json_schema(),
         )
+        facts = await self._request_structured_review(fact_request, payload_model, label="factual")
         numeric_verdict = facts.numeric_verdict if flagged_numeric_facts else None
         numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
         claims, reference_warnings = _filter_factual_references(facts, payload)
@@ -616,117 +566,6 @@ class FinalGroundingVerifier:
             numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
         )
 
-    async def _review_evidence(
-        self, *, payload: dict[str, Any], system: str, payload_model: type[BaseModel],
-        evidence_store: ToolResultStore | None, tool_result_ids: Sequence[str | None],
-    ) -> BaseModel:
-        if evidence_store is None or not payload["tool_results_in_execution_order"]:
-            if evidence_store is None and tool_result_ids:
-                raise ValueError("tool_result_ids require an evidence store")
-            request = ChatRequest(messages=(
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ), tools=(), think=False, response_format=payload_model.model_json_schema())
-            return await self._request_structured_review(request, payload_model, label="factual")
-
-        sources = {item["source_id"]: item for item in payload["tool_results_in_execution_order"]}
-        readable = {}
-        for source_id, item in sources.items():
-            index = item["index"]
-            if index >= len(tool_result_ids) or tool_result_ids[index] is None:
-                raise ValueError("stored evidence is missing an original result ID")
-            readable[source_id] = tool_result_ids[index]
-        system += (
-            "\n\nOriginal-evidence access: tool results contain selected verbatim excerpts and original-result metadata. "
-            "These excerpts were selected by the main agent, not independently verified. Omitted text can contain "
-            "qualifiers or contrary evidence; omission is not proof of absence. Read the relevant original ranges "
-            "when excerpts do not establish a claim, its scope or contradictions. "
-            "Use read_requests=[{source_id, offset, limit}] and review=null to request original ranges; "
-            "source_id must be one of the supplied successful tool source IDs. Character offsets are zero-based "
-            "Python Unicode code points. limit must respect the result's max_read_chars. "
-            "The runtime returns original text under reread_excerpts on the SAME source, not as a new observation. "
-            "Return read_requests=[] with the complete review to finish. Duplicate/overlapping requests are "
-            "deduplicated. original_read_status reports which requested characters were already provided. "
-            "For already_provided ranges, use the existing reread_excerpts; return a verdict or request missing "
-            "ranges instead. original_read_state lists unread original ranges for each source. Start a new read "
-            "inside one of those ranges; complete=true means that source has no unread characters. "
-            "original_read_state.next_read_request supplies ready-to-use read_requests arguments for the "
-            "first unread range, using this review's source_id rather than the main agent's result_id. "
-            "It is a source link, not a requirement to read every omitted range. "
-            "When all sources are complete, return the review using the supplied text, including unsupported "
-            "or uncertain findings where appropriate. Reading more text cannot be required once it is all supplied. "
-            "Repeated read rounds without new characters exhaust the progress budget."
-        )
-        step_model = _EvidenceReviewStep[payload_model]
-        observed_ranges = {
-            source_id: list(evidence_store.retained_ranges(result_id))
-            for source_id, result_id in readable.items()
-        }
-        read_round = 0
-        no_progress_rounds = 0
-        while True:
-            read_options = []
-            for source_id, result_id in readable.items():
-                total_chars = len(evidence_store.original(result_id).content)
-                unread = _unread_source_ranges(0, total_chars, observed_ranges[source_id])
-                sources[source_id]["original_read_state"] = {
-                    "total_chars": total_chars,
-                    "max_read_chars": evidence_store.max_read_chars,
-                    "unread_ranges": [{"offset": left, "length": right - left} for left, right in unread],
-                    "complete": not unread,
-                    "next_read_request": (
-                        {"source_id": source_id, "offset": unread[0][0],
-                         "limit": min(evidence_store.max_read_chars, unread[0][1] - unread[0][0])}
-                        if unread else None
-                    ),
-                }
-                read_options.extend((source_id, left, right, evidence_store.max_read_chars)
-                                    for left, right in unread)
-            request = ChatRequest(messages=(
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ), tools=(), think=False, response_format=_evidence_step_schema(step_model, read_options))
-            _LOG.info("MAI factual reviewer round=%d input_chars=%d", read_round,
-                      sum(len(message["content"]) for message in request.messages))
-            step = await self._request_structured_review(request, step_model, label="factual")
-            if step.review is not None:
-                return step.review
-            updates = []
-            read_results = []
-            for read in step.read_requests:
-                if read.source_id not in readable:
-                    raise ReviewerEvidenceReadError("unknown or failed original source")
-                excerpt = evidence_store.excerpt(
-                    result_id=readable[read.source_id], offset=read.offset, limit=read.limit,
-                )
-                start, end = read.offset, excerpt["next_offset"]
-                previous = observed_ranges.setdefault(read.source_id, [])
-                unseen = _unread_source_ranges(start, end, previous)
-                for left, right in unseen:
-                    fragment = evidence_store.excerpt(
-                        result_id=readable[read.source_id], offset=left, limit=right - left,
-                    )
-                    updates.append((sources[read.source_id], fragment))
-                previous.extend(unseen)
-                new_chars = sum(right - left for left, right in unseen)
-                read_results.append({**read.model_dump(), "new_chars": new_chars,
-                                     "status": "read" if new_chars else "already_provided"})
-            no_progress_rounds = 0 if updates else no_progress_rounds + 1
-            payload["original_read_status"] = {
-                "round": read_round + 1, "results": read_results,
-                "consecutive_no_progress_rounds": no_progress_rounds,
-            }
-            _LOG.info("MAI reviewer original reads %s",
-                      json.dumps(payload["original_read_status"], ensure_ascii=False))
-            if no_progress_rounds >= _MAX_NO_PROGRESS_READ_ROUNDS:
-                raise ReviewerEvidenceReadError(
-                    "original read progress budget exhausted after already_provided notice: "
-                    + json.dumps(payload["original_read_status"], ensure_ascii=False)
-                )
-            for item, excerpt in updates:
-                item.setdefault("reread_excerpts", []).append(excerpt)
-            read_round += 1
-
     async def _request_structured_review(
         self,
         request: ChatRequest,
@@ -771,17 +610,12 @@ class FinalGroundingVerifier:
                 if isinstance(exc, ValidationError):
                     errors = [{"location": list(item["loc"]), "type": item["type"], "message": item["msg"]}
                               for item in exc.errors(include_input=False, include_url=False)]
-                    action_contract = (
-                        "For an evidence step, return read_requests with review=null OR read_requests=[] "
-                        "with a complete review, never both actions. "
-                        if issubclass(payload_model, _EvidenceReviewStep) else ""
-                    )
                     retry_request = replace(request, messages=(*request.messages, {
                         "role": "system",
                         "content": (
                             "The previous reviewer response violated the required output schema. "
                             "Return a new response matching that schema; do not change a factual verdict merely "
-                            "to repair formatting. " + action_contract + "Validation errors: "
+                            "to repair formatting. Validation errors: "
                             + json.dumps(errors, ensure_ascii=False)
                         ),
                     }))
@@ -808,54 +642,6 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
-
-
-def _evidence_step_schema(
-    step_model: type[BaseModel], read_options: Sequence[tuple[str, int, int, int]],
-) -> dict[str, Any]:
-    """Constrain generation to exclusive actions and starts in unread ranges.
-
-    Runtime validation/progress checks remain authoritative if a provider ignores
-    its schema. Nothing here supplies a verdict or rewrites an invalid response.
-    """
-    schema = step_model.model_json_schema()
-    read_ref = f"#/$defs/{_EvidenceReadStep.__name__}"
-    if not read_options:
-        schema["anyOf"] = [item for item in schema["anyOf"] if item.get("$ref") != read_ref]
-        return schema
-    schema["$defs"][_EvidenceReadStep.__name__]["properties"]["read_requests"]["items"] = {
-        "anyOf": [{
-            "type": "object", "additionalProperties": False,
-            "required": ["source_id", "offset", "limit"],
-            "properties": {
-                "source_id": {"type": "string", "const": source_id},
-                "offset": {"type": "integer", "minimum": left, "maximum": right - 1},
-                "limit": {"type": "integer", "minimum": 1, "maximum": max_read},
-            },
-        } for source_id, left, right, max_read in read_options],
-    }
-    return schema
-
-
-def _unread_source_ranges(
-    start: int, end: int, observed: Sequence[tuple[int, int]],
-) -> list[tuple[int, int]]:
-    """Subtract observed half-open intervals; no content/meaning heuristics."""
-    unseen = []
-    cursor = start
-    for left, right in sorted(observed):
-        if right <= cursor:
-            continue
-        if left >= end:
-            break
-        if left > cursor:
-            unseen.append((cursor, left))
-        cursor = max(cursor, right)
-        if cursor >= end:
-            break
-    if cursor < end:
-        unseen.append((cursor, end))
-    return unseen
 
 
 def _claim_issue_message(claims: Sequence[ClaimReview], *, fallback: str) -> str:
@@ -959,10 +745,7 @@ def _filter_factual_references(
         for index, message in enumerate(payload["verified_prior_conversation"])
     })
     sources.update({
-        item["source_id"]: (
-            *_source_texts(item["result"]),
-            *_source_texts(json.dumps(item.get("reread_excerpts", []), ensure_ascii=False)),
-        )
+        item["source_id"]: _source_texts(item["result"])
         for item in payload["tool_results_in_execution_order"]
     })
     sources["time"] = _source_texts(json.dumps(payload["authoritative_current_time"], ensure_ascii=False))
@@ -993,11 +776,11 @@ def _filter_factual_references(
 def _select_review_tool_results(
     tool_results: Sequence[ToolVerificationResult],
 ) -> tuple[tuple[int, ToolVerificationResult], ...]:
-    """Return successful observations, excluding activation and repeated views."""
+    """Return every successful tool result in original execution order."""
     return tuple(
         (index, result)
         for index, result in enumerate(tool_results)
-        if result[1] and result[0] not in {"tool_manual", "tool_result_read"}
+        if result[1]
     )
 
 

@@ -37,7 +37,7 @@ python run_server.py
 |---|---|
 | 에이전트·권한·설정·개발 점검 | [실행 구조](docs/architecture.md) |
 | 기억 저장·검색·정정의 범위 | [장기기억](docs/memory.md) |
-| 모델이 선택한 발췌·원문 재열람 | [도구 결과 전달](docs/TOOL_RESULT_PAGINATION.md) |
+| 도구 결과 크기 제한·페이지네이션 | [도구 결과 전달](docs/TOOL_RESULT_PAGINATION.md) |
 | 수치·사실·작업 결과 검증 | [답변 검증](docs/verifier.md) |
 | llama.cpp·모델 장기 보존 | [로컬 추론 백엔드](docs/llamacpp-portability.md) |
 | 원격 PC 연결 | [원격 연결](docs/remote-powershell-connection.md) |

@@ -1,4 +1,4 @@
-"""Both web chat paths preserve original evidence beyond the bounded model view."""
+"""Raw audit logging remains independent of the bounded model view."""
 import asyncio
 import json
 import sqlite3
@@ -17,7 +17,7 @@ from mai.app.chat_sessions import ChatSessionStore
 def test_audit_persists_full_original_in_both_chat_paths(tmp_path, monkeypatch, detached):
     source = "untruncated source evidence " * 500
     execution = ToolExecution(name="web_fetch", arguments={"url": "https://example.org"}, ok=True,
-        content="bounded model page", source_content=source, result_id="original-result")
+        content="bounded model page", source_content=source)
 
     class Runtime:
         model = "test"
@@ -42,4 +42,4 @@ def test_audit_persists_full_original_in_both_chat_paths(tmp_path, monkeypatch, 
     with sqlite3.connect(tmp_path / "audit.sqlite3") as connection:
         content, details = connection.execute("SELECT content,details_json FROM steps WHERE role='tool_log'").fetchone()
     assert content == source
-    assert json.loads(details)["result_id"] == "original-result"
+    assert json.loads(details)["name"] == "web_fetch"
