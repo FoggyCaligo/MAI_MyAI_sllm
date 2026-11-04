@@ -94,7 +94,7 @@ Action outcomes:
 
 Output and references:
 - Set evidence_verdict="supported" only when no material claim is unsupported. Identify rejected claims in claims[] with concrete reasons and defects; retry_summary is concise, actionable English.
-- When relevant sources exist, include evidence_refs with source_id, location (field/section/record) and a short verbatim quote. IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time.
+- For every supported claim in claims[], include a source_id, location, and verbatim quote in evidence_refs from an observed supporting source. Model familiarity, failed tool calls, and unrelated observations are not evidence. The runtime verifies source existence and quoted text separately; you still decide whether the source actually supports the claim. IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time.
 - References are optional supporting metadata. For missing_evidence they may be empty: specify what is unestablished without inventing a contrary fact or replacement total. Do not relabel a source conflict as missing_evidence to avoid citing it. Observing a quote does not validate its interpretation.
 """.strip()
 
@@ -276,6 +276,7 @@ class FinalReview:
     action_verdict: str = "not_applicable"
     retry_summary: str = ""
     reference_warnings: tuple[str, ...] = ()
+    unanchored_supported_claims: tuple[str, ...] = ()
     numeric_verdict: str | None = None
     numeric_reason: str = ""
 
