@@ -11,7 +11,7 @@ from ..tools.time import current_time
 from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
-from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver, VerificationRejectionObserver
+from .loop import AgentLoop, AgentRunResult, ModelTurnObserver, ToolExecutionObserver, VerificationRejectionObserver, VerificationAuditObserver
 from .tool_results import ToolResultStore
 from .verification import FinalGroundingVerifier
 
@@ -61,6 +61,7 @@ class AgentRuntime:
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
+        on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
         runtime_context = {"tool_contexts": self.loop.registry.model_context(names=()), "authoritative_current_time": current_time()}
         effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
@@ -78,6 +79,7 @@ class AgentRuntime:
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
                 on_verification_rejection=on_verification_rejection,
+            on_verification_audit=on_verification_audit,
             )
             artifacts.cleanup()
             return result
@@ -92,6 +94,7 @@ class AgentRuntime:
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
+        on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
         if not content.strip():
             raise ValueError("user message content must be non-empty")
@@ -106,4 +109,5 @@ class AgentRuntime:
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
             on_verification_rejection=on_verification_rejection,
+            on_verification_audit=on_verification_audit,
         )
