@@ -173,8 +173,10 @@
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
     if (discard || (capture.mode === 'transcribe' && !voiceMode)) return;
-    if (!capture.chunks.length || capture.speechSeconds < capture.minSpeechSeconds) {
-      setStatus('음성이 충분하지 않아 이번 녹음을 건너뛰고 다시 듣는 중…', true);
+    if (!capture.chunks.length || (capture.mode === 'enroll' && capture.speechSeconds < capture.enrollmentMinSpeechSeconds)) {
+      setStatus(capture.mode === 'enroll'
+        ? `목소리 등록에는 최소 ${capture.enrollmentMinSpeechSeconds}초 발화가 필요해. 다시 등록해 줘.`
+        : '녹음 데이터가 없어 다시 듣는 중…', true);
       if (capture.mode === 'transcribe' && voiceMode) await start('transcribe');
       return;
     }
@@ -253,7 +255,7 @@
         sampleRate: context.sampleRate, speechSeconds: 0,
         lastSpeechEnd: null, lastCheck: context.currentTime, checking: false, began: context.currentTime,
         silenceSeconds: config.silence_seconds,
-        minSpeechSeconds: mode === "enroll" ? 2 : config.min_speech_seconds
+        enrollmentMinSpeechSeconds: config.enrollment_min_speech_seconds
       };
       active = capture;
       processor.onaudioprocess = event => {
@@ -273,7 +275,7 @@
           void checkSpeechEnd(capture);
         }
       };
-      setStatus(mode === 'enroll' ? '목소리 등록 녹음 중 (최소 3초 말해 줘)' : '듣고 있어. 마지막 말이 끝난 뒤 설정된 시간이 지나면 종료돼.');
+      setStatus(mode === 'enroll' ? `목소리 등록 녹음 중 (최소 ${capture.enrollmentMinSpeechSeconds}초 말해 줘)` : '듣고 있어. 마지막 말이 끝난 뒤 설정된 시간이 지나면 종료돼.');
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
     } finally {

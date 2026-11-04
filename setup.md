@@ -131,7 +131,7 @@ Tailscale 자체의 로그인과 승인 없이 설정값만 바꿔도 연결된�
 1. 일반 설치는 `pip install -e .`으로 음성 의존성을 설치함. Portable 설치 역시 런타임 준비 시 의존성 설치 절차를 거침.
 2. 사용 중인 브라우저에서 마이크 접근 권한을 허용하고, OS 입력 장치와 브라우저 설정을 확인함.
 3. 음성 입력/화자 구분에 필요한 목소리 등록을 MAI UI에서 진행. 마이크·모델 다운로드/초기화가 실패하면 명시적으로 점검함.
-4. `settings.yaml`에서 `VOICE_SILENCE_SECONDS`, `VOICE_MIN_SPEECH_SECONDS`, `VOICE_MATCH_THRESHOLD`, `VOICE_WHISPER_MODEL` 값을 조정할 수 있음. `VOICE_PROFILE_DIR`은 기기별 데이터 경로이므로 `.env`에 남김.
+4. `settings.yaml`에서 `VOICE_SILENCE_SECONDS`, `VOICE_MATCH_THRESHOLD`, `VOICE_WHISPER_MODEL` 값을 조정할 수 있음. 일반 음성 입력은 최소 발화 길이 제한 없이 음성 감지·화자 확인·음성 인식을 시도함. 최초 목소리 등록에는 3초 이상의 실제 발화가 필요함. 이전의 `VOICE_MIN_SPEECH_SECONDS` 설정은 제거함. `VOICE_PROFILE_DIR`은 기기별 데이터 경로이므로 `.env`에 남김.
 5. 음성 답변은 브라우저의 음성 합성에 의존하므로 기기·브라우저별 음성 품질과 지원 언어가 다를 수 있음.
 
 ## 4. 실행 문제 진단 및 업데이트

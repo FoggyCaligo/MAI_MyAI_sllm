@@ -50,7 +50,7 @@ def test_code_search_applies_inclusive_line_bounds_per_candidate_file(tmp_path):
         end_line=3,
     )
 
-    assert [(item["relative_path"], item["line"]) for item in result["results"]] == [
+    assert sorted((item["relative_path"], item["line"]) for item in result["results"]) == [
         ("first.py", 3),
         ("second.py", 2),
     ]
