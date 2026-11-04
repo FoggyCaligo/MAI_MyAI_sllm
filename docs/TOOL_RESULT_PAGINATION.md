@@ -2,6 +2,8 @@
 
 MAI는 tool output 전체를 model history에 계속 누적하지 않는다. Production에서는 `ToolResultStore`가 크기에 관계없이 관측 결과 원본과 SHA-256을 run-local store에 보존하고, model에는 bounded page를 한 라운드 보여준다. 소비한 뒤에는 선택한 원문 발췌와 참조만 남긴다. 감사 로그의 `tool_log`에는 원본과 result_id를 보존한다.
 
+배포 `settings.yaml`의 `MAX_INLINE_TOOL_RESULT_CHARS`는 8,000자이며, 페이지 메타데이터도 이 예산에 포함됨. `max_read_chars`는 7,488자(본문 한도에서 512자 제외)이고 실제 본문은 JSON 크기에 따라 더 줄어들 수 있음. 직접 `MAIRuntime`을 구성하고 환경변수가 없으면 내부 기본값은 10,666자임. 단위는 토큰이나 UTF-8 바이트가 아닌 Python Unicode 문자임.
+
 ## Large tool-result page metadata
 
 큰 결과의 model-visible page 첫 줄은 JSON metadata다. 핵심 필드는 다음과 같다.

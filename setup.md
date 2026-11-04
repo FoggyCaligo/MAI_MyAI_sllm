@@ -46,7 +46,20 @@ cp .env.example .env
 
 **A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VISION_MODEL`은 이미지 인식에만 필요한 선택 설정이며, 전체 텍스트 MAI 실행의 필수 요건은 아님.
 
-**B. 동작·성능 조정 설정:** `OLLAMA_REQUEST_TIMEOUT_SECONDS`, `OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `AGENT_MAX_IDENTICAL_CALLS`, `AGENT_MAX_IDENTICAL_FAILURES`, `AGENT_MAX_NO_PROGRESS_ROUNDS`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MAX_INLINE_TOOL_RESULT_CHARS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`, `SESSION_HISTORY_MESSAGES`, `MAI_ANSWER_QUALITY_REVIEW`, `VOICE_*` 중 음성 동작 파라미터. 값을 잘못 지정하면 오류가 날 수 있으므로 '임의 값이어도 무조건 실행됨'이라는 의미가 아님. 기본값을 유지하면 수동 입력은 필요하지 않음.
+**B. 동작·성능 조정 설정:** `OLLAMA_REQUEST_TIMEOUT_SECONDS`, `OLLAMA_AGENT_MAX_OUTPUT_TOKENS`, `AGENT_MAX_IDENTICAL_CALLS`, `AGENT_MAX_IDENTICAL_FAILURES`, `AGENT_MAX_NO_PROGRESS_ROUNDS`, `MAX_INLINE_TOOL_RESULT_CHARS`, `SESSION_HISTORY_MESSAGES`, `MAI_ANSWER_QUALITY_REVIEW`, `VOICE_*` 중 음성 동작 파라미터. 값을 잘못 지정하면 오류가 날 수 있으므로 '임의 값이어도 무조건 실행됨'이라는 의미가 아님. 기본값을 유지하면 수동 입력은 필요하지 않음.
+
+현재 `OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 YAML 로더에서 허용하지만 실제 실행 경로에서 값을 읽지 않음. 이 키를 편집해도 해당 동작이 바뀌지 않음. Main adapter는 `think=True`이며 도구 timeout은 등록 함수의 인자로 정함.
+
+| 실제 적용되는 항목 | 배포 `settings.yaml` 값 |
+|---|---|
+| 모델 요청 제한 | `OLLAMA_REQUEST_TIMEOUT_SECONDS: 500`초 |
+| Ollama main 출력 한도 | `OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768` |
+| 한 번의 도구 결과 입력 한도 | `MAX_INLINE_TOOL_RESULT_CHARS: 8000`자 |
+| 최근 대화 | `SESSION_HISTORY_MESSAGES: 10`개 메시지 |
+| 선택적 품질 검토 | `MAI_ANSWER_QUALITY_REVIEW: false` |
+| 음성 종료 무음 시간 / 화자 임계값 | `VOICE_SILENCE_SECONDS: 5` / `VOICE_MATCH_THRESHOLD: 0.65` |
+
+기억 추출의 Ollama 출력은 기본 2,048토큰이며, 필요하면 **프로세스 환경변수 또는 `.env`**의 `OLLAMA_MEMORY_MAX_OUTPUT_TOKENS`로 지정함. 이 키는 현재 YAML 허용 목록에는 없음.
 
 ## 2. 기본 설치: 아래 두 방식 중 하나만 선택
 
@@ -123,6 +136,8 @@ Tailscale은 **일반 설치와 Portable 설치 중 하나가 정상 실행된 �
 2. 먼저 외부 인터넷 공개 없이 자신의 Tailnet 내부에서만 접속할지 결정함. 외부 인터넷으로 공개하려면 Tailscale Funnel을 별도 승인·구성해야 함.
 3. `.env`에서 `TAILSCALE_FUNNEL=true`로 변경하려면 공개 주소에 MAI 로그인 페이지가 노출될 수 있다는 점을 먼저 확인할 것. 로그인 계정에 강력한 비밀번호 설정.
 4. MAI 서버를 재시작해 출력된 주소 및 Tailscale 상태를 확인. 접속 실패 시 Funnel의 승인·정책·포트·장치 로그인 상태를 점검하고, 불필요할 때는 `TAILSCALE_FUNNEL=false`로 되돌림.
+
+Funnel 시작이 `TailscaleFunnelError`로 실패하면 예외를 로그에 남기고 로컬 서버는 계속 제공함. 로컬 `/health`의 `tailscale_funnel`은 `false`이며 외부 연결 성공을 뜻하지 않음.
 
 Tailscale 자체의 로그인과 승인 없이 설정값만 바꿔도 연결된다고 가정하면 안 됨. 외부 공개는 개인 PC 및 파일 도구에 대한 공격 표면을 넓힘.
 
