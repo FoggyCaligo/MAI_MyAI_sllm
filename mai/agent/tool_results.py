@@ -81,6 +81,12 @@ class ToolResultStore:
         except KeyError as exc:
             raise ToolResultNotFoundError(f"unknown tool result id: {result_id}") from exc
 
+    def retained_ranges(self, result_id: str) -> tuple[tuple[int, int], ...]:
+        """Return immutable start/end coordinates of the selected original text."""
+        self.original(result_id)
+        return tuple((item.offset, item.offset + item.length)
+                     for item in self._retained.get(result_id, ()))
+
     def retained_view(self, result_id: str, *, ranges: tuple[EvidenceRange, ...] | None = None) -> str:
         stored = self.original(result_id)
         selections = self._retained.get(result_id, ()) if ranges is None else ranges

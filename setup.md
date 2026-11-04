@@ -151,7 +151,10 @@ Tailscale 자체의 로그인과 승인 없이 설정값만 바꿔도 연결된�
 
 ## 4. 실행 문제 진단 및 업데이트
 
+테스트를 실행하려면 일반 실행 의존성 외에 개발용 의존성(`pytest`, JSON 스키마 검증용 `jsonschema`)을 같은 Python 환경에 설치함.
+
 ```bash
+python -m pip install -e ".[dev]"
 python -m compileall -q mai scripts tests
 python -m pytest -q
 python scripts/audit_codebase.py

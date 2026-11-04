@@ -14,7 +14,7 @@ string-marker heuristics for causal, semantic, action, or coverage relations.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 import json
 import os
@@ -25,7 +25,7 @@ from typing import Any, Generic, Literal, Mapping, Sequence, TypeVar
 import httpx
 from ollama import ResponseError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, field_validator
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
@@ -189,17 +189,30 @@ class _EvidenceReadRequest(BaseModel):
 _ReviewT = TypeVar("_ReviewT", bound=BaseModel)
 
 
-class _EvidenceReviewStep(BaseModel, Generic[_ReviewT]):
-    """A reviewer requests original ranges OR returns a complete verdict."""
+class _EvidenceReadStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    read_requests: list[_EvidenceReadRequest]
-    review: _ReviewT | None
+    read_requests: list[_EvidenceReadRequest] = Field(min_length=1)
+    review: None
 
-    @model_validator(mode="after")
-    def require_one_action(self):
-        if bool(self.read_requests) == (self.review is not None):
-            raise ValueError("supply non-empty read_requests or a review, exclusively")
-        return self
+
+class _EvidenceVerdictStep(BaseModel, Generic[_ReviewT]):
+    model_config = ConfigDict(extra="forbid")
+    read_requests: list[_EvidenceReadRequest] = Field(max_length=0)
+    review: _ReviewT
+
+
+class _EvidenceReviewStep(
+    RootModel[_EvidenceReadStep | _EvidenceVerdictStep[_ReviewT]], Generic[_ReviewT],
+):
+    """Encode exclusive actions in both decoder schema and runtime validation."""
+
+    @property
+    def read_requests(self) -> list[_EvidenceReadRequest]:
+        return self.root.read_requests
+
+    @property
+    def review(self) -> _ReviewT | None:
+        return self.root.review
 
 
 class ReviewerEvidenceReadError(ValueError):
@@ -635,17 +648,36 @@ class FinalGroundingVerifier:
             "Return read_requests=[] with the complete review to finish. Duplicate/overlapping requests are "
             "deduplicated. original_read_status reports which requested characters were already provided. "
             "For already_provided ranges, use the existing reread_excerpts; return a verdict or request missing "
-            "ranges instead. Repeated read rounds without new characters exhaust the progress budget."
+            "ranges instead. original_read_state lists unread original ranges for each source. Start a new read "
+            "inside one of those ranges; complete=true means that source has no unread characters. "
+            "When all sources are complete, return the review using the supplied text, including unsupported "
+            "or uncertain findings where appropriate. Reading more text cannot be required once it is all supplied. "
+            "Repeated read rounds without new characters exhaust the progress budget."
         )
         step_model = _EvidenceReviewStep[payload_model]
-        observed_ranges: dict[str, list[tuple[int, int]]] = {}
+        observed_ranges = {
+            source_id: list(evidence_store.retained_ranges(result_id))
+            for source_id, result_id in readable.items()
+        }
         read_round = 0
         no_progress_rounds = 0
         while True:
+            read_options = []
+            for source_id, result_id in readable.items():
+                total_chars = len(evidence_store.original(result_id).content)
+                unread = _unread_source_ranges(0, total_chars, observed_ranges[source_id])
+                sources[source_id]["original_read_state"] = {
+                    "total_chars": total_chars,
+                    "max_read_chars": evidence_store.max_read_chars,
+                    "unread_ranges": [{"offset": left, "length": right - left} for left, right in unread],
+                    "complete": not unread,
+                }
+                read_options.extend((source_id, left, right, evidence_store.max_read_chars)
+                                    for left, right in unread)
             request = ChatRequest(messages=(
                 {"role": "system", "content": system},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ), tools=(), think=False, response_format=step_model.model_json_schema())
+            ), tools=(), think=False, response_format=_evidence_step_schema(step_model, read_options))
             _LOG.info("MAI factual reviewer round=%d input_chars=%d", read_round,
                       sum(len(message["content"]) for message in request.messages))
             step = await self._request_structured_review(request, step_model, label="factual")
@@ -696,10 +728,11 @@ class FinalGroundingVerifier:
     ) -> BaseModel:
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
+        retry_request = request
         for attempt in range(1, 4):
             try:
                 turn = await asyncio.wait_for(
-                    self.reviewer_adapter.chat(request),
+                    self.reviewer_adapter.chat(retry_request),
                     timeout=self.reviewer_timeout_seconds,
                 )
                 return payload_model.model_validate_json(turn.content, strict=True)
@@ -727,6 +760,23 @@ class FinalGroundingVerifier:
                 )
                 if not retryable or attempt == 3:
                     raise
+                if isinstance(exc, ValidationError):
+                    errors = [{"location": list(item["loc"]), "type": item["type"], "message": item["msg"]}
+                              for item in exc.errors(include_input=False, include_url=False)]
+                    action_contract = (
+                        "For an evidence step, return read_requests with review=null OR read_requests=[] "
+                        "with a complete review, never both actions. "
+                        if issubclass(payload_model, _EvidenceReviewStep) else ""
+                    )
+                    retry_request = replace(request, messages=(*request.messages, {
+                        "role": "system",
+                        "content": (
+                            "The previous reviewer response violated the required output schema. "
+                            "Return a new response matching that schema; do not change a factual verdict merely "
+                            "to repair formatting. " + action_contract + "Validation errors: "
+                            + json.dumps(errors, ensure_ascii=False)
+                        ),
+                    }))
                 await asyncio.sleep(0.25 * attempt)
         raise AssertionError(f"unreachable {label} reviewer retry state")
 
@@ -750,6 +800,33 @@ class FinalGroundingVerifier:
             action,
             reason_text,
         )
+
+
+def _evidence_step_schema(
+    step_model: type[BaseModel], read_options: Sequence[tuple[str, int, int, int]],
+) -> dict[str, Any]:
+    """Constrain generation to exclusive actions and starts in unread ranges.
+
+    Runtime validation/progress checks remain authoritative if a provider ignores
+    its schema. Nothing here supplies a verdict or rewrites an invalid response.
+    """
+    schema = step_model.model_json_schema()
+    read_ref = f"#/$defs/{_EvidenceReadStep.__name__}"
+    if not read_options:
+        schema["anyOf"] = [item for item in schema["anyOf"] if item.get("$ref") != read_ref]
+        return schema
+    schema["$defs"][_EvidenceReadStep.__name__]["properties"]["read_requests"]["items"] = {
+        "anyOf": [{
+            "type": "object", "additionalProperties": False,
+            "required": ["source_id", "offset", "limit"],
+            "properties": {
+                "source_id": {"type": "string", "const": source_id},
+                "offset": {"type": "integer", "minimum": left, "maximum": right - 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": max_read},
+            },
+        } for source_id, left, right, max_read in read_options],
+    }
+    return schema
 
 
 def _unread_source_ranges(
