@@ -8,6 +8,7 @@ import pytest
 
 from mai.agent import AgentRunFailure, AgentRuntime
 from mai.agent.verification import FinalGroundingVerifier
+from tests.reviewer_fixtures import with_claim_units
 from mai.tools.registry import ToolRegistry
 from mai.llm.models import ModelTurn
 
@@ -38,7 +39,7 @@ class Reviewer:
                 "coverage_reasons": [], "reasons": [],
                 "retry_summary": "No correction needed.",
             }
-        body = json.dumps(payload)
+        body = json.dumps(with_claim_units(payload, request))
         return ModelTurn(body, "", (), {"role": "assistant", "content": body})
 
 
@@ -146,7 +147,7 @@ def test_repeated_unverified_supported_claim_uses_existing_retry_limit():
                 "reasons": [], "action_verdict": "not_applicable",
                 "retry_summary": "No correction needed.",
             }
-            body = json.dumps(payload)
+            body = json.dumps(with_claim_units(payload, request))
             return ModelTurn(body, "", (), {"role": "assistant", "content": body})
 
     main, reviewer = Main(), AlwaysUnsupportedSource()
