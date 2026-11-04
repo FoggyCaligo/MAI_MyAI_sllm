@@ -27,9 +27,9 @@ def test_selected_models_only_and_idempotent(tmp_path: Path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     add_model(src, "ornith-1.5:9b", b"shared")
     add_model(src, "gemma4:e4b", b"shared")
-    add_model(src, "lfm2.5:8b", b"other")
+    add_model(src, "granite4:3b-h", b"other")
     add_model(src, "unused:latest", b"unused")
-    names = ["ornith-1.5:9b", "gemma4:e4b", "lfm2.5:8b"]
+    names = ["ornith-1.5:9b", "gemma4:e4b", "granite4:3b-h"]
     copy_models(src, dst, names)
     copy_models(src, dst, names)
     assert len(list((dst / "blobs").iterdir())) == 2
