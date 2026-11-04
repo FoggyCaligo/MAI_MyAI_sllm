@@ -6,7 +6,9 @@ import json
 
 import pytest
 
+from mai.agent import AgentRunFailure, AgentRuntime
 from mai.agent.verification import FinalGroundingVerifier
+from mai.tools.registry import ToolRegistry
 from mai.llm.models import ModelTurn
 
 
@@ -117,3 +119,42 @@ def test_unrelated_unsupported_claim_never_requires_invented_citation():
     assert not result.ok
     assert any(issue.code == "claim_grounding_failed" for issue in result.issues)
     assert not any(issue.code == "supported_claim_source_unverified" for issue in result.issues)
+
+
+def test_repeated_unverified_supported_claim_uses_existing_retry_limit():
+    class Main:
+        calls = 0
+
+        async def chat(self, request):
+            self.calls += 1
+            return ModelTurn(
+                "An observed statement.", "", (),
+                {"role": "assistant", "content": "An observed statement."},
+            )
+
+    class AlwaysUnsupportedSource:
+        calls = 0
+
+        async def chat(self, request):
+            self.calls += 1
+            payload = {
+                "evidence_verdict": "supported",
+                "claims": [{
+                    "claim": "An observed statement.", "verdict": "supported",
+                    "defect": "none", "reason": "", "evidence_refs": [],
+                }],
+                "reasons": [], "action_verdict": "not_applicable",
+                "retry_summary": "No correction needed.",
+            }
+            body = json.dumps(payload)
+            return ModelTurn(body, "", (), {"role": "assistant", "content": body})
+
+    main, reviewer = Main(), AlwaysUnsupportedSource()
+    verifier = FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False)
+    with pytest.raises(AgentRunFailure) as failure:
+        asyncio.run(AgentRuntime(
+            main, ToolRegistry(), final_verifier=verifier,
+        ).run_user_message("Explain the statement."))
+    assert failure.value.error_type == "VerificationRetriesExhausted"
+    assert reviewer.calls == 6
+    assert main.calls == 6
