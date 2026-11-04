@@ -96,6 +96,13 @@ def _insert_tool_catalog(
                 "After reading a tool output, use tool_manual.retain_evidence to retain the original ranges "
                 "needed for your answer, including relevant qualifiers or conflicting observations. "
                 "Results are shown for one round, then replaced by retained excerpts and source references. "
+                "Writing facts in your answer or thinking does not select their source ranges. Before using "
+                "observed facts in a final answer, select the needed evidence with a native tool_manual call "
+                "(tools=[] is valid with retain_evidence); you may batch selections with other tool calls. "
+                "If you selected nothing, the reviewer initially receives references without source text and "
+                "must reopen originals. The selection format is "
+                '{"tools":[],"retain_evidence":[{"result_id":"<observed result_id>",'
+                '"ranges":[{"offset":0,"length":100}]}]}; choose actual in-bounds ranges. '
                 "Unselected original text is still available through tool_result_read; absence from excerpts "
                 "does not establish absence from the original. Retain ranges, not rewritten summaries. "
                 if evidence_compaction else ""

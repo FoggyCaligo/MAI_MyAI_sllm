@@ -54,6 +54,11 @@ code points. Selection replaces ranges for that result; empty ranges clear them.
 Selection can accompany other native calls in the same main-model round. There
 is no separate summarization model. Without a selection, only the source
 reference survives; this is explicitly partial evidence, not an empty original.
+The main-model contract explicitly distinguishes writing a fact in an answer
+from selecting its evidence ranges and shows the existing native call format.
+Selections can be batched with other tools; this is prompt guidance, not an
+automatic detector of what the model actually used. Real-model compliance and
+latency must still be measured.
 
 Ranges are extracted by the runtime, never rewritten by a helper. Unknown IDs,
 overlapping/out-of-bounds ranges or selections over the result budget fail
@@ -71,6 +76,14 @@ are present, its structured response is either:
 ```
 
 or `{"read_requests": [], "review": { ... complete factual/numeric verdict ... }}`.
+These are disjoint schema branches supplied to the decoder, as well as runtime
+validation rules. A response cannot both request reads and return a verdict.
+Each source exposes `original_read_state` with unread ranges, the read limit,
+and whether all original characters have been supplied. Retained excerpts count
+as already supplied. Decoder read choices start inside an unread range and
+exclude fully supplied sources; when none remain, only the verdict branch is
+offered. A verdict can still reject a claim or report uncertainty.
+
 The runtime serves only successful sources from this run, within the existing
 read budget, and puts exact original text in that source's `reread_excerpts`.
 It then asks the reviewer to continue. Original reads may add model calls; they
@@ -85,6 +98,12 @@ This never changes an unsupported verdict into supported. Source quotes may be
 validated against retained or reread original text. Fatal reviewer errors preserve
 the last draft only as explicitly unverified diagnostic output, alongside the
 original error; they do not release it as a verified final answer.
+
+If a provider ignores the supplied schema, runtime validation and the existing
+no-progress error budget still apply. Malformed-output retries receive concrete
+validation locations/types/messages with the original evidence, rather than
+silently repairing a response or retrying an identical prompt. Only the latest
+formatting diagnostic is added; the retry budget remains three attempts.
 
 Numeric token matching scans original text in Python, not compaction metadata.
 The LLM still receives only retained/reopened evidence. This avoids treating
