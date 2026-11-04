@@ -93,10 +93,20 @@ def _insert_tool_catalog(
             "You may activate multiple tools in one tool_manual call. "
             "If tools are unnecessary, answer normally. "
             + (
-                "After reading a tool output, use tool_manual.retain_evidence to select the original ranges "
-                "relied upon for your answer, including relevant qualifiers or conflicting observations. "
-                "Results remain visible in your history during the run. The selected ranges will be supplied "
-                "to the final grounding verifier to substantiate your answer. "
+                "On EVERY main-model turn that receives new tool observations or reopened source pages, "
+                "check which conclusions you draw from each result and which exact original ranges support "
+                "them, including relevant qualifiers, failures, or conflicting observations. Record those "
+                "ranges NOW with tool_manual.retain_evidence, in this same response alongside any next "
+                "task tool calls; do not defer this work until the final answer. Selection can be batched "
+                "with further reads or tool activation, without a separate evidence-selection model pass. "
+                "Results are shown for one round, then replaced by retained excerpts and source references. "
+                "If you continue without selecting the evidence you used, its body will be absent from "
+                "your next context. Select only observed text actually needed for your conclusions; do not "
+                "invent a conclusion for an irrelevant result. Tool activation acknowledgements need no "
+                "source selection. When updating a result, include its previously selected ranges that are "
+                "still needed, because a selection replaces that result's earlier ranges. For a reopened "
+                "page, use its original result_id and absolute source offsets, not offsets relative to "
+                "the page body. "
                 "Writing facts in your answer or thinking does not select their source ranges. Before using "
                 "observed facts in a final answer, select the needed evidence with a native tool_manual call "
                 "(tools=[] is valid with retain_evidence); you may batch selections with other tool calls. "
@@ -104,7 +114,12 @@ def _insert_tool_catalog(
                 "must reopen originals. The selection format is "
                 '{"tools":[],"retain_evidence":[{"result_id":"<observed result_id>",'
                 '"ranges":[{"offset":0,"length":100}]}]}; choose actual in-bounds ranges. '
-                "Retain exact original ranges, not rewritten summaries. "
+                "Unselected original text is still available through tool_result_read; absence from excerpts "
+                "does not establish absence from the original. Retain ranges, not rewritten summaries. "
+                "The selected_verbatim_evidence bundle reports selection.status (none/partial/complete), "
+                "selected and omitted character counts, and original_read with executable tool arguments. "
+                "Use that source reference when more context is needed; activate tool_result_read first if "
+                "necessary. It reopens the stored observation without repeating the original action. "
                 if evidence_compaction else ""
             )
             + "Tool catalog (JSON): "
@@ -251,6 +266,7 @@ class AgentLoop:
         numeric_verification_retries = 0
         coverage_verification_retries = 0
         empty_final_retries = 0
+        pending_history_compactions: dict[int, str] = {}
         history_result_ids: dict[int, str] = {}
         rejected_final_indices: list[int] = []
         rejection_feedback_indices: list[int] = []
@@ -265,6 +281,10 @@ class AgentLoop:
 
         try:
             while True:
+                for history_index, result_id in history_result_ids.items():
+                    if history_index not in pending_history_compactions:
+                        history[history_index] = {**history[history_index], "content":
+                            self.tool_result_store.retained_view(result_id)}
                 _LOG.info("MAI model round start round=%d", round_number)
                 # Keep the latest rejected draft and its corresponding verifier
                 # feedback together. Older rejected drafts, reasoning, and
@@ -325,6 +345,13 @@ class AgentLoop:
                     think=think,
                     options=options,
                 ))
+                for history_index, compact_content in pending_history_compactions.items():
+                    previous = history[history_index]
+                    history[history_index] = {**previous, "content": (
+                        self.tool_result_store.retained_view(history_result_ids[history_index])
+                        if history_index in history_result_ids else compact_content
+                    )}
+                pending_history_compactions.clear()
                 if on_model_turn is not None:
                     on_model_turn(round_number, turn)
                 history.append(dict(turn.assistant_message))
@@ -522,6 +549,8 @@ class AgentLoop:
                         len(execution.content),
                     )
                     history.append({"role": "tool", "tool_name": call.name, "content": execution.content})
+                    if execution.compact_history_content is not None:
+                        pending_history_compactions[len(history) - 1] = execution.compact_history_content
                     if execution.result_id is not None:
                         history_result_ids[len(history) - 1] = execution.result_id
                     observation = ExecutionObservation(
