@@ -79,7 +79,7 @@ class AgentRuntime:
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
                 on_verification_rejection=on_verification_rejection,
-            on_verification_audit=on_verification_audit,
+                on_verification_audit=on_verification_audit,
             )
             artifacts.cleanup()
             return result
