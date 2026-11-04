@@ -22,4 +22,6 @@
 
 Owner의 `file_*`, `code_*`, `csv_aggregate`, `document_edit`, `terminal_run`은 로컬과 같은 이름·입력에 `is_remote` boolean을 추가함. 모델이 원격 세션 ID를 직접 지정하지 않으며, 연결이 없거나 끊어졌을 때 로컬 실행으로 전환하지 않음. `memory_search`, 웹·이미지·다운로드 링크 도구 전체가 이 방식으로 원격화되는 것은 아님.
 
+메인 프롬프트는 첫 턴부터 원격 연결과 실행 대상 선택을 안내함. 원격 PC 작업은 탐색·조회·수정·실행·결과 확인까지 해당 도구 호출마다 `is_remote=true`를 지정함. 브라우저 접속 기기나 도구 활성화만으로 실행 대상이 바뀌지 않으며, 호스트 경로·작업 폴더·셸을 원격 PC 정보로 간주하지 않음. 도구별 상세 문맥은 활성화 후 제공함.
+
 구현은 `mai/remote/routing.py`와 `mai/remote/target.py`를 기준으로 함. 이전 별도 `remote_file_*` 등록 helper는 소스에 남아 있지만 현재 production registry에서 호출하지 않음.
