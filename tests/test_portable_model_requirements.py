@@ -14,14 +14,21 @@ def setup_config(tmp_path, models):
     manifest = tmp_path / "portable-sources.json"
     manifest.write_text(json.dumps({"schema_version": 1, "models": models}), encoding="utf-8")
     settings = tmp_path / "settings.yaml"
-    settings.write_text('MAIN_MODEL: "ornith-1.5:9b"\nVISION_MODEL: "gemma4:e4b"\nVERIFIER_MODEL: "granite4:3b-h"\n', encoding="utf-8")
+    settings.write_text('MAIN_MODEL: "ornith-1.5:9b"\nVISION_MODEL: "gemma4:e4b"\nVERIFIER_MODEL: "lfm2.5:8b"\n', encoding="utf-8")
     return manifest, settings
 
 
-def test_legacy_manifest_adds_verifier_and_preserves_extra_models(tmp_path):
+def test_legacy_manifest_adds_lfm_verifier_and_preserves_extra_models(tmp_path):
     manifest, settings = setup_config(tmp_path, ["ornith-1.5:9b", "gemma4:e4b", "extra:1"])
     assert required_models(manifest, settings, environ={}) == [
-        "ornith-1.5:9b", "gemma4:e4b", "extra:1", "granite4:3b-h",
+        "ornith-1.5:9b", "gemma4:e4b", "extra:1", "lfm2.5:8b",
+    ]
+
+
+def test_old_granite_manifest_retains_legacy_model_and_includes_current_lfm(tmp_path):
+    manifest, settings = setup_config(tmp_path, ["ornith-1.5:9b", "gemma4:e4b", "granite4:3b-h"])
+    assert required_models(manifest, settings, environ={}) == [
+        "ornith-1.5:9b", "gemma4:e4b", "granite4:3b-h", "lfm2.5:8b",
     ]
 
 
@@ -41,7 +48,7 @@ def test_respects_environment_dotenv_yaml_precedence_and_deduplicates(tmp_path):
     assert json.loads(process.stdout)[-1] == "dotenv:2"
 
 
-@pytest.mark.parametrize("models", [[], "granite4:3b-h", [None], [""], ["  "]])
+@pytest.mark.parametrize("models", [[], "lfm2.5:8b", [None], [""], ["  "]])
 def test_invalid_manifest_models_fail(tmp_path, models):
     manifest, settings = setup_config(tmp_path, models)
     with pytest.raises(ValueError):

@@ -63,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 | 옵션 | 의미 |
 |---|---|
 | `-CopyLocalModels` | `OLLAMA_MODELS` 또는 사용자 `.ollama/models` 전체 복사 |
-| `-Models "ornith-1.5:9b,gemma4:e4b,granite4:3b-h"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
+| `-Models "ornith-1.5:9b,gemma4:e4b,lfm2.5:8b"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
 | `-PullModels` | 매니페스트 목록과 현재 메인·비전·verifier 모델을 중복 없이 다운로드 |
 | `-InstallChromium` | Portable Playwright Chromium 설치 |
 | `-PreserveAndReinstallExisting` | 설치 영수증이 없는 기존 런타임을 별도 보존한 뒤 재설치 |
@@ -78,21 +78,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -PullModels -InstallChromium
 ```
 
-새 Windows 매니페스트에는 `ornith-1.5:9b`, `gemma4:e4b`, `granite4:3b-h`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다.
+새 Windows 매니페스트에는 `ornith-1.5:9b`, `gemma4:e4b`, `lfm2.5:8b`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 예전 개인 `portable-sources.json`에 `granite4:3b-h`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
 
-### 기존 외장하드에 Verifier 모델만 추가
+### 기존 외장하드에 Verifier 모델만 추가 또는 변경
 
-PC의 일반 Ollama에 `granite4:3b-h`가 이미 있으면 다시 다운로드하지 않는다. 없다면 일반 Ollama를 실행한 상태에서 `ollama pull granite4:3b-h`를 먼저 실행한다. 다운로드가 끝나면 MAI·Ollama 및 모델 쓰기 작업을 종료한다.
+Verifier를 `granite4:3b-h`에서 `lfm2.5:8b`로 되돌릴 때에도 기존 런타임·DB·모델을 삭제하지 않는다. PC의 일반 Ollama에 `lfm2.5:8b`가 이미 있으면 다시 다운로드하지 않는다. 없다면 일반 Ollama를 실행한 상태에서 `ollama pull lfm2.5:8b`를 먼저 실행한다. 다운로드가 끝나면 MAI·Ollama 및 모델 쓰기 작업을 종료한다.
 
 PowerShell에서 **외장하드의 MAI 프로젝트 루트**로 이동해 다음을 실행한다. `OLLAMA_MODELS`를 사용자 지정했다면 아래 원본 경로가 실제 일반 Ollama 서버의 저장 위치인지 확인한다.
 
 ```powershell
 $sourceModels = if ($env:OLLAMA_MODELS) { $env:OLLAMA_MODELS } else { Join-Path $env:USERPROFILE '.ollama\models' }
-& ./portable/portable-runtimes/python/python.exe ./portable/copy_ollama_models.py --source "$sourceModels" --destination ./portable/portable-models/ollama --model granite4:3b-h
+& ./portable/portable-runtimes/python/python.exe ./portable/copy_ollama_models.py --source "$sourceModels" --destination ./portable/portable-models/ollama --model lfm2.5:8b
 if ($LASTEXITCODE -ne 0) { throw 'Verifier 모델 복사 실패' }
 ```
 
-해당 모델의 매니페스트와 참조 blob만 SHA-256·크기를 검증해 추가한다. 다른 모델은 그대로 두며, 이미 일치하는 파일은 재사용한다. 복사 후 `start-portable.ps1`로 실행하고 별도 PowerShell 창에서 `./portable/portable-runtimes/ollama/ollama.exe show granite4:3b-h`로 확인한다.
+해당 모델의 매니페스트와 참조 blob만 SHA-256·크기를 검증해 추가한다. 다른 모델은 그대로 두며, 이미 일치하는 파일은 재사용한다. 복사 후 `start-portable.ps1`로 실행하고 별도 PowerShell 창에서 `./portable/portable-runtimes/ollama/ollama.exe show lfm2.5:8b`로 확인한다.
 
 `--include-llamacpp`는 목록 생성기 옵션이고 PowerShell 설치기 옵션이 아니다. GGUF 모델은 별도로 준비한다. 설치 준비는 실제 GPU·음성·새 PC의 완전 오프라인 실행을 보장하지 않는다.
 
