@@ -8,7 +8,8 @@ def test_configuration_template_separates_secrets_and_defaults() -> None:
     env = Path(".env.example").read_text(encoding="utf-8")
     settings = load_settings(Path("settings.yaml"), environ={})
     assert settings["MAIN_MODEL"] == "ornith-1.5:9b"
-    assert settings["VERIFIER_MODEL"] == "lfm2.5:8b"
+    assert settings["VERIFIER_MODEL"] == "granite4:3b-h"
+    assert settings["MAI_ANSWER_QUALITY_REVIEW"] == "true"
     assert settings["SESSION_HISTORY_MESSAGES"] == "10"
     assert "MAIN_MODEL=" not in env
     assert "SESSION_HISTORY_MESSAGES=" not in env
