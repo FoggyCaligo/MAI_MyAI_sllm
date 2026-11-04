@@ -39,7 +39,7 @@ def test_server_entrypoint_uses_project_root_without_starting_server(tmp_path):
         "runpy.run_path(sys.argv[1], run_name='__main__')"
     )
     process = subprocess.run(
-        [sys.executable, "-c", code, str(ROOT / "scripts/run_server.py")],
+        [sys.executable, "-c", code, str(ROOT / "run_server.py")],
         cwd=tmp_path, capture_output=True, text=True, timeout=30, check=True,
     )
     assert Path(process.stdout.strip()) == ROOT
@@ -47,8 +47,8 @@ def test_server_entrypoint_uses_project_root_without_starting_server(tmp_path):
 
 def test_backup_and_verify_include_nested_portable_resources(tmp_path):
     source = tmp_path / "source"
-    (source / "scripts").mkdir(parents=True)
-    (source / "scripts/run_server.py").write_text("# 서버", encoding="utf-8")
+    source.mkdir()
+    (source / "run_server.py").write_text("# 서버", encoding="utf-8")
     (source / ".env").write_text("TRIAL_USERS=[]", encoding="utf-8")
     for folder in ["portable-runtimes", "portable-models"]:
         destination = source / "portable" / folder
@@ -57,4 +57,4 @@ def test_backup_and_verify_include_nested_portable_resources(tmp_path):
     snapshot = create_snapshot(source, tmp_path / "backups")
     verify(snapshot)
     assert (snapshot / "portable/portable-models/sample").read_bytes() == b"preserved resource"
-    assert (snapshot / "scripts/run_server.py").is_file()
+    assert (snapshot / "run_server.py").is_file()

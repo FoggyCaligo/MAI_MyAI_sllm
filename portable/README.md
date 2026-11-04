@@ -11,7 +11,7 @@ MAI/
   .env                         # 개인 계정·경로, Git 제외
   settings.yaml
   mai/
-  scripts/run_server.py
+  run_server.py
   data/                        # 공통 기억·대화·감사 DB
   mai_uploads/
   portable/

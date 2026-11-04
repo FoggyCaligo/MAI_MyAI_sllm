@@ -54,4 +54,4 @@ for attempt in {1..80}; do
 done
 [[ "$ready" == 1 ]] || { echo "Portable Ollama did not become ready" >&2; exit 1; }
 echo "[Linux Portable] Ollama ready; launching MAI on http://127.0.0.1:8000"
-"$python" "$root/scripts/run_server.py"
+"$python" "$root/run_server.py"

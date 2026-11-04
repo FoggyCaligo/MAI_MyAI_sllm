@@ -117,7 +117,7 @@ try {
     Write-Host "Installation complete: $InstallPath"
     Write-Host "To start (in a non-administrator terminal):"
     Write-Host "  cd '$InstallPath'"
-    Write-Host '  .\.venv\Scripts\python.exe scripts/run_server.py'
+    Write-Host '  .\.venv\Scripts\python.exe run_server.py'
     Write-Host 'Tailscale/Funnel is intentionally NOT enabled by this installer.'
 }
 finally {

@@ -90,7 +90,7 @@ ollama list
 5. 실행 후 `http://127.0.0.1:8000` 접속.
 
 ```powershell
-python scripts/run_server.py
+python run_server.py
 ```
 
 자동 설치를 선호하면 `scripts/install_windows.ps1`을 확인한 뒤 사용할 수 있음. 이 스크립트는 시스템 Git·Python·Ollama 설치 및 초기 `.env` 생성을 자동화함. **이미 `.env`가 있으면 초기 계정 재설정을 하지 않음.**

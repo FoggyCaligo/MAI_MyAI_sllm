@@ -48,7 +48,7 @@ if ($Backend -eq 'ollama') {
             Start-Sleep -Milliseconds 500
         }
         if (-not $ready) { throw 'Ollama startup did not become ready in 20 seconds' }
-        & $python scripts/run_server.py
+        & $python run_server.py
         if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
     } finally {
         if (-not $ollamaProcess.HasExited) { Stop-Process -Id $ollamaProcess.Id }
@@ -72,7 +72,7 @@ if ($Backend -eq 'ollama') {
             Start-Sleep -Seconds 1
         }
         if (-not $ready) { throw 'llama.cpp did not become ready within 100 seconds' }
-        & $python scripts/run_server.py
+        & $python run_server.py
         if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
     } finally {
         if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }

@@ -12,7 +12,7 @@ MAI는 사용자의 컴퓨터에서 로컬 언어 모델로 실행되는 범용 
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python scripts/run_server.py
+python run_server.py
 ```
 
 브라우저에서 `http://127.0.0.1:8000`에 접속한다. 외부 접속은 별도 Tailscale Funnel 설정이 필요하다. 파일 수정·삭제와 터미널 명령은 실제 PC에 반영되므로 계정 권한과 작업 대상을 확인한다.

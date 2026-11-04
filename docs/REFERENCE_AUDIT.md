@@ -21,7 +21,7 @@ python scripts/audit_references.py
 
 정적 import만으로는 다음 사용을 증명하거나 부정할 수 없다.
 
-- `scripts/run_server.py` 같은 직접 실행 진입점
+- `run_server.py` 같은 직접 실행 진입점
 - FastAPI 데코레이터 및 등록을 통한 간접 호출
 - `importlib` 및 런타임 플러그인 탐색
 - 템플릿/HTML/JS 등의 정적 리소스, 파일명에 의한 런타임 접근
@@ -31,7 +31,7 @@ python scripts/audit_references.py
 
 | 구성 요소 | 확인된 사용처 | 판정 |
 | --- | --- | --- |
-| `scripts/run_server.py` | 공식 서버 실행 경로, `resumable_chat.install()` 호출 | 유지 |
+| `run_server.py` | 공식 서버 실행 경로, `resumable_chat.install()` 호출 | 유지 |
 | `mai/app/server.py` | FastAPI 앱 생성, API·DB·런타임 설정 | 유지 |
 | `mai/app/resumable_chat.py` | 작업 기반 채팅, `/` UI, `/chat/jobs` 라우트 | 유지 |
 | `mai/app/chat_sessions.py` | 세션 저장, 기존 DB 형식 마이그레이션 | 유지 |
