@@ -533,7 +533,7 @@ class FinalGroundingVerifier:
         quality_input = {
             "current_user_request": payload["current_user_request"],
             "conversation_context": payload["conversation_context"],
-            "candidate_final": _clip_text(candidate, 6000),
+            "candidate_final": candidate,
             "factual_review": {
                 "evidence_verdict": evidence_verdict,
                 "action_verdict": facts.action_verdict,
