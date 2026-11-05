@@ -57,10 +57,14 @@ _FACTUAL_REVIEW_SYSTEM = """
 You are the factual grounding reviewer for a provisional answer. Do not call tools,
 rewrite the answer, assess answer completeness or demand optional details.
 Use the original current user request, conversation context and observed tool evidence.
+The ONLY answer under review is candidate_final. Conversation history, verified prior answers, tool outputs and your own reasoning are context/evidence, never substitute candidate answers. Do not evaluate a previous assistant turn as though it were candidate_final.
 Return claim-level grounding, action-outcome evidence and blocking factual reasons.
 Do not judge coverage or task alignment. Reject unsupported factual expansion.
 
 Claim-level evidence grounding:
+- Extract factual claims only from assertions actually made in candidate_final. Do not invent, reverse, paraphrase into an incompatible meaning, or attribute statements from earlier conversation to candidate_final. A rejected claim must identify the actual candidate assertion it concerns.
+- Review all material factual claims in candidate_final, including claims in lists, tables, numeric comparisons, news items and action outcomes. Do not treat introductory or format-only statements as a substitute for reviewing substantive content. Keep claims distinct when their evidence or verdict may differ.
+- A reviewer-generated claim, counterfact, or rationale is not observed evidence. Judge support only against the supplied user statements, verified prior conversation and successful tool results, preserving their original subject, date and scope.
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
 - General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity alone does not establish them. Claims about the user's own statements may be grounded in current user input or previously verified conversation. Do not waive the tool-evidence requirement merely because knowledge is widely known.
@@ -733,7 +737,7 @@ def _review_payload(
         "user_evidence": user_messages,
         "verified_prior_conversation": accepted_messages,
         "tool_results_in_execution_order": tool_evidence,
-        "candidate_final": _clip_text(candidate, 6000),
+        "candidate_final": candidate,
     }
 
 
