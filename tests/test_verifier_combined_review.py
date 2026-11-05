@@ -24,7 +24,7 @@ def turn(content="", calls=()):
     return ModelTurn(content=content, thinking="", tool_calls=tuple(calls), assistant_message=message)
 
 
-def factual(*, supported=True, quote=None):
+def factual(*, supported=True):
     return {
         "evidence_verdict": "supported" if supported else "unsupported",
         "action_verdict": "not_applicable", "reasons": [],
@@ -109,7 +109,7 @@ def test_general_schema_retry_preserves_input_and_reports_validation_errors():
 
 
 def test_supported_numeric_verdict_cannot_override_factual_rejection():
-    review = factual(supported=False, quote="Only for existing customers.")
+    review = factual(supported=False)
     review.update(numeric_verdict="supported", numeric_reason="Equivalent date formatting.")
     reviewer = Reviewer([review])
     result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
