@@ -3,7 +3,7 @@ import asyncio
 import json
 
 from mai.agent.verification import FinalGroundingVerifier
-from tests.reviewer_fixtures import with_claim_units
+from tests.reviewer_fixtures import reviewer_payload
 from mai.llm.models import ModelTurn
 
 
@@ -36,7 +36,7 @@ class Reviewer:
                 "retry_summary": "Answer the question" if self.quality == "misaligned"
                                  else "No correction needed.",
             }
-        body = json.dumps(with_claim_units(payload, request))
+        body = json.dumps(reviewer_payload(payload, request))
         return ModelTurn(content=body, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": body})
 
