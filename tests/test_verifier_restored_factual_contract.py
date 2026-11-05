@@ -96,7 +96,7 @@ def test_numeric_subtask_is_still_combined_in_one_factual_request():
     result = asyncio.run(FinalGroundingVerifier(
         reviewer_adapter=reviewer, quality_review_enabled=False,
     ).verify(candidate="The value is 1,000.", messages=[
-        {"role": "user", "content": "The value is 1000."},
+        {"role": "user", "content": "The value is one thousand."},
     ], tool_results=[]))
     assert result.ok
     assert len(reviewer.calls) == 1
