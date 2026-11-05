@@ -6,7 +6,7 @@ import json
 import logging
 import pytest
 from mai.agent.loop import AgentRunFailure
-from tests.reviewer_fixtures import with_claim_units
+from tests.reviewer_fixtures import reviewer_payload
 
 from mai.agent.runtime import AgentRuntime
 from mai.agent.verification import FinalGroundingVerifier
@@ -74,7 +74,6 @@ def _split_legacy_review(review):
             "claim": "The candidate's material assertion",
             "verdict": "unsupported", "defect": "missing_evidence",
             "reason": "; ".join(fact["reasons"]) or "No supporting observation.",
-            "evidence_refs": [],
         }]
     quality = {
         "alignment_verdict": review.get("alignment_verdict", "aligned"),
@@ -112,7 +111,7 @@ class ReviewerAdapter:
             "reasons": list(reasons),
         })
         self._quality = quality if evidence == "supported" else None
-        return turn(json.dumps(with_claim_units(fact, request)))
+        return turn(json.dumps(reviewer_payload(fact, request)))
 
 
 class StructuredReviewerAdapter:
@@ -137,7 +136,7 @@ class StructuredReviewerAdapter:
         if kind == "combined":
             fact.update(numeric_verdict=review["numeric_verdict"], numeric_reason=review["numeric_reason"])
         self._quality = quality if fact["evidence_verdict"] == "supported" else None
-        return turn(json.dumps(with_claim_units(fact, request), ensure_ascii=False))
+        return turn(json.dumps(reviewer_payload(fact, request), ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -150,7 +149,7 @@ class SlowReviewerAdapter:
         await asyncio.sleep(self.delay_seconds)
         kind = _kind(request)
         if kind == "factual":
-            return turn(json.dumps(with_claim_units({
+            return turn(json.dumps(reviewer_payload({
                 "evidence_verdict": "supported", "reasons": [], "claims": [],
                 "action_verdict": "not_applicable", "retry_summary": "No correction needed.",
             }, request)))
@@ -678,10 +677,6 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
                 "verdict": "unsupported",
                 "defect": "scope_expansion",
                 "reason": "The evidence shows deletion of refs/remotes/origin entries, not GitHub server branches.",
-                "evidence_refs": [{
-                    "source_id": "user:0", "location": "reported local outcome",
-                    "quote": "로컬의 origin remote-tracking ref 16개는 삭제됐습니다",
-                }],
             }],
             "action_verdict": "unverified",
         },
@@ -694,10 +689,6 @@ def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_par
                 "verdict": "supported",
                 "defect": "none",
                 "reason": "",
-                "evidence_refs": [{
-                    "source_id": "user:0", "location": "previous statement",
-                    "quote": "로컬의 origin remote-tracking ref 16개는 삭제됐습니다",
-                }],
             }],
             "action_verdict": "not_applicable",
         },
@@ -729,8 +720,6 @@ def test_claim_level_unsupported_inference_is_reported_with_claim_text() -> None
             "verdict": "unsupported",
             "defect": "unsupported_inference",
             "reason": "Observed price and flow data do not establish this cause.",
-            "evidence_refs": [{"source_id": "tool:0", "location": "snapshot",
-                               "quote": "price up; foreign net buying"}],
         }],
         "action_verdict": "not_applicable",
     }])
@@ -778,10 +767,6 @@ def test_truthful_partial_answer_is_releaseable_after_failed_step() -> None:
             "verdict": "supported",
             "defect": "none",
             "reason": "",
-            "evidence_refs": [{
-                "source_id": "tool:0", "location": "result",
-                "quote": "document contents",
-            }],
         }],
         "action_verdict": "not_applicable",
     }])
@@ -979,8 +964,6 @@ def test_claim_level_unsupported_overrides_inconsistent_supported_overall_verdic
             "verdict": "unsupported",
             "defect": "unsupported_inference",
             "reason": "The evidence only establishes that the user uses Pilot black ink.",
-            "evidence_refs": [{"source_id": "user:0", "location": "user statement",
-                               "quote": "나는 Pilot 검은색 잉크를 사용해."}],
         }],
         "action_verdict": "not_applicable",
     }])

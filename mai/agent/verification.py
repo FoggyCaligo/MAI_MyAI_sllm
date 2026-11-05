@@ -25,7 +25,7 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 import httpx
 from ollama import ResponseError
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest
 from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
@@ -54,49 +54,65 @@ For derived counts, distinguish rows from distinct keys, cite source records and
 """.strip()
 
 _FACTUAL_REVIEW_SYSTEM = """
-You are the factual grounding reviewer for a provisional answer. Use the current user request, conversation context and observed evidence. No tools, answer rewriting, coverage/alignment judgments, or demands for optional details. Return claim-level grounding, action-outcome evidence and blocking factual reasons in the required structured schema.
+You are the factual grounding reviewer for a provisional answer. Do not call tools,
+rewrite the answer, assess answer completeness or demand optional details.
+Use the original current user request, conversation context and observed tool evidence.
+Return claim-level grounding, action-outcome evidence and blocking factual reasons.
+Do not judge coverage or task alignment. Reject unsupported factual expansion.
 
-Evidence and verdicts:
-- Review every candidate_units entry, including mixed factual/nonfactual prose. Return one unit_reviews entry per unit, mark factual whenever a material factual assertion occurs, and link every factual unit to its extracted claims[] by index. Do not omit any unit or classify factual material as nonfactual to avoid scrutiny.
-- For each material factual claim, use "supported", "unsupported", or "uncertain". A claim is unsupported when evidence contradicts it, does not support it, or supports only a narrower statement. Use uncertain only when you cannot confidently decide; presenting an unverified proposition as established fact is normally unsupported.
-- General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity or widely known knowledge does not establish them. Current user messages and observed successful tool results are evidence.
-- Previous assistant answers are factual evidence only in verified_prior_conversation, which contains previously accepted answers. They establish what was known then, not that changing external state remains current. Other assistant text, candidate_final, and verifier feedback are context only, never evidence.
-- Failed tool calls are omitted from grounding evidence and cannot support factual claims. A successful web_search result is observed search evidence: titles, URLs, and snippets may establish what the identified result/source stated. Prefer fetched page text when available, but do not reject solely because evidence is a snippet rather than a later web_fetch result.
-- Evaluate actual source meaning, subject identity and context, not shared words, pre-listed topics, name dictionaries or string heuristics. A feature description does not establish a different mechanism or product identity. Consider all supplied results and user corrections, including evidence contradicting the draft's initial identity/category assumption; prior accepted answers and repeated queries do not override contrary observations.
-- Treat every revised answer as a new candidate and recheck all material claims. Rephrasing without additional evidence does not make an unsupported claim grounded.
-- Explain concrete missing evidence or contradiction. Never invent a counterfact, measurement, filename, causal explanation, source or quote. Missing evidence is not a contrary observation.
+Claim-level evidence grounding:
+- For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
+- A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
+- General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity alone does not establish them. Claims about the user's own statements may be grounded in current user input or previously verified conversation. Do not waive the tool-evidence requirement merely because knowledge is widely known.
+- Evaluate whether the actual evidence establishes each claim by meaning and context, not by word presence, pre-listed topics, or text heuristics. Explain concrete missing evidence or contradiction for each rejected material claim.
+- Compare quantities with their units, time periods, aggregation levels, and subjects: six quarters cannot be silently changed into six months even if both use the numeral six.
+- For structured totals, identify the source records, grouping key, aggregation scope, and whether rows or distinct entities were counted. Never substitute a reviewer-invented count; a precise source location and supported calculation are required to dispute a stated value.
+- For successful csv_aggregate results, compare the same source SHA-256, filters, group_by, metric_definitions, matching row_numbers, and computed metrics; do not invent or demand a different aggregation when a matching result exists.
+- Ground relative dates and weekdays against authoritative_current_time and its timezone. Distinguish the runtime's timezone from a user timezone that has not been established.
+- Treat every revised provisional answer as a new candidate and verify all material claims again. Rephrasing without additional evidence does not make an unsupported claim grounded.
+- Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
+- Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
+- Verify each claim against the actual source statement, not merely shared names or keywords. A feature description does not establish a different mechanism or product identity.
+- For translation, summarization or rewriting, judge fidelity to the source meaning, not literal wording. Unchanged target-language text or proper names are valid; invented details and unsupported counts are not.
+- Across any languages, treat nouns, proper names, and transliterations as equivalent expressions when they refer to the same entity or meaning; different scripts or spellings alone are not grounding defects.
+- Treat cross-language translation and transliteration as semantic equivalence, not an exact-string citation task. A Korean rendering of Russian narrative, dialogue, character names, nicknames, titles, or inflected name forms can be supported by the Russian source without a Korean string appearing in it.
+- Accept a translation or transliteration when the source and candidate refer to the same person, event, relationship, or proposition and the meaning is preserved. Multiple reasonable Korean renderings of a Russian proper name are not factual contradictions solely because spelling differs.
+- Interpret statements about fiction within the story's fictional world. Do not require real-world evidence that a fictional character or event actually exists. Distinguish claims about the text's content from claims about real-world publication history or authorship.
+- Reject actual changes to identities, relationships, actions, negation, timing, quantities, plot events, or attribution not established by the source. If equivalence is genuinely unclear, report the specific semantic uncertainty rather than treating nonmatching scripts as missing evidence.
+- Apply these rules to all languages and literary texts as appropriate; do not rely on fixed name dictionaries, keyword matching, or spelling-based heuristics.
+- Previous assistant answers are factual evidence only when provided in verified_prior_conversation, which contains answers previously accepted by the final verifier. Treat these as evidence of what was established at that time, not proof that changing external state remains current. Other assistant text is context only. Current user messages and observed tool results are evidence.
+- The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
+- A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
+- Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
+- For contradictory persistent-memory Fact nodes about the same subject, property, and time scope, prefer the node with the latest created_at as the authoritative remembered state. A newer retrieved Fact overrides an older conflicting Fact even when the older one appears earlier in search results or a different tool response. Do not use retrieval order, relevance score, occurrence_count, or last_seen_at to decide temporal precedence.
+- Do not mistake a memory tool's fresh execution time for the creation time of the historical Fact it returned. Distinguish changes in current state from accounts of different historical periods. If created_at is tied or unavailable, do not assert that either incompatible memory Fact wins merely by order; report uncertainty or seek additional evidence.
+- Apply this precedence when assessing evidence claims: an older contradicted memory node alone is not grounds for rejecting a candidate supported by a newer Fact about the same state.
 
-Quantities and structured results:
-- Compare quantities with their units, time periods, aggregation levels, and subjects: six quarters cannot be silently changed into six months even if both use six.
-- For structured counts, identify the source result, record type, grouping key, filtering scope, and whether rows or distinct entities are counted. Compute from actual displayed records; never substitute a reviewer-invented count or prior rejection.
-- When contradicting a count, give the precise source location (tool name and identifying field/section/records), aggregation operation and recomputed value. Explain the source-supported basis for numeric conflicts, not just a replacement number. Truncated/incomplete evidence cannot establish exhaustive totals; state that limitation instead of fabricating a counter-total.
-- For a successful csv_aggregate result, use its source SHA-256, filters, group_by, metric_definitions, matching row_numbers and computed metrics for the matching claim. Compare the same scope/grouping; do not independently recount raw CSV in natural language or demand another aggregation when a matching result exists. A different filter/group is not established. If the calculation is absent or does not cover the claim, identify the missing calculation without inventing an opposing number.
+Temporal authority:
+- authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
+- Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
+- If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
 
-Translation, fiction and interpretation:
-- For translation, summarization or rewriting, judge source fidelity rather than literal wording. Unchanged target-language text and proper names are valid; invented details and unsupported counts are not.
-- Across any languages, nouns, proper names, and transliterations referring to the same entity or meaning are equivalent; different scripts or spellings alone are not grounding defects. Treat cross-language translation and transliteration as semantic equivalence, not exact-string citation. A Korean rendering of Russian narrative, dialogue, names, nicknames, titles or inflected forms can be supported by Russian source text without Korean strings appearing in it.
-- Reject actual changes to identities, relationships, actions, negation, timing, quantities, plot events or attribution. If equivalence is unclear, identify the specific semantic uncertainty. Apply this policy to all languages and literary texts without fixed dictionaries or spelling heuristics.
-- Interpret statements about fiction within the story's fictional world; do not require real-world existence of fictional people/events. Distinguish story content from real publication history/authorship.
-- An explicitly qualified, evidence-based interpretation or metaphor requested by the user need not be stated verbatim by the author/manufacturer. Its factual premises must be grounded and it must not be presented as documented official intention. Hedging does not excuse invented premises.
+Evidence scope preservation:
+- A final claim must not be semantically broader than the evidence supporting it.
+- Distinguish local state from remote state, one file from all files, visible rows from a complete collection, one command's effect from a larger goal, and one source's observation from a universal conclusion.
+- When evidence covers only part of a set or state, exhaustive, exclusive, global, superlative, or broader-scope conclusions require evidence that the broader scope was actually observed.
+- If the evidence supports a narrower statement but the candidate asserts a broader one, mark that claim unsupported with defect "scope_expansion".
+- Use defect "contradiction" when evidence directly conflicts, "unsupported_inference" when the candidate adds a causal/semantic conclusion not established by evidence, and "missing_evidence" when the factual assertion simply lacks sufficient support.
+- Use defect "none" for supported/uncertain claims that do not have one of those concrete defects.
 
-Time and remembered state:
-- authoritative_current_time is freshly read from the OS clock using current_time. Use its timezone-aware local/UTC timestamps, never a training cutoff or guessed date. Check that each claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence, including relative dates and weekdays.
-- Historical timestamps retain their meaning; the current clock proves neither source freshness nor truth. Do not assume the runtime timezone is the user's timezone unless established.
-- For conflicting persistent-memory Fact nodes about the same subject, property, and time scope, prefer the latest created_at; a newer Fact overrides an older conflicting Fact regardless of retrieval order, relevance score, occurrence_count or last_seen_at.
-- Do not mistake a memory tool's fresh execution time for a Fact's creation time. Distinguish current-state changes from different historical periods. If created_at is tied or unavailable, report uncertainty or seek evidence rather than choosing by order; an older contradicted memory node alone is not grounds for rejecting a candidate supported by the newer Fact.
+Action outcome verification:
+- Determine whether the current user request asks the agent to change external state and whether the candidate claims that requested outcome was completed.
+- If there is no state-changing request, or the candidate truthfully reports only an attempted/partial result without claiming the requested end state completed, action_verdict is "not_applicable".
+- A successful action/tool invocation is evidence that the tool contract reported success. It is not automatically evidence for a broader requested end state.
+- Use "verified" only when the candidate claims completion and the ordered evidence contains resulting-state evidence that actually establishes the requested outcome. This can be a later observation after the mutation, or an authoritative mutation result that explicitly reports the resulting state at the same scope as the claimed outcome.
+- Use "unverified" when an action was attempted or reported successful but the candidate claims completion beyond what resulting-state evidence establishes.
+- Use "contradicted" when resulting-state evidence shows the requested outcome was not achieved while the candidate claims it was.
+- Do not demand extra verification for a task that did not request or claim an external state change.
 
-Scope and defects:
-- Distinguish local from remote state, one file from all files, displayed rows from a complete collection, one command's effect from the larger goal, and one source's observation from a universal conclusion. Exhaustive, exclusive, global or superlative claims require evidence covering that scope.
-- Mark broader-than-evidence claims unsupported with defect "scope_expansion"; use "contradiction" for observed conflicts, "unsupported_inference" for added causal/semantic conclusions, and "missing_evidence" for insufficient support. Use "none" for supported/uncertain claims without those concrete defects.
-
-Action outcomes:
-- Determine whether the user requested an external state change and the candidate claims its completion. Otherwise, including truthful attempted/partial reports, action_verdict="not_applicable".
-- Tool success establishes its reported contract, not a broader end state. Use "verified" only when same-scope resulting-state evidence establishes the claimed outcome: a later observation or authoritative mutation result explicitly reporting it. Use "unverified" for claimed completion beyond observed state, and "contradicted" when resulting-state evidence shows failure. Do not demand extra verification absent a requested and claimed state change.
-
-Output and references:
-- Set evidence_verdict="supported" only when no material claim is unsupported. Identify rejected claims in claims[] with concrete reasons and defects; retry_summary is concise, actionable English.
-- For every supported claim in claims[], include a source_id, location, and verbatim quote in evidence_refs from an observed supporting source. Model familiarity, failed tool calls, and unrelated observations are not evidence. The runtime verifies source existence and quoted text separately; you still decide whether the source actually supports the claim. IDs are tool:<original execution index>, user:<user_evidence index>, prior:<verified_prior_conversation index>, or time.
-- References are optional supporting metadata. For missing_evidence they may be empty: specify what is unestablished without inventing a contrary fact or replacement total. Do not relabel a source conflict as missing_evidence to avoid citing it. Observing a quote does not validate its interpretation.
+Set evidence_verdict=supported only when no material factual claim is unsupported.
+If no requested external state change is claimed, action_verdict=not_applicable.
+Return the required structured schema. retry_summary is concise, actionable English.
 """.strip()
 
 _QUALITY_REVIEW_SYSTEM = """
@@ -115,14 +131,6 @@ For accepted verdicts return reasons=[] and retry_summary="No correction needed.
 """.strip()
 
 
-class _EvidenceReferencePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    source_id: str = Field(min_length=1, max_length=80)
-    location: str = Field(min_length=1, max_length=240)
-    quote: str = Field(min_length=1, max_length=600)
-
-
 class _ClaimReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -136,38 +144,11 @@ class _ClaimReviewPayload(BaseModel):
         "missing_evidence",
     ]
     reason: str
-    evidence_refs: list[_EvidenceReferencePayload] = Field(default_factory=list)
-
-    @field_validator("evidence_refs", mode="before")
-    @classmethod
-    def read_optional_references(cls, value: Any) -> list[_EvidenceReferencePayload]:
-        # Citation metadata must not turn an otherwise usable reviewer verdict
-        # into a schema error, repeated LLM calls, or an HTTP 500.
-        if not isinstance(value, list):
-            _LOG.warning("MAI factual reviewer reference_warning=invalid_reference_list")
-            return []
-        references = []
-        for index, item in enumerate(value):
-            try:
-                references.append(_EvidenceReferencePayload.model_validate(item, strict=True))
-            except ValidationError:
-                _LOG.warning("MAI factual reviewer reference_warning=invalid_reference_shape index=%d", index)
-        return references
-
-
-class _UnitReviewPayload(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    unit_index: int = Field(ge=0)
-    classification: Literal["factual", "nonfactual"]
-    claim_indices: list[int] = Field(default_factory=list)
-
-
 class _FactualReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     evidence_verdict: Literal["supported", "unsupported", "uncertain"]
     reasons: list[str]
     claims: list[_ClaimReviewPayload]
-    unit_reviews: list[_UnitReviewPayload]
     action_verdict: Literal["not_applicable", "verified", "unverified", "contradicted"]
     retry_summary: str = Field(min_length=1, max_length=800)
 
@@ -213,7 +194,6 @@ class FinalVerificationResult:
                     "claim": claim["claim"],
                     "defect": claim["defect"],
                     "reason": claim["reason"],
-                    "evidence_refs": claim.get("evidence_refs", []),
                 }
                 for claim in claims
                 if claim["verdict"] == "unsupported"
@@ -247,11 +227,6 @@ class FinalVerificationResult:
                     continue
                 for claim in related:
                     lines.append(f"- {issue.code}: {claim['claim']} — {claim['reason']}")
-                    for reference in claim.get("evidence_refs", ()):
-                        lines.append(
-                            f"  Source {reference['source_id']} / {reference['location']}: "
-                            + json.dumps(reference['quote'], ensure_ascii=False)
-                        )
             else:
                 lines.append(f"- {issue.code}: {issue.message}")
         if unsupported:
@@ -271,7 +246,6 @@ class ClaimReview:
     verdict: str
     defect: str = "none"
     reason: str = ""
-    evidence_refs: tuple[Mapping[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,9 +258,6 @@ class FinalReview:
     claims: tuple[ClaimReview, ...] = ()
     action_verdict: str = "not_applicable"
     retry_summary: str = ""
-    reference_warnings: tuple[str, ...] = ()
-    unanchored_supported_claims: tuple[str, ...] = ()
-    claim_coverage_issues: tuple[str, ...] = ()
     numeric_verdict: str | None = None
     numeric_reason: str = ""
 
@@ -379,19 +350,6 @@ class FinalGroundingVerifier:
                 )
                 issues.append(numeric_issue)
         if allow_evidence_review:
-            if review.claim_coverage_issues:
-                issues.append(VerificationIssue(
-                    code="claim_coverage_incomplete",
-                    message="; ".join(review.claim_coverage_issues),
-                ))
-            if review.unanchored_supported_claims:
-                issues.append(VerificationIssue(
-                    code="supported_claim_source_unverified",
-                    message=(
-                        "Claims marked supported without an observed matching source quotation: "
-                        + "; ".join(review.unanchored_supported_claims)
-                    ),
-                ))
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
             other_claims = tuple(claim for claim in unsupported_claims if claim.defect != "scope_expansion")
@@ -464,12 +422,9 @@ class FinalGroundingVerifier:
                 "action_verdict": review.action_verdict,
                 "reasons": list(review.reasons),
                 "coverage_reasons": list(review.coverage_reasons),
-                "reference_warnings": list(review.reference_warnings),
-                "unanchored_supported_claims": list(review.unanchored_supported_claims),
-                "claim_coverage_issues": list(review.claim_coverage_issues),
                 "claims": [
                     {"claim": claim.claim, "verdict": claim.verdict, "defect": claim.defect,
-                     "reason": claim.reason, "evidence_refs": list(claim.evidence_refs)}
+                     "reason": claim.reason}
                     for claim in review.claims
                 ],
             },
@@ -530,11 +485,6 @@ class FinalGroundingVerifier:
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results,
                                   verified_prior_conversation=self.verified_prior_conversation)
-        candidate_units = _candidate_review_units(payload["candidate_final"])
-        payload["candidate_units"] = [
-            {"index": index, "content": unit}
-            for index, unit in enumerate(candidate_units)
-        ]
         system = _FACTUAL_REVIEW_SYSTEM
         payload_model = _FactualReviewPayload
         if flagged_numeric_facts:
@@ -554,14 +504,10 @@ class FinalGroundingVerifier:
         )
         numeric_verdict = facts.numeric_verdict if flagged_numeric_facts else None
         numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
-        claims, reference_warnings = _filter_factual_references(facts, payload)
-        claim_coverage_issues = _check_claim_unit_coverage(
-            facts.unit_reviews, unit_count=len(candidate_units), claim_count=len(claims),
-        )
-        # Source existence and exact quotes are deterministic; semantic support is an LLM judgment.
-        unanchored_supported_claims = tuple(
-            claim.claim for claim in claims if claim.verdict == "supported" and not claim.evidence_refs
-        )
+        claims = tuple(ClaimReview(
+            claim=item.claim.strip(), verdict=item.verdict,
+            defect=item.defect, reason=item.reason.strip(),
+        ) for item in facts.claims)
         evidence_verdict = (
             "unsupported" if any(item.verdict == "unsupported" for item in claims)
             else facts.evidence_verdict
@@ -574,16 +520,13 @@ class FinalGroundingVerifier:
         factual_pass = (not flagged_numeric_facts or numeric_verdict == "supported") and evidence_verdict == "supported" and facts.action_verdict in (
             "not_applicable", "verified"
         )
-        if not (run_quality_review and factual_pass and not unanchored_supported_claims and not claim_coverage_issues):
+        if not (run_quality_review and factual_pass):
             return FinalReview(
                 evidence_verdict=evidence_verdict, alignment_verdict="aligned",
                 coverage_verdict="sufficient", coverage_reasons=(),
                 reasons=factual_reasons, claims=claims,
                 action_verdict=facts.action_verdict,
                 retry_summary=facts.retry_summary,
-                reference_warnings=reference_warnings,
-                unanchored_supported_claims=unanchored_supported_claims,
-                claim_coverage_issues=claim_coverage_issues,
                 numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
             )
 
@@ -596,7 +539,7 @@ class FinalGroundingVerifier:
                 "action_verdict": facts.action_verdict,
                 "claims": [
                     {"claim": item.claim, "verdict": item.verdict, "defect": item.defect,
-                     "reason": item.reason, "evidence_refs": list(item.evidence_refs)}
+                     "reason": item.reason}
                     for item in claims
                 ],
             },
@@ -623,9 +566,6 @@ class FinalGroundingVerifier:
             )),
             claims=claims, action_verdict=facts.action_verdict,
             retry_summary=quality.retry_summary,
-            reference_warnings=reference_warnings,
-            unanchored_supported_claims=unanchored_supported_claims,
-            claim_coverage_issues=claim_coverage_issues,
             numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
         )
 
@@ -750,49 +690,6 @@ def _clip_text(text: str, limit: int) -> str:
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
-def _candidate_review_units(candidate: str) -> tuple[str, ...]:
-    """Structural paragraphs, not semantic keyword or sentence heuristics."""
-    return tuple(
-        unit.strip() for unit in re.split(r"\n\s*\n", candidate) if unit.strip()
-    )
-
-
-def _check_claim_unit_coverage(
-    reviews: Sequence[_UnitReviewPayload], *, unit_count: int, claim_count: int,
-) -> tuple[str, ...]:
-    """Validate completeness of reported units and claim links; never infer semantics."""
-    failures: list[str] = []
-    seen_units: set[int] = set()
-    referenced_claims: set[int] = set()
-    for review in reviews:
-        index = review.unit_index
-        if index >= unit_count:
-            failures.append(f"unit {index} is outside candidate_units")
-            continue
-        if index in seen_units:
-            failures.append(f"unit {index} was reviewed more than once")
-            continue
-        seen_units.add(index)
-        if len(set(review.claim_indices)) != len(review.claim_indices):
-            failures.append(f"unit {index} repeats a claim index")
-        invalid = [i for i in review.claim_indices if i < 0 or i >= claim_count]
-        if invalid:
-            failures.append(f"unit {index} refers to unknown claim indices: {invalid}")
-        else:
-            referenced_claims.update(review.claim_indices)
-        if review.classification == "factual" and not review.claim_indices:
-            failures.append(f"factual unit {index} has no extracted claim")
-        if review.classification == "nonfactual" and review.claim_indices:
-            failures.append(f"nonfactual unit {index} lists factual claims")
-    missing = sorted(set(range(unit_count)) - seen_units)
-    if missing:
-        failures.append(f"candidate units not reviewed: {missing}")
-    unassigned = sorted(set(range(claim_count)) - referenced_claims)
-    if unassigned:
-        failures.append(f"extracted claims not assigned to candidate units: {unassigned}")
-    return tuple(failures)
-
-
 def _review_payload(
     *,
     candidate: str,
@@ -821,7 +718,6 @@ def _review_payload(
     tool_evidence = [
         {
             "index": index,
-            "source_id": f"tool:{index}",
             "tool": name,
             "ok": ok,
             "error_type": error_type,
@@ -839,69 +735,6 @@ def _review_payload(
         "tool_results_in_execution_order": tool_evidence,
         "candidate_final": _clip_text(candidate, 6000),
     }
-
-
-def _source_texts(content: str) -> tuple[str, ...]:
-    """Permit quotes from serialized JSON or its decoded text fields."""
-    texts = [content]
-    try:
-        value = json.loads(content)
-    except (ValueError, TypeError):
-        return tuple(texts)
-
-    def visit(item: Any) -> None:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, dict):
-            for child in item.values():
-                visit(child)
-        elif isinstance(item, list):
-            for child in item:
-                visit(child)
-
-    visit(value)
-    return tuple(texts)
-
-
-def _filter_factual_references(
-    review: _FactualReviewPayload, payload: Mapping[str, Any],
-) -> tuple[tuple[ClaimReview, ...], tuple[str, ...]]:
-    """Keep observed citations; missing/invalid metadata never blocks a verdict."""
-    sources = {
-        f"user:{index}": _source_texts(text)
-        for index, text in enumerate(payload["user_evidence"])
-    }
-    sources.update({
-        f"prior:{index}": _source_texts(message["content"])
-        for index, message in enumerate(payload["verified_prior_conversation"])
-    })
-    sources.update({
-        item["source_id"]: _source_texts(item["result"])
-        for item in payload["tool_results_in_execution_order"]
-    })
-    sources["time"] = _source_texts(json.dumps(payload["authoritative_current_time"], ensure_ascii=False))
-    claims = []
-    warnings = []
-    for index, claim in enumerate(review.claims):
-        references = []
-        for reference in claim.evidence_refs:
-            texts = sources.get(reference.source_id)
-            quote = " ".join(reference.quote.split())
-            if not reference.location.strip() or not quote or texts is None or not any(
-                quote in " ".join(text.split()) for text in texts
-            ):
-                warnings.append(f"claim:{index}:unmatched_reference")
-                continue
-            references.append(reference.model_dump())
-        if claim.verdict == "unsupported" and claim.defect != "missing_evidence" and not references:
-            warnings.append(f"claim:{index}:missing_reference")
-        claims.append(ClaimReview(
-            claim=claim.claim.strip(), verdict=claim.verdict, defect=claim.defect,
-            reason=claim.reason.strip(), evidence_refs=tuple(references),
-        ))
-    for warning in warnings:
-        _LOG.warning("MAI factual reviewer reference_warning=%s", warning)
-    return tuple(claims), tuple(warnings)
 
 
 def _select_review_tool_results(

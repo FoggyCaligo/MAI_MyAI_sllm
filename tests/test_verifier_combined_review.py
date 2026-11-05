@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from mai.agent import AgentRuntime
-from tests.reviewer_fixtures import with_claim_units
+from tests.reviewer_fixtures import reviewer_payload
 from mai.agent.verification import FinalGroundingVerifier, _NUMERIC_REVIEW_SYSTEM
 from mai.llm.models import ModelTurn
 from mai.tools.registry import ToolRegistry
@@ -24,15 +24,13 @@ def turn(content="", calls=()):
     return ModelTurn(content=content, thinking="", tool_calls=tuple(calls), assistant_message=message)
 
 
-def factual(*, supported=True, quote=None):
+def factual(*, supported=True):
     return {
         "evidence_verdict": "supported" if supported else "unsupported",
         "action_verdict": "not_applicable", "reasons": [],
         "claims": [] if supported else [{
             "claim": "The offer is unconditional", "verdict": "unsupported",
             "defect": "contradiction", "reason": "The original contains a condition.",
-            "evidence_refs": [{"source_id": "tool:0", "location": "result",
-                               "quote": quote}],
         }],
         "retry_summary": "No correction needed." if supported else "Preserve the original condition.",
     }
@@ -45,7 +43,7 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(request)
-        return turn(json.dumps(with_claim_units(next(self.responses), request)))
+        return turn(json.dumps(reviewer_payload(next(self.responses), request)))
 
 
 def test_reviewer_failure_preserves_unverified_draft_with_the_error():
@@ -111,7 +109,7 @@ def test_general_schema_retry_preserves_input_and_reports_validation_errors():
 
 
 def test_supported_numeric_verdict_cannot_override_factual_rejection():
-    review = factual(supported=False, quote="Only for existing customers.")
+    review = factual(supported=False)
     review.update(numeric_verdict="supported", numeric_reason="Equivalent date formatting.")
     reviewer = Reviewer([review])
     result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
