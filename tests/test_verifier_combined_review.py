@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from mai.agent import AgentRuntime
-from tests.reviewer_fixtures import with_claim_units
+from tests.reviewer_fixtures import reviewer_payload
 from mai.agent.verification import FinalGroundingVerifier, _NUMERIC_REVIEW_SYSTEM
 from mai.llm.models import ModelTurn
 from mai.tools.registry import ToolRegistry
@@ -31,8 +31,6 @@ def factual(*, supported=True, quote=None):
         "claims": [] if supported else [{
             "claim": "The offer is unconditional", "verdict": "unsupported",
             "defect": "contradiction", "reason": "The original contains a condition.",
-            "evidence_refs": [{"source_id": "tool:0", "location": "result",
-                               "quote": quote}],
         }],
         "retry_summary": "No correction needed." if supported else "Preserve the original condition.",
     }
@@ -45,7 +43,7 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(request)
-        return turn(json.dumps(with_claim_units(next(self.responses), request)))
+        return turn(json.dumps(reviewer_payload(next(self.responses), request)))
 
 
 def test_reviewer_failure_preserves_unverified_draft_with_the_error():
