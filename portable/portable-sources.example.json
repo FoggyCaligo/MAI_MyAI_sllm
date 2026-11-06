@@ -18,7 +18,7 @@
   },
   "models": [
     "ornith-1.5:9b",
-    "gemma4:e4b",
+    "lfm3-vl:2b",
     "granite4:3b-h"
   ]
 }

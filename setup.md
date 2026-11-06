@@ -42,6 +42,8 @@ cp .env.example .env
 
 **Verifier 변경 시 확인:** 기존 `.env` 또는 프로세스 환경변수에 `VERIFIER_MODEL=lfm2.5:8b`가 있으면 YAML 기본값을 바꿔도 그대로 적용됨. `granite4:3b-h`를 사용하려면 해당 값을 수정하거나 기존 덮어쓰기를 삭제하고 모델을 설치할 것.
 
+**비전모델 변경 시 확인:** 기본 비전모델은 `lfm3-vl:2b`임. 기존 `.env` 또는 프로세스 환경변수에 `VISION_MODEL=gemma4:e4b`가 남아 있다면 기존 값이 우선하므로 직접 제거하거나 `lfm3-vl:2b`로 변경해야 함. Ollama에서 해당 모델의 이미지 입력 지원 여부를 설치 후 확인할 것.
+
 **설정 우선순위:** 기존 환경변수와 `.env`의 동일 이름 값이 `settings.yaml` 기본값보다 우선함. 기존 `.env`의 `MAIN_MODEL` 또는 타임아웃 값을 YAML에서 변경해도 적용되지 않으면 `.env`에 동일 키가 있는지 확인할 것. `.env`를 덮어쓰지 않고 이관하려면 해당 키만 직접 삭제함. `settings.yaml`의 중복/알 수 없는 키와 부적절한 값 형식은 명시적 오류로 처리됨.
 
 ### 1.3 settings.yaml 설정 구분
@@ -89,7 +91,7 @@ python -m playwright install chromium
 ollama pull ornith-1.5:9b
 ollama pull granite4:3b-h
 
-ollama pull gemma4:e4b
+ollama pull lfm3-vl:2b
 ollama list
 ```
 
