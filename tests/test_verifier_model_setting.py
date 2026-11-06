@@ -21,6 +21,8 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
     tmp_path, monkeypatch, verifier_model, selected_model, reviewer_fails,
 ):
     monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "false")
+    monkeypatch.setenv("VERIFIER_DECISION_MODEL", "tev1:4b")
+    monkeypatch.setenv("VERIFIER_DECISION_TIMEOUT_SECONDS", "120")
     monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter", lambda **kwargs: SimpleNamespace(close=lambda: None))
     requests = []
 
