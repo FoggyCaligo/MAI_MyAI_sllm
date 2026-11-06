@@ -27,7 +27,7 @@ def required_models(
 
     effective = dict(os.environ if environ is None else environ)
     load_settings(settings, environ=effective)
-    configured = [effective[key] for key in ("MAIN_MODEL", "VISION_MODEL", "VERIFIER_MODEL", "VERIFIER_DECISION_MODEL") if key in effective]
+    configured = [effective[key] for key in ("MAIN_MODEL", "VISION_MODEL", "VERIFIER_MODEL") if key in effective]
     result: list[str] = []
     for model in [*models, *configured]:
         if not isinstance(model, str) or not model.strip():
