@@ -11,7 +11,7 @@ import json
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from ..llm.models import ChatRequest
 from .verification_text import canonical_verification_text
@@ -45,6 +45,41 @@ produce an empty array. Do not omit a claim merely because it is uncertain.
 
 class ClaimSpans(RootModel[list[str]]):
     """An ordered list, not a verdict-producing Granite response."""
+
+
+_EMPTY_EXTRACTION_SYSTEM = """Independently determine whether candidate_final contains any independently
+checkable assertion at all. A prior extraction returned no claims; do not
+assume that extraction was correct.
+Events, entities, dates, amounts, comparisons, interpretations, translations,
+and assertions about actions are checkable. Purely social responses may have none.
+Return exactly one structured decision:
+- contains_checkable_assertions: provide a nonempty exact verbatim span of
+  candidate_final containing one checkable assertion as witness.
+- no_checkable_assertions: provide no witness and explain why the entire answer
+  has no checkable assertions.
+When uncertain, do not certify that the answer has no assertions.
+Do not paraphrase a witness. Do not invent assertions from external context.
+"""
+
+
+class EmptyExtractionDecision(BaseModel):
+    """Explicit separate review of an empty extraction result."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["contains_checkable_assertions", "no_checkable_assertions"]
+    witness: str | None
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "EmptyExtractionDecision":
+        if not self.reason.strip():
+            raise ValueError("empty-extraction decision requires a meaningful reason")
+        if self.status == "contains_checkable_assertions":
+            if not self.witness or not self.witness.strip():
+                raise ValueError("claims-present decision requires a nonempty witness")
+        elif self.witness is not None:
+            raise ValueError("no-claims decision must have null witness")
+        return self
 
 
 class _ChoiceAnswer(BaseModel):
@@ -192,6 +227,31 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
             ClaimSpans, label="extract", on_audit_event=on_audit_event,
         )
         claims = tuple(extraction.root)
+        if not claims:
+            # Empty extraction is not proof that the answer contains no facts.
+            # This second, explicit task does not reuse the extractor's verdict.
+            empty_input = {"candidate_final": canonical_candidate}
+            empty_decision = await self._request_structured_review(
+                ChatRequest(
+                    messages=(
+                        {"role": "system", "content": _EMPTY_EXTRACTION_SYSTEM},
+                        {"role": "user", "content": json.dumps(empty_input, ensure_ascii=False)},
+                    ),
+                    tools=(), think=False,
+                    response_format=EmptyExtractionDecision.model_json_schema(),
+                ),
+                EmptyExtractionDecision, label="empty_extraction",
+                on_audit_event=on_audit_event,
+            )
+            if empty_decision.status == "contains_checkable_assertions":
+                if empty_decision.witness not in canonical_candidate:
+                    raise DecisionVerifierContractError(
+                        "Empty-extraction witness must be a verbatim candidate span"
+                    )
+                raise DecisionVerifierContractError(
+                    "Granite extracted no claims, but independent review found "
+                    f"an unextracted assertion: {empty_decision.witness}"
+                )
         for claim in claims:
             if not claim.strip() or claim not in canonical_candidate:
                 raise DecisionVerifierContractError(

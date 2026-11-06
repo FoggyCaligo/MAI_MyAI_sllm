@@ -16,7 +16,7 @@
 ## 단계
 
 1. Python은 기존 숫자·날짜 정규화 검사를 실행한다.
-2. Granite에 추출 프롬프트와 **임시답변의 Markdown 파싱 결과(검증용 텍스트), 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. JSON **문자열 배열**만 수신한다. 추출한 진술은 Markdown 파서가 생성한 검증용 텍스트의 부분 문자열이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
+2. Granite에 추출 프롬프트와 **임시답변의 Markdown 파싱 결과(검증용 텍스트), 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. JSON **문자열 배열**만 수신한다. **빈 배열을 곧바로 성공으로 간주하지 않고**, 별도의 Granite 구조화 요청으로 후보 답변 전체에 검증 가능한 진술이 하나라도 있는지 명시적으로 재판정한다. `contains_checkable_assertions`이면 후보 원문에 존재하는 witness span을 요구하고 누락 추출 계약 오류로 종료한다. `no_checkable_assertions`이면 witness=null과 비어 있지 않은 사유를 요구한다. 응답 형식 위반은 오류로 유지하고, 실패를 승인하거나 묵시적으로 다른 Verifier로 전환하지 않는다. 추출한 진술은 Markdown 파서가 생성한 검증용 텍스트의 부분 문자열이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
 3. Python이 추출 목록에 순서대로 `c0`, `c1`, … ID를 부여한다. 설정된 `VERIFIER_DECISION_BATCH_SIZE`개씩 나눠 순차 실행한다.
 4. 각 Tev 배치는 `state={orig_answer: 전체 검증용 텍스트, source: {datetime_local_iso, conversation_context, tool_results_in_execution_order}}`와 `questions={c0:..., ...}`를 **각각 한 번씩** 전달한다. 배치 내부 질문들은 같은 state를 공유한다.
 5. Tev의 choice 판정은 `supported / contradicted / insufficient` 중 하나. 누락·중복·예상치 못한 질문 ID나 잘못된 판정은 오류다. `insufficient`는 반증이 아니라 관측 근거의 불충분을 의미한다.
@@ -44,12 +44,12 @@
 
 ## 감사 이벤트와 테스트
 
-Granite의 원본 추출 요청·응답은 기존 `request/raw_response/validated_response` 단계(`stage=extract`)로 감사 DB에 기록한다. Tev는 배치마다 `stage=decision`의 `request`와 `validated_response`를 기록한다. 마지막 `decision`에는 Python이 집계한 주장별 결과가 기록된다.
+Granite의 원본 추출 요청·응답은 기존 `request/raw_response/validated_response` 단계(`stage=extract`)로 감사 DB에 기록한다. 추출이 빈 경우에만 추가된 독립 판정은 `stage=empty_extraction`의 `request/raw_response/validated_response`에 남긴다. Tev는 배치마다 `stage=decision`의 `request`와 `validated_response`를 기록한다. 마지막 `decision`에는 Python이 집계한 주장별 결과가 기록된다.
 
 ```bash
 ollama --version
 ollama pull tev1:4b
-python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_markdown_canonical.py tests/test_verifier_model_setting.py
+python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_empty_claim_contract.py tests/test_verifier_markdown_canonical.py tests/test_verifier_model_setting.py
 python -m pytest -q
 ```
 
