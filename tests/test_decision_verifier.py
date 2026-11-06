@@ -174,7 +174,7 @@ def test_systemone_incorrect_answer_id_is_contract_error(monkeypatch):
     async def respond(request):
         return httpx.Response(200, json={
             "answers": {"unexpected": {"type": "choice", "choice": "supported",
-                                       "probabilities": {"supported": 1},
+                                       "probabilities": {"supported": 1, "contradicted": 0, "insufficient": 0},
                                        "confidence": 1}},
         })
     original_client = httpx.AsyncClient
