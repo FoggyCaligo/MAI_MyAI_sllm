@@ -1,9 +1,9 @@
 ---
 name: web
-description: Search external information, fetch web content, and operate an isolated web browser when needed.
+description: Retrieve current external information and operate webpages when required.
 metadata:
   tool-category: web
 ---
-# Web information
+# External information
 
-Use exact URLs supported by observed search results; do not invent URLs. Distinguish search summaries from primary retrieved sources. Browser sessions require fresh element references from snapshots; never guess elements from text. Keep separate observations of failed and successful fetches. When sources conflict, report uncertainty rather than manufacturing agreement.
+Keep retrieved facts, hypotheses and tool errors distinct. Do not invent URLs, citations, or observations. Select only the specific native tools needed for the task and read their respective schemas before use. An unavailable resource does not establish that the referenced information is false.
