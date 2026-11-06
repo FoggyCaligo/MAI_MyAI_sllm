@@ -83,16 +83,57 @@ def test_rejected_claim_reenters_existing_feedback_contract():
     assert answer in result.feedback_message()
 
 
-@pytest.mark.parametrize("extracted", [["invented claim"], [""]])
-def test_extract_must_be_verbatim(extracted):
-    with pytest.raises(DecisionVerifierContractError):
+def test_empty_extracted_sentence_is_contract_error():
+    with pytest.raises(DecisionVerifierContractError, match="nonempty"):
         run(DecisionGroundingVerifier(
-            reviewer_adapter=GraniteExtractor(extracted),
+            reviewer_adapter=GraniteExtractor([""]),
             judge=FakeJudge(["supported"]), quality_review_enabled=False,
         ).verify(
             candidate="Original claim", messages=[{"role": "user", "content": "Check"}],
             tool_results=(),
         ))
+
+
+def test_semantically_equivalent_reworded_claim_reaches_tev():
+    answer = "회사의 신제품 출시일은 어제입니다."
+    paraphrase = "그 회사는 어제 신제품을 출시했다."
+    judge = FakeJudge(["supported"])
+    reviewer = GraniteExtractor([paraphrase])
+    result = run(DecisionGroundingVerifier(
+        reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
+    ).verify(
+        candidate=answer, messages=[{"role": "user", "content": "출시일?"}],
+        tool_results=(),
+    ))
+    assert result.ok
+    assert len(reviewer.requests) == 1
+    assert judge.calls[0][2] == (paraphrase,)
+    assert judge.calls[0][0] == answer
+
+
+def test_tev_checks_semantic_fidelity_without_literal_matching():
+    question = SystemOneJudge._questions(["회사가 어제 출시했다."], 0)["c0"]
+    assert "same meaning" in question["instructions"]
+    assert "orig_answer" in question["instructions"]
+    assert "wording need not be identical" in question["instructions"]
+    assert "changes its meaning" in question["criteria"]["insufficient"]
+
+
+def test_extractor_uses_requested_nine_part_korean_prompt():
+    reviewer = GraniteExtractor(["그 회사는 어제 신제품을 출시했다."])
+    judge = FakeJudge(["supported"])
+    run(DecisionGroundingVerifier(
+        reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
+    ).verify(
+        candidate="회사가 어제 신제품을 출시했습니다.",
+        messages=[{"role": "user", "content": "출시?"}], tool_results=(),
+    ))
+    system_prompt = reviewer.requests[0].messages[0]["content"]
+    assert "# 검증 대상 추출" in system_prompt
+    assert "9. **자료 해석:**" in system_prompt
+    assert "검증이나 진위 판정은 수행하지 않는다." in system_prompt
+    assert "출력은 지정된 JSON 배열만 사용한다." in system_prompt
+    assert reviewer.requests[0].response_format == ClaimSpans.model_json_schema()
 
 
 def test_systemone_30_item_batches_share_state_and_preserve_order():

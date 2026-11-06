@@ -66,9 +66,12 @@ def test_code_and_escaped_pipe():
     assert "raw **code**" in canonical
 
 
-def test_false_span_still_raises():
-    with pytest.raises(DecisionVerifierContractError, match="verbatim"):
-        verify("**방주**는 Ark입니다.", ["방주는 Arc입니다."])
+def test_semantic_paraphrase_does_not_fail_literal_span_check():
+    answer = "**방주**는 Ark라는 영어 단어로 번역됩니다."
+    paraphrase = "방주의 영어 표현은 Ark이다."
+    result, _, judge = verify(answer, [paraphrase])
+    assert result.ok
+    assert judge.received == (canonical_verification_text(answer), (paraphrase,))
 
 
 def test_error_ui_renders_markdown_without_feedback():
