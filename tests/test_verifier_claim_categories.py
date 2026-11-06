@@ -105,10 +105,25 @@ def test_invalid_claim_in_any_category_fails_before_judgment():
 
 
 def test_empty_categories_still_produce_empty_extraction_review():
-    reviewer = CategorizedExtractor(categories())
-    # Without the required separate empty_extraction response, it must not pass.
-    with pytest.raises(Exception):
+    class EmptyReviewExtractor(CategorizedExtractor):
+        async def chat(self, request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                value = self.extracted
+            else:
+                value = {
+                    "status": "contains_checkable_assertions",
+                    "witness": "A fact.",
+                    "reason": "The candidate asserts a fact.",
+                }
+            body = json.dumps(value, ensure_ascii=False)
+            return ModelTurn(body, "", (), {"role": "assistant", "content": body})
+
+    reviewer = EmptyReviewExtractor(categories())
+    judge = RecordingJudge()
+    with pytest.raises(DecisionVerifierContractError, match="unextracted assertion"):
         asyncio.run(DecisionGroundingVerifier(
-            reviewer_adapter=reviewer, judge=RecordingJudge(), quality_review_enabled=False,
+            reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
         ).verify(candidate="A fact.", messages=[{"role": "user", "content": "Check"}], tool_results=()))
-    assert len(reviewer.requests) >= 2
+    assert len(reviewer.requests) == 2
+    assert judge.calls == []
