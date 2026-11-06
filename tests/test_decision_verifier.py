@@ -138,10 +138,11 @@ def test_systemone_30_item_batches_share_state_and_preserve_order():
 def test_systemone_missing_answers_fail_explicitly(monkeypatch):
     async def respond(request):
         return httpx.Response(200, json={"answers": {}})
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: httpx.AsyncClient(
-        transport=httpx.MockTransport(respond), **kwargs
-    ))
-    with pytest.raises((DecisionVerifierContractError, RecursionError)):
+    original_client = httpx.AsyncClient
+    def mock_client(**kwargs):
+        return original_client(transport=httpx.MockTransport(respond), **kwargs)
+    monkeypatch.setattr("mai.agent.decision_verifier.httpx.AsyncClient", mock_client)
+    with pytest.raises(DecisionVerifierContractError, match="missing or extra"):
         run(SystemOneJudge(host="http://localhost:11434", model="tev1:4b").judge(
             candidate="A", source={}, claims=["A"],
         ))
