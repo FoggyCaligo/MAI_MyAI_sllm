@@ -8,9 +8,16 @@ import pytest
 from pydantic import ValidationError
 
 from mai.agent.decision_verifier import (
-    DecisionGroundingVerifier, DecisionVerifierContractError, EmptyExtractionDecision,
+    ClaimSpans, DecisionGroundingVerifier, DecisionVerifierContractError, EmptyExtractionDecision,
 )
 from mai.llm.models import ModelTurn
+
+
+def categorized(spans, **overrides):
+    values = {name: [] for name in ClaimSpans.model_fields}
+    values["factual_claims"] = list(spans)
+    values.update(overrides)
+    return values
 
 
 class ReviewAdapter:
@@ -21,7 +28,7 @@ class ReviewAdapter:
 
     async def chat(self, request):
         self.requests.append(request)
-        result = self.extraction if len(self.requests) == 1 else self.empty_decision
+        result = categorized(self.extraction) if len(self.requests) == 1 else self.empty_decision
         content = json.dumps(result, ensure_ascii=False)
         return ModelTurn(content, "", (), {"role": "assistant", "content": content})
 
