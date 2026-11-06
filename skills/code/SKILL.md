@@ -1,9 +1,9 @@
 ---
 name: code
-description: Inspect source code, search symbols, read line ranges, and apply supported code edits.
+description: Examine and modify source code using registered code tools.
 metadata:
   tool-category: code
 ---
-# Code inspection and modification
+# Code operations
 
-Inspect the actual repository, source locations and currently selected branch before changes. Use code search/read to gather evidence, keep modifications minimal and preserve explicit errors. Run available validation after changes and report what was not tested. Prefer the user's branch policy: make a new branch from dev and open PRs into dev, never auto-merge to main.
+Inspect the actual repository and selected branch before making changes. Choose only the specific native operation needed; the selected tool's schema defines its parameters. Preserve observed failures, verify relevant outcomes, and report untested behavior. For repository changes follow the user's dev-branch workflow and open PRs into dev, never merge main automatically.
