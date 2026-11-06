@@ -1,4 +1,3 @@
-"""Native runtime context stays scoped to selected tools and skills."""
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from mai.agent.runtime import AgentRuntime
+from mai.agent.loop import AgentLoop
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools import ToolRegistry, register_terminal_tools
 
@@ -17,33 +17,28 @@ class EmptyInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-def turn(content="", call=None):
-    calls = (call,) if call else ()
-    assistant = {"role": "assistant", "content": content}
-    if call:
-        assistant["tool_calls"] = [{"type": "function", "function": {
-            "name": call.name, "arguments": dict(call.arguments),
-        }}]
-    return ModelTurn(content=content, thinking="", tool_calls=calls, assistant_message=assistant)
-
-
 class FakeAdapter:
-    def __init__(self, turns=None):
-        self.turns = list(turns or [turn(content="done")])
+    def __init__(self) -> None:
         self.requests = []
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
-        return self.turns.pop(0)
+        return ModelTurn(
+            content="done",
+            thinking="",
+            tool_calls=(),
+            assistant_message={"role": "assistant", "content": "done"},
+        )
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
-def test_terminal_declares_authoritative_shell_runtime_context(tmp_path: Path):
+def test_terminal_declares_authoritative_shell_runtime_context(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_terminal_tools(registry, cwd=tmp_path)
+
     contexts = registry.model_context()
     assert len(contexts) == 1
     assert contexts[0]["tool"] == "terminal_run"
@@ -51,72 +46,108 @@ def test_terminal_declares_authoritative_shell_runtime_context(tmp_path: Path):
     assert context["shell"]
     assert context["shell_family"] in {"cmd", "sh"}
     assert context["default_cwd"] == str(tmp_path.resolve())
+    assert context["posix_shell_syntax"] is (context["shell_family"] == "sh")
 
 
-def test_runtime_withholds_tool_context_before_activation():
+def test_agent_runtime_withholds_tool_context_before_activation() -> None:
     registry = ToolRegistry()
-    registry.add(name="probe", description="Probe.", input_model=EmptyInput, handler=lambda: {},
-                 metadata={"model_context": {"mode": "exact-runtime-mode"}})
+    registry.add(
+        name="probe",
+        description="Probe.",
+        input_model=EmptyInput,
+        handler=lambda: {},
+        metadata={"model_context": {"mode": "exact-runtime-mode"}},
+    )
     adapter = FakeAdapter()
-    assert run(AgentRuntime(adapter, registry).run_user_message("hello")).content == "done"
-    first = adapter.requests[0].messages[0]
-    assert first["role"] == "system"
-    _, payload = first["content"].split("\n", 1)
-    data = json.loads(payload)
-    assert data["tool_contexts"] == []
+
+    result = run(AgentRuntime(adapter, registry).run_user_message("hello"))
+
+    assert result.content == "done"
+    first_message = adapter.requests[0].messages[0]
+    assert first_message["role"] == "system"
+    _, payload = first_message["content"].split("\n", 1)
+    context = json.loads(payload)
+    assert context["tool_contexts"] == []
     assert "exact-runtime-mode" not in json.dumps(adapter.requests[0].messages)
-    clock = data["authoritative_current_time"]
+    clock = context["authoritative_current_time"]
     assert clock["date"] == clock["local_iso"][:10]
     assert clock["utc_iso"]
+    assert clock["utc_offset_seconds"] is not None
 
 
-def test_activation_reveals_only_selected_schema_and_context():
+def test_agent_runtime_provides_current_clock_without_registered_tool_context() -> None:
+    adapter = FakeAdapter()
+    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message("hello"))
+    assert result.content == "done"
+    first = adapter.requests[0].messages[0]
+    _, payload = first["content"].split("\n", 1)
+    context = json.loads(payload)
+    assert context["tool_contexts"] == []
+    assert context["authoritative_current_time"]["date"]
+
+
+def test_activation_reveals_only_selected_schema_and_context_after_recoverable_failure():
     class ProbeInput(BaseModel):
         activation_only_argument: str
 
     registry = ToolRegistry()
     calls = []
-    registry.add(name="probe", description="Probe usage description", input_model=ProbeInput,
+    registry.add(name="probe", description="Activation-only usage explanation", input_model=ProbeInput,
                  handler=lambda activation_only_argument: calls.append(activation_only_argument),
-                 category="general", metadata={"model_context": {"mode": "probe-only-contract"}})
+                 metadata={"model_context": {"mode": "probe-only-contract"}})
     registry.add(name="other", description="Another tool", input_model=EmptyInput, handler=lambda: {},
-                 category="time", metadata={"model_context": {"mode": "other-only-contract"}})
-    registry.add_model_context(key="scoped-probe",
-                               context={"argument_rule": "scoped-probe-contract"}, tools=["probe"])
+                 metadata={"model_context": {"mode": "other-only-contract"}})
+    registry.add_model_context(key="scoped-probe", context={"argument_rule": "scoped-probe-contract"}, tools=["probe"])
 
-    adapter = FakeAdapter([
-        turn(call=NativeToolCall("probe", {})),
-        turn(call=NativeToolCall("skill_activate", {"skills": ["general"]})),
-        turn(call=NativeToolCall("skill_tools", {"tools": ["probe"]})),
-        turn(call=NativeToolCall("probe", {"activation_only_argument": "observed-value"})),
-        turn(content="done"),
-    ])
-    assert run(AgentRuntime(adapter, registry).run_user_message("probe")).content == "done"
-    for req in adapter.requests[:3]:
-        visible = json.dumps(req.messages)
-        assert "probe-only-contract" not in visible
-        assert "scoped-probe-contract" not in visible
-        assert "other-only-contract" not in visible
-    assert [t["function"]["name"] for t in adapter.requests[0].tools] == ["skill_activate"]
-    assert [t["function"]["name"] for t in adapter.requests[2].tools] == ["skill_activate", "skill_tools"]
-    visible = json.dumps(adapter.requests[3].messages)
-    assert "probe-only-contract" in visible and "scoped-probe-contract" in visible
-    assert "other-only-contract" not in visible
-    assert "activation_only_argument" in json.dumps(adapter.requests[3].tools)
-    assert calls == ["observed-value"]
+    class Main:
+        round = 0
+
+        async def chat(self, request):
+            self.round += 1
+            names = [s["function"]["name"] for s in request.tools]
+            visible = json.dumps(request.messages)
+            if self.round <= 2:
+                assert names == ["tool_manual"]
+                assert "activation_only_argument" not in visible
+                assert "probe-only-contract" not in visible
+                assert "scoped-probe-contract" not in visible
+            assert "other-only-contract" not in visible
+            if self.round == 1:
+                tool = NativeToolCall("probe", {})
+            elif self.round == 2:
+                error = json.loads(next(m["content"] for m in request.messages if m.get("tool_name") == "probe"))
+                assert error["error_type"] == "ToolUnavailableInRoundError"
+                assert error["required_activation"] == {"name": "tool_manual", "arguments": {"tools": ["probe"]}}
+                assert calls == []
+                tool = NativeToolCall("tool_manual", {"tools": ["probe"]})
+            elif self.round == 3:
+                assert names == ["tool_manual", "probe"]
+                assert "activation_only_argument" in json.dumps(request.tools)
+                assert "probe-only-contract" in visible and "scoped-probe-contract" in visible
+                tool = NativeToolCall("probe", {"activation_only_argument": "observed-value"})
+            else:
+                assert self.round == 4 and calls == ["observed-value"]
+                return ModelTurn(content="done", thinking="", tool_calls=(),
+                                 assistant_message={"role": "assistant", "content": "done"})
+            return ModelTurn(content="", thinking="", tool_calls=(tool,), assistant_message={
+                "role": "assistant", "content": "", "tool_calls": [
+                    {"type": "function", "function": {"name": tool.name, "arguments": tool.arguments}}
+                ],
+            })
+
+    result = run(AgentRuntime(Main(), registry).run_user_message("Use the probe"))
+    assert result.model_rounds == 4
+    assert [e.ok for e in result.tool_executions] == [False, True, True]
 
 
-def test_invalid_activation_context_does_not_partially_select_tool():
+def test_invalid_activation_context_does_not_partially_activate_tool():
     registry = ToolRegistry()
-    registry.add(name="probe", description="Probe", input_model=EmptyInput,
-                 handler=lambda: {}, metadata={"model_context": []})
-    adapter = FakeAdapter([
-        turn(call=NativeToolCall("skill_activate", {"skills": ["general"]})),
-        turn(call=NativeToolCall("skill_tools", {"tools": ["probe"]})),
-        turn(content="done"),
-    ])
-    result = run(AgentRuntime(adapter, registry).run_user_message("probe"))
-    assert result.tool_executions[1].error_type == "TypeError"
-    assert [t["function"]["name"] for t in adapter.requests[2].tools] == [
-        "skill_activate", "skill_tools",
-    ]
+    registry.add(name="probe", description="Probe", input_model=EmptyInput, handler=lambda: {},
+                 metadata={"model_context": []})
+    activated = set()
+    result = run(AgentLoop(None, registry)._execute_tool(
+        NativeToolCall("tool_manual", {"tools": ["probe"]}),
+        available_tool_names=frozenset({"tool_manual"}), activated_tool_names=activated,
+    ))
+    assert result.ok is False and result.error_type == "TypeError"
+    assert activated == set()

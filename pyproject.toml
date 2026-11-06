@@ -5,8 +5,8 @@ description = "Ollama-native personal agent runtime with graph memory"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11"
 dependencies = [
-  "beautifulsoup4>=4.13",
   "markdown-it-py>=3.0,<5",
+  "beautifulsoup4>=4.13",
   "ddgs>=9.0",
   "fastapi>=0.116.0",
   "httpx>=0.27",

@@ -84,9 +84,7 @@ def test_claim_only_factual_review_is_accepted_without_citation_gate():
     sent = json.loads(reviewer.calls[0].messages[1]["content"])
     assert "candidate_units" not in sent
     assert "conversation_context" in sent
-    assert "verified_prior_conversation" not in sent
-    assert "user_evidence" not in sent
-    assert "datetime_local_iso" in sent
+    assert "verified_prior_conversation" in sent
     assert "tool_results_in_execution_order" in sent
 
 

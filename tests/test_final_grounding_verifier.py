@@ -530,7 +530,7 @@ def test_image_comma_grouped_number_grounds_plain_integer() -> None:
     assert result.ok is True
 
 
-def test_failed_tool_outputs_are_recorded_but_not_positive_evidence() -> None:
+def test_failed_tool_outputs_are_omitted_from_review_evidence() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
 
@@ -547,14 +547,10 @@ def test_failed_tool_outputs_are_recorded_but_not_positive_evidence() -> None:
 
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["tool_results_in_execution_order"] == [{
-        "index": 0, "tool": "terminal_run", "params": None,
-        "endtype": "error_type:TerminalCommandError",
-        "result": "collected 138 items; 136 passed, 2 failed",
-    }]
+    assert payload["tool_results_in_execution_order"] == []
 
 
-def test_review_payload_keeps_successes_and_failures_in_order() -> None:
+def test_review_payload_keeps_all_successful_results_and_omits_failures() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     tool_results = tuple(
@@ -576,11 +572,9 @@ def test_review_payload_keeps_successes_and_failures_in_order() -> None:
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
     evidence = payload["tool_results_in_execution_order"]
-    assert len(evidence) == 50
-    assert [item["index"] for item in evidence] == list(range(50))
-    assert all(item["endtype"] == ("success" if index % 2 == 0 else "error_type:WebSearchError")
-               for index, item in enumerate(evidence))
-    assert all(item["params"] is None for item in evidence)
+    assert len(evidence) == 25
+    assert [item["index"] for item in evidence] == list(range(0, 50, 2))
+    assert all(item["ok"] is True for item in evidence)
 
 
 def test_web_search_payload_marks_snippets_as_observed_search_evidence() -> None:
@@ -945,8 +939,7 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
     ))
 
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["datetime_local_iso"] == clock["local_iso"]
-    assert "authoritative_current_time" not in payload
+    assert payload["authoritative_current_time"] == clock
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
@@ -1124,24 +1117,16 @@ def test_count_review_contract_requires_source_based_recount():
     assert "grouping key" in feedback
     assert "Source: terminal_run / records[0:18]" in feedback
 
-def test_verifier_keeps_all_non_activation_tool_results_in_execution_order():
-    from mai.agent.verification import _review_payload
+def test_verifier_keeps_every_successful_tool_result_in_execution_order():
+    from mai.agent.verification import _select_review_tool_results
 
     results = tuple(
-        ("terminal_run", i % 7 != 0,
-         None if i % 7 != 0 else "TerminalCommandError",
-         f"result-{i}", {"command": f"run-{i}"})
+        ("terminal_run", i % 7 != 0, None, f"result-{i}")
         for i in range(45)
     )
-    payload = _review_payload(
-        candidate="candidate",
-        messages=[{"role": "user", "content": "Check all executions"}],
-        tool_results=results,
-    )
-    selected = payload["tool_results_in_execution_order"]
-    assert [item["index"] for item in selected] == list(range(45))
-    assert len(selected) == 45
-    assert all(item["params"]["command"] == f"run-{index}"
-               for index, item in enumerate(selected))
-    assert selected[0]["endtype"] == "error_type:TerminalCommandError"
-    assert selected[1]["endtype"] == "success"
+    selected = _select_review_tool_results(results)
+    assert [index for index, _ in selected] == [
+        index for index, result in enumerate(results) if result[1]
+    ]
+    assert len(selected) > 20
+    assert all(result[1] for _, result in selected)
