@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
 from ..skills.registry import SkillCatalog, SkillContractError
-from .skill_activation import SkillActivateInput, SkillToolsInput, activation_schema, tool_selection_schema, insert_skill_context
+from .skill_activation import SkillToolsInput, tool_selection_schema, insert_skill_context
 from .guards import (
     AgentGuard,
     AgentGuardError,
@@ -155,14 +155,13 @@ class AgentLoop:
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        if self.registry.has("skill_activate") or self.registry.has("skill_tools"):
-            raise ValueError("Agent Skills activation names are reserved")
+        if self.registry.has("skill_tools"):
+            raise ValueError("Agent Skills tool selection name is reserved")
         catalog = SkillCatalog(self.registry)
-        activated_skill_names: set[str] = set()
         activated_tool_names: set[str] = set()
-        skill_schema = activation_schema(catalog.names())
+        skill_schema = tool_selection_schema(self.registry.names())
         active_tools = (skill_schema,)
-        active_tool_names = frozenset({"skill_activate"})
+        active_tool_names = frozenset({"skill_tools"})
         guard = AgentGuard(self.guard_config)
         round_number = 1
         semantic_verification_retries = 0
@@ -234,11 +233,9 @@ class AgentLoop:
                     name for name in self.registry.names()
                     if name in activated_tool_names
                 ]
-                insert_skill_context(model_history, catalog, activated_skill_names,
-                                     activated_order, self.registry)
-                selectors = (tool_selection_schema(catalog.available_tools(activated_skill_names)),) if activated_skill_names else ()
-                active_tools = (skill_schema, *selectors, *self.registry.native_schemas(activated_order))
-                active_tool_names = frozenset({"skill_activate", *({"skill_tools"} if activated_skill_names else set()), *activated_order})
+                insert_skill_context(model_history, catalog, activated_order, self.registry)
+                active_tools = (skill_schema, *self.registry.native_schemas(activated_order))
+                active_tool_names = frozenset({"skill_tools", *activated_order})
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -304,7 +301,7 @@ class AgentLoop:
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content, dict(execution.arguments))
                                 for execution in executions
-                                if execution.name not in {"skill_activate", "skill_tools"}
+                                if execution.name not in {"skill_tools"}
                             ),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
@@ -347,7 +344,7 @@ class AgentLoop:
                                     (execution.name, execution.source_content_fingerprint
                                      or content_fingerprint(execution.content))
                                     for execution in executions
-                                    if execution.ok and execution.name not in {"skill_activate", "skill_tools"}
+                                    if execution.ok and execution.name not in {"skill_tools"}
                                 )
                                 unchanged_evidence_rejections = (
                                     unchanged_evidence_rejections + 1
@@ -442,7 +439,6 @@ class AgentLoop:
                             call,
                             available_tool_names=active_tool_names,
                             activated_tool_names=activated_tool_names,
-                            activated_skill_names=activated_skill_names,
                             catalog=catalog,
                         )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -520,16 +516,15 @@ class AgentLoop:
         *,
         available_tool_names: frozenset[str],
         activated_tool_names: set[str],
-        activated_skill_names: set[str],
         catalog: SkillCatalog,
     ) -> ToolExecution:
-        activation_names = frozenset({"skill_activate", "skill_tools"})
+        activation_names = frozenset({"skill_tools"})
         if call.name not in available_tool_names and (
             self.registry.has(call.name) or call.name in activation_names
         ):
             exc = ToolUnavailableInRoundError(
                 f"native tool '{call.name}' is not active in this round; "
-                "activate its skill and then select its native schema."
+                "select it with skill_tools before using its native schema."
             )
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
             source = _serialize_tool_content(payload)
@@ -541,26 +536,18 @@ class AgentLoop:
                 compact_history_content=compact, source_content=source,
             )
         try:
-            if call.name == "skill_activate":
-                try:
-                    request = SkillActivateInput.model_validate(call.arguments, strict=True)
-                except ValidationError as exc:
-                    raise ToolArgumentsError("invalid arguments for skill_activate") from exc
-                selected = [catalog.get(name) for name in request.skills]
-                activated_skill_names.update(skill.name for skill in selected)
-                value = {"activated_skills": request.skills, "available_next_round": True}
-            elif call.name == "skill_tools":
+            if call.name == "skill_tools":
                 try:
                     request = SkillToolsInput.model_validate(call.arguments, strict=True)
                 except ValidationError as exc:
                     raise ToolArgumentsError("invalid arguments for skill_tools") from exc
-                permitted = frozenset(catalog.available_tools(activated_skill_names))
-                unknown = sorted(set(request.tools).difference(permitted))
-                if unknown:
-                    raise SkillContractError(f"tools not granted by active skills: {unknown}")
-                # Validate the complete selected context before enabling any tool.
-                self.registry.model_context(names=request.tools)
-                activated_tool_names.update(request.tools)
+                # Validate the entire selection before activating any tool.
+                # Ownership comes from the explicit SkillCatalog registration.
+                selected = tuple(dict.fromkeys(request.tools))
+                for name in selected:
+                    catalog.skill_for_tool(name)
+                self.registry.model_context(names=selected)
+                activated_tool_names.update(selected)
                 value = {"activated_tools": request.tools, "available_next_round": True}
             else:
                 value = await self.registry.invoke(call)
