@@ -129,7 +129,21 @@ if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning man
 # Require a versioned official release URL. The archive is still SHA-256-verified
 # independently by Install-VerifiedArchive before installation.
 $ollamaUrl = Get-Required $config.ollama 'url'
-$versionMatch = [regex]::Match($ollamaUrl, '/releases/download/v?(\\d+)\\.(\\d+)\\.(\\d+)/ollama-windows-amd64\\.zip
+$versionMatch = [regex]::Match($ollamaUrl, '/releases/download/v?([0-9]+)[.]([0-9]+)[.]([0-9]+)/ollama-windows-amd64[.]zip$')
+if (-not $versionMatch.Success -or -not $ollamaUrl.StartsWith('https://github.com/ollama/ollama/')) {
+    throw 'Ollama portable manifest must use an official versioned Windows x64 release archive'
+}
+$ollamaVersion = [version]::new(
+    [int]$versionMatch.Groups[1].Value,
+    [int]$versionMatch.Groups[2].Value,
+    [int]$versionMatch.Groups[3].Value
+)
+if ($ollamaVersion -lt [version]'0.35.0') {
+    throw "Ollama $ollamaVersion does not support /v1/systemone. Require version 0.35.0 or newer."
+}
+$runtimes = Join-Path $root 'portable/portable-runtimes'
+New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
+
 Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
 Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
 Install-VerifiedArchive $config.ollama (Join-Path $runtimes 'ollama') 'ollama.exe' ([bool]$UpgradeOllama)
