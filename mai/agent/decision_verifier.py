@@ -119,21 +119,35 @@ class SystemOneJudge:
                         "stage": "decision", "batch_start": start, "batch_size": len(batch),
                         "request": request,
                     })
-                response = await client.post(
-                    f"{self.host}/v1/systemone", content=raw,
-                    headers={"content-type": "application/json"},
-                )
-                response.raise_for_status()
-                result = _ChoiceResponse.model_validate(response.json())
-                if set(result.answers) != set(questions):
-                    raise DecisionVerifierContractError(
-                        f"System One returned missing or extra answer IDs for batch {start}"
+                try:
+                    response = await client.post(
+                        f"{self.host}/v1/systemone", content=raw,
+                        headers={"content-type": "application/json"},
                     )
-                if on_audit_event is not None:
-                    on_audit_event("validated_response", {
-                        "stage": "decision", "batch_start": start,
-                        "answers": result.model_dump(mode="json"),
-                    })
+                    response.raise_for_status()
+                    if on_audit_event is not None:
+                        on_audit_event("raw_response", {
+                            "stage": "decision", "batch_start": start,
+                            "content": response.text,
+                        })
+                    result = _ChoiceResponse.model_validate(response.json())
+                    if set(result.answers) != set(questions):
+                        raise DecisionVerifierContractError(
+                            f"System One returned missing or extra answer IDs for batch {start}"
+                        )
+                    if on_audit_event is not None:
+                        on_audit_event("validated_response", {
+                            "stage": "decision", "batch_start": start,
+                            "answers": result.model_dump(mode="json"),
+                        })
+                except Exception as exc:
+                    if on_audit_event is not None:
+                        on_audit_event("error", {
+                            "stage": "decision", "batch_start": start,
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc),
+                        })
+                    raise
                 verdicts.extend(result.answers[name].choice for name in questions)
         if len(verdicts) != len(claims):
             raise DecisionVerifierContractError("System One results do not cover every extracted claim")
