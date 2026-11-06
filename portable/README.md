@@ -63,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 | 옵션 | 의미 |
 |---|---|
 | `-CopyLocalModels` | `OLLAMA_MODELS` 또는 사용자 `.ollama/models` 전체 복사 |
-| `-Models "ornith-1.5:9b,lfm3-vl:2b,granite4:3b-h"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
+| `-Models "ornith-1.5:9b,lfm3-vl:2b,granite4:3b-h,tev1:4b"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
 | `-PullModels` | 매니페스트 목록과 현재 메인·비전·verifier 모델을 중복 없이 다운로드 |
 | `-InstallChromium` | Portable Playwright Chromium 설치 |
 | `-PreserveAndReinstallExisting` | 설치 영수증이 없는 기존 런타임을 별도 보존한 뒤 재설치 |
@@ -78,7 +78,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -PullModels -InstallChromium
 ```
 
-새 Windows 매니페스트에는 `ornith-1.5:9b`, `lfm3-vl:2b`, `granite4:3b-h`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 기존 개인 `portable-sources.json`에 `gemma4:e4b`가 남아 있으면 그대로 보존·다운로드하므로 원하지 않는 모델은 해당 매니페스트에서 명시적으로 제거한다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
+새 Windows 매니페스트에는 `ornith-1.5:9b`, `lfm3-vl:2b`, `granite4:3b-h`, `tev1:4b`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`, `VERIFIER_DECISION_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 기존 개인 `portable-sources.json`에 `gemma4:e4b`가 남아 있으면 그대로 보존·다운로드하므로 원하지 않는 모델은 해당 매니페스트에서 명시적으로 제거한다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
+
+Tev 기반 검증을 수행하려면 Portable로 묶인 Ollama가 **0.35.0 이상**이어야 하며, `tev1:4b` 모델을 추가로 받아야 한다. 구 버전에서는 `/v1/systemone`이 제공되지 않으므로 모델을 받기만 해도 검증이 동작한다고 가정하지 않는다.
 
 ### 기존 외장하드에 Verifier 모델만 추가 또는 변경
 
