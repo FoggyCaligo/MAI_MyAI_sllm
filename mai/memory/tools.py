@@ -61,11 +61,6 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
     Memory handlers remain async so ToolRegistry does not move SQLite-backed work to
     a worker thread. This preserves SQLite thread affinity instead of disabling it.
     """
-    registry.add_model_context(
-        key=_MEMORY_MODEL_CONTEXT_KEY,
-        context=_MEMORY_MODEL_CONTEXT,
-    )
-
     async def memory_search(
         node_id: int | None = None,
         keyword: str | None = None,
@@ -98,5 +93,10 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         input_model=MemorySearchInput,
         handler=memory_search,
         category="memory",
+    )
+    registry.add_model_context(
+        key=_MEMORY_MODEL_CONTEXT_KEY,
+        context=_MEMORY_MODEL_CONTEXT,
+        tools=["memory_search"],
     )
 

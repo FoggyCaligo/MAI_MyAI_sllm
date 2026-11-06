@@ -9,6 +9,8 @@ MEMORY_RECALL_TOOL_NAMES = frozenset({
     "memory_search",
 })
 
+AGENT_CONTROL_TOOL_NAMES = frozenset({"skill_activate", "skill_tools"})
+
 
 class ToolExecutionLike(Protocol):
     name: str
@@ -44,7 +46,7 @@ def successful_non_recall_tool_results(executions: Iterable[ToolExecutionLike]) 
     return tuple(
         execution.context_content
         for execution in executions
-        if execution.ok and execution.name not in MEMORY_RECALL_TOOL_NAMES
+        if execution.ok and execution.name not in MEMORY_RECALL_TOOL_NAMES | AGENT_CONTROL_TOOL_NAMES
     )
 
 

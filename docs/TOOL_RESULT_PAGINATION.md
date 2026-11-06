@@ -20,7 +20,7 @@
 | `max_read_chars` | 한 번의 읽기 상한 |
 | `pagination` | 페이지 크기·현재 페이지·전체 크기·다음 위치 |
 
-`complete=false` 또는 `pagination.has_more=true`면 일부 범위다. `tool_result_read`에는 관측한 `result_id`, 다음 `offset`, 허용 범위의 `limit`를 전달한다. 이 도구도 먼저 `tool_manual`로 활성화해야 한다.
+`complete=false` 또는 `pagination.has_more=true`면 일부 범위다. `tool_result_read`에는 관측한 `result_id`, 다음 `offset`, 허용 범위의 `limit`를 전달한다. 이 도구는 `skill_activate`로 `runtime` 스킬을 선택한 뒤 `skill_tools`에서 `tool_result_read`를 활성화해야 사용할 수 있다.
 
 ## 검증기와 감사 기록
 
