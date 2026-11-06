@@ -6,6 +6,7 @@ param(
     [switch]$InstallChromium,
     [switch]$PullModels,
     [switch]$PreserveAndReinstallExisting,
+    [switch]$UpgradeOllama,
     [string]$Models
 )
 $ErrorActionPreference = 'Stop'
@@ -21,7 +22,7 @@ function Get-Required([object]$obj, [string]$property) {
     }
     return [string]$value.Value
 }
-function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$expectedExecutable) {
+function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$expectedExecutable, [bool]$allowUpgrade = $false) {
     $url = Get-Required $entry 'url'
     $hash = Get-Required $entry 'sha256'
     if ($url -notmatch '^https://') { throw "Only HTTPS release URLs are allowed: $url" }
@@ -37,7 +38,7 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
             throw "Existing runtime lacks expected executable: $binary"
         }
         if (-not (Test-Path -LiteralPath $recordPath -PathType Leaf)) {
-            if (-not $PreserveAndReinstallExisting) {
+            if (-not ($PreserveAndReinstallExisting -or $allowUpgrade)) {
                 throw "Existing runtime has no installation receipt: $destination. Rerun with -PreserveAndReinstallExisting to preserve it and reinstall."
             }
             $backup = "$destination.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
@@ -47,10 +48,17 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
         } else {
             $record = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($record.url -cne $url -or $record.sha256 -ine $hash -or $record.executable -cne $expectedExecutable) {
-                throw "Existing runtime does not match pinned manifest: $destination"
+                if (-not $allowUpgrade) {
+                    throw "Existing runtime does not match pinned manifest: $destination. Upgrade Ollama explicitly with -UpgradeOllama after stopping the server."
+                }
+                $backup = "$destination.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
+                if (Test-Path -LiteralPath $backup) { throw "Preservation destination already exists: $backup" }
+                Move-Item -LiteralPath $destination -Destination $backup -ErrorAction Stop
+                Write-Host "Preserved previous Ollama runtime in $backup"
+            } else {
+                Write-Host "Reusing verified runtime: $destination"
+                return
             }
-            Write-Host "Reusing verified runtime: $destination"
-            return
         }
     }
     $archive = Join-Path $cache $archiveName
@@ -117,6 +125,101 @@ if ($CopyLocalModels -and $PullModels) {
 }
 $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
+# The System One API needed by Tev1 was introduced in Ollama 0.35.0.
+# Require a versioned official release URL. The archive is still SHA-256-verified
+# independently by Install-VerifiedArchive before installation.
+$ollamaUrl = Get-Required $config.ollama 'url'
+$versionMatch = [regex]::Match($ollamaUrl, '/releases/download/v?(\\d+)\\.(\\d+)\\.(\\d+)/ollama-windows-amd64\\.zip
+Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
+Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
+Install-VerifiedArchive $config.ollama (Join-Path $runtimes 'ollama') 'ollama.exe' ([bool]$UpgradeOllama)
+if ($null -ne $config.llamacpp) {
+    Install-VerifiedArchive $config.llamacpp (Join-Path $runtimes 'llamacpp') 'llama-server.exe'
+}
+$python = Join-Path $runtimes 'python\python.exe'
+& $python -c 'import sys; print(sys.version)'
+if ($LASTEXITCODE -ne 0) { throw 'Portable Python cannot start' }
+
+# Use an independently installed uv command for provisioning only; MAI runtime
+# does not depend on uv at startup. Do not silently use global Python for MAI.
+$uv = Join-Path $runtimes 'uv\uv.exe'
+& $uv pip install --python $python "$root"
+if ($LASTEXITCODE -ne 0) { throw 'MAI dependency installation failed' }
+& $python -c 'import fastapi, ollama, uvicorn, playwright, mai'
+if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
+if ($InstallChromium) {
+    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $runtimes 'playwright-browsers'
+    & $python -m playwright install chromium
+    if ($LASTEXITCODE -ne 0) { throw 'Portable Chromium installation failed' }
+}
+if ($CopyLocalModels) {
+    $sourceModels = if ($env:OLLAMA_MODELS) { $env:OLLAMA_MODELS } else { Join-Path $env:USERPROFILE '.ollama\models' }
+    if (-not (Test-Path -LiteralPath $sourceModels -PathType Container)) {
+        throw "Source Ollama models not found: $sourceModels"
+    }
+    $targetModels = Join-Path $root 'portable/portable-models\ollama'
+    if ($selectedModels.Count -gt 0) {
+        $copyArgs = @('portable/copy_ollama_models.py', '--source', $sourceModels, '--destination', $targetModels)
+        foreach ($model in $selectedModels) {
+            $copyArgs += @('--model', $model)
+        }
+        & $python @copyArgs
+        if ($LASTEXITCODE -ne 0) { throw 'Selective Ollama model copy failed' }
+    } else {
+        if (Test-Path -LiteralPath $targetModels) { throw "Refusing to overwrite existing models: $targetModels" }
+        New-Item -ItemType Directory -Force -Path $targetModels | Out-Null
+        & robocopy $sourceModels $targetModels /E /COPY:DAT /DCOPY:DAT /R:1 /W:1
+        if ($LASTEXITCODE -ge 8) { throw "Model copy failed with robocopy code $LASTEXITCODE" }
+    }
+}
+if ($PullModels) {
+    $requiredModelsJson = & $python 'portable/model_requirements.py' --manifest $manifestPath --settings (Join-Path $root 'settings.yaml')
+    if ($LASTEXITCODE -ne 0) { throw 'Portable Ollama model requirements could not be resolved' }
+    $requiredModels = @($requiredModelsJson | ConvertFrom-Json)
+    if ($requiredModels.Count -eq 0) { throw 'Portable model resolver returned no models' }
+    Write-Host ('Provisioning configured Ollama models: ' + ($requiredModels -join ', '))
+    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) {
+        throw 'Port 11434 is already in use; stop the existing Ollama service before model provisioning'
+    }
+    $env:OLLAMA_MODELS = Join-Path $root 'portable/portable-models\ollama'
+    New-Item -ItemType Directory -Path $env:OLLAMA_MODELS -Force | Out-Null
+    $ollamaExe = Join-Path $runtimes 'ollama\ollama.exe'
+    $process = Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollamaExe) -PassThru -NoNewWindow
+    try {
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            if ($process.HasExited) { throw 'Ollama exited before becoming ready' }
+            try {
+                $probe = Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 -UseBasicParsing
+                if ($probe.StatusCode -eq 200) { $ready = $true; break }
+            } catch [System.Net.WebException] { }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $ready) { throw 'Ollama service did not start' }
+        foreach ($model in $requiredModels) {
+            & $ollamaExe pull $model
+            if ($LASTEXITCODE -ne 0) { throw "Model pull failed: $model" }
+            & $ollamaExe show $model
+            if ($LASTEXITCODE -ne 0) { throw "Model verification failed: $model" }
+        }
+    } finally {
+        if (-not $process.HasExited) { Stop-Process -Id $process.Id }
+    }
+}
+Write-Host "Portable installation prepared under $root"
+Write-Host 'Verify all model tags and run portable/start-portable.ps1; this script does not fabricate missing models.'
+)
+if (-not $versionMatch.Success -or -not $ollamaUrl.StartsWith('https://github.com/ollama/ollama/')) {
+    throw 'Ollama portable manifest must use an official versioned Windows x64 release archive'
+}
+$ollamaVersion = [version]::new(
+    [int]$versionMatch.Groups[1].Value,
+    [int]$versionMatch.Groups[2].Value,
+    [int]$versionMatch.Groups[3].Value
+)
+if ($ollamaVersion -lt [version]'0.35.0') {
+    throw "Ollama $ollamaVersion does not support /v1/systemone. Require version 0.35.0 or newer."
+}
 $runtimes = Join-Path $root 'portable/portable-runtimes'
 New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
 Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
