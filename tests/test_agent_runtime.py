@@ -304,36 +304,26 @@ def test_native_tool_call_arguments_are_not_duplicated_in_tool_result() -> None:
     assert "check the tool" in assistant_calls[0]["thinking"]
 
 
-def test_tool_round_preserves_thinking_but_not_incidental_prose():
+def test_tool_round_preserves_original_assistant_message_unchanged():
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo", input_model=EchoInput,
                  handler=lambda text: {"echo": text})
+    call = NativeToolCall("echo", {"text": "observed"}, index=4)
+    original = assistant_turn(
+        content="Original assistant explanation.",
+        thinking="Original model thinking.",
+        calls=(call,),
+    )
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall("tool_manual", {"tools": ["echo"]}),)),
-        assistant_turn(
-            content="DO_NOT_RETAIN_THIS_TOOL_CALL_PROSE",
-            thinking="PRESERVE_THIS_MODEL_THINKING",
-            calls=(NativeToolCall("echo", {"text": "observed"}, index=4),),
-        ),
+        activate("echo"),
+        original,
         assistant_turn(content="done"),
     ])
     result = run(AgentRuntime(adapter, registry).run_user_message("echo observed"))
     assert result.content == "done"
     history = adapter.requests[2].messages
-    assistants = [m for m in history if m.get("role") == "assistant" and m.get("tool_calls")]
-    assert assistants[-1] == {
-        "role": "assistant",
-        "content": "",
-        "thinking": "PRESERVE_THIS_MODEL_THINKING",
-        "tool_calls": [{"type": "function", "function": {
-            "index": 4, "name": "echo", "arguments": {"text": "observed"},
-        }}],
-    }
-    assert "DO_NOT_RETAIN_THIS_TOOL_CALL_PROSE" not in str(history)
-    tool_results = [m for m in history if m.get("role") == "tool" and m.get("tool_name") == "echo"]
-    assert tool_results == [{
-        "role": "tool", "tool_name": "echo", "content": '{"echo":"observed"}',
-    }]
+    assert original.assistant_message in history
+    assert {"role": "tool", "tool_name": "echo", "content": '{"echo":"observed"}'} in history
 
 
 def test_tool_manual_returns_status_only_and_guidance_is_separate_system_context():

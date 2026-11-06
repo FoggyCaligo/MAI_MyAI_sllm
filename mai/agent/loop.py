@@ -320,23 +320,7 @@ class AgentLoop:
                 pending_history_compactions.clear()
                 if on_model_turn is not None:
                     on_model_turn(round_number, turn)
-                if turn.tool_calls:
-                    # Keep the model's thinking for the next model round.
-                    # Discard only ancillary assistant prose from tool-call turns;
-                    # tool messages themselves carry execution results, never guidance.
-                    history.append({
-                        "role": "assistant",
-                        "content": "",
-                        **({"thinking": turn.thinking} if turn.thinking else {}),
-                        "tool_calls": [
-                            {"type": "function", "function": {
-                                **({"index": call.index} if call.index is not None else {}),
-                                "name": call.name, "arguments": dict(call.arguments),
-                            }} for call in turn.tool_calls
-                        ],
-                    })
-                else:
-                    history.append(dict(turn.assistant_message))
+                history.append(dict(turn.assistant_message))
 
                 if not turn.tool_calls:
                     if not turn.content.strip():
