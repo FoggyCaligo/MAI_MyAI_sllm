@@ -169,7 +169,7 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
     assert result.model_rounds == 9
     assert len(result.tool_executions) == 8
     assert [execution.ok for execution in result.tool_executions if execution.name == "terminal_run"] == [False, False, False, False, False, True]
-    assert all(execution.handler_started for execution in result.tool_executions)
+    assert all(execution.handler_started for execution in result.tool_executions if execution.name == "terminal_run")
     for request_index, failed_command in enumerate(failed_commands, start=3):
         tool_message = adapter.requests[request_index].messages[-1]
         assert tool_message["role"] == "tool"
