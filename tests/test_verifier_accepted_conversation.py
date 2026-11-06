@@ -15,9 +15,12 @@ def test_review_context_matches_supplied_dialogue_without_second_history_cap():
         candidate="candidate", messages=messages, tool_results=(),
         verified_prior_conversation=history,
     )
-    assert len(payload["verified_prior_conversation"]) == len(history)
-    assert payload["verified_prior_conversation"] == history
-    assert payload["conversation_context"] == [*history, {"role": "user", "content": "What remains?"}]
+    assert "verified_prior_conversation" not in payload
+    assert "user_evidence" not in payload
+    assert payload["conversation_context"] == [
+        *[{**message, "verified_prior": True} for message in history],
+        {"role": "user", "content": "What remains?", "verified_prior": False},
+    ]
     assert all(item["role"] != "tool" for item in payload["conversation_context"])
     assert payload["tool_results_in_execution_order"] == []
 

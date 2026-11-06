@@ -32,7 +32,7 @@ from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolEr
 from ..tools.time import current_time
 
 
-ToolVerificationResult = tuple[str, bool, str | None, str]
+ToolVerificationResult = (tuple[str, bool, str | None, str] | tuple[str, bool, str | None, str, Mapping[str, Any]])
 VerificationAuditObserver = Callable[[str, Mapping[str, Any]], None]
 
 _DATE_RE = re.compile(r"(?<![A-Za-z0-9_.])(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?![A-Za-z0-9_.])")
@@ -68,7 +68,7 @@ Claim-level evidence grounding:
 - Compare quantities with their units, time periods, aggregation levels, and subjects: six quarters cannot be silently changed into six months even if both use the numeral six.
 - For structured totals, identify the source records, grouping key, aggregation scope, and whether rows or distinct entities were counted. Never substitute a reviewer-invented count; a precise source location and supported calculation are required to dispute a stated value.
 - For successful csv_aggregate results, compare the same source SHA-256, filters, group_by, metric_definitions, matching row_numbers, and computed metrics; do not invent or demand a different aggregation when a matching result exists.
-- Ground relative dates and weekdays against authoritative_current_time and its timezone. Distinguish the runtime's timezone from a user timezone that has not been established.
+- Ground relative dates and weekdays against datetime_local_iso and its timezone. Distinguish the runtime's timezone from a user timezone that has not been established.
 - Treat every revised provisional answer as a new candidate and verify all material claims again. Rephrasing without additional evidence does not make an unsupported claim grounded.
 - Use "uncertain" only when you as reviewer cannot confidently decide from the supplied evidence. If the candidate itself presents an unverified proposition as established fact, that is normally "unsupported", not merely "uncertain".
 - Distinguish absent evidence from contradiction: cite the observed source for a conflict, and never invent a counterfact, measurement, filename or causal explanation.
@@ -80,8 +80,8 @@ Claim-level evidence grounding:
 - Interpret statements about fiction within the story's fictional world. Do not require real-world evidence that a fictional character or event actually exists. Distinguish claims about the text's content from claims about real-world publication history or authorship.
 - Reject actual changes to identities, relationships, actions, negation, timing, quantities, plot events, or attribution not established by the source. If equivalence is genuinely unclear, report the specific semantic uncertainty rather than treating nonmatching scripts as missing evidence.
 - Apply these rules to all languages and literary texts as appropriate; do not rely on fixed name dictionaries, keyword matching, or spelling-based heuristics.
-- Previous assistant answers are factual evidence only when provided in verified_prior_conversation, which contains answers previously accepted by the final verifier. Treat these as evidence of what was established at that time, not proof that changing external state remains current. Other assistant text is context only. Current user messages and observed tool results are evidence.
-- The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
+- In conversation_context, prior assistant messages are factual evidence only when verified_prior=true; this marker comes from the session's accepted-message record. Treat such answers as evidence of what was established then, not proof that changing external state is still current. Assistant messages with verified_prior=false are context only. The current user request and conversation_context messages with role=user are user evidence; successful tool results are observed evidence.
+- tool_results_in_execution_order includes both successful and failed calls. endtype=success means the result is observed tool evidence; endtype=error_type:<name> is a failed attempt and its result may establish the failure but must not support a claim of successful execution. Use params to check the actual scope and target of each call; params=null denotes an older call record with unrecorded arguments, not an empty argument object. Tool activation bookkeeping (tool_manual) is excluded.
 - A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 - For contradictory persistent-memory Fact nodes about the same subject, property, and time scope, prefer the node with the latest created_at as the authoritative remembered state. A newer retrieved Fact overrides an older conflicting Fact even when the older one appears earlier in search results or a different tool response. Do not use retrieval order, relevance score, occurrence_count, or last_seen_at to decide temporal precedence.
@@ -89,7 +89,7 @@ Claim-level evidence grounding:
 - Apply this precedence when assessing evidence claims: an older contradicted memory node alone is not grounds for rejecting a candidate supported by a newer Fact about the same state.
 
 Temporal authority:
-- authoritative_current_time is freshly read from the operating system clock by the runtime using the same implementation as the current_time tool. Use its timezone-aware local and UTC timestamps as the current moment, never a training cutoff or a guessed date.
+- datetime_local_iso is freshly read from the runtime's operating-system clock using current_time and includes its local UTC offset. Use this timestamp as the current moment, never a training cutoff or a guessed date.
 - Historical source timestamps retain their original meaning; the current clock does not prove a source is fresh or a claim is true.
 - If a user's timezone is not established, do not assume the runtime's local timezone is the user's timezone.
 
@@ -454,8 +454,9 @@ class FinalGroundingVerifier:
         for message in self.verified_prior_conversation:
             if message["role"] == "assistant":
                 evidence.update(_extract_material_numeric_facts(message["content"], include_date_aliases=True))
-        for _, ok, _, content in tool_results:
-            if not ok:
+        for result in tool_results:
+            name, ok, _, content, _ = _unpack_tool_result(result)
+            if not ok or name == "tool_manual":
                 continue
             evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
 
@@ -690,6 +691,27 @@ def _clip_text(text: str, limit: int) -> str:
     return text[:head] + "\n...[truncated]...\n" + text[-tail:]
 
 
+def _unpack_tool_result(
+    result: ToolVerificationResult,
+) -> tuple[str, bool, str | None, str, Mapping[str, Any] | None]:
+    """Accept explicit versioned tool records; live agent always supplies params."""
+    if len(result) == 5:
+        name, ok, error_type, content, params = result
+    elif len(result) == 4:
+        # Older external callers / saved fixtures have no recorded arguments.
+        name, ok, error_type, content = result
+        params = None
+    else:
+        raise ValueError("tool verification result requires 4 or 5 fields")
+    if params is not None and not isinstance(params, Mapping):
+        raise TypeError("tool verification params must be a mapping")
+    if not isinstance(ok, bool):
+        raise TypeError("tool verification ok must be bool")
+    if not ok and not error_type:
+        raise ValueError("failed tool verification requires error_type")
+    return name, ok, error_type, content, params
+
+
 def _review_payload(
     *,
     candidate: str,
@@ -697,55 +719,47 @@ def _review_payload(
     tool_results: Sequence[ToolVerificationResult],
     verified_prior_conversation: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    """Produce one nonduplicated conversation with explicit trusted provenance."""
     user_messages = [
-        str(message.get("content"))
-        for message in messages
+        str(message["content"]) for message in messages
         if message.get("role") == "user" and isinstance(message.get("content"), str)
     ]
-    # Do not reduce the main model's conversation window to another fixed
-    # ten-message slice. Exclude tool results; keep any unverified draft text
-    # as context only, never in the verified prior-evidence collection.
-    context_messages = [
+    history = [
         {"role": message["role"], "content": message["content"]}
         for message in messages[:-1]
         if message.get("role") in {"user", "assistant"}
         and isinstance(message.get("content"), str)
     ]
-    accepted_messages = [
+    verified_prefix = [
         {"role": message["role"], "content": message["content"]}
         for message in verified_prior_conversation
     ]
-    tool_evidence = [
-        {
+    if history[:len(verified_prefix)] != verified_prefix:
+        raise ValueError("accepted prior conversation is not the prefix of review history")
+    context_messages = [
+        {**message, "verified_prior": index < len(verified_prefix)}
+        for index, message in enumerate(history)
+    ]
+    tool_evidence = []
+    for index, record in enumerate(tool_results):
+        name, ok, error_type, content, params = _unpack_tool_result(record)
+        if name == "tool_manual":
+            continue
+        tool_evidence.append({
             "index": index,
             "tool": name,
-            "ok": ok,
-            "error_type": error_type,
+            "params": dict(params) if params is not None else None,
+            "endtype": "success" if ok else f"error_type:{error_type}",
             "result": content,
             **_tool_evidence_metadata(name=name, ok=ok),
-        }
-        for index, (name, ok, error_type, content) in _select_review_tool_results(tool_results)
-    ]
+        })
     return {
-        "authoritative_current_time": current_time(),
+        "datetime_local_iso": current_time()["local_iso"],
         "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
         "conversation_context": context_messages,
-        "user_evidence": user_messages,
-        "verified_prior_conversation": accepted_messages,
         "tool_results_in_execution_order": tool_evidence,
         "candidate_final": candidate,
     }
-
-
-def _select_review_tool_results(
-    tool_results: Sequence[ToolVerificationResult],
-) -> tuple[tuple[int, ToolVerificationResult], ...]:
-    """Return every successful tool result in original execution order."""
-    return tuple(
-        (index, result)
-        for index, result in enumerate(tool_results)
-        if result[1]
-    )
 
 
 def _tool_evidence_metadata(*, name: str, ok: bool) -> dict[str, str]:
