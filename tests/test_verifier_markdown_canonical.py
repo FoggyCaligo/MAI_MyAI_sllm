@@ -3,9 +3,16 @@ import asyncio
 import json
 from pathlib import Path
 import pytest
-from mai.agent.decision_verifier import DecisionGroundingVerifier, DecisionVerifierContractError
+from mai.agent.decision_verifier import ClaimSpans, DecisionGroundingVerifier, DecisionVerifierContractError
 from mai.agent.verification_text import canonical_verification_text
 from mai.llm.models import ModelTurn
+
+
+def categorized(spans, **overrides):
+    values = {name: [] for name in ClaimSpans.model_fields}
+    values["factual_claims"] = list(spans)
+    values.update(overrides)
+    return values
 
 
 class Extractor:
@@ -15,7 +22,7 @@ class Extractor:
 
     async def chat(self, request):
         self.request = request
-        value = json.dumps(self.spans, ensure_ascii=False)
+        value = json.dumps(categorized(self.spans), ensure_ascii=False)
         return ModelTurn(value, "", (), {"role": "assistant", "content": value})
 
 
