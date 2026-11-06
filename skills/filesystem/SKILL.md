@@ -1,9 +1,9 @@
 ---
 name: filesystem
-description: Read, search, create, edit, copy, move, or inspect local files and CSV data.
+description: Work with local or routed files, documents, and CSV data.
 metadata:
   tool-category: filesystem
 ---
-# Filesystem operations
+# File operations
 
-Use the native file tools for the selected machine and account. Discover paths before assuming their existence. A file_read operation supports PDF, DOCX, XLSX, CSV, PPTX, and plain text. For CSV use the declared encoding when necessary. A file_write creates or replaces text; owner OS permissions and trial upload isolation are enforced by the actual tool handler. Temporary scripts and probes created for this turn should use file_write with lifecycle=temporary. A terminal-created file is not automatically registered for cleanup. Do not delete or overwrite a user file unless requested. Inspect the activated tool's exact input schema, including is_remote when available.
+Establish the actual file location, target machine and permitted scope before operating. Preserve user-owned data and distinguish observation from changes. Select only the native operations required for this request; each activated tool's own schema and runtime context contain its exact argument rules, lifecycle policy, and access limitations. Never infer a file path or treat a failed operation as success.
