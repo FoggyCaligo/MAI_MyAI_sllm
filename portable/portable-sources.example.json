@@ -19,6 +19,6 @@
   "models": [
     "ornith-1.5:9b",
     "lfm3-vl:2b",
-    "granite4:3b-h"
+    "LiquidAI/lfm2.5-2.6b:q4_k_m"
   ]
 }
