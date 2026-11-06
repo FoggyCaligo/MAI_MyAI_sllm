@@ -9,6 +9,8 @@ def test_configuration_template_separates_secrets_and_defaults() -> None:
     settings = load_settings(Path("settings.yaml"), environ={})
     assert settings["MAIN_MODEL"] == "ornith-1.5:9b"
     assert settings["VERIFIER_MODEL"] == "granite4:3b-h"
+    assert settings["VERIFIER_DECISION_MODEL"] == "tev1:4b"
+    assert settings["VERIFIER_DECISION_BATCH_SIZE"] == "30"
     assert settings["VISION_MODEL"] == "lfm3-vl:2b"
     assert settings["MAI_ANSWER_QUALITY_REVIEW"] == "false"
     assert settings["SESSION_HISTORY_MESSAGES"] == "10"
