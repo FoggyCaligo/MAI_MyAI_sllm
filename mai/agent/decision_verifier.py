@@ -11,7 +11,7 @@ import json
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from ..llm.models import ChatRequest
 from .verification_text import canonical_verification_text
