@@ -155,8 +155,8 @@ class AgentLoop:
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        if self.registry.has("skill_activate") or self.registry.has("skill_tools"):
-            raise ValueError("Agent Skills activation names are reserved")
+        if self.registry.has("skill_tools"):
+            raise ValueError("Agent Skills tool selection name is reserved")
         catalog = SkillCatalog(self.registry)
         activated_tool_names: set[str] = set()
         skill_schema = tool_selection_schema(self.registry.names())
@@ -301,7 +301,7 @@ class AgentLoop:
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content, dict(execution.arguments))
                                 for execution in executions
-                                if execution.name not in {"skill_activate", "skill_tools"}
+                                if execution.name not in {"skill_tools"}
                             ),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
@@ -344,7 +344,7 @@ class AgentLoop:
                                     (execution.name, execution.source_content_fingerprint
                                      or content_fingerprint(execution.content))
                                     for execution in executions
-                                    if execution.ok and execution.name not in {"skill_activate", "skill_tools"}
+                                    if execution.ok and execution.name not in {"skill_tools"}
                                 )
                                 unchanged_evidence_rejections = (
                                     unchanged_evidence_rejections + 1
