@@ -110,10 +110,10 @@ def test_failed_tool_execution_is_published_without_hiding_failure() -> None:
         on_tool_execution=observed.append,
     ))
 
-    assert len(observed) == 2
-    assert observed[1].ok is False
-    assert observed[1].error_type == "PermissionError"
-    assert "blocked" in observed[1].content
+    assert len(observed) == 3
+    assert observed[2].ok is False
+    assert observed[2].error_type == "PermissionError"
+    assert "blocked" in observed[2].content
 
 
 def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
@@ -143,6 +143,7 @@ def test_model_turn_progress_preserves_optional_thinking_by_round() -> None:
     assert result.content == "done"
     assert observed == [
         (1, ""),
-        (2, "I should inspect the tool result first."),
-        (3, ""),
+        (2, ""),
+        (3, "I should inspect the tool result first."),
+        (4, ""),
     ]
