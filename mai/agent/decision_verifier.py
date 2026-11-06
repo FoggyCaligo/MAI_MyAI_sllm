@@ -125,19 +125,24 @@ class SystemOneJudge:
             f"c{offset + index}": {
                 "type": "choice",
                 "instructions": (
-                    "Assess ONLY the following exact claim against the shared source. "
-                    "Preserve its subject, date, units, scope and negation. "
+                    "First verify this extracted claim has the same meaning as an assertion "
+                    "actually present in orig_answer. Preserve subject, negation, date, "
+                    "units, scope and conditions; wording need not be identical. "
+                    "If orig_answer does not express the claim, choose insufficient. "
+                    "Then assess the claim against the shared source. "
                     "Successful tool results and user assertions may establish facts; "
                     "failed executions do not establish successful outcomes. "
                     "Previously verified assistant statements may establish past claims, "
                     "not necessarily current external state. "
-                    "Decide whether the provided evidence supports, contradicts, "
-                    "or is insufficient for this claim: " + claim
+                    "Choose supported only if the original answer expresses the claim "
+                    "and the evidence establishes it; otherwise choose contradicted "
+                    "for conflicting evidence or insufficient for missing evidence. "
+                    "Claim: " + claim
                 ),
                 "criteria": {
-                    "supported": "The shared evidence establishes the entire claim at its asserted scope.",
-                    "contradicted": "The shared evidence directly conflicts with the claim.",
-                    "insufficient": "The shared evidence does not establish the full claim; it may be incomplete or absent.",
+                    "supported": "The original answer expresses the claim and the shared evidence establishes its full scope.",
+                    "contradicted": "The original answer expresses the claim but shared evidence directly conflicts with it.",
+                    "insufficient": "The claim is absent from the original answer, changes its meaning, or is not fully established by evidence.",
                 },
             }
             for index, claim in enumerate(claims)
