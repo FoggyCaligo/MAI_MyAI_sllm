@@ -153,3 +153,36 @@ def test_systemone_input_limit_fails_without_truncation():
         run(SystemOneJudge(host="http://localhost:11434", model="tev1:4b").judge(
             candidate="A", source={"full": "x" * 70000}, claims=["A"],
         ))
+
+
+def test_numeric_precheck_cannot_pass_when_extractor_omits_number():
+    answer = "The result is 123456 units. A file exists."
+    granite = GraniteExtractor(["A file exists."])
+    judge = FakeJudge(["supported"])
+    with pytest.raises(DecisionVerifierContractError, match="numeric/date"):
+        run(DecisionGroundingVerifier(
+            reviewer_adapter=granite, judge=judge, quality_review_enabled=False,
+        ).verify(
+            candidate=answer,
+            messages=[{"role": "user", "content": "What was the result?"}],
+            tool_results=(),
+        ))
+    assert judge.calls == []
+
+
+def test_systemone_incorrect_answer_id_is_contract_error(monkeypatch):
+    async def respond(request):
+        return httpx.Response(200, json={
+            "answers": {"unexpected": {"type": "choice", "choice": "supported",
+                                       "probabilities": {"supported": 1},
+                                       "confidence": 1}},
+        })
+    original_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "mai.agent.decision_verifier.httpx.AsyncClient",
+        lambda **kwargs: original_client(transport=httpx.MockTransport(respond), **kwargs),
+    )
+    with pytest.raises(DecisionVerifierContractError, match="missing or extra"):
+        run(SystemOneJudge(host="http://localhost:11434", model="tev1:4b").judge(
+            candidate="A", source={}, claims=["A"],
+        ))
