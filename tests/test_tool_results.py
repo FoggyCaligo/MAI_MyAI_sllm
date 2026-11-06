@@ -17,6 +17,7 @@ from mai.agent.tool_results import (
     register_tool_result_tools,
 )
 from mai.llm.models import ModelTurn, NativeToolCall
+from mai.skills.registry import SkillCatalog
 from mai.tools import ToolRegistry
 
 
@@ -82,20 +83,20 @@ def test_legacy_delivery_keeps_small_bodies_and_gives_verifier_original_visible_
 
     class Verifier:
         async def verify(self, **kwargs):
-            assert kwargs["tool_results"][1][3] == observed[1].content
+            assert kwargs["tool_results"][2][3] == observed[2].content
             return FinalVerificationResult(ok=True)
 
     result = run(AgentRuntime(adapter, registry, tool_result_store=store,
         final_verifier=Verifier()).run_user_message("Check the observations", on_tool_execution=observed.append))
     later = next(m["content"] for m in adapter.requests[-1].messages if m.get("tool_name") == "echo")
-    assert observed[1].audit_content == source
+    assert observed[2].audit_content == source
     if size < 1024:
-        assert observed[1].content == later == source
+        assert observed[2].content == later == source
     else:
-        header, body = split_page(observed[1].content)
+        header, body = split_page(observed[2].content)
         assert body == source[:len(body)] and header["complete"] is False
         assert json.loads(later)["content_compacted"] is True
-    assert result.model_rounds == len(adapter.requests) == 4
+    assert result.model_rounds == len(adapter.requests) == 5
 
 
 def test_removed_evidence_selection_is_rejected_without_activating_tools():
@@ -188,12 +189,12 @@ def test_agent_observer_and_next_round_receive_same_bounded_scope() -> None:
     result = run(AgentRuntime(adapter, registry, tool_result_store=store).run_user_message("return a large result", on_tool_execution=observed.append))
 
     assert result.content == "done"
-    assert len(observed) == 2
-    assert len(observed[1].content) <= 1024
-    assert observed[1].content != source
-    tool_message = adapter.requests[2].messages[-1]
+    assert len(observed) == 3
+    assert len(observed[2].content) <= 1024
+    assert observed[2].content != source
+    tool_message = adapter.requests[3].messages[-1]
     assert tool_message["role"] == "tool"
-    assert tool_message["content"] == observed[1].content
+    assert tool_message["content"] == observed[2].content
     metadata, visible_content = split_page(observed[1].content)
     assert metadata["total_chars"] == len(source)
     assert metadata["pagination"]["page"] == 1
@@ -223,10 +224,10 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
     result = run(AgentRuntime(adapter, registry, tool_result_store=store).run_user_message("use two tool rounds"))
 
     assert result.content == "done"
-    first_round_tool = [message for message in adapter.requests[2].messages if message.get("tool_name") == "echo"][0]
+    first_round_tool = [message for message in adapter.requests[3].messages if message.get("tool_name") == "echo"][0]
     first_metadata, _ = split_page(first_round_tool["content"])
 
-    third_request_tools = [message for message in adapter.requests[3].messages if message.get("tool_name") == "echo"]
+    third_request_tools = [message for message in adapter.requests[4].messages if message.get("tool_name") == "echo"]
     assert len(third_request_tools) == 2
     compact = json.loads(third_request_tools[0]["content"])
     assert compact["result_id"] == first_metadata["result_id"]
