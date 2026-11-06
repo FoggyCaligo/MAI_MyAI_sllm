@@ -26,7 +26,13 @@ def model_manifest_path(root: Path, model: str) -> Path:
     components = name.split("/")
     if not components or not all(MODEL_PART.fullmatch(part) for part in (*components, tag)):
         raise ValueError(f"Unsafe or unsupported Ollama model name: {model!r}")
-    return root / "manifests" / "registry.ollama.ai" / "library" / Path(*components) / tag
+    if len(components) == 1:
+        namespace, model_name = "library", components[0]
+    elif len(components) == 2:
+        namespace, model_name = components
+    else:
+        raise ValueError(f"Unsupported Ollama model name: {model!r}")
+    return root / "manifests" / "registry.ollama.ai" / namespace / model_name / tag
 
 
 def manifest_blobs(manifest: Path) -> dict[str, int]:
