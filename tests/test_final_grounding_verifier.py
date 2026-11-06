@@ -1124,16 +1124,24 @@ def test_count_review_contract_requires_source_based_recount():
     assert "grouping key" in feedback
     assert "Source: terminal_run / records[0:18]" in feedback
 
-def test_verifier_keeps_every_successful_tool_result_in_execution_order():
-    from mai.agent.verification import _select_review_tool_results
+def test_verifier_keeps_all_non_activation_tool_results_in_execution_order():
+    from mai.agent.verification import _review_payload
 
     results = tuple(
-        ("terminal_run", i % 7 != 0, None, f"result-{i}")
+        ("terminal_run", i % 7 != 0,
+         None if i % 7 != 0 else "TerminalCommandError",
+         f"result-{i}", {"command": f"run-{i}"})
         for i in range(45)
     )
-    selected = _select_review_tool_results(results)
-    assert [index for index, _ in selected] == [
-        index for index, result in enumerate(results) if result[1]
-    ]
-    assert len(selected) > 20
-    assert all(result[1] for _, result in selected)
+    payload = _review_payload(
+        candidate="candidate",
+        messages=[{"role": "user", "content": "Check all executions"}],
+        tool_results=results,
+    )
+    selected = payload["tool_results_in_execution_order"]
+    assert [item["index"] for item in selected] == list(range(45))
+    assert len(selected) == 45
+    assert all(item["params"]["command"] == f"run-{index}"
+               for index, item in enumerate(selected))
+    assert selected[0]["endtype"] == "error_type:TerminalCommandError"
+    assert selected[1]["endtype"] == "success"
