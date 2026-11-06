@@ -40,15 +40,15 @@ cp .env.example .env
 
 `.env`에서 `OWNER_USERS`의 `user_id`, `user_pw`를 반드시 개인 값으로 수정하고, `db_id`는 이미 데이터를 사용 중이라면 유지함. `TRIAL_USERS`는 사용하지 않을 때 `[]`로 지정하고, `TAILSCALE_FUNNEL=false`로 시작할 것. 실제 비밀번호를 저장소·로그·공개 게시글에 노출하지 말 것.
 
-**Verifier 변경 시 확인:** 기존 `.env` 또는 프로세스 환경변수에 `VERIFIER_MODEL=lfm2.5:8b`가 있으면 YAML 기본값을 바꿔도 그대로 적용됨. `granite4:3b-h`를 사용하려면 해당 값을 수정하거나 기존 덮어쓰기를 삭제하고 모델을 설치할 것.
+**Verifier 변경 시 확인:** 기존 `.env` 또는 프로세스 환경변수에 `VERIFIER_MODEL=granite4:3b-h`가 있으면 YAML 기본값을 바꿔도 그대로 적용됨. `LiquidAI/lfm2.5-2.6b:q4_k_m`를 사용하려면 해당 값을 수정하거나 기존 덮어쓰기를 삭제하고 모델을 설치할 것.
 
 **설정 우선순위:** 기존 환경변수와 `.env`의 동일 이름 값이 `settings.yaml` 기본값보다 우선함. 기존 `.env`의 `MAIN_MODEL` 또는 타임아웃 값을 YAML에서 변경해도 적용되지 않으면 `.env`에 동일 키가 있는지 확인할 것. `.env`를 덮어쓰지 않고 이관하려면 해당 키만 직접 삭제함. `settings.yaml`의 중복/알 수 없는 키와 부적절한 값 형식은 명시적 오류로 처리됨.
 
 ### 1.3 settings.yaml 설정 구분
 
-**A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VERIFIER_MODEL`은 검증 전용 모델이며 기본값은 `granite4:3b-h`다. 해당 키를 생략하면 기존처럼 본 모델로 검증한다. `VISION_MODEL`은 이미지 인식에만 필요한 선택 설정이며, 전체 텍스트 MAI 실행의 필수 요건은 아님.
+**A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VERIFIER_MODEL`은 검증 전용 모델이며 기본값은 `LiquidAI/lfm2.5-2.6b:q4_k_m`다. 해당 키를 생략하면 기존처럼 본 모델로 검증한다. `VISION_MODEL`은 이미지 인식에만 필요한 선택 설정이며, 전체 텍스트 MAI 실행의 필수 요건은 아님.
 
-**Verifier 품질 검토:** 기본 `MAI_ANSWER_QUALITY_REVIEW=true`는 사실 검증 통과 후 요청 부합도·정보 충족도를 별도 검토함. 추가 모델 호출로 응답이 느려질 수 있음. 기존 `.env`·환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 그 값이 우선하므로 변경 후 확인할 것.
+**Verifier 품질 검토:** 기본 `MAI_ANSWER_QUALITY_REVIEW=false`는 사실 검증 통과 후 요청 부합도·정보 충족도를 별도 검토함. 추가 모델 호출로 응답이 느려질 수 있음. 기존 `.env`·환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 그 값이 우선하므로 변경 후 확인할 것.
 
 **B. 동작·성능 조정 설정:** `OLLAMA_REQUEST_TIMEOUT_SECONDS`, `OLLAMA_AGENT_MAX_OUTPUT_TOKENS`, `AGENT_MAX_IDENTICAL_CALLS`, `AGENT_MAX_IDENTICAL_FAILURES`, `AGENT_MAX_NO_PROGRESS_ROUNDS`, `MAX_INLINE_TOOL_RESULT_CHARS`, `SESSION_HISTORY_MESSAGES`, `MAI_ANSWER_QUALITY_REVIEW`, `VOICE_*` 중 음성 동작 파라미터. 값을 잘못 지정하면 오류가 날 수 있으므로 '임의 값이어도 무조건 실행됨'이라는 의미가 아님. 기본값을 유지하면 수동 입력은 필요하지 않음.
 
@@ -60,7 +60,7 @@ cp .env.example .env
 | Ollama main 출력 한도 | `OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768` |
 | 한 번의 도구 결과 입력 한도 | `MAX_INLINE_TOOL_RESULT_CHARS: 8000`자 |
 | 최근 대화 | `SESSION_HISTORY_MESSAGES: 10`개 메시지 |
-| 선택적 품질 검토 | `MAI_ANSWER_QUALITY_REVIEW: true` |
+| 선택적 품질 검토 | `MAI_ANSWER_QUALITY_REVIEW: false` |
 | 음성 종료 무음 시간 / 화자 임계값 | `VOICE_SILENCE_SECONDS: 5` / `VOICE_MATCH_THRESHOLD: 0.65` |
 
 기억 추출의 Ollama 출력은 기본 2,048토큰이며, 필요하면 **프로세스 환경변수 또는 `.env`**의 `OLLAMA_MEMORY_MAX_OUTPUT_TOKENS`로 지정함. 이 키는 현재 YAML 허용 목록에는 없음.
@@ -87,9 +87,9 @@ python -m playwright install chromium
 
 ```powershell
 ollama pull ornith-1.5:9b
-ollama pull granite4:3b-h
+ollama pull LiquidAI/lfm2.5-2.6b:q4_k_m
 
-ollama pull gemma4:e4b
+ollama pull lfm3-vl:2b
 ollama list
 ```
 
