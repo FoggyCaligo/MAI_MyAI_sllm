@@ -521,7 +521,7 @@
     $uploadStatus.classList.remove('failed');
     try {
       const references = await uploadClipboardImages();
-      message = [message, ...references.map(item=>item.reference)].filter(Boolean).join('\\n');
+      message = [message, ...references.map(item=>item.reference)].filter(Boolean).join('\n');
        pendingUploadedImages.push(...references.map(item=>item.filename));
       clipboardImages.forEach(item => URL.revokeObjectURL(item.url));
       clipboardImages.length = 0;
