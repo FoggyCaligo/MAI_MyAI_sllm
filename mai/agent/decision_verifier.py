@@ -29,22 +29,31 @@ from .verification import (
 
 MAX_SYSTEM_ONE_REQUEST_BYTES = 64 * 1024
 
-_EXTRACT_SYSTEM = """Extract EVERY independently checkable assertion from candidate_final.
-Use conversation_context only to resolve references and omissions of subject.
-Return only a JSON array of exact verbatim spans from candidate_final.
-Include factual statements, numbers, quantities, dates, periods, identity, scope,
-comparisons, causal claims, calculations, translations, interpretations, and
-assertions of actions attempted, failed, or completed.
-Split separate assertions into separate array elements whenever they can be
-judged independently. Preserve negation, units, time scopes and conditions.
-Do not assess truth, use outside knowledge, paraphrase, supply evidence, or
-invent assertions. A greeting or a message with no factual assertions may
-produce an empty array. Do not omit a claim merely because it is uncertain.
+_EXTRACT_SYSTEM = """# 검증 대상 추출
+
+이전 대화 문맥과 메인모델의 임시답변을 읽고, 임시답변에서, 아래 중 하나라도 해당하는 요소들을 문장 하나씩으로 모두 추출하라.
+
+1. **사실:** 인물, 사건, 사물, 장소, 상태, 특성에 관한 사실
+2. **수치:** 금액, 수량, 비율, 크기, 거리, 단위 등
+3. **주장:** 판단, 결론, 해석, 추론, 비교, 평가
+4. **시간:** 날짜, 기간, 순서, 시점, 현재성에 관한 진술
+5. **관계:** 대상의 정체성, 소속, 인과관계, 상호관계
+6. **범위:** 전체, 일부, 유일성, 최대·최소, 포함·제외에 관한 진술
+7. **계산:** 합계, 평균, 변환, 집계, 파생 수치
+8. **실행 결과:** 요청된 작업의 수행, 성공, 실패, 완료 여부
+9. **자료 해석:** 번역, 요약, 인용, 원문 해석으로 도출된 진술
+
+규칙:
+- 모든 검증 가능한 진술을 빠짐없이 추출한다.
+- 하나의 문장에 여러 독립적인 주장이 있으면 분리한다.
+- 원래 문장의 의미, 부정, 수치, 단위, 시점 및 조건을 보존한다.
+- 검증이나 진위 판정은 수행하지 않는다.
+- 새로운 사실을 생성하지 않는다.
+- 출력은 지정된 JSON 배열만 사용한다.
 """
 
-
 class ClaimSpans(RootModel[list[str]]):
-    """An ordered list, not a verdict-producing Granite response."""
+    """An ordered list of semantic claims, not a Granite truth verdict."""
 
 
 _EMPTY_EXTRACTION_SYSTEM = """Independently determine whether candidate_final contains any independently
@@ -253,10 +262,14 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
                     f"an unextracted assertion: {empty_decision.witness}"
                 )
         for claim in claims:
-            if not claim.strip() or claim not in canonical_candidate:
+            if not claim.strip():
                 raise DecisionVerifierContractError(
-                    "Granite must extract nonempty verbatim spans of the provisional answer"
+                    "Granite must return nonempty sentences for extracted claims"
                 )
+        # Granite may rewrite an assertion while retaining its meaning.
+        # Do not require literal inclusion or assert semantic equivalence
+        # through string matching. Tev receives both the original answer and
+        # the extracted claims, and judges grounding against the source.
         extracted_numbers = set().union(*(
             _extract_material_numeric_facts(claim) for claim in claims
         ))
