@@ -548,7 +548,7 @@ def test_failed_tool_outputs_are_recorded_but_not_positive_evidence() -> None:
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert payload["tool_results_in_execution_order"] == [{
-        "index": 0, "tool": "terminal_run", "params": {},
+        "index": 0, "tool": "terminal_run", "params": None,
         "endtype": "error_type:TerminalCommandError",
         "result": "collected 138 items; 136 passed, 2 failed",
     }]
@@ -580,7 +580,7 @@ def test_review_payload_keeps_successes_and_failures_in_order() -> None:
     assert [item["index"] for item in evidence] == list(range(50))
     assert all(item["endtype"] == ("success" if index % 2 == 0 else "error_type:WebSearchError")
                for index, item in enumerate(evidence))
-    assert all(item["params"] == {} for item in evidence)
+    assert all(item["params"] is None for item in evidence)
 
 
 def test_web_search_payload_marks_snippets_as_observed_search_evidence() -> None:
