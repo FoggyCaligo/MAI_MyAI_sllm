@@ -16,14 +16,22 @@
 ## 단계
 
 1. Python은 기존 숫자·날짜 정규화 검사를 실행한다.
-2. Granite에 추출 프롬프트와 **임시답변 원문, 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. JSON **문자열 배열**만 수신한다. 추출한 진술은 임시답변의 원문 구간이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
+2. Granite에 추출 프롬프트와 **임시답변의 Markdown 파싱 결과(검증용 텍스트), 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. JSON **문자열 배열**만 수신한다. 추출한 진술은 Markdown 파서가 생성한 검증용 텍스트의 부분 문자열이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
 3. Python이 추출 목록에 순서대로 `c0`, `c1`, … ID를 부여한다. 설정된 `VERIFIER_DECISION_BATCH_SIZE`개씩 나눠 순차 실행한다.
-4. 각 Tev 배치는 `state={orig_answer: 전체 임시답변 원문, source: {datetime_local_iso, conversation_context, tool_results_in_execution_order}}`와 `questions={c0:..., ...}`를 **각각 한 번씩** 전달한다. 배치 내부 질문들은 같은 state를 공유한다.
+4. 각 Tev 배치는 `state={orig_answer: 전체 검증용 텍스트, source: {datetime_local_iso, conversation_context, tool_results_in_execution_order}}`와 `questions={c0:..., ...}`를 **각각 한 번씩** 전달한다. 배치 내부 질문들은 같은 state를 공유한다.
 5. Tev의 choice 판정은 `supported / contradicted / insufficient` 중 하나. 누락·중복·예상치 못한 질문 ID나 잘못된 판정은 오류다. `insufficient`는 반증이 아니라 관측 근거의 불충분을 의미한다.
 6. Python은 모든 배치의 판정을 수집한 뒤 각각의 원문 주장에 다시 연결한다. `contradicted`와 `insufficient`를 기존 Verifier의 `unsupported`로 바꾸되 사유는 구분한다. 하나라도 검증 불통과면 메인모델에 해당 주장과 사유를 전달한다.
 7. 기존 숫자·근거·교정 한도와 교정된 임시답변의 전면 재검증 흐름을 유지한다.
 
 질문이 설정된 배치 크기 이하면 Tev를 한 번 호출한다. 더 많으면 같은 크기로 순차 분할하고 마지막 배치는 남은 질문만 처리한다. Ollama API는 최대 64개 질문을 허용하므로 `VERIFIER_DECISION_BATCH_SIZE`는 1~64의 정수만 허용한다. 여러 질문의 state를 요청 내에서 한 번 제공하지만, **여러 배치 사이에서는 state를 다시 전송**한다. 공통 컨텍스트를 GPU 내부에서 한 번만 계산한다고 가정해서는 안 된다.
+
+## 검증용 텍스트와 화면 표시
+
+- 최종 답변·임시답변의 원본 Markdown은 변형하지 않는다. Granite와 Tev의 주장 추출·판단에만 Markdown 파서가 구성한 별도 텍스트를 사용한다.
+- 강조·링크·목록 등의 표현 문법은 검증용 텍스트에서 제외하되, 화면에 표시되는 내용과 코드 블록의 실제 텍스트는 남긴다.
+- 표는 셀만 병합하지 않고 **각 데이터 행에 표 머리글을 연결**한다. 예를 들어 `| 단어 | 철자 |`의 `| Ark | A-R-K |`는 `단어: Ark; 철자: A-R-K`로 전달한다. 원본 Markdown 표는 사용자에게 그대로 렌더링한다.
+- 문자열 치환이나 의미 추측으로 임시답변을 고치지 않는다. 검증용 텍스트에 없는 주장은 기존과 같이 계약 오류를 발생시킨다.
+- 실패 응답에 임시답변이 있고 마지막 verifier 피드백이 없더라도 임시답변은 Markdown으로 렌더링하고, 실제 오류 내용은 별도 영역에 표시한다. 재개·대화기록 화면에도 동일하게 적용한다.
 
 ## 오류와 근거의 범위
 
@@ -41,7 +49,7 @@ Granite의 원본 추출 요청·응답은 기존 `request/raw_response/validate
 ```bash
 ollama --version
 ollama pull tev1:4b
-python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_model_setting.py
+python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_markdown_canonical.py tests/test_verifier_model_setting.py
 python -m pytest -q
 ```
 
