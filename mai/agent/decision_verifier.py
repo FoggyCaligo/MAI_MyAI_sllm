@@ -64,7 +64,7 @@ class DecisionVerifierContractError(RuntimeError):
 
 
 class SystemOneJudge:
-    def __init__(self, *, host: str, model: str, timeout_seconds: float = 120.0, batch_size: int = 30) -> None:
+    def __init__(self, *, host: str, model: str, batch_size: int, timeout_seconds: float = 120.0) -> None:
         if not host.strip() or not model.strip() or timeout_seconds <= 0:
             raise ValueError("System One host, model, and positive timeout are required")
         self.host = host.rstrip("/")
