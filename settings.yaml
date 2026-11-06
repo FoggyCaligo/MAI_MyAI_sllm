@@ -10,7 +10,9 @@ LLAMACPP_HOST: "http://127.0.0.1:8080"  # llama.cpp 선택 시 필요
 OLLAMA_HOST: "http://127.0.0.1:11434"  # Ollama 선택 시 필요
 MAIN_MODEL: "ornith-1.5:9b"  # 실제 사용 가능한 모델명
 
-VERIFIER_MODEL: "granite4:3b-h"  # 최종 답변 검증 전용 모델
+VERIFIER_MODEL: "granite4:3b-h"  # 임시답변 검증 대상 주장 추출 전용 모델
+VERIFIER_DECISION_MODEL: "tev1:4b"  # Ollama System One 근거 판정 모델
+VERIFIER_DECISION_TIMEOUT_SECONDS: 120  # System One 단일 배치 요청 제한시간
 VISION_MODEL : "lfm3-vl:2b"
 
 OLLAMA_REQUEST_TIMEOUT_SECONDS: 500
