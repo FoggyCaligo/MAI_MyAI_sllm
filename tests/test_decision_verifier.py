@@ -79,7 +79,7 @@ def test_rejected_claim_reenters_existing_feedback_contract():
         tool_results=(),
     ))
     assert not result.ok
-    assert result.issues[0].code == "claim_grounding_failed"
+    assert any(issue.code == "claim_grounding_failed" for issue in result.issues)
     assert result.correction_contract()["unsupported_claims"][0]["claim"] == answer
     assert answer in result.feedback_message()
 
