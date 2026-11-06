@@ -273,10 +273,16 @@ class MAIRuntime:
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
+        decision_model = os.environ.get("VERIFIER_DECISION_MODEL")
+        decision_timeout = os.environ.get("VERIFIER_DECISION_TIMEOUT_SECONDS")
+        if not decision_model or not decision_model.strip():
+            raise ValueError("VERIFIER_DECISION_MODEL must be configured in settings.yaml or environment")
+        if decision_timeout is None:
+            raise ValueError("VERIFIER_DECISION_TIMEOUT_SECONDS must be configured")
         decision_judge = SystemOneJudge(
             host=self.ollama_host,
-            model=os.environ.get("VERIFIER_DECISION_MODEL", "tev1:4b"),
-            timeout_seconds=float(os.environ.get("VERIFIER_DECISION_TIMEOUT_SECONDS", "120")),
+            model=decision_model,
+            timeout_seconds=float(decision_timeout),
         )
         fact_extractor = self._fact_extractor_for(selected_model)
 
