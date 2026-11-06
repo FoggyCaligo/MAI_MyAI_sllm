@@ -67,20 +67,6 @@ def latest_binary_release(owner: str, repo: str, asset_pattern: str) -> tuple[di
     raise ValueError(f"No matching binary asset found in recent {owner}/{repo} releases")
 
 
-def ollama_release_version(release: dict[str, object]) -> tuple[int, int, int]:
-    """Require an explicit semver release tag, not an inferred asset filename."""
-    tag = release.get("tag_name")
-    if not isinstance(tag, str):
-        raise ValueError("Ollama release must specify a version tag")
-    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag)
-    if match is None:
-        raise ValueError(f"Unsupported Ollama release version tag: {tag}")
-    version = tuple(map(int, match.groups()))
-    if version < (0, 35, 0):
-        raise ValueError(f"Ollama {tag} is older than the System One minimum v0.35.0")
-    return version
-
-
 def resolve_one(owner: str, repo: str, asset_pattern: str) -> dict[str, str]:
     if (owner, repo) == ("ggml-org", "llama.cpp"):
         _, asset = latest_binary_release(owner, repo, asset_pattern)
@@ -88,8 +74,6 @@ def resolve_one(owner: str, repo: str, asset_pattern: str) -> dict[str, str]:
         release = github_json(f"/repos/{owner}/{repo}/releases/latest")
         if not isinstance(release, dict) or not isinstance(release.get("id"), int):
             raise ValueError(f"Invalid release metadata: {owner}/{repo}")
-        if (owner, repo) == ("ollama", "ollama"):
-            ollama_release_version(release)
         matches = matching_assets(release, asset_pattern)
         if len(matches) != 1:
             raise ValueError(f"Expected one matching asset for {owner}/{repo}, got {len(matches)}")
@@ -114,7 +98,7 @@ def main() -> None:
     selected = ("python", "uv", "ollama", "llamacpp") if args.include_llamacpp else ("python", "uv", "ollama")
     for name in selected:
         config[name] = resolve_one(*SOURCES[name])
-    config["models"] = ["ornith-1.5:9b", "lfm3-vl:2b", "granite4:3b-h", "tev1:4b"]
+    config["models"] = ["ornith-1.5:9b", "lfm3-vl:2b", "granite4:3b-h"]
     args.output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Publisher-digest-pinned manifest saved: {args.output}")
 
