@@ -47,7 +47,13 @@ async def _execute_chat(
 
     limit = server._history_limit()
     prior = server._session_history(principal, request.session_id, limit=limit) if limit else []
-    server._append_session_message(principal, request.session_id, role="user", content=request.message)
+    attachments = server._validated_image_attachments(
+        request.attachments, principal, runtime.upload_root,
+    )
+    server._append_session_message(
+        principal, request.session_id, role="user", content=request.message,
+        metadata={"attachments": attachments} if attachments else None,
+    )
     active_model = selected_model or runtime.model
     try:
         result = await runtime.run_user_message(
