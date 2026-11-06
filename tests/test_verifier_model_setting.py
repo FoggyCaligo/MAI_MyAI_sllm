@@ -7,7 +7,7 @@ import pytest
 
 from mai.app import runtime as runtime_module
 from mai.agent import AgentRunFailure
-from tests.reviewer_fixtures import reviewer_payload
+from mai.agent.decision_verifier import SystemOneJudge
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.llm.models import ModelTurn
 
@@ -21,6 +21,9 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
     tmp_path, monkeypatch, verifier_model, selected_model, reviewer_fails,
 ):
     monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "false")
+    monkeypatch.setenv("VERIFIER_DECISION_MODEL", "tev1:4b")
+    monkeypatch.setenv("VERIFIER_DECISION_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("VERIFIER_DECISION_BATCH_SIZE", "30")
     monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter", lambda **kwargs: SimpleNamespace(close=lambda: None))
     requests = []
 
@@ -32,8 +35,7 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
             assert request.tools == () and request.think is False
             if reviewer_fails:
                 raise RuntimeError("configured reviewer is unavailable")
-            content = json.dumps(reviewer_payload({"evidence_verdict": "supported", "action_verdict": "not_applicable",
-                                  "reasons": [], "claims": [], "retry_summary": "No correction needed."}, request))
+            content = json.dumps(["알겠습니다."])
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 
@@ -41,6 +43,11 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
         pass
 
     monkeypatch.setattr(runtime_module.OllamaAdapter, "chat", chat)
+    async def judge(self, *, candidate, source, claims, on_audit_event=None):
+        assert candidate == "알겠습니다."
+        assert "conversation_context" in source
+        return tuple("supported" for _ in claims)
+    monkeypatch.setattr(SystemOneJudge, "judge", judge)
     runtime = runtime_module.MAIRuntime(
         model="ornith-1.5:9b", verifier_model=verifier_model, ollama_host="http://127.0.0.1:11434",
         memory_db_path=tmp_path / "memory.db", sentence_breaker_db_path=tmp_path / "segmenter.db",
