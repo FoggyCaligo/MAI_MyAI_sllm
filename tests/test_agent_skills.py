@@ -47,7 +47,7 @@ def tools(request):
 
 def test_direct_selection_reveals_only_selected_skill_and_tool_schema():
     registry = ToolRegistry()
-    registry.add(name="probe", description="PROBE_DESCRIPTION\\nLong details hidden.",
+    registry.add(name="probe", description="PROBE_DESCRIPTION\nLong details hidden.",
                  input_model=TextInput, handler=lambda value: {"observation": value},
                  category="general", metadata={"model_context": {"secret": "SCOPED_PROBE_CONTEXT"}})
     registry.add(name="other", description="OTHER_DESCRIPTION",
@@ -75,7 +75,7 @@ def test_direct_selection_reveals_only_selected_skill_and_tool_schema():
     assert "Long details hidden." not in selected
     assert "value" not in json.dumps(adapter.requests[0].tools)
     assert "value" in json.dumps(adapter.requests[1].tools)
-    assert "skill_activate" not in json.dumps(adapter.requests)
+    assert "skill_activate" not in str(adapter.requests)
     assert "INTERNAL_REASONING" not in json.dumps(adapter.requests[2].messages)
     assert "DONOTRETAIN" not in json.dumps(adapter.requests[2].messages)
     prior = [m for m in adapter.requests[2].messages if m.get("role") == "tool"]
