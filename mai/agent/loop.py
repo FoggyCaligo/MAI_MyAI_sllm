@@ -304,6 +304,7 @@ class AgentLoop:
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
+                                if execution.name not in {"skill_activate", "skill_tools"}
                             ),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
