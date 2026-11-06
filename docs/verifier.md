@@ -4,7 +4,7 @@
 
 ## 구성·설정
 
-- `VERIFIER_MODEL`: 임시답변에 포함된 검증 가능 진술의 **원문 부분 문자열만 추출**하는 모델. 기본 `granite4:3b-h`. 기존 설정 계약대로 생략되면 메인 모델이 추출을 담당한다.
+- `VERIFIER_MODEL`: 임시답변에 포함된 검증 가능 진술의 **원문 부분 문자열을 12개 유형별 목록으로 추출**하는 모델. 기본 `granite4:3b-h`. 기존 설정 계약대로 생략되면 메인 모델이 추출을 담당한다.
 - `VERIFIER_DECISION_MODEL`: Ollama System One 판단 모델. 기본 `tev1:4b`.
 - `VERIFIER_DECISION_TIMEOUT_SECONDS`: Tev 단일 배치 HTTP 요청 제한 시간. 기본 120초.
 - `VERIFIER_DECISION_BATCH_SIZE`: Tev 한 번의 System One 요청에 넣을 주장 수. `settings.yaml` 기본 30개. 1~64의 정수로 변경 가능하며 범위를 벗어나면 실행 실패.
@@ -16,14 +16,36 @@
 ## 단계
 
 1. Python은 기존 숫자·날짜 정규화 검사를 실행한다.
-2. Granite에 추출 프롬프트와 **임시답변의 Markdown 파싱 결과(검증용 텍스트), 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. JSON **문자열 배열**만 수신한다. **빈 배열을 곧바로 성공으로 간주하지 않고**, 별도의 Granite 구조화 요청으로 후보 답변 전체에 검증 가능한 진술이 하나라도 있는지 명시적으로 재판정한다. `contains_checkable_assertions`이면 후보 원문에 존재하는 witness span을 요구하고 누락 추출 계약 오류로 종료한다. `no_checkable_assertions`이면 witness=null과 비어 있지 않은 사유를 요구한다. 응답 형식 위반은 오류로 유지하고, 실패를 승인하거나 묵시적으로 다른 Verifier로 전환하지 않는다. 추출한 진술은 Markdown 파서가 생성한 검증용 텍스트의 부분 문자열이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
-3. Python이 추출 목록에 순서대로 `c0`, `c1`, … ID를 부여한다. 설정된 `VERIFIER_DECISION_BATCH_SIZE`개씩 나눠 순차 실행한다.
+2. Granite에 추출 프롬프트와 **임시답변의 Markdown 파싱 결과(검증용 텍스트), 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. 12개 필수 유형 배열을 가진 JSON 객체를 수신한다. 분류는 중복 허용하며 `definition_claims`에는 대상이나 개념의 정의가 맞는지 검증할 진술을 포함한다. 동일한 원문 span이 여러 분류에 있으면 Python이 완전히 같은 문자열만 중복 제거하여 Tev에 한 번 전달한다. 각 분류가 비어 있을 때는 해당 배열을 `[]`로 반환해야 하며 필드를 생략할 수 없다. **빈 배열을 곧바로 성공으로 간주하지 않고**, 별도의 Granite 구조화 요청으로 후보 답변 전체에 검증 가능한 진술이 하나라도 있는지 명시적으로 재판정한다. `contains_checkable_assertions`이면 후보 원문에 존재하는 witness span을 요구하고 누락 추출 계약 오류로 종료한다. `no_checkable_assertions`이면 witness=null과 비어 있지 않은 사유를 요구한다. 응답 형식 위반은 오류로 유지하고, 실패를 승인하거나 묵시적으로 다른 Verifier로 전환하지 않는다. 추출한 진술은 Markdown 파서가 생성한 검증용 텍스트의 부분 문자열이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
+3. Python이 분류별 배열을 선언된 필드 순서로 합치고 원문이 정확히 동일한 항목만 중복 제거한 뒤 `c0`, `c1`, … ID를 부여한다. 설정된 `VERIFIER_DECISION_BATCH_SIZE`개씩 나눠 순차 실행한다.
 4. 각 Tev 배치는 `state={orig_answer: 전체 검증용 텍스트, source: {datetime_local_iso, conversation_context, tool_results_in_execution_order}}`와 `questions={c0:..., ...}`를 **각각 한 번씩** 전달한다. 배치 내부 질문들은 같은 state를 공유한다.
 5. Tev의 choice 판정은 `supported / contradicted / insufficient` 중 하나. 누락·중복·예상치 못한 질문 ID나 잘못된 판정은 오류다. `insufficient`는 반증이 아니라 관측 근거의 불충분을 의미한다.
 6. Python은 모든 배치의 판정을 수집한 뒤 각각의 원문 주장에 다시 연결한다. `contradicted`와 `insufficient`를 기존 Verifier의 `unsupported`로 바꾸되 사유는 구분한다. 하나라도 검증 불통과면 메인모델에 해당 주장과 사유를 전달한다.
 7. 기존 숫자·근거·교정 한도와 교정된 임시답변의 전면 재검증 흐름을 유지한다.
 
 질문이 설정된 배치 크기 이하면 Tev를 한 번 호출한다. 더 많으면 같은 크기로 순차 분할하고 마지막 배치는 남은 질문만 처리한다. Ollama API는 최대 64개 질문을 허용하므로 `VERIFIER_DECISION_BATCH_SIZE`는 1~64의 정수만 허용한다. 여러 질문의 state를 요청 내에서 한 번 제공하지만, **여러 배치 사이에서는 state를 다시 전송**한다. 공통 컨텍스트를 GPU 내부에서 한 번만 계산한다고 가정해서는 안 된다.
+
+
+### Granite 추출 JSON 분류
+
+모든 항목은 필수 `list[str]`로, 각 요소는 검증용 `candidate_final`의 원문 부분 문자열이다.
+
+| 필드 | 대상 |
+|---|---|
+| `factual_claims` | 일반 사실·사건 |
+| `numerical_claims` | 수치·수량·비율 |
+| `temporal_claims` | 날짜·시간·기간 |
+| `identity_claims` | 정체성·속성·소속·관계 |
+| `scope_claims` | 범위·조건·예외 |
+| `comparative_claims` | 비교 |
+| `causal_claims` | 인과관계 |
+| `calculation_claims` | 계산 결과 |
+| `translation_claims` | 번역·언어 간 의미 대응 |
+| `interpretation_claims` | 해석 |
+| `action_claims` | 시도·실패·완료한 행동 |
+| `definition_claims` | 용어·개념·대상의 정의 |
+
+중복 분류는 허용하지만 완전히 동일한 문자열을 Tev에 반복 질의하지 않는다. 서로 표현이 다른 span은 의미가 비슷하더라도 합치지 않는다. 12개 배열이 전부 비었을 때만 `empty_extraction` 판정이 수행된다.
 
 ## 검증용 텍스트와 화면 표시
 
@@ -44,12 +66,12 @@
 
 ## 감사 이벤트와 테스트
 
-Granite의 원본 추출 요청·응답은 기존 `request/raw_response/validated_response` 단계(`stage=extract`)로 감사 DB에 기록한다. 추출이 빈 경우에만 추가된 독립 판정은 `stage=empty_extraction`의 `request/raw_response/validated_response`에 남긴다. Tev는 배치마다 `stage=decision`의 `request`와 `validated_response`를 기록한다. 마지막 `decision`에는 Python이 집계한 주장별 결과가 기록된다.
+Granite의 원본 추출 요청·응답(12개 분류 포함)은 기존 `request/raw_response/validated_response` 단계(`stage=extract`)로 감사 DB에 기록한다. 추출이 빈 경우에만 추가된 독립 판정은 `stage=empty_extraction`의 `request/raw_response/validated_response`에 남긴다. Tev는 배치마다 `stage=decision`의 `request`와 `validated_response`를 기록한다. 마지막 `decision`에는 Python이 집계한 주장별 결과가 기록된다.
 
 ```bash
 ollama --version
 ollama pull tev1:4b
-python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_empty_claim_contract.py tests/test_verifier_markdown_canonical.py tests/test_verifier_model_setting.py
+python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_empty_claim_contract.py tests/test_verifier_claim_categories.py tests/test_verifier_markdown_canonical.py tests/test_verifier_model_setting.py
 python -m pytest -q
 ```
 
