@@ -199,7 +199,7 @@ def test_agent_observer_and_next_round_receive_same_bounded_scope() -> None:
     tool_message = adapter.requests[3].messages[-1]
     assert tool_message["role"] == "tool"
     assert tool_message["content"] == observed[2].content
-    metadata, visible_content = split_page(observed[1].content)
+    metadata, visible_content = split_page(observed[2].content)
     assert metadata["total_chars"] == len(source)
     assert metadata["pagination"]["page"] == 1
     assert metadata["pagination"]["has_more"] is True
