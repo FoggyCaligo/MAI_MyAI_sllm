@@ -6,6 +6,7 @@ import secrets
 import io
 import hashlib
 import logging
+import mimetypes
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -242,6 +243,7 @@ class ChatRequest(BaseModel):
     session_id: str = Field(default="default", min_length=1)
     model: str | None = None
     remote_session_id: str | None = None
+    attachments: list[str] = Field(default_factory=list)
 
 
 class ToolExecutionResponse(BaseModel):
@@ -510,6 +512,45 @@ async def upload_file(
     }
 
 
+_PREVIEW_IMAGE_MEDIA_TYPES = frozenset({
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+})
+
+
+def _validated_image_attachments(
+    filenames: list[str], principal: AccessPrincipal, upload_root: str | Path,
+) -> list[str]:
+    """Validate structured image references against the caller's private upload directory."""
+    directory = principal_upload_directory(upload_root, principal).resolve()
+    validated: list[str] = []
+    for filename in filenames:
+        clean = _validated_upload_filename(filename)
+        target = (directory / clean).resolve()
+        if target.parent != directory or not target.is_file():
+            raise HTTPException(status_code=404, detail="attached image not found")
+        media_type, _ = mimetypes.guess_type(clean)
+        if media_type not in _PREVIEW_IMAGE_MEDIA_TYPES:
+            raise HTTPException(status_code=400, detail="unsupported preview image type")
+        validated.append(clean)
+    return validated
+
+
+@app.get("/uploads/image/{filename}")
+async def preview_uploaded_image(
+    filename: str, authorization: str | None = Header(default=None),
+) -> FileResponse:
+    _, principal = _principal_from_authorization(authorization)
+    attachments = _validated_image_attachments(
+        [filename], principal, _get_runtime().upload_root,
+    )
+    target = principal_upload_directory(_get_runtime().upload_root, principal) / attachments[0]
+    media_type, _ = mimetypes.guess_type(attachments[0])
+    return FileResponse(
+        path=target, media_type=media_type,
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.get("/session/{session_id}")
 async def get_session_history(
     session_id: str,
@@ -535,6 +576,7 @@ async def chat(
 ) -> ChatResponse | JSONResponse:
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
+    attachments = _validated_image_attachments(request.attachments, principal, runtime.upload_root)
     if request.remote_session_id is not None:
         if principal.role is not AccessRole.OWNER:
             raise HTTPException(status_code=403, detail="remote management is owner only")
@@ -610,7 +652,8 @@ async def chat(
     try:
         limit = _history_limit()
         prior = _session_history(principal, request.session_id, limit=limit) if limit else []
-        _append_session_message(principal, request.session_id, role="user", content=request.message)
+        _append_session_message(principal, request.session_id, role="user", content=request.message,
+                                metadata={"attachments": attachments} if attachments else None)
         active_model = selected_model or runtime.model
         result = await runtime.run_user_message(
             request.message,

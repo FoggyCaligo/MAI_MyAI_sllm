@@ -177,6 +177,7 @@
   function clearVisibleConversation() {
     const host = document.getElementById('messages');
     if (!host) return;
+    if (typeof releaseImageObjectUrls === 'function') releaseImageObjectUrls();
     host.replaceChildren();
     const empty = document.createElement('div');
     empty.id = 'empty-state';
@@ -197,6 +198,7 @@
     const signature = JSON.stringify([state?.userId || null, normalized]);
     if (signature === renderedHistorySignature) return;
 
+    if (typeof releaseImageObjectUrls === 'function') releaseImageObjectUrls();
     host.replaceChildren();
     if (!normalized.length) {
       const empty = document.createElement('div');
@@ -210,7 +212,7 @@
       host.appendChild(empty);
     } else {
       normalized.forEach(message => {
-        if (message?.role === 'user') addMessage('user', String(message.content || ''));
+        if (message?.role === 'user') addMessage('user', String(message.content || ''), Array.isArray(message?.metadata?.attachments) ? message.metadata.attachments : []);
         if (message?.role === 'assistant') {
           const metadata = message?.metadata;
           const isError = metadata?.kind === 'error';

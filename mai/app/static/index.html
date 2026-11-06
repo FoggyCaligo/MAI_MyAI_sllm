@@ -94,6 +94,13 @@
     #clipboard-previews { display:flex; flex-wrap:wrap; gap:8px; margin:0 3px 8px; }
     .clipboard-preview { position:relative; border:1px solid var(--border); border-radius:8px; padding:5px; background:var(--surface); }
     .clipboard-preview img { display:block; width:90px; height:72px; object-fit:contain; }
+    .message-images { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .message-image { border:1px solid var(--border); background:var(--surface); border-radius:9px; padding:4px; cursor:zoom-in; }
+    .message-image img { display:block; max-width:210px; max-height:160px; object-fit:contain; }
+    .image-preview-dialog { border:1px solid var(--border); border-radius:12px; padding:14px; background:var(--surface); color:var(--text); max-width:95vw; max-height:95vh; margin:auto; }
+    .image-preview-dialog::backdrop { background:#000c; }
+    .image-preview-dialog img { display:block; max-width:calc(95vw - 28px); max-height:calc(95vh - 72px); object-fit:contain; }
+    .image-preview-dialog button { display:block; margin:0 0 8px auto; border:1px solid var(--border); background:var(--bg); color:var(--text); padding:4px 10px; border-radius:6px; cursor:pointer; }
     .clipboard-preview button { position:absolute; top:2px; right:2px; border:0; border-radius:6px; background:var(--bg); color:var(--danger); cursor:pointer; }
     #input-row { display:flex; align-items:flex-end; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:9px 11px; }
     #input-row:focus-within { border-color:var(--accent-dim); }
@@ -331,7 +338,70 @@
     if(inCode)out.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);flush();closeList();return out.join('');
   }
   function removeEmpty(){const empty=document.getElementById('empty-state');if(empty)empty.remove();}
-  function addMessage(role,text){removeEmpty();const row=document.createElement('div');row.className=`msg-row ${role}`;const avatar=document.createElement('div');avatar.className=`avatar ${role}`;avatar.textContent=role==='user'?'U':'MAI';const wrap=document.createElement('div');wrap.className='content-wrap';const bubble=document.createElement('div');bubble.className='bubble';if(role==='user')bubble.textContent=text;else bubble.innerHTML=renderMarkdown(text);wrap.appendChild(bubble);row.append(avatar,wrap);$messages.appendChild(row);scrollToBottom('smooth',role==='user');return{row,wrap,bubble};}
+  const imageObjectUrls = new Set();
+  function releaseImageObjectUrls() {
+    for (const url of imageObjectUrls) URL.revokeObjectURL(url);
+    imageObjectUrls.clear();
+  }
+  async function appendMessageImages(bubble, filenames) {
+    if (!Array.isArray(filenames) || !filenames.length) return;
+    const gallery = document.createElement('div');
+    gallery.className = 'message-images';
+    bubble.appendChild(gallery);
+    for (const filename of filenames) {
+      const response = await fetch('/uploads/image/' + encodeURIComponent(filename), {headers:authHeaders(), cache:'no-store'});
+      if (!response.ok) {
+        const error = document.createElement('span');
+        error.textContent = '이미지 조회 실패 (' + response.status + '): ' + filename;
+        gallery.appendChild(error);
+        continue;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      imageObjectUrls.add(url);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'message-image';
+      button.setAttribute('aria-label', '이미지 확대: ' + filename);
+      const image = document.createElement('img');
+      image.src = url;
+      image.alt = filename;
+      button.appendChild(image);
+      button.addEventListener('click', () => {
+        const dialog = document.createElement('dialog');
+        dialog.className = 'image-preview-dialog';
+        const close = document.createElement('button');
+        close.textContent = '닫기';
+        close.addEventListener('click', () => dialog.close());
+        const full = document.createElement('img');
+        full.src = url;
+        full.alt = filename;
+        dialog.append(close, full);
+        dialog.addEventListener('close', () => dialog.remove());
+        document.body.appendChild(dialog);
+        dialog.showModal();
+      });
+      gallery.appendChild(button);
+    }
+  }
+  function addMessage(role,text,attachments=[]) {
+    removeEmpty();
+    const row=document.createElement('div');row.className=`msg-row ${role}`;
+    const avatar=document.createElement('div');avatar.className=`avatar ${role}`;
+    avatar.textContent=role==='user'?'U':'MAI';
+    const wrap=document.createElement('div');wrap.className='content-wrap';
+    const bubble=document.createElement('div');bubble.className='bubble';
+    if(role==='user') {
+      bubble.textContent=text;
+      if(attachments.length) void appendMessageImages(bubble,attachments).catch(error => {
+        const failure=document.createElement('div');
+        failure.textContent='이미지 미리보기 오류: '+error.message;
+        bubble.appendChild(failure);
+      });
+    } else bubble.innerHTML=renderMarkdown(text);
+    wrap.appendChild(bubble);row.append(avatar,wrap);$messages.appendChild(row);
+    scrollToBottom('smooth',role==='user');return{row,wrap,bubble};
+  }
   function renderUnverifiedAnswer(bubble, payload) {
     bubble.classList.add('error');
     bubble.replaceChildren();
@@ -399,6 +469,7 @@
   $logout.addEventListener('click',async()=>{try{await fetch('/logout',{method:'POST',headers:authHeaders()});}finally{showLogin();}});
   const $clipboardPreviews = document.getElementById('clipboard-previews');
   const clipboardImages = [];
+  const pendingUploadedImages = [];
   let uploadingClipboardImages = false;
   function refreshClipboardPreviews() {
     $clipboardPreviews.replaceChildren();
@@ -440,17 +511,18 @@
       const response = await fetch('/upload', {method:'POST',headers:authHeaders(),body});
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || '이미지 업로드 실패');
-      references.push(`업로드된 파일: ${data.path}`);
+      references.push({reference:`업로드된 파일: ${data.path}`, filename:data.filename});
     }
     return references;
   }
-  $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`업로드 중: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||'업로드 실패');const reference=`업로드된 파일: ${data.path}`;$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`업로드 완료: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`업로드 오류: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
+  $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`업로드 중: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||'업로드 실패');const reference=`업로드된 파일: ${data.path}`;if(file.type.startsWith('image/'))pendingUploadedImages.push(data.filename);$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`업로드 완료: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`업로드 오류: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
   $form.addEventListener('submit',async event=>{event.preventDefault();let message=$input.value.trim();if(uploadingClipboardImages)return;if(!message && clipboardImages.length === 0){if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);syncSendButton();$input.focus();}return;}if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);}if (clipboardImages.length) {
     uploadingClipboardImages = true;
     $uploadStatus.classList.remove('failed');
     try {
       const references = await uploadClipboardImages();
-      message = [message, ...references].filter(Boolean).join('\\n');
+      message = [message, ...references.map(item=>item.reference)].filter(Boolean).join('\n');
+       pendingUploadedImages.push(...references.map(item=>item.filename));
       clipboardImages.forEach(item => URL.revokeObjectURL(item.url));
       clipboardImages.length = 0;
       refreshClipboardPreviews();
@@ -462,7 +534,7 @@
       uploadingClipboardImages = false;
     }
   }
-  addMessage('user',message);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null,remote_session_id:remoteSession?.id||null}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string' && typeof data.verifier_feedback === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
+  const attachments=pendingUploadedImages.splice(0);addMessage('user',message,attachments);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null,remote_session_id:remoteSession?.id||null,attachments}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string' && typeof data.verifier_feedback === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
   $input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=`${Math.min($input.scrollHeight,150)}px`;syncSendButton();});
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   syncSendButton();
