@@ -46,7 +46,7 @@ Git·Python·PowerShell과 최초 다운로드용 인터넷이 필요하다. 저
 python portable/resolve_portable_sources.py
 ```
 
-공식 GitHub 릴리스의 URL과 **배포자가 제공한 SHA-256**을 `portable/portable-sources.json`에 기록한다. llama.cpp Windows Vulkan까지 준비하려면 `--include-llamacpp`를 추가한다. 최신 릴리스에 해당 바이너리가 없으면 최근 릴리스 목록에서 적합한 자산을 찾는다. 파일·배포자 해시가 없거나 기존 출력 파일이 있으면 실패한다.
+공식 GitHub 릴리스의 URL과 **배포자가 제공한 SHA-256**을 `portable/portable-sources.json`에 기록한다. Ollama는 **v0.35.0 이상**인지 배포 태그로 먼저 검사하며, 새 매니페스트 기본 모델 목록에는 `tev1:4b`가 포함된다. 기존 구버전 매니페스트를 지정하면 설치 전에 실패한다. llama.cpp Windows Vulkan까지 준비하려면 `--include-llamacpp`를 추가한다. 최신 릴리스에 해당 바이너리가 없으면 최근 릴리스 목록에서 적합한 자산을 찾는다. 파일·배포자 해시가 없거나 기존 출력 파일이 있으면 실패한다.
 
 직접 고정하려면 `portable-sources.example.json`을 복사해 정확한 HTTPS URL·해시를 채운다. Python은 Windows x64 `python-build-standalone`의 `install_only` 아카이브, uv는 x64 ZIP, Ollama는 독립 CLI ZIP을 사용한다. CPython 임베디드 ZIP이나 `ollama.exe` 단독 복사로 전체 환경이 갖춰진다고 가정하지 않는다.
 
@@ -79,6 +79,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 ```
 
 새 Windows 매니페스트에는 `ornith-1.5:9b`, `lfm3-vl:2b`, `granite4:3b-h`, `tev1:4b`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`, `VERIFIER_DECISION_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 기존 개인 `portable-sources.json`에 `gemma4:e4b`가 남아 있으면 그대로 보존·다운로드하므로 원하지 않는 모델은 해당 매니페스트에서 명시적으로 제거한다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
+
+
+
+### 기존 Portable Ollama만 0.35.0 이상으로 갱신
+
+Portable MAI와 Ollama를 완전히 종료한 뒤, 기존 개인 설정·DB·모델을 보존하면서 **Ollama 런타임만 교체**한다. 원래 `portable/portable-sources.json`은 덮어쓰지 않는다. 기존 매니페스트가 Ollama 구버전을 가리키면 새로운 이름으로 공식 릴리스 URL·배포자 SHA-256이 고정된 매니페스트를 생성한다.
+
+```powershell
+# 외장하드 MAI 프로젝트 루트에서 실행
+python portable/resolve_portable_sources.py --output portable/portable-sources-systemone.json
+
+# 해시로 고정된 새 매니페스트를 사용하여 Ollama 런타임만 명시적으로 업그레이드
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources-systemone.json -UpgradeOllama
+```
+
+`-UpgradeOllama`는 **기존 Ollama 버전과 새 고정 매니페스트가 다를 때만** `portable/portable-runtimes/ollama.before-portable-<날짜>`로 기존 런타임을 보존하고 새 배포본을 설치한다. 다른 Python·uv 런타임이 이미 설치돼 있고 매니페스트 해시가 달라졌다면 해당 런타임은 기존 안전 정책대로 명시적 오류로 처리한다. 그 경우 기존 매니페스트에서 Python·uv 등의 URL·해시를 유지하고 **공식 새 매니페스트의 `ollama` 항목만** 옮긴 별도 매니페스트를 만들어 사용한다. 모델은 `portable/portable-models/ollama`에 별도 보존된다.
+
+최초 설치 또는 전체 모델 자동 준비에는 기존과 같이 `-PullModels`를 사용하면 된다. 기존 시스템을 갱신하면서 Tev1만 복사하려면 아래의 선택적 모델 복사 방법을 사용한다.
 
 Tev 기반 검증을 수행하려면 Portable로 묶인 Ollama가 **0.35.0 이상**이어야 하며, `tev1:4b` 모델을 추가로 받아야 한다. `settings.yaml`의 `VERIFIER_DECISION_BATCH_SIZE`(기본 30, 1~64)를 변경하면 Portable에서도 동일하게 적용한다. 실행할 때 `.env`와 시스템 환경변수에 같은 이름의 값이 남아 있으면 해당 값이 우선한다. 구 버전에서는 `/v1/systemone`이 제공되지 않으므로 모델을 받기만 해도 검증이 동작한다고 가정하지 않는다.
 

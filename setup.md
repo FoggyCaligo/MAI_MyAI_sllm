@@ -74,7 +74,7 @@ cp .env.example .env
 Windows 10/11을 기준으로 진행함.
 
 1. [Python 공식 설치 안내](https://www.python.org/downloads/windows/)에서 Python 3.11 이상(호환되는 64-bit 버전) 설치. 새 터미널에서 `python --version` 확인. Windows 앱 실행 별칭 때문에 `python`이 동작하지 않으면 `py --version` 확인.
-2. [Ollama](https://ollama.com/download/windows)를 Windows에 설치하고 `ollama --version`으로 확인. **0.35.0 이상**이 필요하며 `/v1/systemone` API를 지원해야 함. Ollama 서버가 실행 가능한지 확인.
+2. [Ollama](https://ollama.com/download/windows)를 Windows에 설치하고 `ollama --version`으로 확인. **0.35.0 이상**이 필요하며 `/v1/systemone` API를 지원해야 함. Ollama 서버가 실행 가능한지 확인. 일반 Windows 설치 스크립트(`scripts/install_windows.ps1`)는 기존 Ollama 버전을 확인하고 0.35 미만이면 winget 업그레이드를 요청한 다음 결과를 재검증함. 설치·업그레이드가 실패하면 명시적으로 중단함.
 3. 프로젝트 루트에서 Python 가상환경을 생성·활성화하고 필요한 패키지를 설치함.
 
 ```powershell
@@ -101,7 +101,7 @@ ollama list
 python run_server.py
 ```
 
-자동 설치를 선호하면 `scripts/install_windows.ps1`을 확인한 뒤 사용할 수 있음. 이 스크립트는 시스템 Git·Python·Ollama 설치 및 초기 `.env` 생성을 자동화함. **이미 `.env`가 있으면 초기 계정 재설정을 하지 않음.**
+자동 설치를 선호하면 `scripts/install_windows.ps1`을 확인한 뒤 사용할 수 있음. Portable 설치에서는 `portable/resolve_portable_sources.py`가 신규 매니페스트를 생성할 때 Ollama 0.35 이상을 요구하고 `tev1:4b`를 기본 목록에 넣음. 기존 Portable Ollama만 갱신하려면 `portable/README.md`의 `-UpgradeOllama` 절차를 따를 것. 이 스크립트는 시스템 Git·Python·Ollama 설치 및 초기 `.env` 생성을 자동화함. **이미 `.env`가 있으면 초기 계정 재설정을 하지 않음.**
 
 ### 2-B. 외장 SSD Portable 설치
 
