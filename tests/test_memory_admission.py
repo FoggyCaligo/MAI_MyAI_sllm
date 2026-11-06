@@ -101,12 +101,3 @@ def test_non_recall_turn_is_not_suppressed_even_without_facts() -> None:
         extracted_facts=(),
         extraction_succeeded=True,
     ) is False
-
-
-def test_skill_activation_results_are_not_memory_evidence() -> None:
-    executions = (
-        Execution("skill_activate", True, "activated skill metadata"),
-        Execution("skill_tools", True, "activated native tool metadata"),
-        Execution("file_read", True, "observed file contents"),
-    )
-    assert successful_non_recall_tool_results(executions) == ("observed file contents",)

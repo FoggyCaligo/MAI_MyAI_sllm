@@ -65,10 +65,7 @@ def assistant_turn(*, content="", thinking="", calls=()):
 
 
 def activate(*names: str):
-    return (
-        assistant_turn(calls=(NativeToolCall(name="skill_activate", arguments={"skills": ["general"]}),)),
-        assistant_turn(calls=(NativeToolCall(name="skill_tools", arguments={"tools": list(names)}),)),
-    )
+    return assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": list(names)}),))
 
 
 def _request_tool_names(request) -> list[str]:
@@ -79,16 +76,16 @@ def test_runtime_completes_native_tool_round_trip() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: {"echo": text})
     adapter = FakeAdapter([
-        *activate("echo"),
+        activate("echo"),
         assistant_turn(thinking="Use echo.", calls=(NativeToolCall(name="echo", arguments={"text": "hello"}, index=0),)),
         assistant_turn(content="The tool returned hello.", thinking="Done."),
     ])
     result = run(AgentRuntime(adapter, registry).run_user_message("echo hello"))
     assert result.content == "The tool returned hello."
-    assert result.model_rounds == 4
-    assert result.tool_executions[2].ok is True
-    assert result.tool_executions[2].handler_started is True
-    followup_messages = adapter.requests[3].messages
+    assert result.model_rounds == 3
+    assert result.tool_executions[1].ok is True
+    assert result.tool_executions[1].handler_started is True
+    followup_messages = adapter.requests[2].messages
     assert any(m.get("tool_calls") and m["tool_calls"][0]["function"]["name"] == "echo" for m in followup_messages)
     assert {"role": "tool", "tool_name": "echo", "content": '{"echo":"hello"}'} in followup_messages
 
@@ -97,7 +94,7 @@ def test_runtime_preserves_multiple_tool_calls_in_order() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text.upper())
     adapter = FakeAdapter([
-        *activate("echo"),
+        activate("echo"),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "a"}, index=0), NativeToolCall(name="echo", arguments={"text": "b"}, index=1))),
         assistant_turn(content="done"),
     ])
@@ -111,20 +108,20 @@ def test_tool_failure_is_returned_as_visible_structured_tool_result() -> None:
         raise PermissionError("denied")
     registry.add(name="denied", description="A tool that fails.", input_model=EchoInput, handler=denied)
     adapter = FakeAdapter([
-        *activate("denied"),
+        activate("denied"),
         assistant_turn(calls=(NativeToolCall(name="denied", arguments={"text": "x"}),)),
         assistant_turn(content="I could not complete it."),
     ])
     result = run(AgentRuntime(adapter, registry).run_user_message("try"))
-    payload = json.loads(result.tool_executions[2].content)
+    payload = json.loads(result.tool_executions[1].content)
     assert payload == {"ok": False, "error_type": "PermissionError", "message": "denied"}
-    assert result.tool_executions[2].handler_started is True
+    assert result.tool_executions[1].handler_started is True
 
 
 def test_model_can_continue_beyond_thirty_rounds_when_each_round_makes_progress() -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: text)
-    turns = [*activate("echo"), *[
+    turns = [activate("echo"), *[
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": f"step-{index}"}),))
         for index in range(1, 33)
     ]]
@@ -134,7 +131,7 @@ def test_model_can_continue_beyond_thirty_rounds_when_each_round_makes_progress(
     result = run(AgentRuntime(adapter, registry).run_user_message("long task"))
 
     assert result.content == "completed long task"
-    assert result.model_rounds == 35
+    assert result.model_rounds == 34
     assert len([item for item in result.tool_executions if item.name == "echo"]) == 32
 
 
@@ -154,7 +151,7 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
     )
     failed_commands = [f"attempt-{index}" for index in range(1, 6)]
     adapter = FakeAdapter([
-        *activate("terminal_run"),
+        activate("terminal_run"),
         *[
             assistant_turn(calls=(NativeToolCall(name="terminal_run", arguments={"command": command}),))
             for command in failed_commands
@@ -166,11 +163,11 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
     result = run(AgentRuntime(adapter, registry).run_user_message("run the command"))
 
     assert result.content == "completed after correcting the command"
-    assert result.model_rounds == 9
-    assert len(result.tool_executions) == 8
+    assert result.model_rounds == 8
+    assert len(result.tool_executions) == 7
     assert [execution.ok for execution in result.tool_executions if execution.name == "terminal_run"] == [False, False, False, False, False, True]
-    assert all(execution.handler_started for execution in result.tool_executions if execution.name == "terminal_run")
-    for request_index, failed_command in enumerate(failed_commands, start=3):
+    assert all(execution.handler_started for execution in result.tool_executions)
+    for request_index, failed_command in enumerate(failed_commands, start=2):
         tool_message = adapter.requests[request_index].messages[-1]
         assert tool_message["role"] == "tool"
         assert tool_message["tool_name"] == "terminal_run"
@@ -213,7 +210,7 @@ def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text.", input_model=EchoInput, handler=lambda text: {"echo": text})
     adapter = FakeAdapter([
-        *activate("echo"),
+        activate("echo"),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "hello"}),)),
         assistant_turn(content="done"),
     ])
@@ -222,10 +219,10 @@ def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
     result = run(AgentRuntime(adapter, registry).run_user_message("echo hello"))
 
     assert result.content == "done"
-    assert 'MAI tool call round=3 name=echo args={"text":"hello"}' in caplog.text
-    assert "MAI tool result round=3 name=echo ok=true handler_started=true error_type=-" in caplog.text
-    assert "MAI provisional answer verification round=4" in caplog.text
-    assert "MAI final accepted round=4" in caplog.text
+    assert 'MAI tool call round=2 name=echo args={"text":"hello"}' in caplog.text
+    assert "MAI tool result round=2 name=echo ok=true handler_started=true error_type=-" in caplog.text
+    assert "MAI provisional answer verification round=3" in caplog.text
+    assert "MAI final accepted round=3" in caplog.text
 
 
 def test_unknown_tool_is_not_substituted_with_another_tool() -> None:
@@ -289,13 +286,13 @@ def test_native_tool_call_arguments_are_not_duplicated_in_tool_result() -> None:
     registry.add(name="echo", description="Echo.", input_model=EchoInput,
                  handler=lambda text: {"output": "ok"})
     adapter = FakeAdapter([
-        *activate("echo"),
+        activate("echo"),
         assistant_turn(thinking="check the tool", calls=(
             NativeToolCall(name="echo", arguments={"text": "unique-argument"}),)),
         assistant_turn(content="finished"),
     ])
     run(AgentRuntime(adapter, registry).run_user_message("test"))
-    messages = adapter.requests[3].messages
+    messages = adapter.requests[2].messages
     assistant_calls = [m for m in messages if m.get("tool_calls") and m["tool_calls"][0]["function"]["name"] == "echo"]
     tool_results = [m for m in messages if m.get("role") == "tool" and m.get("tool_name") == "echo"]
     assert len(assistant_calls) == 1
@@ -304,4 +301,56 @@ def test_native_tool_call_arguments_are_not_duplicated_in_tool_result() -> None:
         "text": "unique-argument",
     }
     assert "unique-argument" not in tool_results[0]["content"]
-    assert "thinking" not in assistant_calls[0]
+    assert "check the tool" in assistant_calls[0]["thinking"]
+
+
+def test_tool_round_preserves_original_assistant_message_unchanged():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo", input_model=EchoInput,
+                 handler=lambda text: {"echo": text})
+    call = NativeToolCall("echo", {"text": "observed"}, index=4)
+    original = assistant_turn(
+        content="Original assistant explanation.",
+        thinking="Original model thinking.",
+        calls=(call,),
+    )
+    adapter = FakeAdapter([
+        activate("echo"),
+        original,
+        assistant_turn(content="done"),
+    ])
+    result = run(AgentRuntime(adapter, registry).run_user_message("echo observed"))
+    assert result.content == "done"
+    history = adapter.requests[2].messages
+    assert original.assistant_message in history
+    assert {"role": "tool", "tool_name": "echo", "content": '{"echo":"observed"}'} in history
+
+
+def test_tool_manual_returns_status_only_and_guidance_is_separate_system_context():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo", input_model=EchoInput,
+                 handler=lambda text: text)
+    registry.add_model_context(
+        key="echo_runtime_guidance",
+        context={"instructions": "SCOPED_TOOL_GUIDANCE"},
+        tools=["echo"],
+    )
+    adapter = FakeAdapter([
+        assistant_turn(
+            thinking="THINKING_ON_ACTIVATION",
+            calls=(NativeToolCall("tool_manual", {"tools": ["echo"]}),),
+        ),
+        assistant_turn(content="done"),
+    ])
+    result = run(AgentRuntime(adapter, registry).run_user_message("select echo"))
+    assert result.content == "done"
+    assert json.loads(result.tool_executions[0].content) == {
+        "activated_tools": ["echo"], "available_next_round": True,
+    }
+    request = adapter.requests[1]
+    assert any(m.get("role") == "system" and "SCOPED_TOOL_GUIDANCE" in m["content"]
+               for m in request.messages)
+    assert all("SCOPED_TOOL_GUIDANCE" not in m["content"]
+               for m in request.messages if m.get("role") == "tool")
+    assert any(m.get("role") == "assistant" and m.get("thinking") == "THINKING_ON_ACTIVATION"
+               for m in request.messages)

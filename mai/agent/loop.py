@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
-from ..skills.registry import SkillCatalog, SkillContractError
-from .skill_activation import SkillToolsInput, tool_selection_schema, insert_skill_context
 from .guards import (
     AgentGuard,
     AgentGuardError,
@@ -30,6 +28,81 @@ _TOOL_ARGS_LOG_LIMIT = 800
 _MAX_NUMERIC_VERIFICATION_RETRIES = 2
 _MAX_COVERAGE_VERIFICATION_RETRIES = 2
 _MAX_EVIDENCE_VERIFICATION_RETRIES = 5
+
+
+class ToolManualInput(BaseModel):
+    """Request activation of one or more registered native tools in this run."""
+    model_config = ConfigDict(extra="forbid")
+    tools: list[str] = Field(min_length=1)
+
+
+_TOOL_MANUAL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "tool_manual",
+        "description": (
+            "Activate one or more tools from the tool catalog in the system message. "
+            "The next model round will expose their full native schemas. "
+            "Activated tools stay available for this run; call this tool again to activate more."
+        ),
+        "parameters": ToolManualInput.model_json_schema(),
+    },
+}
+
+
+def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
+    """Build the activation schema from this run's registered tool names."""
+    schema = json.loads(json.dumps(_TOOL_MANUAL_SCHEMA))
+    schema["function"]["parameters"]["properties"]["tools"]["items"] = {
+        "type": "string", "enum": list(available_names),
+    }
+    return schema
+
+
+
+def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, selected_tools: Sequence[str] = ()) -> None:
+    """Expose catalog metadata without exposing unactivated tool schemas."""
+    # Catalog names and categories are structural registry metadata.
+    # Full parameter schemas are available after explicit activation.
+    catalog_position = next(
+        (index for index, message in enumerate(model_history) if message.get("role") != "system"),
+        len(model_history),
+    )
+    model_history.insert(catalog_position, {
+        "role": "system",
+        "content": (
+            "Native tool activation contract: the tool catalog below lists tools "
+            "available in this run, but their parameter schemas are not initially exposed. "
+            "Call tool_manual with exact tool names to activate them. "
+            "On the next round, the activated native tools can be called directly. "
+            "The catalog is a discovery list, not a callable-tool list. On the first round, tool_manual "
+            "is the ONLY callable tool. First activate the tool by name, then read its next-round schema; "
+            "never guess its arguments from its name or prior familiarity. "
+            "Activated tools remain available throughout this run. "
+            "Do not call an unactivated tool or invent its arguments. "
+            "You may activate multiple tools in one tool_manual call. "
+            "Tool catalog (JSON): "
+            + json.dumps([
+                {"name": definition.name, "category": definition.category}
+                for definition in registry.definitions()
+            ], ensure_ascii=False, separators=(",", ":"))
+        ),
+    })
+
+    # Tool-specific instructions are system context, not a tool result.
+    # The selection event remains a status-only tool response.
+    if selected_tools:
+        global_contexts = registry.model_context(names=())
+        selected_contexts = [
+            context for context in registry.model_context(names=selected_tools)
+            if context not in global_contexts
+        ]
+        if selected_contexts:
+            model_history.insert(catalog_position + 1, {
+                "role": "system",
+                "content": "Selected native-tool runtime context (JSON): "
+                           + json.dumps(selected_contexts, ensure_ascii=False, separators=(",", ":")),
+            })
 
 
 class AgentRuntimeError(RuntimeError):
@@ -155,13 +228,12 @@ class AgentLoop:
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        if self.registry.has("skill_tools"):
-            raise ValueError("Agent Skills tool selection name is reserved")
-        catalog = SkillCatalog(self.registry)
+        if self.registry.has("tool_manual"):
+            raise ValueError("tool_manual is reserved for native lazy tool activation")
         activated_tool_names: set[str] = set()
-        skill_schema = tool_selection_schema(self.registry.names())
-        active_tools = (skill_schema,)
-        active_tool_names = frozenset({"skill_tools"})
+        manual_schema = _tool_manual_schema(self.registry.names())
+        active_tools = (manual_schema,)
+        active_tool_names = frozenset({"tool_manual"})
         guard = AgentGuard(self.guard_config)
         round_number = 1
         semantic_verification_retries = 0
@@ -233,9 +305,9 @@ class AgentLoop:
                     name for name in self.registry.names()
                     if name in activated_tool_names
                 ]
-                insert_skill_context(model_history, catalog, activated_order, self.registry)
-                active_tools = (skill_schema, *self.registry.native_schemas(activated_order))
-                active_tool_names = frozenset({"skill_tools", *activated_order})
+                _insert_tool_catalog(model_history, self.registry, activated_order)
+                active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
+                active_tool_names = frozenset({"tool_manual", *activated_order})
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -248,19 +320,7 @@ class AgentLoop:
                 pending_history_compactions.clear()
                 if on_model_turn is not None:
                     on_model_turn(round_number, turn)
-                assistant_message = dict(turn.assistant_message)
-                if turn.tool_calls:
-                    # Preserve prior native call arguments only, not model
-                    # thinking or incidental explanation from tool-call rounds.
-                    assistant_message = {
-                        "role": "assistant", "content": "",
-                        "tool_calls": assistant_message.get("tool_calls", [
-                            {"type": "function", "function": {
-                                "name": call.name, "arguments": dict(call.arguments),
-                            }} for call in turn.tool_calls
-                        ]),
-                    }
-                history.append(assistant_message)
+                history.append(dict(turn.assistant_message))
 
                 if not turn.tool_calls:
                     if not turn.content.strip():
@@ -301,7 +361,6 @@ class AgentLoop:
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content, dict(execution.arguments))
                                 for execution in executions
-                                if execution.name not in {"skill_tools"}
                             ),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
@@ -344,7 +403,7 @@ class AgentLoop:
                                     (execution.name, execution.source_content_fingerprint
                                      or content_fingerprint(execution.content))
                                     for execution in executions
-                                    if execution.ok and execution.name not in {"skill_tools"}
+                                    if execution.ok and execution.name != "tool_manual"
                                 )
                                 unchanged_evidence_rejections = (
                                     unchanged_evidence_rejections + 1
@@ -439,7 +498,6 @@ class AgentLoop:
                             call,
                             available_tool_names=active_tool_names,
                             activated_tool_names=activated_tool_names,
-                            catalog=catalog,
                         )
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
@@ -516,60 +574,88 @@ class AgentLoop:
         *,
         available_tool_names: frozenset[str],
         activated_tool_names: set[str],
-        catalog: SkillCatalog,
     ) -> ToolExecution:
-        activation_names = frozenset({"skill_tools"})
-        if call.name not in available_tool_names and (
-            self.registry.has(call.name) or call.name in activation_names
-        ):
+        if call.name not in available_tool_names and (self.registry.has(call.name) or call.name == "tool_manual"):
             exc = ToolUnavailableInRoundError(
-                f"native tool '{call.name}' is not active in this round; "
-                "select it with skill_tools before using its native schema."
+                f"native tool '{call.name}' is registered but not activated in the current model round; "
+                "activate it with tool_manual before using its schema. This is not a missing capability."
             )
-            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
-            source = _serialize_tool_content(payload)
-            model, compact = self._model_contents(source)
+            payload = {
+                "ok": False, "error_type": type(exc).__name__, "message": str(exc),
+                "required_activation": {"name": "tool_manual", "arguments": {"tools": [call.name]}},
+            }
+            source_content = _serialize_tool_content(payload)
+            model_content, compact_content = self._model_contents(source_content)
             return ToolExecution(
-                name=call.name, arguments=dict(call.arguments), ok=False,
-                content=model, error_type=type(exc).__name__, handler_started=False,
-                source_content_fingerprint=content_fingerprint(source),
-                compact_history_content=compact, source_content=source,
+                name=call.name,
+                arguments=dict(call.arguments),
+                ok=False,
+                content=model_content,
+                error_type=type(exc).__name__,
+                handler_started=False,
+                source_content_fingerprint=content_fingerprint(source_content),
+                compact_history_content=compact_content, source_content=source_content,
             )
         try:
-            if call.name == "skill_tools":
+            if call.name == "tool_manual":
                 try:
-                    request = SkillToolsInput.model_validate(call.arguments, strict=True)
+                    request = ToolManualInput.model_validate(call.arguments, strict=True)
                 except ValidationError as exc:
-                    raise ToolArgumentsError("invalid arguments for skill_tools") from exc
-                # Validate the entire selection before activating any tool.
-                # Ownership comes from the explicit SkillCatalog registration.
-                selected = tuple(dict.fromkeys(request.tools))
-                for name in selected:
-                    catalog.skill_for_tool(name)
-                self.registry.model_context(names=selected)
-                activated_tool_names.update(selected)
-                value = {"activated_tools": request.tools, "available_next_round": True}
+                    raise ToolArgumentsError("invalid arguments for native tool 'tool_manual'") from exc
+                requested = request.tools
+                unknown = sorted(set(requested) - frozenset(self.registry.names()))
+                if unknown:
+                    exc = UnknownToolError(f"tool_manual requested unknown tools: {unknown}")
+                    payload = {
+                        "ok": False,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                        "unknown_tools": unknown,
+                        "available_tools": list(self.registry.names()),
+                    }
+                    source_content = _serialize_tool_content(payload)
+                    model_content, compact_content = self._model_contents(source_content)
+                    return ToolExecution(
+                        name=call.name,
+                        arguments=dict(call.arguments),
+                        ok=False,
+                        content=model_content,
+                        error_type=type(exc).__name__,
+                        handler_started=False,
+                        source_content_fingerprint=content_fingerprint(source_content),
+                        compact_history_content=compact_content, source_content=source_content,
+                    )
+                # Validate all contexts before activating any tool. Do not put
+                # the context instructions into this control tool's response.
+                self.registry.model_context(names=requested)
+                value = {"activated_tools": requested, "available_next_round": True}
+                activated_tool_names.update(requested)
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
-            source = _serialize_tool_content(payload)
-            model, compact = self._model_contents(source)
+            source_content = _serialize_tool_content(payload)
+            model_content, compact_content = self._model_contents(source_content)
             return ToolExecution(
-                name=call.name, arguments=dict(call.arguments), ok=False,
-                content=model, error_type=type(exc).__name__,
-                handler_started=call.name not in activation_names
-                                and not isinstance(exc, (UnknownToolError, ToolArgumentsError)),
-                source_content_fingerprint=content_fingerprint(source),
-                compact_history_content=compact, source_content=source,
+                name=call.name,
+                arguments=dict(call.arguments),
+                ok=False,
+                content=model_content,
+                error_type=type(exc).__name__,
+                handler_started=not isinstance(exc, (UnknownToolError, ToolArgumentsError)),
+                source_content_fingerprint=content_fingerprint(source_content),
+                compact_history_content=compact_content, source_content=source_content,
             )
-        source = _serialize_tool_content(value)
-        model, compact = self._model_contents(source)
+        source_content = _serialize_tool_content(value)
+        model_content, compact_content = self._model_contents(source_content)
         return ToolExecution(
-            name=call.name, arguments=dict(call.arguments), ok=True, content=model,
-            handler_started=call.name not in activation_names,
-            source_content_fingerprint=content_fingerprint(source),
-            compact_history_content=compact, source_content=source,
+            name=call.name,
+            arguments=dict(call.arguments),
+            ok=True,
+            content=model_content,
+            handler_started=True,
+            source_content_fingerprint=content_fingerprint(source_content),
+            compact_history_content=compact_content, source_content=source_content,
         )
 
     def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:

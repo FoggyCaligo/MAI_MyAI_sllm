@@ -35,7 +35,7 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
             assert request.tools == () and request.think is False
             if reviewer_fails:
                 raise RuntimeError("configured reviewer is unavailable")
-            content = json.dumps(["알겠습니다."])
+            content = json.dumps([["알겠습니다."], *[[] for _ in range(11)]])
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 
