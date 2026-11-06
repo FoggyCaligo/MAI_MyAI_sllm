@@ -81,7 +81,7 @@ Claim-level evidence grounding:
 - Reject actual changes to identities, relationships, actions, negation, timing, quantities, plot events, or attribution not established by the source. If equivalence is genuinely unclear, report the specific semantic uncertainty rather than treating nonmatching scripts as missing evidence.
 - Apply these rules to all languages and literary texts as appropriate; do not rely on fixed name dictionaries, keyword matching, or spelling-based heuristics.
 - In conversation_context, prior assistant messages are factual evidence only when verified_prior=true; this marker comes from the session's accepted-message record. Treat such answers as evidence of what was established then, not proof that changing external state is still current. Assistant messages with verified_prior=false are context only. The current user request and conversation_context messages with role=user are user evidence; successful tool results are observed evidence.
-- tool_results_in_execution_order includes both successful and failed calls. endtype=success means the result is observed tool evidence; endtype=error_type:<name> is a failed attempt and its result may establish the failure but must not support a claim of successful execution. Use params to check the actual scope and target of each call. Tool activation bookkeeping (tool_manual) is excluded.
+- tool_results_in_execution_order includes both successful and failed calls. endtype=success means the result is observed tool evidence; endtype=error_type:<name> is a failed attempt and its result may establish the failure but must not support a claim of successful execution. Use params to check the actual scope and target of each call; params=null denotes an older call record with unrecorded arguments, not an empty argument object. Tool activation bookkeeping (tool_manual) is excluded.
 - A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
 - For contradictory persistent-memory Fact nodes about the same subject, property, and time scope, prefer the node with the latest created_at as the authoritative remembered state. A newer retrieved Fact overrides an older conflicting Fact even when the older one appears earlier in search results or a different tool response. Do not use retrieval order, relevance score, occurrence_count, or last_seen_at to decide temporal precedence.
@@ -693,17 +693,17 @@ def _clip_text(text: str, limit: int) -> str:
 
 def _unpack_tool_result(
     result: ToolVerificationResult,
-) -> tuple[str, bool, str | None, str, Mapping[str, Any]]:
+) -> tuple[str, bool, str | None, str, Mapping[str, Any] | None]:
     """Accept explicit versioned tool records; live agent always supplies params."""
     if len(result) == 5:
         name, ok, error_type, content, params = result
     elif len(result) == 4:
         # Older external callers / saved fixtures have no recorded arguments.
         name, ok, error_type, content = result
-        params = {}
+        params = None
     else:
         raise ValueError("tool verification result requires 4 or 5 fields")
-    if not isinstance(params, Mapping):
+    if params is not None and not isinstance(params, Mapping):
         raise TypeError("tool verification params must be a mapping")
     if not isinstance(ok, bool):
         raise TypeError("tool verification ok must be bool")
@@ -748,7 +748,7 @@ def _review_payload(
         tool_evidence.append({
             "index": index,
             "tool": name,
-            "params": dict(params),
+            "params": dict(params) if params is not None else None,
             "endtype": "success" if ok else f"error_type:{error_type}",
             "result": content,
             **_tool_evidence_metadata(name=name, ok=ok),
