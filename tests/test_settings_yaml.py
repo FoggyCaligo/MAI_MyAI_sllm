@@ -44,10 +44,3 @@ def test_verifier_model_setting_has_independent_environment_precedence(tmp_path)
     env = {"VERIFIER_MODEL": "explicit-reviewer"}
     load_settings(path, environ=env)
     assert env == {"MAIN_MODEL": "main", "VERIFIER_MODEL": "explicit-reviewer"}
-
-
-def test_retired_tev_setting_is_not_valid_configuration(tmp_path):
-    path = tmp_path / "settings.yaml"
-    path.write_text("VERIFIER_DECISION_BATCH_SIZE: 30\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="unknown settings.yaml keys"):
-        load_settings(path, environ={})

@@ -92,8 +92,7 @@ def test_repeated_correction_tracks_evidence_content_not_number_of_tool_calls(ne
         def __init__(self):
             self.requests = []
             self.turns = iter([
-                call("skill_activate", {"skills": ["general"]}),
-                call("skill_tools", {"tools": ["observe"]}), call("observe", {}),
+                call("tool_manual", {"tools": ["observe"]}), call("observe", {}),
                 final("unsupported first"), call("observe", {}),
                 final("unsupported second"), final("supported partial answer"),
             ])

@@ -33,30 +33,6 @@ function Ensure-Command {
     }
 }
 
-function Get-OllamaVersion {
-    $output = & ollama --version 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "Ollama version command failed: $output" }
-    $match = [regex]::Match($output, '(?<![0-9])([0-9]+)[.]([0-9]+)[.]([0-9]+)(?![0-9])')
-    if (-not $match.Success) { throw "Could not parse Ollama version: $output" }
-    return [version]::new([int]$match.Groups[1].Value, [int]$match.Groups[2].Value, [int]$match.Groups[3].Value)
-}
-
-function Ensure-Ollama-SystemOne {
-    $minimum = [version]'0.35.0'
-    $current = Get-OllamaVersion
-    if ($current -ge $minimum) { return }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "Ollama $current is too old for System One; update to v0.35.0 or newer and rerun"
-    }
-    Write-Host "Updating Ollama from $current to v0.35.0 or newer..."
-    Run-Command 'winget' @('upgrade', '--id', 'Ollama.Ollama', '--exact', '--accept-source-agreements', '--accept-package-agreements')
-    Refresh-Path
-    $upgraded = Get-OllamaVersion
-    if ($upgraded -lt $minimum) {
-        throw "Ollama upgrade did not meet System One minimum: $upgraded"
-    }
-}
-
 function Read-RequiredValue {
     param([string]$Prompt)
     $value = Read-Host $Prompt
@@ -71,7 +47,6 @@ Write-Host 'MAI first-run setup - existing .env and databases will be preserved.
 Ensure-Command 'git' 'Git.Git'
 Ensure-Command 'python' 'Python.Python.3.12'
 Ensure-Command 'ollama' 'Ollama.Ollama'
-Ensure-Ollama-SystemOne
 
 $parent = Split-Path -Parent $InstallPath
 New-Item -ItemType Directory -Force -Path $parent | Out-Null
@@ -98,22 +73,18 @@ try {
         $source = Get-Content '.env.example' -Raw -Encoding UTF8
         # PyYAML is installed by pip install -e . above.
         # Read model defaults from the same settings.yaml as MAI runtime.
-        $modelDefaultsJson = & $venvPython -c "import json, pathlib; from mai.app.settings import load_settings; s = load_settings(pathlib.Path('settings.yaml'), environ={}); print(json.dumps({'main': s['MAIN_MODEL'], 'vision': s['VISION_MODEL'], 'verifier': s.get('VERIFIER_MODEL'), 'decision': s.get('VERIFIER_DECISION_MODEL')}))"
+        $modelDefaultsJson = & $venvPython -c "import json, pathlib; from mai.app.settings import load_settings; s = load_settings(pathlib.Path('settings.yaml'), environ={}); print(json.dumps({'main': s['MAIN_MODEL'], 'vision': s['VISION_MODEL'], 'verifier': s.get('VERIFIER_MODEL')}))"
         if ($LASTEXITCODE -ne 0) { throw 'Could not read settings.yaml model defaults' }
         $modelDefaults = $modelDefaultsJson | ConvertFrom-Json
         $defaultModel = [string]$modelDefaults.main
         $visionModel = [string]$modelDefaults.vision
         $verifierModel = [string]$modelDefaults.verifier
-        $decisionModel = [string]$modelDefaults.decision
         $model = Read-Host "Main Ollama model [$defaultModel] (press Enter for default)"
         if ([string]::IsNullOrWhiteSpace($model)) { $model = $defaultModel }
         Run-Command 'ollama' @('pull', $model)
         Run-Command 'ollama' @('pull', $visionModel)
         if ($verifierModel -and $verifierModel -ne $model -and $verifierModel -ne $visionModel) {
             Run-Command 'ollama' @('pull', $verifierModel)
-        }
-        if ($decisionModel -and $decisionModel -ne $model -and $decisionModel -ne $visionModel -and $decisionModel -ne $verifierModel) {
-            Run-Command 'ollama' @('pull', $decisionModel)
         }
         $userId = Read-RequiredValue 'Owner login ID'
         $secure = Read-Host 'Owner password' -AsSecureString

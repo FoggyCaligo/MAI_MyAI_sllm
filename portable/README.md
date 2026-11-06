@@ -63,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 | 옵션 | 의미 |
 |---|---|
 | `-CopyLocalModels` | `OLLAMA_MODELS` 또는 사용자 `.ollama/models` 전체 복사 |
-| `-Models "ornith-1.5:9b,lfm3-vl:2b,granite4:3b-h"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
+| `-Models "ornith-1.5:9b,gemma4:e4b,granite4:3b-h"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
 | `-PullModels` | 매니페스트 목록과 현재 메인·비전·verifier 모델을 중복 없이 다운로드 |
 | `-InstallChromium` | Portable Playwright Chromium 설치 |
 | `-PreserveAndReinstallExisting` | 설치 영수증이 없는 기존 런타임을 별도 보존한 뒤 재설치 |
@@ -78,25 +78,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -PullModels -InstallChromium
 ```
 
-새 Windows 매니페스트에는 `ornith-1.5:9b`, `lfm3-vl:2b`, `granite4:3b-h`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 기존 개인 `portable-sources.json`에 `gemma4:e4b`가 남아 있으면 그대로 보존·다운로드하므로 원하지 않는 모델은 해당 매니페스트에서 명시적으로 제거한다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
-
-
-
-### 기존 Portable Ollama만 명시적으로 업그레이드
-
-Portable MAI와 Ollama를 완전히 종료한 뒤, 기존 개인 설정·DB·모델을 보존하면서 **Ollama 런타임만 교체**한다. 원래 `portable/portable-sources.json`은 덮어쓰지 않는다. 기존 매니페스트가 Ollama 구버전을 가리키면 새로운 이름으로 공식 릴리스 URL·배포자 SHA-256이 고정된 매니페스트를 생성한다.
-
-```powershell
-# 외장하드 MAI 프로젝트 루트에서 실행
-python portable/resolve_portable_sources.py --output portable/portable-sources-upgrade.json
-
-# 해시로 고정된 새 매니페스트를 사용하여 Ollama 런타임만 명시적으로 업그레이드
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources-upgrade.json -UpgradeOllama
-```
-
-`-UpgradeOllama`는 **기존 Ollama 버전과 새 고정 매니페스트가 다를 때만** `portable/portable-runtimes/ollama.before-portable-<날짜>`로 기존 런타임을 보존하고 새 배포본을 설치한다. 다른 Python·uv 런타임이 이미 설치돼 있고 매니페스트 해시가 달라졌다면 해당 런타임은 기존 안전 정책대로 명시적 오류로 처리한다. 그 경우 기존 매니페스트에서 Python·uv 등의 URL·해시를 유지하고 **공식 새 매니페스트의 `ollama` 항목만** 옮긴 별도 매니페스트를 만들어 사용한다. 모델은 `portable/portable-models/ollama`에 별도 보존된다.
-
-최초 설치 또는 전체 모델 자동 준비에는 기존과 같이 `-PullModels`를 사용하면 된다. 모델 하나만 복사하려면 아래의 Verifier 모델 선택 복사 방법을 사용한다.
+새 Windows 매니페스트에는 `ornith-1.5:9b`, `gemma4:e4b`, `granite4:3b-h`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
 
 ### 기존 외장하드에 Verifier 모델만 추가 또는 변경
 
@@ -115,7 +97,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Verifier 모델 복사 실패' }
 `--include-llamacpp`는 목록 생성기 옵션이고 PowerShell 설치기 옵션이 아니다. GGUF 모델은 별도로 준비한다. 설치 준비는 실제 GPU·음성·새 PC의 완전 오프라인 실행을 보장하지 않는다.
 
 
-기본 `MAI_ANSWER_QUALITY_REVIEW=false`에서는 추가 품질 검토 호출을 생략한다. `true`로 설정하면 사실 검증 통과 후 별도 품질 검토가 실행되므로 응답 시간이 증가할 수 있다. 기존 `.env` 또는 환경변수의 값이 `settings.yaml`보다 우선한다.
+기본 `MAI_ANSWER_QUALITY_REVIEW=true`에서는 사실 검증 통과 후 추가 품질 검토 호출이 실행되므로 응답 시간이 증가할 수 있다. 기존 `.env` 또는 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 새 기본값보다 우선한다.
 
 ## Windows 실행
 

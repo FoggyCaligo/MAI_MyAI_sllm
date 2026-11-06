@@ -9,4 +9,4 @@ def test_final_reviewer_checks_temporal_consistency() -> None:
 
 def test_final_reviewer_does_not_exempt_stable_general_knowledge() -> None:
     assert "Stable general knowledge" not in FINAL_REVIEW_PROMPT
-    assert "datetime_local_iso" in FINAL_REVIEW_PROMPT
+    assert "authoritative_current_time" in FINAL_REVIEW_PROMPT
