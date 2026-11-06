@@ -63,7 +63,9 @@ def insert_skill_context(history: list[Message], catalog: SkillCatalog,
         "instructions": skill.instructions,
         "available_tool_names": list(skill.tools),
     } for skill in selected]
-    contexts = registry.model_context(names=selected_tools) if selected_tools else ()
+    global_contexts = registry.model_context(names=())
+    contexts = tuple(context for context in registry.model_context(names=selected_tools)
+                     if context not in global_contexts) if selected_tools else ()
     text = (
         "Agent Skills catalog: descriptions only. Call skill_activate to load "
         "selected skill instructions. Then call skill_tools to select individual "
