@@ -519,88 +519,69 @@ class AgentLoop:
         *,
         available_tool_names: frozenset[str],
         activated_tool_names: set[str],
+        activated_skill_names: set[str],
+        catalog: SkillCatalog,
     ) -> ToolExecution:
-        if call.name not in available_tool_names and (self.registry.has(call.name) or call.name == "tool_manual"):
+        activation_names = frozenset({"skill_activate", "skill_tools"})
+        if call.name not in available_tool_names and (
+            self.registry.has(call.name) or call.name in activation_names
+        ):
             exc = ToolUnavailableInRoundError(
-                f"native tool '{call.name}' is registered but not activated in the current model round; "
-                "activate it with tool_manual before using its schema. This is not a missing capability."
+                f"native tool '{call.name}' is not active in this round; "
+                "activate its skill and then select its native schema."
             )
-            payload = {
-                "ok": False, "error_type": type(exc).__name__, "message": str(exc),
-                "required_activation": {"name": "tool_manual", "arguments": {"tools": [call.name]}},
-            }
-            source_content = _serialize_tool_content(payload)
-            model_content, compact_content = self._model_contents(source_content)
+            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+            source = _serialize_tool_content(payload)
+            model, compact = self._model_contents(source)
             return ToolExecution(
-                name=call.name,
-                arguments=dict(call.arguments),
-                ok=False,
-                content=model_content,
-                error_type=type(exc).__name__,
-                handler_started=False,
-                source_content_fingerprint=content_fingerprint(source_content),
-                compact_history_content=compact_content, source_content=source_content,
+                name=call.name, arguments=dict(call.arguments), ok=False,
+                content=model, error_type=type(exc).__name__, handler_started=False,
+                source_content_fingerprint=content_fingerprint(source),
+                compact_history_content=compact, source_content=source,
             )
         try:
-            if call.name == "tool_manual":
+            if call.name == "skill_activate":
                 try:
-                    request = ToolManualInput.model_validate(call.arguments, strict=True)
+                    request = SkillActivateInput.model_validate(call.arguments, strict=True)
                 except ValidationError as exc:
-                    raise ToolArgumentsError("invalid arguments for native tool 'tool_manual'") from exc
-                requested = request.tools
-                unknown = sorted(set(requested) - frozenset(self.registry.names()))
+                    raise ToolArgumentsError("invalid arguments for skill_activate") from exc
+                selected = [catalog.get(name) for name in request.skills]
+                activated_skill_names.update(skill.name for skill in selected)
+                value = {"activated_skills": request.skills, "available_next_round": True}
+            elif call.name == "skill_tools":
+                try:
+                    request = SkillToolsInput.model_validate(call.arguments, strict=True)
+                except ValidationError as exc:
+                    raise ToolArgumentsError("invalid arguments for skill_tools") from exc
+                permitted = frozenset(catalog.available_tools(activated_skill_names))
+                unknown = sorted(set(request.tools).difference(permitted))
                 if unknown:
-                    exc = UnknownToolError(f"tool_manual requested unknown tools: {unknown}")
-                    payload = {
-                        "ok": False,
-                        "error_type": type(exc).__name__,
-                        "message": str(exc),
-                        "unknown_tools": unknown,
-                        "available_tools": list(self.registry.names()),
-                    }
-                    source_content = _serialize_tool_content(payload)
-                    model_content, compact_content = self._model_contents(source_content)
-                    return ToolExecution(
-                        name=call.name,
-                        arguments=dict(call.arguments),
-                        ok=False,
-                        content=model_content,
-                        error_type=type(exc).__name__,
-                        handler_started=False,
-                        source_content_fingerprint=content_fingerprint(source_content),
-                        compact_history_content=compact_content, source_content=source_content,
-                    )
-                contexts = self.registry.model_context(names=requested)
-                value = {"activated_tools": requested, "available_next_round": True}
-                if contexts:
-                    value["tool_contexts"] = contexts
-                activated_tool_names.update(requested)
+                    raise SkillContractError(f"tools not granted by active skills: {unknown}")
+                # Validate the complete selected context before enabling any tool.
+                self.registry.model_context(names=request.tools)
+                activated_tool_names.update(request.tools)
+                value = {"activated_tools": request.tools, "available_next_round": True}
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
             payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
-            source_content = _serialize_tool_content(payload)
-            model_content, compact_content = self._model_contents(source_content)
+            source = _serialize_tool_content(payload)
+            model, compact = self._model_contents(source)
             return ToolExecution(
-                name=call.name,
-                arguments=dict(call.arguments),
-                ok=False,
-                content=model_content,
-                error_type=type(exc).__name__,
-                handler_started=not isinstance(exc, (UnknownToolError, ToolArgumentsError)),
-                source_content_fingerprint=content_fingerprint(source_content),
-                compact_history_content=compact_content, source_content=source_content,
+                name=call.name, arguments=dict(call.arguments), ok=False,
+                content=model, error_type=type(exc).__name__,
+                handler_started=call.name not in activation_names
+                                and not isinstance(exc, (UnknownToolError, ToolArgumentsError)),
+                source_content_fingerprint=content_fingerprint(source),
+                compact_history_content=compact, source_content=source,
             )
-        source_content = _serialize_tool_content(value)
-        model_content, compact_content = self._model_contents(source_content)
+        source = _serialize_tool_content(value)
+        model, compact = self._model_contents(source)
         return ToolExecution(
-            name=call.name,
-            arguments=dict(call.arguments),
-            ok=True,
-            content=model_content,
-            handler_started=True,
-            source_content_fingerprint=content_fingerprint(source_content),
-            compact_history_content=compact_content, source_content=source_content,
+            name=call.name, arguments=dict(call.arguments), ok=True, content=model,
+            handler_started=call.name not in activation_names,
+            source_content_fingerprint=content_fingerprint(source),
+            compact_history_content=compact, source_content=source,
         )
 
     def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:
