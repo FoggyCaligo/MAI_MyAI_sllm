@@ -111,6 +111,31 @@ def test_semantically_equivalent_reworded_claim_reaches_tev():
     assert judge.calls[0][0] == answer
 
 
+def test_tev_checks_semantic_fidelity_without_literal_matching():
+    question = SystemOneJudge._questions(["회사가 어제 출시했다."], 0)["c0"]
+    assert "same meaning" in question["instructions"]
+    assert "orig_answer" in question["instructions"]
+    assert "wording need not be identical" in question["instructions"]
+    assert "changes its meaning" in question["criteria"]["insufficient"]
+
+
+def test_extractor_uses_requested_nine_part_korean_prompt():
+    reviewer = GraniteExtractor(["그 회사는 어제 신제품을 출시했다."])
+    judge = FakeJudge(["supported"])
+    run(DecisionGroundingVerifier(
+        reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
+    ).verify(
+        candidate="회사가 어제 신제품을 출시했습니다.",
+        messages=[{"role": "user", "content": "출시?"}], tool_results=(),
+    ))
+    system_prompt = reviewer.requests[0].messages[0]["content"]
+    assert "# 검증 대상 추출" in system_prompt
+    assert "9. **자료 해석:**" in system_prompt
+    assert "검증이나 진위 판정은 수행하지 않는다." in system_prompt
+    assert "출력은 지정된 JSON 배열만 사용한다." in system_prompt
+    assert reviewer.requests[0].response_format == ClaimSpans.model_json_schema()
+
+
 def test_systemone_30_item_batches_share_state_and_preserve_order():
     seen = []
     async def respond(request):
