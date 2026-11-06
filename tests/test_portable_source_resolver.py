@@ -23,75 +23,33 @@ def test_llamacpp_skips_non_binary_latest_release():
     assert "/download/b12345/" in result["url"]
 
 
-def test_ollama_release_rejects_versions_older_than_system_one():
-    import pytest
-    from portable.resolve_portable_sources import ollama_release_version
-    assert ollama_release_version({"tag_name": "v0.35.0"}) == (0, 35, 0)
-    assert ollama_release_version({"tag_name": "v0.36.1"}) == (0, 36, 1)
-    with pytest.raises(ValueError, match="older than"):
-        ollama_release_version({"tag_name": "v0.34.9"})
-    with pytest.raises(ValueError, match="version tag"):
-        ollama_release_version({"tag_name": "latest"})
+def test_portable_rollback_drops_tev_requirement_but_retains_safe_upgrade():
+    from pathlib import Path
+
+    installer = Path("portable/prepare-portable.ps1").read_text(encoding="utf-8-sig")
+    resolver = Path("portable/resolve_portable_sources.py").read_text(encoding="utf-8")
+    readme = Path("portable/README.md").read_text(encoding="utf-8")
+    assert "[switch]$UpgradeOllama" in installer
+    assert "([bool]$UpgradeOllama)" in installer
+    assert "/v1/systemone" not in installer
+    assert "0.35.0" not in installer
+    assert "tev1:4b" not in resolver
+    assert "tev1:4b" not in readme
+    assert "VERIFIER_DECISION_MODEL" not in readme
+    assert "0.35.0" not in readme
 
 
-def test_resolver_rejects_old_official_ollama_release():
-    import pytest
-    from portable.resolve_portable_sources import resolve_one
-    payload = {
-        "id": 17,
-        "tag_name": "v0.34.9",
-        "assets": [{
-            "name": "ollama-windows-amd64.zip",
-            "digest": "sha256:" + "a" * 64,
-            "browser_download_url":
-                "https://github.com/ollama/ollama/releases/download/v0.34.9/ollama-windows-amd64.zip",
-        }],
-    }
-    with patch("portable.resolve_portable_sources.github_json", return_value=payload):
-        with pytest.raises(ValueError, match="older than"):
-            resolve_one("ollama", "ollama", r"ollama-windows-amd64\.zip")
-
-
-def test_new_portable_manifest_includes_tev1(tmp_path):
+def test_manifest_default_models_are_the_pre_tev_set(tmp_path):
     import json
     import sys
     from portable.resolve_portable_sources import main
 
-    def resolve(*args):
-        return {"url": "https://example.test/release.zip", "sha256": "a" * 64}
-
-    output = tmp_path / "portable-sources.json"
-    with patch("portable.resolve_portable_sources.resolve_one", side_effect=resolve):
+    output = tmp_path / "sources.json"
+    with patch("portable.resolve_portable_sources.resolve_one", return_value={
+        "url": "https://example.test/pinned.zip", "sha256": "a" * 64,
+    }):
         with patch.object(sys, "argv", ["resolve_portable_sources.py", "--output", str(output)]):
             main()
-    manifest = json.loads(output.read_text(encoding="utf-8"))
-    assert "tev1:4b" in manifest["models"]
-
-
-def test_portable_installer_has_explicit_systemone_version_contract():
-    from pathlib import Path
-
-    script = Path("portable/prepare-portable.ps1").read_text(encoding="utf-8-sig")
-    assert "[switch]$UpgradeOllama" in script
-    assert "0.35.0" in script
-    assert "Install-VerifiedArchive $config.ollama" in script
-    assert "([bool]$UpgradeOllama)" in script
-    assert "Preserved previous Ollama runtime" in script
-
-
-def test_resolver_accepts_official_systemone_release():
-    from portable.resolve_portable_sources import resolve_one
-    payload = {
-        "id": 18,
-        "tag_name": "v0.35.0",
-        "assets": [{
-            "name": "ollama-windows-amd64.zip",
-            "digest": "sha256:" + "b" * 64,
-            "browser_download_url":
-                "https://github.com/ollama/ollama/releases/download/v0.35.0/ollama-windows-amd64.zip",
-        }],
-    }
-    with patch("portable.resolve_portable_sources.github_json", return_value=payload):
-        resolved = resolve_one("ollama", "ollama", r"ollama-windows-amd64\.zip")
-    assert resolved["sha256"] == "b" * 64
-    assert "/v0.35.0/" in resolved["url"]
+    assert json.loads(output.read_text(encoding="utf-8"))["models"] == [
+        "ornith-1.5:9b", "lfm3-vl:2b", "granite4:3b-h",
+    ]

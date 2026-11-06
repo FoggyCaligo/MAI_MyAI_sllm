@@ -16,7 +16,7 @@ from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver, VerificationAuditObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
-from ..agent.decision_verifier import DecisionGroundingVerifier, SystemOneJudge
+from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig, ollama_generation_limit
 from ..llm.ollama import OllamaAdapter
 from ..llm.llamacpp import LlamaCppAdapter
@@ -273,21 +273,6 @@ class MAIRuntime:
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
         verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
-        decision_model = os.environ.get("VERIFIER_DECISION_MODEL")
-        decision_timeout = os.environ.get("VERIFIER_DECISION_TIMEOUT_SECONDS")
-        if not decision_model or not decision_model.strip():
-            raise ValueError("VERIFIER_DECISION_MODEL must be configured in settings.yaml or environment")
-        if decision_timeout is None:
-            raise ValueError("VERIFIER_DECISION_TIMEOUT_SECONDS must be configured")
-        decision_batch_size = os.environ.get("VERIFIER_DECISION_BATCH_SIZE")
-        if decision_batch_size is None:
-            raise ValueError("VERIFIER_DECISION_BATCH_SIZE must be configured")
-        decision_judge = SystemOneJudge(
-            host=self.ollama_host,
-            model=decision_model,
-            timeout_seconds=float(decision_timeout),
-            batch_size=int(decision_batch_size),
-        )
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -307,9 +292,8 @@ class MAIRuntime:
                 max_identical_failures=max_identical_failures,
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
-            final_verifier=DecisionGroundingVerifier(
+            final_verifier=FinalGroundingVerifier(
                 reviewer_adapter=verifier_adapter,
-                judge=decision_judge,
                 verified_prior_conversation=prior_messages,
             ),
             max_semantic_verification_retries=2,

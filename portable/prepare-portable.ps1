@@ -125,22 +125,6 @@ if ($CopyLocalModels -and $PullModels) {
 }
 $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
-# The System One API needed by Tev1 was introduced in Ollama 0.35.0.
-# Require a versioned official release URL. The archive is still SHA-256-verified
-# independently by Install-VerifiedArchive before installation.
-$ollamaUrl = Get-Required $config.ollama 'url'
-$versionMatch = [regex]::Match($ollamaUrl, '/releases/download/v?([0-9]+)[.]([0-9]+)[.]([0-9]+)/ollama-windows-amd64[.]zip$')
-if (-not $versionMatch.Success -or -not $ollamaUrl.StartsWith('https://github.com/ollama/ollama/')) {
-    throw 'Ollama portable manifest must use an official versioned Windows x64 release archive'
-}
-$ollamaVersion = [version]::new(
-    [int]$versionMatch.Groups[1].Value,
-    [int]$versionMatch.Groups[2].Value,
-    [int]$versionMatch.Groups[3].Value
-)
-if ($ollamaVersion -lt [version]'0.35.0') {
-    throw "Ollama $ollamaVersion does not support /v1/systemone. Require version 0.35.0 or newer."
-}
 $runtimes = Join-Path $root 'portable/portable-runtimes'
 New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
 
