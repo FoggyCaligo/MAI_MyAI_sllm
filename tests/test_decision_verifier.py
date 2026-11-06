@@ -83,16 +83,32 @@ def test_rejected_claim_reenters_existing_feedback_contract():
     assert answer in result.feedback_message()
 
 
-@pytest.mark.parametrize("extracted", [["invented claim"], [""]])
-def test_extract_must_be_verbatim(extracted):
-    with pytest.raises(DecisionVerifierContractError):
+def test_empty_extracted_sentence_is_contract_error():
+    with pytest.raises(DecisionVerifierContractError, match="nonempty"):
         run(DecisionGroundingVerifier(
-            reviewer_adapter=GraniteExtractor(extracted),
+            reviewer_adapter=GraniteExtractor([""]),
             judge=FakeJudge(["supported"]), quality_review_enabled=False,
         ).verify(
             candidate="Original claim", messages=[{"role": "user", "content": "Check"}],
             tool_results=(),
         ))
+
+
+def test_semantically_equivalent_reworded_claim_reaches_tev():
+    answer = "회사의 신제품 출시일은 어제입니다."
+    paraphrase = "그 회사는 어제 신제품을 출시했다."
+    judge = FakeJudge(["supported"])
+    reviewer = GraniteExtractor([paraphrase])
+    result = run(DecisionGroundingVerifier(
+        reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
+    ).verify(
+        candidate=answer, messages=[{"role": "user", "content": "출시일?"}],
+        tool_results=(),
+    ))
+    assert result.ok
+    assert len(reviewer.requests) == 1
+    assert judge.calls[0][2] == (paraphrase,)
+    assert judge.calls[0][0] == answer
 
 
 def test_systemone_30_item_batches_share_state_and_preserve_order():
