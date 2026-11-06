@@ -15,7 +15,9 @@ class Extractor:
 
     async def chat(self, request):
         self.request = request
-        value = json.dumps(self.spans, ensure_ascii=False)
+        # One category array per rule; Markdown tests use the first category.
+        grouped = [list(self.spans), *[[] for _ in range(11)]]
+        value = json.dumps(grouped, ensure_ascii=False)
         return ModelTurn(value, "", (), {"role": "assistant", "content": value})
 
 
