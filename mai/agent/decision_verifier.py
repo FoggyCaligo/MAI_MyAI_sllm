@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from ..llm.models import ChatRequest
+from .verification_text import canonical_verification_text
 from .verification import (
     ClaimReview,
     FinalGroundingVerifier,
@@ -175,8 +176,9 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
             candidate=candidate, messages=messages, tool_results=tool_results,
             verified_prior_conversation=self.verified_prior_conversation,
         )
+        canonical_candidate = canonical_verification_text(candidate)
         extractor_input = {
-            "candidate_final": candidate,
+            "candidate_final": canonical_candidate,
             "conversation_context": payload["conversation_context"],
         }
         extraction = await self._request_structured_review(
@@ -191,7 +193,7 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
         )
         claims = tuple(extraction.root)
         for claim in claims:
-            if not claim.strip() or claim not in candidate:
+            if not claim.strip() or claim not in canonical_candidate:
                 raise DecisionVerifierContractError(
                     "Granite must extract nonempty verbatim spans of the provisional answer"
                 )
@@ -213,7 +215,7 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
             "tool_results_in_execution_order": payload["tool_results_in_execution_order"],
         }
         decisions = await self.judge.judge(
-            candidate=candidate, source=source, claims=claims,
+            candidate=canonical_candidate, source=source, claims=claims,
             on_audit_event=on_audit_event,
         )
         claim_reviews = tuple(
