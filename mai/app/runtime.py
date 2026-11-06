@@ -272,9 +272,7 @@ class MAIRuntime:
 
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
-        if self.verifier_model is None:
-            raise ValueError("VERIFIER_MODEL must be configured for Granite claim extraction")
-        verifier_adapter = self._adapter_for(self.verifier_model)
+        verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
         decision_judge = SystemOneJudge(
             host=self.ollama_host,
             model=os.environ.get("VERIFIER_DECISION_MODEL", "tev1:4b"),
