@@ -44,3 +44,11 @@ def test_verifier_model_setting_has_independent_environment_precedence(tmp_path)
     env = {"VERIFIER_MODEL": "explicit-reviewer"}
     load_settings(path, environ=env)
     assert env == {"MAIN_MODEL": "main", "VERIFIER_MODEL": "explicit-reviewer"}
+
+
+def test_decision_batch_setting_preserves_explicit_environment_priority(tmp_path):
+    path = tmp_path / "settings.yaml"
+    path.write_text("VERIFIER_DECISION_BATCH_SIZE: 30\n", encoding="utf-8")
+    env = {"VERIFIER_DECISION_BATCH_SIZE": "12"}
+    assert load_settings(path, environ=env)["VERIFIER_DECISION_BATCH_SIZE"] == "30"
+    assert env["VERIFIER_DECISION_BATCH_SIZE"] == "12"
