@@ -23,6 +23,7 @@ from .verification import (
     _QUALITY_REVIEW_SYSTEM,
     _QualityReviewPayload,
     _review_payload,
+    _extract_material_numeric_facts,
 )
 
 BATCH_SIZE = 30
@@ -176,6 +177,15 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
                 raise DecisionVerifierContractError(
                     "Granite must extract nonempty verbatim spans of the provisional answer"
                 )
+        extracted_numbers = set().union(*(
+            _extract_material_numeric_facts(claim) for claim in claims
+        ))
+        omitted_numbers = set(flagged_numeric_facts).difference(extracted_numbers)
+        if omitted_numbers:
+            raise DecisionVerifierContractError(
+                "Granite failed to extract candidate numeric/date assertions: "
+                + ", ".join(sorted(omitted_numbers))
+            )
 
         # No evidence is duplicated in the Granite input. System One receives the
         # complete observed source once per batch (not once per question).
