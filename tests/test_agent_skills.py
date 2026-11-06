@@ -1,10 +1,9 @@
-"""Skill selection, native schema isolation and clean prior tool results."""
+"""Direct native-tool selection, delayed Skill guidance, and schema isolation."""
 from __future__ import annotations
 
 import asyncio
 import json
 from copy import deepcopy
-from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
@@ -46,16 +45,15 @@ def tools(request):
     return [item["function"]["name"] for item in request.tools]
 
 
-def test_skills_are_staged_and_prior_tool_results_contain_no_instructions():
+def test_direct_selection_reveals_only_selected_skill_and_tool_schema():
     registry = ToolRegistry()
-    registry.add(name="probe", description="SECRET_PROBE_DESCRIPTION",
+    registry.add(name="probe", description="PROBE_DESCRIPTION\nLong details hidden.",
                  input_model=TextInput, handler=lambda value: {"observation": value},
                  category="general", metadata={"model_context": {"secret": "SCOPED_PROBE_CONTEXT"}})
-    registry.add(name="other", description="SECRET_OTHER_DESCRIPTION",
+    registry.add(name="other", description="OTHER_DESCRIPTION",
                  handler=lambda: "other", category="time",
                  metadata={"model_context": {"secret": "UNSELECTED_CONTEXT"}})
     adapter = FakeAdapter([
-        turn(call=NativeToolCall("skill_activate", {"skills": ["general"]})),
         turn(call=NativeToolCall("skill_tools", {"tools": ["probe"]})),
         turn(content="DONOTRETAIN", thinking="INTERNAL_REASONING",
              call=NativeToolCall("probe", {"value": "actual"})),
@@ -63,62 +61,82 @@ def test_skills_are_staged_and_prior_tool_results_contain_no_instructions():
     ])
     result = asyncio.run(AgentRuntime(adapter, registry).run_user_message("inspect"))
     assert result.content == "done"
-    assert tools(adapter.requests[0]) == ["skill_activate"]
-    assert tools(adapter.requests[1]) == ["skill_activate", "skill_tools"]
-    assert tools(adapter.requests[2]) == ["skill_activate", "skill_tools", "probe"]
-    assert tools(adapter.requests[3]) == ["skill_activate", "skill_tools", "probe"]
-    for request in adapter.requests:
-        payload = json.dumps(request.messages, ensure_ascii=False)
-        assert "SECRET_OTHER_DESCRIPTION" not in payload
-        assert "UNSELECTED_CONTEXT" not in payload
-        assert "SECRET_PROBE_DESCRIPTION" not in payload
-    first = json.dumps(adapter.requests[0].messages)
-    second = json.dumps(adapter.requests[1].messages)
-    assert "SCOPED_PROBE_CONTEXT" not in first + second
-    assert "SCOPED_PROBE_CONTEXT" in json.dumps(adapter.requests[2].messages)
+    assert tools(adapter.requests[0]) == ["skill_tools"]
+    assert tools(adapter.requests[1]) == ["skill_tools", "probe"]
+    assert tools(adapter.requests[2]) == ["skill_tools", "probe"]
+    first = json.dumps(adapter.requests[0].messages, ensure_ascii=False)
+    selected = json.dumps(adapter.requests[1].messages, ensure_ascii=False)
+    assert "PROBE_DESCRIPTION" in first
+    assert "OTHER_DESCRIPTION" in first
+    assert "Long details hidden." not in first
+    assert "SCOPED_PROBE_CONTEXT" not in first
+    assert "SCOPED_PROBE_CONTEXT" in selected
+    assert "Use the exact activated native tool schema." in selected
+    assert "Use the exact activated native tool schema." not in first
+    assert "Use the actual clock result." not in selected
+    assert "UNSELECTED_CONTEXT" not in selected
+    assert "Long details hidden." not in selected
     assert "value" not in json.dumps(adapter.requests[0].tools)
-    assert "value" not in json.dumps(adapter.requests[1].tools)
-    assert "INTERNAL_REASONING" not in json.dumps(adapter.requests[3].messages)
-    assert "DONOTRETAIN" not in json.dumps(adapter.requests[3].messages)
-    prior = [m for m in adapter.requests[3].messages if m.get("role") == "tool"]
+    assert "value" in json.dumps(adapter.requests[1].tools)
+    assert "skill_activate" not in str(adapter.requests)
+    assert "INTERNAL_REASONING" not in json.dumps(adapter.requests[2].messages)
+    assert "DONOTRETAIN" not in json.dumps(adapter.requests[2].messages)
+    prior = [m for m in adapter.requests[2].messages if m.get("role") == "tool"]
     assert json.loads(prior[0]["content"]) == {
-        "activated_skills": ["general"], "available_next_round": True,
-    }
-    assert json.loads(prior[1]["content"]) == {
         "activated_tools": ["probe"], "available_next_round": True,
     }
-    assert prior[2]["content"] == '{"observation":"actual"}'
+    assert prior[1]["content"] == '{"observation":"actual"}'
     assert "SCOPED_PROBE_CONTEXT" not in str(prior)
 
 
-def test_tools_not_in_activated_skill_cannot_be_selected():
+def test_tool_can_be_selected_without_first_selecting_skill():
     registry = ToolRegistry()
     registry.add(name="probe", description="probe", handler=lambda: "okay", category="general")
     registry.add(name="other", description="other", handler=lambda: "should-not-run", category="time")
     adapter = FakeAdapter([
-        turn(call=NativeToolCall("skill_activate", {"skills": ["general"]})),
         turn(call=NativeToolCall("skill_tools", {"tools": ["other"]})),
+        turn(call=NativeToolCall("other", {})),
+        turn(content="done"),
+    ])
+    result = asyncio.run(AgentRuntime(adapter, registry).run_user_message("check"))
+    assert [execution.ok for execution in result.tool_executions] == [True, True]
+    assert tools(adapter.requests[1]) == ["skill_tools", "other"]
+
+
+def test_unknown_tool_selection_fails_without_partial_activation():
+    registry = ToolRegistry()
+    registry.add(name="probe", description="probe", handler=lambda: "okay", category="general")
+    adapter = FakeAdapter([
+        turn(call=NativeToolCall("skill_tools", {"tools": ["probe", "invented"]})),
         turn(content="not available"),
     ])
     result = asyncio.run(AgentRuntime(adapter, registry).run_user_message("check"))
-    assert result.tool_executions[1].error_type == "SkillContractError"
-    assert tools(adapter.requests[2]) == ["skill_activate", "skill_tools"]
+    assert result.tool_executions[0].error_type == "SkillContractError"
+    assert tools(adapter.requests[1]) == ["skill_tools"]
 
 
-def test_missing_skill_binding_fails_explicitly(tmp_path):
+def test_calling_native_tool_before_selection_fails_explicitly():
+    registry = ToolRegistry()
+    registry.add(name="probe", description="probe", handler=lambda: "should-not-run")
+    adapter = FakeAdapter([
+        turn(call=NativeToolCall("probe", {})),
+        turn(content="not available"),
+    ])
+    result = asyncio.run(AgentRuntime(adapter, registry).run_user_message("check"))
+    assert result.tool_executions[0].error_type == "ToolUnavailableInRoundError"
+    assert tools(adapter.requests[1]) == ["skill_tools"]
+
+
+def test_missing_skill_binding_fails_explicitly():
     registry = ToolRegistry()
     registry.add(name="test", description="test", handler=lambda: "ok", category="unknown")
     with __import__("pytest").raises(SkillContractError, match="without skills"):
         SkillCatalog(registry)
 
 
-def test_skill_activate_rejects_unknown_name_without_partial_activation():
+def test_rejected_legacy_activation_is_never_offered():
     registry = ToolRegistry()
     registry.add(name="probe", description="probe", handler=lambda: "ok")
-    adapter = FakeAdapter([
-        turn(call=NativeToolCall("skill_activate", {"skills": ["general", "invented"]})),
-        turn(content="not available"),
-    ])
-    result = asyncio.run(AgentRuntime(adapter, registry).run_user_message("check"))
-    assert result.tool_executions[0].error_type == "SkillContractError"
-    assert tools(adapter.requests[1]) == ["skill_activate"]
+    adapter = FakeAdapter([turn(content="done")])
+    asyncio.run(AgentRuntime(adapter, registry).run_user_message("check"))
+    assert tools(adapter.requests[0]) == ["skill_tools"]
