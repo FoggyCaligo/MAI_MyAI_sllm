@@ -61,7 +61,7 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
             }
         }
     }
-    $archive = Join-Path $cache $archiveName
+    $archive = Join-Path $cache "$($hash.ToLowerInvariant())-$archiveName"
     if (-not (Test-Path -LiteralPath $archive)) {
         $temporary = "$archive.incomplete"
         try {
