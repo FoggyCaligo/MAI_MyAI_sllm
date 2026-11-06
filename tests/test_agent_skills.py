@@ -71,6 +71,9 @@ def test_direct_selection_reveals_only_selected_skill_and_tool_schema():
     assert "Long details hidden." not in first
     assert "SCOPED_PROBE_CONTEXT" not in first
     assert "SCOPED_PROBE_CONTEXT" in selected
+    assert "Use the exact activated native tool schema." in selected
+    assert "Use the exact activated native tool schema." not in first
+    assert "Use the actual clock result." not in selected
     assert "UNSELECTED_CONTEXT" not in selected
     assert "Long details hidden." not in selected
     assert "value" not in json.dumps(adapter.requests[0].tools)
