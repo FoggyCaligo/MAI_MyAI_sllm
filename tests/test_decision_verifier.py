@@ -16,9 +16,21 @@ from mai.agent.decision_verifier import (
 from mai.llm.models import ModelTurn
 
 
+def categories(*, facts=(), numbers=(), claims=(), times=(), relationships=(),
+               scopes=(), aggregations=(), outcomes=(), interpretations=(),
+               causality=(), definitions=(), entities=()):
+    return [list(items) for items in (
+        facts, numbers, claims, times, relationships, scopes,
+        aggregations, outcomes, interpretations, causality, definitions, entities,
+    )]
+
+
 class GraniteExtractor:
     def __init__(self, spans):
-        self.spans = spans
+        # Tests supplying a list of strings put them in the first category;
+        # tests of the structure explicitly supply twelve category arrays.
+        self.spans = (categories(facts=spans) if not spans or isinstance(spans[0], str)
+                      else spans)
         self.requests = []
 
     async def chat(self, request):
@@ -119,21 +131,57 @@ def test_tev_checks_semantic_fidelity_without_literal_matching():
     assert "changes its meaning" in question["criteria"]["insufficient"]
 
 
-def test_extractor_uses_requested_nine_part_korean_prompt():
-    reviewer = GraniteExtractor(["그 회사는 어제 신제품을 출시했다."])
-    judge = FakeJudge(["supported"])
+def test_extractor_uses_requested_twelve_category_korean_prompt():
+    reviewer = GraniteExtractor(categories(
+        facts=["그 회사는 신제품을 출시했다."],
+        times=["신제품 출시일은 어제다."],
+        definitions=["신제품은 새로운 모델을 뜻한다."],
+    ))
+    judge = FakeJudge(["supported", "supported", "supported"])
     run(DecisionGroundingVerifier(
         reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
     ).verify(
-        candidate="회사가 어제 신제품을 출시했습니다.",
+        candidate="그 회사는 신제품을 출시했다. 신제품 출시일은 어제다. 신제품은 새로운 모델을 뜻한다.",
         messages=[{"role": "user", "content": "출시?"}], tool_results=(),
     ))
-    system_prompt = reviewer.requests[0].messages[0]["content"]
-    assert "# 검증 대상 추출" in system_prompt
-    assert "9. **자료 해석:**" in system_prompt
-    assert "검증이나 진위 판정은 수행하지 않는다." in system_prompt
-    assert "출력은 지정된 JSON 배열만 사용한다." in system_prompt
+    prompt = reviewer.requests[0].messages[0]["content"]
+    assert "# 기본 임무" in prompt
+    assert "12. 대상 :" in prompt
+    assert "요소가 하나도 없는게 확실하지 않으면 빈 배열을 내놓지 마라." in prompt
     assert reviewer.requests[0].response_format == ClaimSpans.model_json_schema()
+    assert len(reviewer.spans) == 12
+    assert judge.calls[0][2] == (
+        "그 회사는 신제품을 출시했다.",
+        "신제품 출시일은 어제다.",
+        "신제품은 새로운 모델을 뜻한다.",
+    )
+
+
+def test_every_category_must_be_a_string_list():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        ClaimSpans.model_validate([[]] * 11)
+    with pytest.raises(ValidationError):
+        ClaimSpans.model_validate([[]] * 13)
+    with pytest.raises(ValidationError):
+        ClaimSpans.model_validate([["valid"]] + [7] + [[]] * 10)
+    with pytest.raises(ValidationError):
+        ClaimSpans.model_validate([["valid"]] + [[{"claim": "not a string"}]] + [[]] * 10)
+
+
+def test_all_twelve_categories_reach_tev_in_order():
+    expected = [f"claim-{number}" for number in range(1, 13)]
+    reviewer = GraniteExtractor([[claim] for claim in expected])
+    judge = FakeJudge(["supported"] * 12)
+    result = run(DecisionGroundingVerifier(
+        reviewer_adapter=reviewer, judge=judge, quality_review_enabled=False,
+    ).verify(
+        candidate=" ".join(expected),
+        messages=[{"role": "user", "content": "Check all"}],
+        tool_results=(),
+    ))
+    assert result.ok
+    assert judge.calls[0][2] == tuple(expected)
 
 
 def test_systemone_30_item_batches_share_state_and_preserve_order():
