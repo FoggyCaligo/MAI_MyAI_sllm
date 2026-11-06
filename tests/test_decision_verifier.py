@@ -16,6 +16,13 @@ from mai.agent.decision_verifier import (
 from mai.llm.models import ModelTurn
 
 
+def categorized(spans, **overrides):
+    values = {name: [] for name in ClaimSpans.model_fields}
+    values["factual_claims"] = list(spans)
+    values.update(overrides)
+    return values
+
+
 class GraniteExtractor:
     def __init__(self, spans):
         self.spans = spans
@@ -23,7 +30,7 @@ class GraniteExtractor:
 
     async def chat(self, request):
         self.requests.append(request)
-        content = json.dumps(self.spans, ensure_ascii=False)
+        content = json.dumps(categorized(self.spans), ensure_ascii=False)
         return ModelTurn(content, "", (), {"role": "assistant", "content": content})
 
 
