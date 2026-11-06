@@ -83,7 +83,7 @@ def test_legacy_delivery_keeps_small_bodies_and_gives_verifier_original_visible_
 
     class Verifier:
         async def verify(self, **kwargs):
-            assert kwargs["tool_results"][2][3] == observed[2].content
+            assert kwargs["tool_results"][0][3] == observed[2].content
             return FinalVerificationResult(ok=True)
 
     result = run(AgentRuntime(adapter, registry, tool_result_store=store,
