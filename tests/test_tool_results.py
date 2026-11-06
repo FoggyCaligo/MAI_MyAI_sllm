@@ -103,12 +103,16 @@ def test_removed_evidence_selection_is_rejected_without_activating_tools():
     registry = ToolRegistry()
     registry.add(name="echo", description="Echo text", input_model=EchoInput, handler=lambda text: text)
     activated = set()
+    activated_skills = set()
     execution = run(AgentLoop(None, registry)._execute_tool(
-        NativeToolCall("tool_manual", {"tools": ["echo"], "retain_evidence": []}),
-        available_tool_names=frozenset({"tool_manual"}), activated_tool_names=activated,
+        NativeToolCall("skill_activate", {"skills": ["general"], "retain_evidence": []}),
+        available_tool_names=frozenset({"skill_activate"}),
+        activated_tool_names=activated,
+        activated_skill_names=activated_skills,
+        catalog=SkillCatalog(registry),
     ))
     assert not execution.ok and execution.error_type == "ToolArgumentsError"
-    assert activated == set()
+    assert activated == set() and activated_skills == set()
 
 
 def test_large_result_is_bounded_and_can_be_read_by_range() -> None:
