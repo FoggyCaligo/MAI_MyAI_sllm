@@ -530,7 +530,7 @@ def test_image_comma_grouped_number_grounds_plain_integer() -> None:
     assert result.ok is True
 
 
-def test_failed_tool_outputs_are_omitted_from_review_evidence() -> None:
+def test_failed_tool_outputs_are_recorded_but_not_positive_evidence() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
 
@@ -547,10 +547,14 @@ def test_failed_tool_outputs_are_omitted_from_review_evidence() -> None:
 
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["tool_results_in_execution_order"] == []
+    assert payload["tool_results_in_execution_order"] == [{
+        "index": 0, "tool": "terminal_run", "params": {},
+        "endtype": "error_type:TerminalCommandError",
+        "result": "collected 138 items; 136 passed, 2 failed",
+    }]
 
 
-def test_review_payload_keeps_all_successful_results_and_omits_failures() -> None:
+def test_review_payload_keeps_successes_and_failures_in_order() -> None:
     reviewer = ReviewerAdapter([("supported", "aligned", ())])
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     tool_results = tuple(
@@ -572,9 +576,11 @@ def test_review_payload_keeps_all_successful_results_and_omits_failures() -> Non
     assert result.ok is True
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
     evidence = payload["tool_results_in_execution_order"]
-    assert len(evidence) == 25
-    assert [item["index"] for item in evidence] == list(range(0, 50, 2))
-    assert all(item["ok"] is True for item in evidence)
+    assert len(evidence) == 50
+    assert [item["index"] for item in evidence] == list(range(50))
+    assert all(item["endtype"] == ("success" if index % 2 == 0 else "error_type:WebSearchError")
+               for index, item in enumerate(evidence))
+    assert all(item["params"] == {} for item in evidence)
 
 
 def test_web_search_payload_marks_snippets_as_observed_search_evidence() -> None:
@@ -939,7 +945,8 @@ def test_reviewer_receives_authoritative_clock(monkeypatch) -> None:
     ))
 
     payload = json.loads(reviewer.requests[0].messages[1]["content"])
-    assert payload["authoritative_current_time"] == clock
+    assert payload["datetime_local_iso"] == clock["local_iso"]
+    assert "authoritative_current_time" not in payload
 
 
 def test_valid_rejection_is_not_retried_as_infrastructure_failure() -> None:
