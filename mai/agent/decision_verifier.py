@@ -48,9 +48,11 @@ class ClaimSpans(RootModel[list[str]]):
 
 
 class _ChoiceAnswer(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
     type: Literal["choice"]
     choice: Literal["supported", "contradicted", "insufficient"]
+    probabilities: dict[Literal["supported", "contradicted", "insufficient"], float]
+    confidence: float = Field(ge=0, le=1)
 
 
 class _ChoiceResponse(BaseModel):
