@@ -91,7 +91,7 @@ Portable MAI와 Ollama를 완전히 종료한 뒤, 기존 개인 설정·DB·모
 python portable/resolve_portable_sources.py --output portable/portable-sources-upgrade.json
 
 # 해시로 고정된 새 매니페스트를 사용하여 Ollama 런타임만 명시적으로 업그레이드
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources-systemone.json -UpgradeOllama
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources-upgrade.json -UpgradeOllama
 ```
 
 `-UpgradeOllama`는 **기존 Ollama 버전과 새 고정 매니페스트가 다를 때만** `portable/portable-runtimes/ollama.before-portable-<날짜>`로 기존 런타임을 보존하고 새 배포본을 설치한다. 다른 Python·uv 런타임이 이미 설치돼 있고 매니페스트 해시가 달라졌다면 해당 런타임은 기존 안전 정책대로 명시적 오류로 처리한다. 그 경우 기존 매니페스트에서 Python·uv 등의 URL·해시를 유지하고 **공식 새 매니페스트의 `ollama` 항목만** 옮긴 별도 매니페스트를 만들어 사용한다. 모델은 `portable/portable-models/ollama`에 별도 보존된다.
