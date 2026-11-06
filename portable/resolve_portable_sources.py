@@ -72,7 +72,7 @@ def ollama_release_version(release: dict[str, object]) -> tuple[int, int, int]:
     tag = release.get("tag_name")
     if not isinstance(tag, str):
         raise ValueError("Ollama release must specify a version tag")
-    match = re.fullmatch(r"v?(\\d+)\\.(\\d+)\\.(\\d+)", tag)
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag)
     if match is None:
         raise ValueError(f"Unsupported Ollama release version tag: {tag}")
     version = tuple(map(int, match.groups()))
