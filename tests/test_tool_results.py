@@ -72,7 +72,8 @@ def test_legacy_delivery_keeps_small_bodies_and_gives_verifier_original_visible_
     registry.add(name="echo", description="Echo text", input_model=EchoInput, handler=lambda text: text)
     store = ToolResultStore(max_inline_chars=1024)
     adapter = FakeAdapter([
-        assistant_turn(calls=[NativeToolCall("tool_manual", {"tools": ["echo"]})]),
+        assistant_turn(calls=[NativeToolCall("skill_activate", {"skills": ["general"]})]),
+        assistant_turn(calls=[NativeToolCall("skill_tools", {"tools": ["echo"]})]),
         assistant_turn(calls=[NativeToolCall("echo", {"text": source})]),
         assistant_turn(calls=[NativeToolCall("echo", {"text": "second observation"})]),
         assistant_turn(content="The observations are available."),
@@ -177,7 +178,8 @@ def test_agent_observer_and_next_round_receive_same_bounded_scope() -> None:
     store = ToolResultStore(max_inline_chars=1024)
     register_tool_result_tools(registry, store)
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="skill_activate", arguments={"skills": ["general"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="skill_tools", arguments={"tools": ["echo"]}),)),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": source}),)),
         assistant_turn(content="done"),
     ])
@@ -211,7 +213,8 @@ def test_large_tool_page_is_compacted_before_later_model_rounds() -> None:
     store = ToolResultStore(max_inline_chars=1024)
     register_tool_result_tools(registry, store)
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="skill_activate", arguments={"skills": ["general"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="skill_tools", arguments={"tools": ["echo"]}),)),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": source}),)),
         assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "small"}),)),
         assistant_turn(content="done"),
