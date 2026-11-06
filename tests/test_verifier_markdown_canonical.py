@@ -9,15 +9,15 @@ def test_markdown_emphasis_keeps_plain_text_readable():
 
 
 def test_table_cells_retain_column_relationships():
-    answer = "| 단어 | 철자 | 발음 |\\n|---|---|---|\\n| **Ark** | A-R-K | 아크 |\\n| **Arc** | A-R-C | 아크 |"
+    answer = "| 단어 | 철자 | 발음 |\n|---|---|---|\n| **Ark** | A-R-K | 아크 |\n| **Arc** | A-R-C | 아크 |"
     assert canonical_verification_text(answer) == (
-        "단어: Ark; 철자: A-R-K; 발음: 아크\\n"
+        "단어: Ark; 철자: A-R-K; 발음: 아크\n"
         "단어: Arc; 철자: A-R-C; 발음: 아크"
     )
 
 
 def test_code_and_escaped_pipe():
-    answer = "설명: **굵게**\\n\\n| 항목 | 값 |\\n|---|---|\\n| a\\\\|b | x |\\n\\n~~~text\\nraw **code**\\n~~~"
+    answer = "설명: **굵게**\n\n| 항목 | 값 |\n|---|---|\n| a\\|b | x |\n\n~~~text\nraw **code**\n~~~"
     canonical = canonical_verification_text(answer)
     assert "설명: 굵게" in canonical
     assert "항목: a|b; 값: x" in canonical
