@@ -19,7 +19,6 @@
   "models": [
     "ornith-1.5:9b",
     "lfm3-vl:2b",
-    "granite4:3b-h",
-    "tev1:4b"
+    "granite4:3b-h"
   ]
 }

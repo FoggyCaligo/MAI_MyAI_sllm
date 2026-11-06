@@ -6,7 +6,6 @@ param(
     [switch]$InstallChromium,
     [switch]$PullModels,
     [switch]$PreserveAndReinstallExisting,
-    [switch]$UpgradeOllama,
     [string]$Models
 )
 $ErrorActionPreference = 'Stop'
@@ -22,7 +21,7 @@ function Get-Required([object]$obj, [string]$property) {
     }
     return [string]$value.Value
 }
-function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$expectedExecutable, [bool]$allowUpgrade = $false) {
+function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$expectedExecutable) {
     $url = Get-Required $entry 'url'
     $hash = Get-Required $entry 'sha256'
     if ($url -notmatch '^https://') { throw "Only HTTPS release URLs are allowed: $url" }
@@ -38,7 +37,7 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
             throw "Existing runtime lacks expected executable: $binary"
         }
         if (-not (Test-Path -LiteralPath $recordPath -PathType Leaf)) {
-            if (-not ($PreserveAndReinstallExisting -or $allowUpgrade)) {
+            if (-not $PreserveAndReinstallExisting) {
                 throw "Existing runtime has no installation receipt: $destination. Rerun with -PreserveAndReinstallExisting to preserve it and reinstall."
             }
             $backup = "$destination.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
@@ -48,20 +47,13 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
         } else {
             $record = Get-Content -LiteralPath $recordPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($record.url -cne $url -or $record.sha256 -ine $hash -or $record.executable -cne $expectedExecutable) {
-                if (-not $allowUpgrade) {
-                    throw "Existing runtime does not match pinned manifest: $destination. Upgrade Ollama explicitly with -UpgradeOllama after stopping the server."
-                }
-                $backup = "$destination.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
-                if (Test-Path -LiteralPath $backup) { throw "Preservation destination already exists: $backup" }
-                Move-Item -LiteralPath $destination -Destination $backup -ErrorAction Stop
-                Write-Host "Preserved previous Ollama runtime in $backup"
-            } else {
-                Write-Host "Reusing verified runtime: $destination"
-                return
+                throw "Existing runtime does not match pinned manifest: $destination"
             }
+            Write-Host "Reusing verified runtime: $destination"
+            return
         }
     }
-    $archive = Join-Path $cache "$($hash.ToLowerInvariant())-$archiveName"
+    $archive = Join-Path $cache $archiveName
     if (-not (Test-Path -LiteralPath $archive)) {
         $temporary = "$archive.incomplete"
         try {
@@ -125,28 +117,11 @@ if ($CopyLocalModels -and $PullModels) {
 }
 $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
-# The System One API needed by Tev1 was introduced in Ollama 0.35.0.
-# Require a versioned official release URL. The archive is still SHA-256-verified
-# independently by Install-VerifiedArchive before installation.
-$ollamaUrl = Get-Required $config.ollama 'url'
-$versionMatch = [regex]::Match($ollamaUrl, '/releases/download/v?([0-9]+)[.]([0-9]+)[.]([0-9]+)/ollama-windows-amd64[.]zip$')
-if (-not $versionMatch.Success -or -not $ollamaUrl.StartsWith('https://github.com/ollama/ollama/')) {
-    throw 'Ollama portable manifest must use an official versioned Windows x64 release archive'
-}
-$ollamaVersion = [version]::new(
-    [int]$versionMatch.Groups[1].Value,
-    [int]$versionMatch.Groups[2].Value,
-    [int]$versionMatch.Groups[3].Value
-)
-if ($ollamaVersion -lt [version]'0.35.0') {
-    throw "Ollama $ollamaVersion does not support /v1/systemone. Require version 0.35.0 or newer."
-}
 $runtimes = Join-Path $root 'portable/portable-runtimes'
 New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
-
 Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
 Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
-Install-VerifiedArchive $config.ollama (Join-Path $runtimes 'ollama') 'ollama.exe' ([bool]$UpgradeOllama)
+Install-VerifiedArchive $config.ollama (Join-Path $runtimes 'ollama') 'ollama.exe'
 if ($null -ne $config.llamacpp) {
     Install-VerifiedArchive $config.llamacpp (Join-Path $runtimes 'llamacpp') 'llama-server.exe'
 }

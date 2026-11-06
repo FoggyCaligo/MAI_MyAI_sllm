@@ -1,60 +1,60 @@
-"""Agent Skills catalog is metadata-only until explicit selection."""
+"""Preserve the tool catalog contract following the PR #364 AgentLoop refactor."""
 from __future__ import annotations
 
 import json
 
-from mai.agent.skill_activation import activation_schema, insert_skill_context, tool_selection_schema
-from mai.skills.registry import SkillCatalog
+from mai.agent.loop import _insert_tool_catalog, _tool_manual_schema
 from mai.tools.registry import ToolRegistry
 
 
-def _registry():
+def _registry() -> ToolRegistry:
     registry = ToolRegistry()
-    registry.add(name="read_document", description="DO_NOT_EXPOSE_DOCUMENT_SCHEMA",
-                 category="document", handler=lambda: {"ok": True})
-    registry.add(name="inspect_file", description="DO_NOT_EXPOSE_FILE_SCHEMA",
-                 category="filesystem", handler=lambda: {"ok": True})
+    registry.add(name="read_document", description="Reads a document", category="document",
+                 handler=lambda: {"ok": True})
+    registry.add(name="inspect_file", description="Inspects a file", category="file",
+                 handler=lambda: {"ok": True})
     return registry
 
 
-def test_catalog_is_inserted_after_system_messages():
+def test_catalog_is_inserted_after_system_messages_before_user_messages() -> None:
     registry = _registry()
-    catalog = SkillCatalog(registry)
     history = [
         {"role": "system", "content": "Owner policy"},
         {"role": "system", "content": "Runtime context"},
         {"role": "user", "content": "Read this file."},
     ]
     original = [dict(item) for item in history]
-    insert_skill_context(history, catalog, set(), (), registry)
+    _insert_tool_catalog(history, registry)
+
     assert history[:2] == original[:2]
     assert history[3:] == original[2:]
-    msg = history[2]["content"]
-    assert "skill_activate" in msg
-    assert "DO_NOT_EXPOSE_DOCUMENT_SCHEMA" not in msg
-    assert "DO_NOT_EXPOSE_FILE_SCHEMA" not in msg
-    serialized = msg.split("Skill catalog (JSON): ", 1)[1]
-    items = json.loads(serialized)
-    assert {"name": "document", "description": catalog.get("document").description} in items
-    assert {"name": "filesystem", "description": catalog.get("filesystem").description} in items
+    catalog_message = history[2]
+    assert catalog_message["role"] == "system"
+    assert "Call tool_manual" in catalog_message["content"]
+    assert "If tools are unnecessary, answer normally." not in catalog_message["content"]
+    serialized = catalog_message["content"].split("Tool catalog (JSON): ", 1)[1]
+    assert json.loads(serialized) == [
+        {"name": "read_document", "category": "document"},
+        {"name": "inspect_file", "category": "file"},
+    ]
 
 
-def test_skill_activation_does_not_expose_unselected_tool_contracts():
+def test_catalog_never_exposes_unactivated_tool_parameter_schemas() -> None:
     registry = _registry()
-    catalog = SkillCatalog(registry)
     history = [{"role": "user", "content": "Inspect."}]
-    insert_skill_context(history, catalog, {"filesystem"}, (), registry)
-    text = history[0]["content"]
-    assert "inspect_file" in text and "read_document" not in text
-    assert "DO_NOT_EXPOSE_DOCUMENT_SCHEMA" not in text
-    assert "DO_NOT_EXPOSE_FILE_SCHEMA" not in text
-    assert "parameters" not in text
-    assert "filesystem" in activation_schema(catalog.names())["function"]["parameters"]["properties"]["skills"]["items"]["enum"]
-    assert tool_selection_schema(catalog.available_tools({"filesystem"}))["function"]["parameters"]["properties"]["tools"]["items"]["enum"] == ["inspect_file"]
+    _insert_tool_catalog(history, registry)
+
+    catalog = history[0]["content"]
+    assert "parameters" not in catalog
+    assert "properties" not in catalog
+    assert registry.names() == ("read_document", "inspect_file")
+    activation = _tool_manual_schema(registry.names())
+    assert activation["function"]["parameters"]["properties"]["tools"]["items"]["enum"] == [
+        "read_document", "inspect_file"
+    ]
 
 
-def test_catalog_with_no_prior_system_message_precedes_user():
-    registry = _registry()
+def test_catalog_with_no_prior_system_message_precedes_user() -> None:
     history = [{"role": "user", "content": "Hello"}]
-    insert_skill_context(history, SkillCatalog(registry), set(), (), registry)
+    _insert_tool_catalog(history, _registry())
     assert [item["role"] for item in history] == ["system", "user"]
