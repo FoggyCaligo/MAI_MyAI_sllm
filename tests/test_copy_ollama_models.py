@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from portable.copy_ollama_models import copy_models
+from portable.copy_ollama_models import copy_models, model_manifest_path
 
 
 def add_model(root: Path, name: str, blob: bytes) -> Path:
@@ -12,8 +12,7 @@ def add_model(root: Path, name: str, blob: bytes) -> Path:
     source_blob = root / "blobs" / f"sha256-{digest}"
     source_blob.parent.mkdir(parents=True, exist_ok=True)
     source_blob.write_bytes(blob)
-    name_part, tag = name.split(":")
-    manifest = root / "manifests" / "registry.ollama.ai" / "library" / name_part / tag
+    manifest = model_manifest_path(root, name)
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(json.dumps({
         "schemaVersion": 2,
@@ -34,6 +33,15 @@ def test_selected_models_only_and_idempotent(tmp_path: Path):
     copy_models(src, dst, names)
     assert len(list((dst / "blobs").iterdir())) == 2
     assert not (dst / "manifests" / "registry.ollama.ai" / "library" / "unused").exists()
+
+
+def test_namespaced_ollama_model_copies_manifest_and_blobs(tmp_path: Path):
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    model = "LiquidAI/lfm2.5-2.6b:q4_k_m"
+    add_model(src, model, b"lfm-model")
+    copy_models(src, dst, [model])
+    assert model_manifest_path(dst, model).is_file()
+    assert model_manifest_path(dst, model).read_bytes() == model_manifest_path(src, model).read_bytes()
 
 
 def test_missing_source_blob_does_not_publish_manifest(tmp_path: Path):
@@ -57,7 +65,7 @@ def test_corrupt_existing_blob_fails_without_overwrite(tmp_path: Path):
     assert bad.read_bytes() == b"bad!"
 
 
-@pytest.mark.parametrize("model", ["../bad:tag", "model", "name:../bad", "a:b:c"])
+@pytest.mark.parametrize("model", ["../bad:tag", "model", "name:../bad", "a:b:c", "a/b/c:tag"])
 def test_reject_unsafe_names(tmp_path: Path, model: str):
     with pytest.raises(ValueError):
         copy_models(tmp_path / "src", tmp_path / "dst", [model])
