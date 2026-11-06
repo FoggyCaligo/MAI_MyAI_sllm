@@ -44,6 +44,7 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
 
     monkeypatch.setattr(runtime_module.OllamaAdapter, "chat", chat)
     async def judge(self, *, candidate, source, claims, on_audit_event=None):
+        assert self.batch_size == 30
         assert candidate == "알겠습니다."
         assert "conversation_context" in source
         return tuple("supported" for _ in claims)
