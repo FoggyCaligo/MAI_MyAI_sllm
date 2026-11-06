@@ -1,7 +1,7 @@
 """Reproduce MAI's image_analyze request against a local Ollama instance.
 
 Run from the repository root:
-    python scripts/check_image_analyze.py --path "C:\\path\\to\\image.png" --model gemma4:e4b
+    python -m scripts.check_image_analyze --path "C:\\path\\to\\image.png" --model gemma4:e4b
 
 This uses ImageAnalyzer itself, not a parallel HTTP implementation. The output
 includes input byte count and SHA-256 for correlating the exact image file
