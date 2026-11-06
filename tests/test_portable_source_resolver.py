@@ -49,7 +49,7 @@ def test_resolver_rejects_old_official_ollama_release():
     }
     with patch("portable.resolve_portable_sources.github_json", return_value=payload):
         with pytest.raises(ValueError, match="older than"):
-            resolve_one("ollama", "ollama", r"ollama-windows-amd64\\.zip")
+            resolve_one("ollama", "ollama", r"ollama-windows-amd64\.zip")
 
 
 def test_new_portable_manifest_includes_tev1(tmp_path):
@@ -77,3 +77,21 @@ def test_portable_installer_has_explicit_systemone_version_contract():
     assert "Install-VerifiedArchive $config.ollama" in script
     assert "([bool]$UpgradeOllama)" in script
     assert "Preserved previous Ollama runtime" in script
+
+
+def test_resolver_accepts_official_systemone_release():
+    from portable.resolve_portable_sources import resolve_one
+    payload = {
+        "id": 18,
+        "tag_name": "v0.35.0",
+        "assets": [{
+            "name": "ollama-windows-amd64.zip",
+            "digest": "sha256:" + "b" * 64,
+            "browser_download_url":
+                "https://github.com/ollama/ollama/releases/download/v0.35.0/ollama-windows-amd64.zip",
+        }],
+    }
+    with patch("portable.resolve_portable_sources.github_json", return_value=payload):
+        resolved = resolve_one("ollama", "ollama", r"ollama-windows-amd64\.zip")
+    assert resolved["sha256"] == "b" * 64
+    assert "/v0.35.0/" in resolved["url"]
