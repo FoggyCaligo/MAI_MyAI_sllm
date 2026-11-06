@@ -16,7 +16,7 @@ from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver, VerificationAuditObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
-from ..agent.verification import FinalGroundingVerifier
+from ..agent.decision_verifier import DecisionGroundingVerifier, SystemOneJudge
 from ..llm.models import ModelConfig, ollama_generation_limit
 from ..llm.ollama import OllamaAdapter
 from ..llm.llamacpp import LlamaCppAdapter
@@ -272,7 +272,14 @@ class MAIRuntime:
 
         selected_model = self.model if model is None else model.strip()
         adapter = self._adapter_for(selected_model)
-        verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
+        if self.verifier_model is None:
+            raise ValueError("VERIFIER_MODEL must be configured for Granite claim extraction")
+        verifier_adapter = self._adapter_for(self.verifier_model)
+        decision_judge = SystemOneJudge(
+            host=self.ollama_host,
+            model=os.environ.get("VERIFIER_DECISION_MODEL", "tev1:4b"),
+            timeout_seconds=float(os.environ.get("VERIFIER_DECISION_TIMEOUT_SECONDS", "120")),
+        )
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -292,8 +299,9 @@ class MAIRuntime:
                 max_identical_failures=max_identical_failures,
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
-            final_verifier=FinalGroundingVerifier(
+            final_verifier=DecisionGroundingVerifier(
                 reviewer_adapter=verifier_adapter,
+                judge=decision_judge,
                 verified_prior_conversation=prior_messages,
             ),
             max_semantic_verification_retries=2,
