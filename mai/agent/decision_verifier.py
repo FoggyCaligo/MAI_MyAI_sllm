@@ -11,7 +11,7 @@ import json
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..llm.models import ChatRequest
 from .verification_text import canonical_verification_text
@@ -31,20 +31,37 @@ MAX_SYSTEM_ONE_REQUEST_BYTES = 64 * 1024
 
 _EXTRACT_SYSTEM = """Extract EVERY independently checkable assertion from candidate_final.
 Use conversation_context only to resolve references and omissions of subject.
-Return only a JSON array of exact verbatim spans from candidate_final.
+Return a JSON object with all twelve required claim-category arrays.
 Include factual statements, numbers, quantities, dates, periods, identity, scope,
-comparisons, causal claims, calculations, translations, interpretations, and
-assertions of actions attempted, failed, or completed.
-Split separate assertions into separate array elements whenever they can be
-judged independently. Preserve negation, units, time scopes and conditions.
-Do not assess truth, use outside knowledge, paraphrase, supply evidence, or
-invent assertions. A greeting or a message with no factual assertions may
-produce an empty array. Do not omit a claim merely because it is uncertain.
+comparisons, causal claims, calculations, translations, interpretations, definitions,
+and assertions of actions attempted, failed, or completed.
+Extract exact verbatim spans from candidate_final into every applicable category.
+A claim may appear in multiple categories. Split independent assertions into
+separate elements when independently checkable. Preserve negation, units,
+time scopes, and conditions.
+Do not assess truth, use outside knowledge, paraphrase, supply evidence, or invent
+assertions. Categories without matches must contain empty arrays.
+A greeting or a message with no factual assertions may have all arrays empty.
+Do not omit a claim merely because it is uncertain.
 """
 
 
-class ClaimSpans(RootModel[list[str]]):
-    """An ordered list, not a verdict-producing Granite response."""
+class ClaimSpans(BaseModel):
+    """Required category-specific lists; membership is intentionally nonexclusive."""
+
+    model_config = ConfigDict(extra="forbid")
+    factual_claims: list[str] = Field(description="Factual assertions about events, states, or the world.")
+    numerical_claims: list[str] = Field(description="Numbers, amounts, quantities, rates, and measurements.")
+    temporal_claims: list[str] = Field(description="Dates, times, periods, sequence, and temporal claims.")
+    identity_claims: list[str] = Field(description="Identity, roles, memberships, properties, and relationships.")
+    scope_claims: list[str] = Field(description="Scope, applicability, conditions, limitations, and exceptions.")
+    comparative_claims: list[str] = Field(description="Comparisons between objects, states, or periods.")
+    causal_claims: list[str] = Field(description="Cause-and-effect relationships.")
+    calculation_claims: list[str] = Field(description="Calculations and arithmetic results.")
+    translation_claims: list[str] = Field(description="Claims of equivalence or meaning across languages.")
+    interpretation_claims: list[str] = Field(description="Interpretations of meaning, intent, or context.")
+    action_claims: list[str] = Field(description="Claims of actions attempted, failed, or completed.")
+    definition_claims: list[str] = Field(description="Definitions of terms, concepts, entities, or properties.")
 
 
 _EMPTY_EXTRACTION_SYSTEM = """Independently determine whether candidate_final contains any independently
@@ -226,7 +243,14 @@ class DecisionGroundingVerifier(FinalGroundingVerifier):
             ),
             ClaimSpans, label="extract", on_audit_event=on_audit_event,
         )
-        claims = tuple(extraction.root)
+        # Keep category membership in the structured audit response. Only exact
+        # duplicate spans are collapsed before asking Tev to judge each assertion.
+        # This is structural deduplication, never text heuristics or paraphrasing.
+        claims = tuple(dict.fromkeys(
+            claim
+            for field in type(extraction).model_fields
+            for claim in getattr(extraction, field)
+        ))
         if not claims:
             # Empty extraction is not proof that the answer contains no facts.
             # This second, explicit task does not reuse the extractor's verdict.
