@@ -1,80 +1,68 @@
-# MAI 최종 검증 — Granite 추출 + Tev System One 판단
+# 최종 답변 검증
 
-최종 임시답변은 사용자가 확인하기 전에 검증한다. 성공하면 원문을 그대로 반환하고, 실패하면 해당 주장을 명시한 검증 결과를 기존 메인 Agent Loop에 전달해 추가 툴 조회·주장 축소·삭제를 수행한다. 검증 실패를 임의 승인하거나 기존 Verifier로 자동 우회하지 않는다.
+검증은 이미 생성된 답변 초안을 검사한다. 승인되면 그 초안을 그대로 전달하고, 반려되면 도구를 사용할 수 있는 본 모델 차례로 돌아가 수정한다. 검증기를 통과하지 않은 초안을 보조 경로로 성공 처리하지 않는다.
 
-## 구성·설정
+## 검증 순서와 설정
 
-- `VERIFIER_MODEL`: 임시답변에 포함된 검증 가능 진술의 **원문 부분 문자열을 12개 유형별 목록으로 추출**하는 모델. 기본 `granite4:3b-h`. 기존 설정 계약대로 생략되면 메인 모델이 추출을 담당한다.
-- `VERIFIER_DECISION_MODEL`: Ollama System One 판단 모델. 기본 `tev1:4b`.
-- `VERIFIER_DECISION_TIMEOUT_SECONDS`: Tev 단일 배치 HTTP 요청 제한 시간. 기본 120초.
-- `VERIFIER_DECISION_BATCH_SIZE`: Tev 한 번의 System One 요청에 넣을 주장 수. `settings.yaml` 기본 30개. 1~64의 정수로 변경 가능하며 범위를 벗어나면 실행 실패.
-- `OLLAMA_HOST`: System One 로컬 API 접속 호스트.
-- `MAI_ANSWER_QUALITY_REVIEW`: 기본 false. true면 사실 판정 통과 뒤 기존 품질 검토를 별도 모델 호출로 진행한다.
+`settings.yaml`의 `VERIFIER_MODEL`로 검증 전용 모델을 지정한다. 기본 구성은 본 모델 `ornith-1.5:9b`, 검증 모델 `granite4:3b-h`다. 같은 이름의 환경변수·`.env` 값이 YAML보다 우선하며, 설정을 생략하면 요청의 본 모델을 사용한다. 명시한 모델의 실패는 오류로 유지한다.
 
-**필수:** Ollama **0.35.0 이상** 및 다운로드한 `tev1:4b` 모델. `ollama --version`과 `ollama list`로 확인한다. Ollama의 `/v1/systemone`는 llama.cpp 네이티브 툴 호출과 별도 API이다. 판단 모델에 연결할 수 없으면 검증 실패를 명시적으로 드러낸다.
+1. **수치 사전 검사:** Python이 사용자·전달된 도구 결과·승인된 이전 대화의 숫자와 날짜를 대조한다. 단순 표기 불일치는 의미상 동등성 검토 대상으로 보내며 Python 예외는 오류로 유지한다.
+2. **사실·수치 통합 검토:** 모델이 주장, 출처 범위, 시각, 외부 작업 성공 여부를 확인한다. 수치가 표시되면 같은 호출에 동등성 검토를 포함하고 `numeric_verdict`와 `numeric_reason`을 필수로 받는다. 별도 숫자 전용 모델 호출은 없다.
+3. **선택적 답변 품질 검토:** 앞 단계가 통과한 경우에만 요청 부합도·정보 충족도·정직한 부분 답변 여부를 검사한다. 초안, 대화 요청, 사실 검토 결과를 받으며 도구 원문 전체는 받지 않는다.
 
-## 단계
+수치 정규화는 `Decimal`의 문맥 정밀도에 의존하지 않는다. 큰 정수·긴 소수의 유효 자릿수를 유지하고, `만·억` 환산은 십진 지수만 이동한다. 소수부 끝의 불필요한 0만 제거하며 큰 숫자를 생략하거나 정규화 예외를 성공으로 처리하지 않는다.
 
-1. Python은 기존 숫자·날짜 정규화 검사를 실행한다.
-2. Granite에 추출 프롬프트와 **임시답변의 Markdown 파싱 결과(검증용 텍스트), 이전 문맥**만 전달한다. 툴 결과·사용법·검증 프롬프트 전문은 Granite 추출 입력에 포함하지 않는다. 12개 필수 유형 배열을 가진 JSON 객체를 수신한다. 분류는 중복 허용하며 `definition_claims`에는 대상이나 개념의 정의가 맞는지 검증할 진술을 포함한다. 동일한 원문 span이 여러 분류에 있으면 Python이 완전히 같은 문자열만 중복 제거하여 Tev에 한 번 전달한다. 각 분류가 비어 있을 때는 해당 배열을 `[]`로 반환해야 하며 필드를 생략할 수 없다. **빈 배열을 곧바로 성공으로 간주하지 않고**, 별도의 Granite 구조화 요청으로 후보 답변 전체에 검증 가능한 진술이 하나라도 있는지 명시적으로 재판정한다. `contains_checkable_assertions`이면 후보 원문에 존재하는 witness span을 요구하고 누락 추출 계약 오류로 종료한다. `no_checkable_assertions`이면 witness=null과 비어 있지 않은 사유를 요구한다. 응답 형식 위반은 오류로 유지하고, 실패를 승인하거나 묵시적으로 다른 Verifier로 전환하지 않는다. 추출한 진술은 Markdown 파서가 생성한 검증용 텍스트의 부분 문자열이어야 한다. Python에서 미확인 수치로 표시한 값이 전부 추출되었는지도 확인하고, 누락되면 명확하게 실패한다.
-3. Python이 분류별 배열을 선언된 필드 순서로 합치고 원문이 정확히 동일한 항목만 중복 제거한 뒤 `c0`, `c1`, … ID를 부여한다. 설정된 `VERIFIER_DECISION_BATCH_SIZE`개씩 나눠 순차 실행한다.
-4. 각 Tev 배치는 `state={orig_answer: 전체 검증용 텍스트, source: {datetime_local_iso, conversation_context, tool_results_in_execution_order}}`와 `questions={c0:..., ...}`를 **각각 한 번씩** 전달한다. 배치 내부 질문들은 같은 state를 공유한다.
-5. Tev의 choice 판정은 `supported / contradicted / insufficient` 중 하나. 누락·중복·예상치 못한 질문 ID나 잘못된 판정은 오류다. `insufficient`는 반증이 아니라 관측 근거의 불충분을 의미한다.
-6. Python은 모든 배치의 판정을 수집한 뒤 각각의 원문 주장에 다시 연결한다. `contradicted`와 `insufficient`를 기존 Verifier의 `unsupported`로 바꾸되 사유는 구분한다. 하나라도 검증 불통과면 메인모델에 해당 주장과 사유를 전달한다.
-7. 기존 숫자·근거·교정 한도와 교정된 임시답변의 전면 재검증 흐름을 유지한다.
+`MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성해도 기본값은 `false`다. 명시적으로 `true`로 설정하면 기존 Quality Review를 활성화할 수 있다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 품질 검토는 사실 검증 통과 뒤 추가 모델 호출을 수행하므로 응답 지연이 발생할 수 있다. 기존 `.env` 또는 프로세스 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 배포 기본값보다 우선한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
-질문이 설정된 배치 크기 이하면 Tev를 한 번 호출한다. 더 많으면 같은 크기로 순차 분할하고 마지막 배치는 남은 질문만 처리한다. Ollama API는 최대 64개 질문을 허용하므로 `VERIFIER_DECISION_BATCH_SIZE`는 1~64의 정수만 허용한다. 여러 질문의 state를 요청 내에서 한 번 제공하지만, **여러 배치 사이에서는 state를 다시 전송**한다. 공통 컨텍스트를 GPU 내부에서 한 번만 계산한다고 가정해서는 안 된다.
+사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
+
+## 입력 범위와 교정 제한
+
+현재 요청과 검증 초안은 현행 `_review_payload` 계약대로 전달한다. 초안에 6,000자 강제 절단을 적용하지 않는다. 대화 문맥과 승인된 이전 대화는 기존 입력 계약을 따른다. 기본 최근 대화는 메시지 10개이며 시스템 지시와 모델 중간 사고 출력은 대화 근거에서 제외한다.
+
+기본 교정 예산은 수치 2회, 의미·요청 정렬 2회, 근거·작업 결과 5회, 정보 충족도 2회다. 소진되면 실패하며 해당 검사를 끄거나 반려된 초안을 공개하지 않는다. 교정한 새 초안은 처음부터 다시 검사한다.
+
+재시도 가능한 통신·형식 오류에는 별도 최대 3회 요청 예산이 있다. 잘못된 형식은 구체적인 검증 위치·유형·오류를 다음 요청에 제공한다. 자동으로 판정을 고치지 않으며, 형식이 맞는 반려 판정을 뒤집으려고 재호출하지 않는다.
+
+## 도구 결과 입력
+
+선택적 근거 보존 기능 도입 전처럼, 성공한 도구 실행의 최초 모델 가시 출력(`execution.content`)을 순서대로 받는다. 작은 결과는 본문이며 큰 결과는 기존 예산으로 제한한 최초 페이지다. 메인모델이 추가로 호출한 `tool_result_read`의 성공 결과도 근거에 포함한다. [도구 결과 전달](TOOL_RESULT_PAGINATION.md)을 따른다.
+
+검증기는 전달된 결과를 바로 판정한다. 선택 발췌·원문 식별자 연결·추가 읽기 요청 단계는 없다. 감사 DB에는 별도로 도구 원문을 보존한다. 검증 중 오류가 나면 원래 오류를 유지하고 마지막 초안을 **미검증 진단 출력**으로 보존한다.
+
+## Verifier 감사 추적
+
+채팅 감사 DB(`LOG_DB_PATH`)의 기존 `steps` 테이블에 `role=verifier_step`, `status=TRACE` 이벤트를 추가 기록한다. 기존 `ACCEPTED`와 `REJECTED` 단계는 유지한다. 각 TRACE의 `details_json`은 `event`, 실제 선택한 `verifier_model`, `data`를 포함하며 같은 `run_id`와 `round_number`로 연결한다.
+
+- `request`: 검증 단계(`factual` 또는 `quality`), 요청 시도 번호, 모델이 실제 받은 전체 메시지(시스템 프롬프트·근거 JSON 포함), 구조화 응답 스키마, `think`, `tools`.
+- `raw_response`: 모델이 반환한 원본 텍스트. 형식 오류라도 원문이 남는다.
+- `validated_response`: 스키마에 맞게 검증된 모델 판정 전체. 원본과 별개로 기록한다.
+- `error`: 요청 또는 스키마 검증의 예외 유형·메시지와 재시도 여부. 각 요청 시도마다 기록되며 최종 오류를 정상 승인으로 바꾸지 않는다.
+- `decision`: 마지막 판정의 `ok`, 실제 오류 코드·설명 목록, `review_details`의 원문 기반 판정 요약. 사실 검토가 거절하면 품질 검토 이벤트는 없다.
+
+이 기록은 감사 전용이며 메인모델의 메시지나 기억에 다시 삽입하지 않는다. 완전한 입력과 원본 응답에는 사용자 대화·도구 데이터가 포함될 수 있으므로 감사 DB는 개인 데이터로 취급하고 접근 권한·백업을 관리해야 한다. 로깅 실패는 조용히 무시하지 않고 오류로 전파한다. 관측 기능은 검증 기준이나 ACCEPT/REJECT 판정 자체를 변경하지 않는다.
+
+## 근거 판정과 교정 피드백
+
+사실 검증기는 `main`의 주장 중심 구조화 응답을 따른다. 각 `claims[]` 항목에는 `claim`, `verdict`, `defect`, `reason`이 들어가며, 추가 `unit_reviews` 또는 `evidence_refs`를 요구하지 않는다. 별도의 문단 단위 주장 연결이나 출처 ID·원문 인용 일치 검사도 수행하지 않는다. 중요한 사실 주장을 빠짐없이 추출하고 근거의 의미·대상·범위가 실제로 부합하는지 판정하는 것은 사실 검증 LLM의 책임이다.
+
+일반지식이나 LLM의 확신 자체는 사실 근거가 아니다. 사용자 진술, 성공한 도구 결과, 승인된 이전 대화와 후보 임시답변의 차이를 구분한다. 실패한 도구 결과와 반려된 초안은 근거가 아니다. 근거가 없는 주장을 반대 사실이나 대체 수치로 만들어 내면 안 된다.
+
+유효한 근거 반려를 받으면 메인모델에 문제 주장과 `defect`·`reason`을 전달한다. 같은 성공 근거로 반복 반려되면 원문 재확인, 계산 접근 변경 또는 주장 축소·삭제를 지시하며, 같은 결과 재호출은 새 근거가 아니다. 새로운 LLM 호출 단계는 추가하지 않는다.
+
+Verifier 입력에는 메인모델의 `thinking`을 포함하지 않는다. 현재 사용자 요청, 과거 대화의 보이는 본문, 승인된 이전 대화, 관찰된 도구 결과, 임시답변은 `MAI_ANSWER_QUALITY_REVIEW=false`에서도 유지한다. 이 설정은 추가 품질 검토 호출만 생략한다.
+
+## 해석과 검증의 한계
+
+모호한 이름은 사용자 문맥이나 중립적 조회로 대상을 확인한다. 추측한 분류를 모든 검색어에 먼저 넣지 않는다. 검색 제목·본문이 가정과 다르면 재검토하며 빈 검색이 가정을 증명하지 않는다. 사용자가 요청한 비유·해석은 근거와 구분해 제시하고 창작자의 공식 의도라고 단정하지 않는다. 이 검사는 품질 검토가 꺼져도 사실 검토에 포함된다.
+
+품질 검토가 도구 원문 전체를 보지 않으므로 원문에만 있는 누락 정보 탐지에 한계가 있다. 사실 검토 역시 전달된 도구 결과의 범위를 넘는 원문을 자동으로 받지는 않는다. 테스트 통과나 입력 문자 감소만으로 실제 모델의 정확도·속도 개선을 보장하지 않는다.
 
 
-### Granite 추출 JSON 분류
+## 복원 범위 (2026-11-06)
 
-모든 항목은 필수 `list[str]`로, 각 요소는 검증용 `candidate_final`의 원문 부분 문자열이다.
-
-| 필드 | 대상 |
-|---|---|
-| `factual_claims` | 일반 사실·사건 |
-| `numerical_claims` | 수치·수량·비율 |
-| `temporal_claims` | 날짜·시간·기간 |
-| `identity_claims` | 정체성·속성·소속·관계 |
-| `scope_claims` | 범위·조건·예외 |
-| `comparative_claims` | 비교 |
-| `causal_claims` | 인과관계 |
-| `calculation_claims` | 계산 결과 |
-| `translation_claims` | 번역·언어 간 의미 대응 |
-| `interpretation_claims` | 해석 |
-| `action_claims` | 시도·실패·완료한 행동 |
-| `definition_claims` | 용어·개념·대상의 정의 |
-
-중복 분류는 허용하지만 완전히 동일한 문자열을 Tev에 반복 질의하지 않는다. 서로 표현이 다른 span은 의미가 비슷하더라도 합치지 않는다. 12개 배열이 전부 비었을 때만 `empty_extraction` 판정이 수행된다.
-
-## 검증용 텍스트와 화면 표시
-
-- 최종 답변·임시답변의 원본 Markdown은 변형하지 않는다. Granite와 Tev의 주장 추출·판단에만 Markdown 파서가 구성한 별도 텍스트를 사용한다.
-- 강조·링크·목록 등의 표현 문법은 검증용 텍스트에서 제외하되, 화면에 표시되는 내용과 코드 블록의 실제 텍스트는 남긴다.
-- 표는 셀만 병합하지 않고 **각 데이터 행에 표 머리글을 연결**한다. 예를 들어 `| 단어 | 철자 |`의 `| Ark | A-R-K |`는 `단어: Ark; 철자: A-R-K`로 전달한다. 원본 Markdown 표는 사용자에게 그대로 렌더링한다.
-- 문자열 치환이나 의미 추측으로 임시답변을 고치지 않는다. 검증용 텍스트에 없는 주장은 기존과 같이 계약 오류를 발생시킨다.
-- 실패 응답에 임시답변이 있고 마지막 verifier 피드백이 없더라도 임시답변은 Markdown으로 렌더링하고, 실제 오류 내용은 별도 영역에 표시한다. 재개·대화기록 화면에도 동일하게 적용한다.
-
-## 오류와 근거의 범위
-
-- Ollama 로컬 System One 입력은 텍스트·스키마 기준 최대 64KiB이며, 실제 모델 컨텍스트 제한도 지켜야 한다. 입력이 너무 길어지면 임의로 잘라서 성공으로 취급하지 않고 예외를 반환한다.
-- `source`에는 기존 Verifier 입력 계약에 따라 검증 통과 대화 여부, 툴 실행 인자, `endtype`, 실행 결과가 포함된다. `endtype=error_type:<type>`인 결과는 실패 사실을 뒷받침할 수 있지만 성공 사실을 증명할 수 없다.
-- 새로운 모델이 기존 내용 전체의 정확성을 독립적으로 보장하는 것은 아니다. 특히 Granite가 수치 이외의 주장을 빠뜨리는 경우 누락 주장은 Tev가 검증하지 못한다. 이 구조는 실사용 전 MAI의 실제 과잉거절/할루시네이션 로그에서 평가가 필요하다.
-- 긴 툴 로그 전체가 입력 한도를 넘으면 명시적으로 실패한다. 이 버전은 임의 근거 발췌, 문맥 추측, 자동 압축 우회를 구현하지 않는다.
-- `Tev1`의 분류 확률은 정답의 객관적 확률이 아니다. Python은 점수 임계값으로 임의 판정하지 않고 모델의 명시적인 choice만 사용한다.
-- 모든 내부 Tool Registry, Agent Skills, 권한, 실패 처리와 사용자에게 반환되는 최종 검증 계약은 그대로 유지한다.
-
-## 감사 이벤트와 테스트
-
-Granite의 원본 추출 요청·응답(12개 분류 포함)은 기존 `request/raw_response/validated_response` 단계(`stage=extract`)로 감사 DB에 기록한다. 추출이 빈 경우에만 추가된 독립 판정은 `stage=empty_extraction`의 `request/raw_response/validated_response`에 남긴다. Tev는 배치마다 `stage=decision`의 `request`와 `validated_response`를 기록한다. 마지막 `decision`에는 Python이 집계한 주장별 결과가 기록된다.
-
-```bash
-ollama --version
-ollama pull tev1:4b
-python -m pytest -q tests/test_decision_verifier.py tests/test_verifier_empty_claim_contract.py tests/test_verifier_claim_categories.py tests/test_verifier_markdown_canonical.py tests/test_verifier_model_setting.py
-python -m pytest -q
-```
-
-모델 로딩/전환 시간, 총 처리 시간, 잘못된 승인, 과잉거절, 추출 누락률을 **기존 Granite 단독**과 실제 로그로 비교하기 전에는 속도나 정확도 개선을 확정하지 않는다.
-
-Portable 배포는 신규 매니페스트 생성 시 Ollama v0.35.0 이상을 검증하고 Tev1을 기본 모델에 포함한다. 기존 설치본을 갱신할 때는 `portable/README.md`에 설명한 `-UpgradeOllama`와 고정 해시 매니페스트를 사용한다.
+- 기준: Granite + Tev System One 구조 도입 직전 커밋 `85294d5`.
+- 런타임은 `FinalGroundingVerifier`를 사용한다. `VERIFIER_MODEL`의 모델 하나가 전체 근거·주장·작업 결과를 구조화 판정한다. `MAI_ANSWER_QUALITY_REVIEW=false`이면 별도 품질 검토는 생략한다.
+- 기존 `verification.py` 구현은 기준 커밋과 동일하여 변경하지 않았다.
+- Tev 전용 설정과 코드, 12개 분류 추출 단계, 별도 빈 추출 판정은 제거한다. 이제 이전의 단일 Granite 사실검증 JSON 계약을 따른다.
+- 브라우저 화면의 원본 Markdown 렌더링, 실패 시 미검증 임시답변 표시 및 복원 화면 처리는 최근 상태를 그대로 보존한다. Markdown 텍스트 정규화 유틸리티 역시 변경하지 않지만 단일 Granite 검증 입력에는 사용하지 않는다.
