@@ -60,20 +60,18 @@ function Initialize-MaiRemotePython {
 }
 
 Initialize-MaiRemotePython
-
-# The shared Python agent owns one native registry and browser manager for this
-# authenticated session. PowerShell only provisions the environment; it does
-# not create a fresh Python process for every native.invoke request.
 $env:MAI_REMOTE_SERVER = $Server
 $env:MAI_REMOTE_SESSION = $Session
 $env:MAI_REMOTE_KEY = $Key
 Write-Host 'Connected. Close this PowerShell window or press Ctrl+C to stop accepting work.'
 try {
     & $env:MAI_REMOTE_PYTHON -m mai.remote.agent_client
-    if ($LASTEXITCODE -ne 0) {
-        throw "MAI remote agent client exited with status $LASTEXITCODE"
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0 -and $exitCode -ne 130) {
+        throw "MAI remote agent exited with code $exitCode"
     }
 } finally {
-    Remove-Item Env:MAI_REMOTE_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:MAI_REMOTE_SERVER -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_SESSION -ErrorAction SilentlyContinue
+    Remove-Item Env:MAI_REMOTE_KEY -ErrorAction SilentlyContinue
 }
