@@ -153,7 +153,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         cwd=os.environ.get("MAI_CWD") or None,
     )
     print(f"MAI local: http://{host}:{port}", flush=True)
-    _hosting_provider = os.environ.get("REMOTE_HOSTING_PROVIDER", "none").strip().lower()
+    _hosting_provider = os.environ.get("REMOTE_HOSTING_PROVIDER", "tailscale").strip().lower()
     _hosting = create_hosting(provider=_hosting_provider, port=port)
     if _hosting is not None:
         try:
