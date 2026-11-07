@@ -3,8 +3,8 @@
 추론 엔진은 Ollama가 아니라 **독립 프로젝트 llama.cpp**의 `llama-server`이다.
 모델 가중치는 하나의 GGUF 파일이다. 모델 파일과 엔진은 개별 보관·업그레이드한다.
 
-- 모델 선택: `portable/portable-models/gguf/active.gguf` 또는 시작 스크립트의 `-GgufPath` 경로
-- 모델 별칭: `settings.yaml`의 `MAIN_MODEL`
+- 모델 선택: `settings.yaml`의 `MODEL_GGUF_PATH` (기본 `portable/portable-models/gguf/active.gguf`) 또는 시작 스크립트의 `-GgufPath` 경로
+- 내부 llama.cpp 모델 별칭: 고정값 `mai-model`
 - 실행 엔진: `portable/portable-runtimes/llamacpp/`
 - 검증: 같은 GGUF로 숫자·최종 사실 검증, 메인 역할 캐시는 REJECT 후 복원
 - 프롬프트 캐시: `portable/portable-slot-cache/`, 저장 파일은 사용 뒤 정리
