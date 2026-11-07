@@ -69,6 +69,24 @@ Tailscale Funnel은 호스트에 Tailscale을 설치·로그인하고 Funnel 권
 
 호스팅과 원격 PC 명령 실행 세션은 별개다. 원격 PC 연결 시간 정책은 각 브랜치의 원격 세션 코드를 따른다.
 
+## Verifier 제어 (dev2)
+
+`settings.yaml`에서 답변 검증을 켜고 끌 수 있다.
+
+```yaml
+MAI_VERIFIER_ENABLED: true          # false: 최종 숫자/사실 검증 요청 자체를 건너뜀
+MAI_VERIFIER_BLOCKING_MODE: critical # critical | strict
+MAI_ANSWER_QUALITY_REVIEW: false    # 별도 품질/요청 충족 검토 (기존 옵션)
+```
+
+- `MAI_VERIFIER_ENABLED: false`: 최종 Verifier를 생성하지 않고 숫자 검증과 사실 검증, 역할별 KV 전환을 건너뛴다. 메인 모델·도구·후속 메모리 처리까지 끄는 옵션은 아니다. 메인 모델 답변이 자동으로 사실 검증되는 것은 아니므로 실험 시 로그와 답변을 직접 비교해야 한다.
+- `critical`(기본): 관측된 근거와 **직접 충돌**하는 사실 주장, 요청한 실행 결과를 검증 없이 완료했다고 단정, 결과가 반박하는 성공 주장, 명백한 핵심 요청 불일치가 Verifier에서 판정된 경우만 재수정 대상으로 삼는다. 단순 근거 부재, 수치 동등성 불확실성, 답변 완성도 부족은 거절이 아니라 감사 로그의 경고로 보존한다. *오류의 완벽한 감지나 교정은 보증하지 않는다.*
+- `strict`: 기존의 강한 근거 검증 및 거절 동작을 유지한다. 비교 실험용.
+- `MAI_ANSWER_QUALITY_REVIEW: false`이면 별도 품질/요청 충족 검토 단계는 실행하지 않는다. `critical` 설정만으로 그 단계가 자동 실행되지는 않는다.
+- 기존 `.env` 또는 프로세스 환경변수에 동일한 키가 존재하면 그 값이 YAML보다 우선한다. 설정 변경 후 MAI를 재시작한다.
+
+**KV 캐시 범위:** `RoleCacheRun` 체크포인트 파일명에 GGUF 경로·크기·수정 시각으로 생성한 모델 식별 네임스페이스를 추가했다. 메인/숫자/최종 검증 역할은 각자 별도 체크포인트이며 모델이 다르면 서로 재사용하지 않는다. **이는 모델 교체 인프라의 첫 단계일 뿐**, 현재 `dev2`는 하나의 llama.cpp 모델만 적재하며 LFM 등 별도 Verifier 모델을 VRAM에서 교대로 불러오는 기능은 구현하지 않았다. 파일명 격리만으로 교차 모델 캐시 복원이 안전해지는 것이 아니다.
+
 ## 실행 제약
 
 - `REMOTE_HOSTING_PROVIDER` 기본값: `tailscale` (`none`/`cloudflare`도 가능)
