@@ -47,9 +47,9 @@ async def _execute_chat(
 
     limit = server._history_limit()
     prior = server._session_history(principal, request.session_id, limit=limit) if limit else []
-    attachments = server._validated_image_attachments(
+    attachments = (server._validated_image_attachments(
         request.attachments, principal, runtime.upload_root,
-    )
+    ) if request.attachments else [])
     server._append_session_message(
         principal, request.session_id, role="user", content=request.message,
         metadata={"attachments": attachments} if attachments else None,
