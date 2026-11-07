@@ -274,3 +274,29 @@ python -m pytest -q
 ```
 
 Then verify original Ollama Portable startup is unchanged and llama.cpp mode performs a real main tool call, a structured Verifier review, a main-image request (when configured), and memory extraction. These hardware integration checks have not been run by this change.
+
+
+## Ubuntu 24.04: optional llama.cpp router Portable (dev)
+
+The existing `prepare-portable-linux.sh` and `start-portable-linux.sh` continue to support **Ollama**. This is an **additional** backend, not a replacement. MAI's agent, verifier prompts, memory, tools and Ollama model files are unchanged. Main and verifier are separate GGUFs behind one llama.cpp router; simultaneous residency is allowed, not guaranteed.
+
+1. While online, create the publisher-digest-pinned manifest with llama.cpp:
+   ```bash
+   python3 portable/resolve_portable_sources_linux.py --include-llamacpp
+   ```
+   This command refuses to overwrite an existing `portable-sources-linux.json`; preserve/rename the old manifest first and review the new one before provisioning.
+2. On the Ubuntu 24.04 x86-64 host, prepare the Linux host cache (native executable and Python packages, separate from Windows NTFS runtimes):
+   ```bash
+   bash portable/prepare-portable-linux.sh --with-llamacpp
+   ```
+   Optionally add `--install-vulkan` to install host Mesa Vulkan dependencies on AMD/Intel. The existing hardware Vulkan preflight requires `vulkaninfo` and a non-software GPU; host driver installation, mount permissions and native libraries cannot be bundled as an identical cross-OS binary.
+3. Put the main, projector and verifier GGUF files in the locations already configured in **`settings.yaml`**: `LLAMACPP_MAIN_GGUF_PATH`, `LLAMACPP_MAIN_MMPROJ_PATH`, `LLAMACPP_VERIFIER_GGUF_PATH`. The same paths work on Windows and Linux if relative to the project root.
+4. Run the optional Linux router:
+   ```bash
+   bash portable/start-portable-llamacpp-linux.sh
+   ```
+   An optional argument `3` allows up to three simultaneously loaded models if a separate Vision GGUF is configured. Default is `2`. The script creates a private per-run router INI in the Linux host cache, validates GGUF headers and exposes the same `mai-main`, `mai-verifier`, optional `mai-vision` aliases as the Windows launcher. It does not reuse an occupied port or silently fall back to Ollama.
+
+**Host portability boundary:** Linux native Python, llama.cpp binaries and Python dependencies are cached under `~/.cache/mai-portable/<path-id>` (or `XDG_CACHE_HOME`). Moving the SSD to an **unprepared** Linux computer still requires the initial provisioning step, executable host tools, writable data filesystem, Vulkan drivers and adequate GPU/RAM; this is not yet guaranteed plug-and-run on arbitrary Linux hardware. Linux remote-agent bootstrap is still Windows PowerShell-only; a Linux MAI host can use local tools, but attaching a **Linux remote target** requires a separate remote worker implementation. Playwright Chromium and audio/microphone capabilities have native host dependencies.
+
+Before merging, run `python -m pytest -q` on Ubuntu and test actual Vulkan inference, image input, main tool calls, verifier JSON output, local file/code/CSV/document/terminal tool paths, browser Chromium, and remote Windows worker separately. No live Ubuntu inference has been run for this addition.
