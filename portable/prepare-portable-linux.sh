@@ -13,9 +13,15 @@ fi
 for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
-if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--install-chromium" ) ]]; then
-  echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium]" >&2; exit 2
-fi
+install_chromium=0
+upgrade_llamacpp=0
+for arg in "$@"; do
+  case "$arg" in
+    --install-chromium) install_chromium=1 ;;
+    --upgrade-llamacpp) upgrade_llamacpp=1 ;;
+    *) echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium] [--upgrade-llamacpp]" >&2; exit 2 ;;
+  esac
+done
 manifest="$root/portable/portable-sources-linux.json"
 [[ -f "$manifest" ]] || { echo "Missing $manifest; create with portable/resolve_portable_sources_linux.py" >&2; exit 1; }
 export MAI_LINUX_ROOT="$root"
@@ -64,9 +70,17 @@ fetch() {
 install_archive() {
   local name="$1" archive="$2" hash="$3" staging="$cache/$name.incomplete" dest="$cache/$name" record="$cache/$name/.mai-source-sha256"
   if [[ -e "$dest" ]]; then
-    [[ -f "$record" && "$(cat "$record")" == "$hash" ]] || { echo "Existing $name runtime is not validated: $dest" >&2; exit 1; }
-    echo "[Linux Portable] Reusing $name"
-    return
+    if [[ -f "$record" && "$(cat "$record")" == "$hash" ]]; then
+      echo "[Linux Portable] Reusing $name"
+      return
+    fi
+    if [[ "$name" != llamacpp || "$upgrade_llamacpp" != 1 ]]; then
+      echo "Existing $name runtime differs; use --upgrade-llamacpp only for a pinned llama.cpp update" >&2
+      exit 1
+    fi
+    backup="$dest.before-portable-$(date +%Y%m%d%H%M%S)"
+    mv -- "$dest" "$backup"
+    echo "[Linux Portable] Preserved old llama.cpp in $backup"
   fi
   [[ ! -e "$staging" ]] || { echo "Incomplete prior runtime: $staging" >&2; exit 1; }
   mkdir -p "$staging"
@@ -113,7 +127,7 @@ llamacpp="$cache/llamacpp/bin/llama-server"
 echo "[Linux Portable] Installing MAI Python dependencies"
 UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root"
 "$python" -c 'import fastapi, uvicorn, playwright, mai'
-if [[ "${1:-}" == "--install-chromium" ]]; then
+if [[ "$install_chromium" == 1 ]]; then
   export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
   "$python" -m playwright install chromium
 fi
