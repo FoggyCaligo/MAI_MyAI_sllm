@@ -68,6 +68,19 @@ class LlamaCppAdapter:
         thinking = msg.get("reasoning_content") or ""
         if not isinstance(content, str) or not isinstance(thinking, str):
             raise OllamaProtocolError("llama.cpp content and reasoning must be strings")
+        # A successful HTTP response can still be an unusable generation.
+        # Never treat empty structured-review content as valid JSON.
+        if request.response_format is not None and not content.strip():
+            choice = choices[0]
+            finish = choice.get("finish_reason")
+            usage = result.get("usage")
+            reason_chars = len(thinking)
+            raise OllamaProtocolError(
+                "llama.cpp structured response contains no JSON content "
+                f"(finish_reason={finish!r}, reasoning_chars={reason_chars}, "
+                f"usage={usage!r}); check context size, output budget, "
+                "and model chat-template/reasoning compatibility"
+            )
         raw_calls = msg.get("tool_calls") or []
         if not isinstance(raw_calls, list):
             raise OllamaProtocolError("llama.cpp tool_calls must be an array")
