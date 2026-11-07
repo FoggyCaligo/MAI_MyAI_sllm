@@ -63,13 +63,26 @@ def test_text_only_model_keeps_separate_image_tool_route(tmp_path):
     assert "test.png" in prompt
 
 
-def test_llamacpp_uses_existing_image_tool_without_unsupported_payload(tmp_path):
+def test_llamacpp_text_only_main_explains_unavailable_image_without_tool_or_exception(tmp_path, monkeypatch):
     principal = image_fixture(tmp_path)
     client = ShowClient(["vision"])
+    monkeypatch.setenv("LLAMACPP_MAIN_VISION", "false")
     prompt, images = prepare(tmp_path, principal, client, backend="llamacpp")
     assert images == ()
-    assert "image_analyze" in prompt
+    assert "cannot inspect these images" in prompt
+    assert "No image pixels were provided" in prompt
+    assert "image_analyze is not available" in prompt
+    assert "Activate image_analyze" not in prompt
+    assert "test.png" not in prompt
     assert client.calls == []
+
+
+def test_llamacpp_image_capable_main_receives_pixels_directly(tmp_path, monkeypatch):
+    principal = image_fixture(tmp_path)
+    monkeypatch.setenv("LLAMACPP_MAIN_VISION", "true")
+    prompt, images = prepare(tmp_path, principal, None, backend="llamacpp")
+    assert prompt == "What is pictured?"
+    assert images == (b"test-raw-image",)
 
 
 def test_without_any_vision_backend_raises_instead_of_discarding_image(tmp_path):
