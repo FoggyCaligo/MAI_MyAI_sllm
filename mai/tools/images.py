@@ -108,8 +108,10 @@ def register_image_tools(
     registry.add(
         name="image_analyze",
         description=(
-            "Analyze a local image with the configured vision model. Use this for screenshots, "
-            "photos, charts, diagrams, or other image files whose visual content must be understood."
+            ("Analyze a local image with the configured Ollama vision model. Use this for screenshots, "
+             if backend == "ollama" else
+             "Analyze a local image with the configured llama.cpp vision model. Use this for screenshots, ")
+            + "photos, charts, diagrams, or other image files whose visual content must be understood."
         ),
         input_model=ImageAnalyzeInput,
         handler=analyzer.analyze,
