@@ -87,7 +87,7 @@ python -m playwright install chromium
 
 ```powershell
 ollama pull ornith-1.5:9b
-ollama pull LiquidAI/lfm2.5-2.6b:q4_k_m
+ollama pull qwen3:4b-instruct-2507-q4_K_M
 
 ollama pull lfm3-vl:2b
 ollama list
