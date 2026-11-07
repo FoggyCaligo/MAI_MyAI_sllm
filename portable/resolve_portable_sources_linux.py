@@ -17,7 +17,7 @@ SOURCES_LINUX = {
     "python": ("astral-sh", "python-build-standalone",
                r"cpython-3\.11\.[0-9]+\+[^/]+-x86_64-unknown-linux-gnu-install_only\.tar\.gz"),
     "uv": ("astral-sh", "uv", r"uv-x86_64-unknown-linux-gnu\.tar\.gz"),
-    "ollama": ("ollama", "ollama", r"ollama-linux-amd64\.tar\.zst"),
+    "llamacpp": ("ggml-org", "llama.cpp", r"llama-.*-bin-ubuntu-vulkan-x64\\.tar\\.gz"),
 }
 
 
