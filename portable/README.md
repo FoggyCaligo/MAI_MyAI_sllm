@@ -247,9 +247,18 @@ This is **opt-in** and does not replace `portable/start-portable.ps1` or change 
    Replace the placeholder owner/repo and filename with the actual model listing; download any required matching `mmproj` separately.
 4. Start the **optional** single-router launcher (the existing Ollama command stays unchanged):
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable-llamacpp-router.ps1 -MainGgufPath "portable/portable-models/gguf/main.gguf" -VerifierGgufPath "portable/portable-models/gguf/verifier.gguf" -MainMmprojPath "portable/portable-models/gguf/mmproj.gguf"
+   powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable-llamacpp-router.ps1
    ```
-   Omit `-MainMmprojPath` when the main model has no separate vision projector. For architectures with integrated vision that are supported by the installed llama.cpp build, pass `-MainVision` explicitly; this only enables MAI image forwarding and does not establish actual vision support. For a separate vision model add `-VisionGgufPath` and its matching `-VisionMmprojPath`; increase `-ModelsMax 3` if all three should be eligible to remain loaded. The launcher generates an untracked `mai-models.generated.ini` in `portable/portable-runtimes/llamacpp/`. It sets **MAIN_MODEL=mai-main**, **VERIFIER_MODEL=mai-verifier**, optionally **VISION_MODEL=mai-vision** and connects all through `LLAMACPP_HOST=http://127.0.0.1:8080`. The main image input uses standard OpenAI `image_url` payloads when `-MainMmprojPath` or `-MainVision` is supplied.
+   Set the GGUF paths **only in project-root `settings.yaml`** (no model-path command-line switches):
+   ```yaml
+   LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma-3-12b-it-Q4_K_M.gguf"
+   LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/verifier.gguf"
+   # LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-model-f16.gguf"
+   LLAMACPP_MAIN_VISION: false
+   # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
+   # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
+   ```
+   These are example filenames, not downloaded files. Replace both required paths with existing GGUFs. Main projector and separate vision-model settings are optional. When the main model supports integrated vision without a separate projector, set `LLAMACPP_MAIN_VISION: true`; this merely enables MAI image forwarding, not model compatibility. To permit three resident models, pass `-ModelsMax 3` (the argument controls capacity, **not** a file path). Settings paths are resolved from the MAI project root, not the shell's working directory; the resolver uses the same strict YAML parser as MAI. The launcher generates an untracked `mai-models.generated.ini` in `portable/portable-runtimes/llamacpp/`. It sets **MAIN_MODEL=mai-main**, **VERIFIER_MODEL=mai-verifier**, optionally **VISION_MODEL=mai-vision** and connects all through `LLAMACPP_HOST=http://127.0.0.1:8080`. The main image input uses standard OpenAI `image_url` payloads when `LLAMACPP_MAIN_MMPROJ_PATH` is set or `LLAMACPP_MAIN_VISION: true` is configured.
    
    Projector presence is a **configuration assertion**, not proof the selected model supports images; end-to-end image inference must be checked. The verified GGUF magic only confirms the file container format. A router response from `/v1/models` confirms registration, not inference readiness. For main/verifier tool/JSON contracts, conduct an actual end-to-end smoke test.
    
