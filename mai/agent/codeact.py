@@ -283,7 +283,7 @@ class CodeActExecutor:
                 validated = definition.validate_arguments(prepared)
                 handler_started = True
                 value = await definition.invoke(validated.model_dump())
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, CodeActLimitError):
                 raise
             except Exception as exc:
                 evidence = CodeActToolEvidence(
