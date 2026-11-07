@@ -107,7 +107,7 @@ New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
 Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
 Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
 if ($null -eq $config.llamacpp) { throw 'Manifest must include pinned llama.cpp Vulkan release.' }
-if ($null -ne $config.ollama -or $null -ne $config.models) { throw 'Use a dev2 single-model manifest without Ollama entries.' }
+if ($null -ne $config.PSObject.Properties['ollama'] -or $null -ne $config.PSObject.Properties['models']) { throw 'Use a dev2 single-model manifest without Ollama entries.' }
 Install-VerifiedArchive $config.llamacpp (Join-Path $runtimes 'llamacpp') 'llama-server.exe'
 $python = Join-Path $runtimes 'python\python.exe'
 & $python -c 'import sys; print(sys.version)'
