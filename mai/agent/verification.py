@@ -23,7 +23,6 @@ import re
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 import httpx
-from ollama import ResponseError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -637,8 +636,12 @@ class FinalGroundingVerifier:
                 ))
                 if isinstance(exc, OllamaRequestError):
                     cause = exc.__cause__
-                    retryable = isinstance(cause, ResponseError) and (
-                        cause.status_code == 429 or 500 <= cause.status_code <= 599
+                    retryable = (
+                        cause is not None
+                        and type(cause).__name__ == "ResponseError"
+                        and type(cause).__module__.startswith("ollama")
+                        and isinstance(getattr(cause, "status_code", None), int)
+                        and (cause.status_code == 429 or 500 <= cause.status_code <= 599)
                     )
                 if on_audit_event is not None:
                     on_audit_event("error", {
