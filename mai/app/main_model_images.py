@@ -5,6 +5,7 @@ This path is optional; the separately configured image_analyze tool remains avai
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import os
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,9 @@ async def prepare_main_image_input(
     if backend == "ollama":
         show = await ollama_client.show(model)
         supports_vision = "vision" in _capabilities(show)
+    elif backend == "llamacpp":
+        # Explicit portable launch contract: no heuristic vision probing.
+        supports_vision = os.environ.get("LLAMACPP_MAIN_VISION", "false").lower() == "true"
     if supports_vision:
         return prompt, tuple(path.read_bytes() for path in paths)
     if separate_vision_model is None:
