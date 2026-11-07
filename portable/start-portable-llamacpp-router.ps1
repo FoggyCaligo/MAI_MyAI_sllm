@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory=$true)][string]$MainGgufPath,
     [Parameter(Mandatory=$true)][string]$VerifierGgufPath,
     [string]$MainMmprojPath,
+    [switch]$MainVision,
     [string]$VisionGgufPath,
     [string]$VisionMmprojPath,
     [ValidateRange(1,3)][int]$ModelsMax = 2,
@@ -82,10 +83,8 @@ $env:LLM_BACKEND = 'llamacpp'
 $env:MAIN_MODEL = 'mai-main'
 $env:VERIFIER_MODEL = 'mai-verifier'
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
-$env:LLAMACPP_VERIFIER_HOST = $env:LLAMACPP_HOST
-$env:LLAMACPP_VISION_HOST = $env:LLAMACPP_HOST
-$env:LLAMACPP_MAIN_VISION = if ($mainProjector) { 'true' } else { 'false' }
-$env:VISION_MODEL = if ($vision) { 'mai-vision' } elseif ($mainProjector) { 'mai-main' } else { '' }
+$env:LLAMACPP_MAIN_VISION = if ($mainProjector -or $MainVision) { 'true' } else { 'false' }
+$env:VISION_MODEL = if ($vision) { 'mai-vision' } elseif ($mainProjector -or $MainVision) { 'mai-main' } else { '' }
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
                '--host', '127.0.0.1', '--port', '8080', '--jinja')
