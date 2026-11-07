@@ -238,51 +238,62 @@ class CodeActExecutor:
                 )
 
         async def tool(name: str, arguments: Mapping[str, Any], *, is_remote: bool = False) -> dict[str, Any]:
-            if not isinstance(name, str) or not name:
-                raise CodeActSyntaxError("tool name must be a non-empty string")
-            if not isinstance(arguments, Mapping):
-                raise CodeActSyntaxError("tool arguments must be a mapping")
-            if type(is_remote) is not bool:
-                raise CodeActTargetError("is_remote must be a boolean")
-            if name not in self.activated_tool_names:
-                raise CodeActSyntaxError(
-                    f"tool '{name}' is not activated for this CodeAct run"
-                )
-            if len(calls) >= self.max_tool_calls:
-                raise CodeActLimitError(
-                    f"CodeAct tool-call limit exceeded ({self.max_tool_calls})"
-                )
-
-            definition = self.registry.get(name)
-            prepared = dict(arguments)
-            routed = (
-                definition.metadata.get(_REMOTE_TARGET_METADATA_KEY)
-                == _REMOTE_TARGET_METADATA_VALUE
-            )
-            if "is_remote" in prepared:
-                raise CodeActTargetError(
-                    "CodeAct tool arguments must not contain is_remote; use execute_code.target"
-                )
-            if is_remote:
-                if not routed:
-                    raise CodeActTargetError(
-                        f"tool '{name}' does not have a remote worker implementation"
-                    )
-                prepared["is_remote"] = True
-            elif routed:
-                prepared["is_remote"] = False
-
+            """Return real per-tool failures as observations; do not abort the code round."""
+            actual_name = name if isinstance(name, str) else repr(name)
+            target = "remote" if is_remote is True else "local"
+            supplied_arguments = dict(arguments) if isinstance(arguments, Mapping) else {}
+            prepared = dict(supplied_arguments)
+            handler_started = False
             try:
-                value = await definition.invoke(prepared)
+                if not isinstance(name, str) or not name:
+                    raise CodeActSyntaxError("tool name must be a non-empty string")
+                if not isinstance(arguments, Mapping):
+                    raise CodeActSyntaxError("tool arguments must be a mapping")
+                if type(is_remote) is not bool:
+                    raise CodeActTargetError("is_remote must be a boolean")
+                if name not in self.activated_tool_names:
+                    raise CodeActSyntaxError(
+                        f"tool '{name}' is not activated for this CodeAct run"
+                    )
+                if len(calls) >= self.max_tool_calls:
+                    raise CodeActLimitError(
+                        f"CodeAct tool-call limit exceeded ({self.max_tool_calls})"
+                    )
+
+                definition = self.registry.get(name)
+                routed = (
+                    definition.metadata.get(_REMOTE_TARGET_METADATA_KEY)
+                    == _REMOTE_TARGET_METADATA_VALUE
+                )
+                if "is_remote" in prepared:
+                    raise CodeActTargetError(
+                        "is_remote belongs to tool() keyword arguments, not the tool argument object"
+                    )
+                if is_remote:
+                    if not routed:
+                        raise CodeActTargetError(
+                            f"tool '{name}' does not have a remote worker implementation"
+                        )
+                    prepared["is_remote"] = True
+                elif routed:
+                    prepared["is_remote"] = False
+
+                # Preserve the distinction between argument-validation failures
+                # and errors after a tool's handler actually started.
+                validated = definition.validate_arguments(prepared)
+                handler_started = True
+                value = await definition.invoke(validated.model_dump())
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
                 evidence = CodeActToolEvidence(
-                    name=name,
+                    name=actual_name,
                     arguments=prepared,
-                    target="remote" if is_remote else "local",
+                    target=target,
                     ok=False,
                     error_type=type(exc).__name__,
                     message=str(exc),
-                    handler_started=not isinstance(exc, ToolArgumentsError),
+                    handler_started=handler_started,
                 )
                 calls.append(evidence)
                 return {
@@ -292,9 +303,9 @@ class CodeActExecutor:
                 }
 
             evidence = CodeActToolEvidence(
-                name=name,
+                name=actual_name,
                 arguments=prepared,
-                target="remote" if is_remote else "local",
+                target=target,
                 ok=True,
                 result=value,
                 handler_started=True,
