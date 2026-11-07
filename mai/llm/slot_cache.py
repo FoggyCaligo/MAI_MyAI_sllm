@@ -112,3 +112,36 @@ class LlamaCppSlotCacheManager:
         if not isinstance(data, dict):
             raise SlotCacheError(f"llama.cpp slot {action} returned non-object response")
         return data
+
+
+class CacheRoleSwitcher:
+    """Experimental role state machine; caller must own a dedicated idle slot.
+
+    This protects transitions within a run, not across independent processes
+    or unrelated requests. It must not be wired to the agent loop until
+    llama.cpp slot affinity and exclusive inference scheduling are verified.
+    """
+
+    def __init__(self, manager: LlamaCppSlotCacheManager):
+        self.manager = manager
+        self.active: CacheRole | None = None
+        self._transition_lock = asyncio.Lock()
+
+    async def switch(self, target: CacheRole) -> None:
+        target = CacheRole(target)
+        async with self._transition_lock:
+            if target == self.active:
+                return
+            previous = self.active
+            if previous is not None:
+                # Save before touching the active cache. A failure leaves
+                # the prior role active and does not erase any cache.
+                await self.manager.save(previous)
+            # A restore failure is visible and must not silently use the
+            # previous role's KV cache; the caller must abort the run.
+            self.active = None
+            if self.manager.checkpoint(target) is not None:
+                await self.manager.restore(target)
+            else:
+                await self.manager.erase_active()
+            self.active = target
