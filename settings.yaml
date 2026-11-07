@@ -31,3 +31,6 @@ MAI_ANSWER_QUALITY_REVIEW: false
 VOICE_SILENCE_SECONDS: 5
 VOICE_MATCH_THRESHOLD: 0.65
 VOICE_WHISPER_MODEL: small
+
+# 원격 웹 호스팅 선택: none / tailscale / cloudflare. 비밀 토큰은 .env에만 저장.
+REMOTE_HOSTING_PROVIDER: none
