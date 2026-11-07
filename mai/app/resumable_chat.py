@@ -36,15 +36,6 @@ async def _execute_chat(
     on_verification_audit=None,
 ) -> tuple[int, dict[str, object]]:
     runtime = server._get_runtime()
-    try:
-        selected_model = server._selected_model_for_principal(
-            principal,
-            runtime_model=runtime.model,
-            requested_model=request.model,
-        )
-    except PermissionError as exc:
-        return 403, {"detail": str(exc)}
-
     limit = server._history_limit()
     prior = server._session_history(principal, request.session_id, limit=limit) if limit else []
     attachments = (server._validated_image_attachments(
@@ -54,13 +45,12 @@ async def _execute_chat(
         principal, request.session_id, role="user", content=request.message,
         metadata={"attachments": attachments} if attachments else None,
     )
-    active_model = selected_model or runtime.model
+    active_model = runtime.model
     try:
         result = await runtime.run_user_message(
             request.message,
             principal=principal,
             prior_messages=prior,
-            model=selected_model,
             **({"attachments": attachments} if attachments else {}),
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
