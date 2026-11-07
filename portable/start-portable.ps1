@@ -49,6 +49,8 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data/sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
 $env:MAIN_MODEL = $modelAlias
+# Exact launched GGUF identity for model-scoped cache filenames (honors -GgufPath).
+$env:MAI_ACTIVE_GGUF_PATH = $modelFile
 $env:LLM_BACKEND = 'llamacpp'
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
 $env:MAI_SLOT_CACHE_DIR = Join-Path $root 'portable/portable-slot-cache'
