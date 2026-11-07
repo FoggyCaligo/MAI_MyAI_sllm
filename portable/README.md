@@ -9,7 +9,7 @@ Ollama 서비스, 두 번째 Verifier 모델, 별도 Vision 모델, 브라우저
 ```text
 MAI/
   .env                                # 계정/비밀정보, Git 제외
-  settings.yaml                       # MAIN_MODEL은 llama.cpp 모델 별칭 1개
+  settings.yaml                       # MODEL_GGUF_PATH: 사용할 GGUF 파일 경로 1개
   data/                               # 계정별 DB
   portable/
     portable-sources.json             # Python/uv/llama.cpp 특정 릴리스 URL·SHA256
@@ -39,9 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps
 
 기본 모델 파일 위치는 `portable/portable-models/gguf/active.gguf`다. 별도 위치에 있는 파일로 시작하려면 `-GgufPath`를 지정한다. **모델 파일과 엔진 바이너리는 서로 다른 디렉터리**에 있다.
 
-`settings.yaml`의 `MAIN_MODEL: "mai-model"`은 하나의 llama.cpp 별칭이다.
-GGUF의 내부 모델명을 뜻하지 않으며 서버가 `--alias mai-model`로 로드된다.
-별칭을 바꾼다면 서버를 반드시 재시작해야 한다.
+`settings.yaml`의 `MODEL_GGUF_PATH`에서 GGUF 파일을 선택한다. 예: `portable/portable-models/gguf/active.gguf`. 내부 llama.cpp alias는 `mai-model`로 고정되어 모델을 바꾸더라도 변경할 필요가 없다. 모델 파일 경로를 바꾸면 서버를 재시작한다.
 
 ## llama.cpp만 업그레이드하기
 
@@ -63,8 +61,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 ## 다른 GGUF로 변경
 
 단일 모델이므로 서버 실행 중에 다른 모델을 추가 적재하지 않는다.
-종료한 뒤 `-ModelFile`을 지정해 `active.gguf`를 교체하거나
-`start-portable.ps1 -GgufPath "경로\\다른모델.gguf"`로 실행한다.
+종료한 뒤 `settings.yaml`의 `MODEL_GGUF_PATH`를 다른 GGUF 경로로 바꾸거나 `-ModelFile`을 지정해 `active.gguf`를 교체할 수 있다. 시작 시 `-GgufPath`를 명시하면 해당 실행에 한하여 YAML 경로를 덮어쓴다.
 파일 교체에는 `-PreserveAndReinstallExisting`을 사용해 기존 파일을 보존할 수 있다.
 GGUF 배포처/라이선스를 확인하고 해당 파일을 별도 백업한다.
 
