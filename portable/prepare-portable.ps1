@@ -26,7 +26,8 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
     $hash = Get-Required $entry 'sha256'
     if ($url -notmatch '^https://') { throw "Only HTTPS release URLs are allowed: $url" }
     if ($hash -notmatch '^[0-9a-fA-F]{64}$') { throw "Invalid SHA-256 for $destination" }
-    $cache = Join-Path $root 'portable/portable-downloads'
+    # Resolve download cache relative to this script, never the caller's working directory.
+    $cache = Join-Path $PSScriptRoot 'portable-downloads'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $archiveName = [IO.Path]::GetFileName(([uri]$url).AbsolutePath)
     if ($archiveName -notmatch '\.(zip|tar\.gz)$') { throw "Unsupported archive type: $archiveName" }
