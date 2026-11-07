@@ -104,6 +104,18 @@ class MAIRunResult:
     tools: tuple[dict[str, object], ...]
 
 
+def _leaf_tool_executions(executions: Sequence[Any]) -> tuple[Any, ...]:
+    """Expand CodeAct parents into their concrete native calls for downstream evidence."""
+    leaves: list[Any] = []
+    for execution in executions:
+        children = tuple(getattr(execution, "children", ()) or ())
+        if children:
+            leaves.extend(children)
+        else:
+            leaves.append(execution)
+    return tuple(leaves)
+
+
 class FileDownloadLinkInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str
@@ -368,6 +380,7 @@ class MAIRuntime:
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions
+        evidence_executions = _leaf_tool_executions(tool_executions)
 
         tools = tuple({
             "name": execution.name,
@@ -375,7 +388,7 @@ class MAIRuntime:
             "ok": execution.ok,
             "error_type": execution.error_type,
             "result": execution.content,
-        } for execution in tool_executions)
+        } for execution in evidence_executions)
 
         task = asyncio.create_task(
             self._postprocess_memory_with_model_scope(
@@ -383,7 +396,7 @@ class MAIRuntime:
                 previous_assistant_message=previous_assistant_message,
                 final_answer=answer,
                 principal=principal,
-                tool_executions=tool_executions,
+                tool_executions=evidence_executions,
                 fact_extractor=fact_extractor,
             )
         )
