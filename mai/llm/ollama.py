@@ -79,7 +79,7 @@ class OllamaAdapter:
         _LOG.info(
             "MAI Ollama request start id=%s model=%s messages=%d tools=%d input_chars_approx=%d timeout_seconds=%g",
             request_id, self.config.model, len(payload["messages"]), len(payload["tools"]),
-            sum(len(str(message)) for message in payload["messages"]), self.config.request_timeout_seconds,
+            sum(_safe_message_size(message) for message in payload["messages"]), self.config.request_timeout_seconds,
         )
         try:
             response = await asyncio.wait_for(
@@ -109,6 +109,22 @@ class OllamaAdapter:
         if turn.thinking:
             _LOG.info("MAI Ollama thinking id=%s model=%s chars=%d content=%s", request_id, self.config.model, len(turn.thinking), turn.thinking)
         return turn
+
+
+def _safe_message_size(message: Mapping[str, Any]) -> int:
+    """Estimate input size without rendering binary images into giant strings."""
+    size = len(str(message.get("role", ""))) + len(str(message.get("content", "")))
+    for item in message.get("images", ()) or ():
+        if isinstance(item, (bytes, bytearray)):
+            size += len(item)
+        elif isinstance(item, str):
+            size += len(item)
+        else:
+            size += len(str(type(item)))
+    for key in ("thinking", "tool_calls", "tool_name"):
+        if key in message:
+            size += len(str(message[key]))
+    return size
 
 
 def _normalize_response(response: Any) -> ModelTurn:
