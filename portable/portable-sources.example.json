@@ -18,7 +18,6 @@
   },
   "models": [
     "ornith-1.5:9b",
-    "lfm3-vl:2b",
-    "qwen3:4b-instruct-2507-q4_K_M"
+    "lfm3-vl:2b"
   ]
 }

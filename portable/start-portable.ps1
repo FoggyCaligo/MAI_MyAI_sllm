@@ -2,7 +2,8 @@ param(
     [ValidateSet('ollama','llamacpp')]
     [string]$Backend = 'ollama',
     [string]$GgufPath,
-    [string]$ModelAlias
+    [string]$ModelAlias,
+    [switch]$SlotCache
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -26,6 +27,8 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data\sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'data\chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data\log.sqlite3'
 $env:LLM_BACKEND = $Backend
+if ($SlotCache -and $Backend -ne "llamacpp") { throw "-SlotCache requires -Backend llamacpp" }
+if ($SlotCache) { $env:MAI_EXPERIMENTAL_SLOT_CACHE = "true" }
 $ollama = Join-Path $root 'portable/portable-runtimes\ollama\ollama.exe'
 $llama = Join-Path $root 'portable/portable-runtimes\llamacpp\llama-server.exe'
 if ($Backend -eq 'ollama') {
@@ -59,6 +62,15 @@ if ($Backend -eq 'ollama') {
     $resolvedModel = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
     $env:MAIN_MODEL = $ModelAlias
     $args = @('-m', $resolvedModel, '--alias', $ModelAlias, '--host', '127.0.0.1', '--port', '8080', '--jinja')
+    if ($SlotCache) {
+        # This dedicated local server contains exactly one slot and one model.
+        $cacheDir = Join-Path $root 'portable/portable-slot-cache'
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+        $env:MAI_SLOT_CACHE_DIR = $cacheDir
+        $env:MAIN_MODEL = $ModelAlias
+        $env:VERIFIER_MODEL = $ModelAlias
+        $args += @('--parallel', '1', '--slot-save-path', $cacheDir, '--cache-prompt')
+    }
     if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { throw 'llama.cpp port 8080 is already occupied' }
     $llamaProcess = Start-Process -FilePath $llama -ArgumentList $args -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
     try {

@@ -61,11 +61,11 @@ def test_invalid_configured_model_fails(tmp_path):
         required_models(manifest, settings, environ={"VERIFIER_MODEL": ""})
 
 
-def test_portable_example_and_windows_source_generator_include_qwen_verifier():
+def test_portable_example_and_windows_source_generator_follow_single_model_default():
     root = Path(__file__).resolve().parents[1]
     example = json.loads((root / "portable/portable-sources.example.json").read_text(encoding="utf-8"))
-    assert "qwen3:4b-instruct-2507-q4_K_M" in example["models"]
+    assert example["models"] == ["ornith-1.5:9b", "lfm3-vl:2b"]
     assert "LiquidAI/lfm2.5-2.6b:q4_k_m" not in example["models"]
     # The pinned release resolver must use the same default model tag.
     source = (root / "portable/resolve_portable_sources.py").read_text(encoding="utf-8")
-    assert 'qwen3:4b-instruct-2507-q4_K_M' in source
+    assert 'config["models"] = ["ornith-1.5:9b", "lfm3-vl:2b"]' in source

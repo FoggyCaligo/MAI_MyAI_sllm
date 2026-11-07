@@ -63,7 +63,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 | 옵션 | 의미 |
 |---|---|
 | `-CopyLocalModels` | `OLLAMA_MODELS` 또는 사용자 `.ollama/models` 전체 복사 |
-| `-Models "ornith-1.5:9b,lfm3-vl:2b,qwen3:4b-instruct-2507-q4_K_M"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
+| `-Models "ornith-1.5:9b,lfm3-vl:2b"` | 위 옵션과 함께 지정한 모델의 매니페스트·참조 blob만 검증 후 복사 |
 | `-PullModels` | 매니페스트 목록과 현재 메인·비전·verifier 모델을 중복 없이 다운로드 |
 | `-InstallChromium` | Portable Playwright Chromium 설치 |
 | `-PreserveAndReinstallExisting` | 설치 영수증이 없는 기존 런타임을 별도 보존한 뒤 재설치 |
@@ -78,21 +78,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -PullModels -InstallChromium
 ```
 
-버전 관리되는 Windows 매니페스트 예시에는 `ornith-1.5:9b`, `lfm3-vl:2b`, `qwen3:4b-instruct-2507-q4_K_M`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
+버전 관리되는 Windows 매니페스트 예시에는 `ornith-1.5:9b`, `lfm3-vl:2b`가 포함된다. `-PullModels`는 기존 매니페스트를 그대로 사용해도 현재 설정의 `MAIN_MODEL`, `VISION_MODEL`, `VERIFIER_MODEL`을 추가한다. 설정 우선순위는 MAI와 동일하게 프로세스 환경변수 → 프로젝트 `.env` → `settings.yaml`이다. 매니페스트에 별도로 지정한 모델도 유지하며, 각 모델은 다운로드 후 `ollama show`로 확인한다. 런타임 다운로드 URL·해시를 다시 생성할 필요는 없다. 예전 개인 `portable-sources.json`에 `lfm2.5:8b`가 남아 있으면 `-PullModels`는 그 모델도 다운로드한다. 더 이상 필요 없다면 매니페스트의 `models` 목록에서 직접 제거한다. 기존 `.env` 또는 프로세스 환경변수의 `VERIFIER_MODEL`도 `settings.yaml`보다 우선하므로 확인한다.
 
 ### 기존 외장하드에 Verifier 모델만 추가 또는 변경
 
-Verifier를 기존 모델에서 `qwen3:4b-instruct-2507-q4_K_M`로 변경할 때에도 기존 런타임·DB·모델을 삭제하지 않는다. PC의 일반 Ollama에 `qwen3:4b-instruct-2507-q4_K_M`가 이미 있으면 다시 다운로드하지 않는다. 없다면 일반 Ollama를 실행한 상태에서 `ollama pull qwen3:4b-instruct-2507-q4_K_M`를 먼저 실행한다. 다운로드가 끝나면 MAI·Ollama 및 모델 쓰기 작업을 종료한다.
+단일 메인/Verifier 모델 `ornith-1.5:9b`를 복사할 때에도 기존 런타임·DB·모델을 삭제하지 않는다. PC의 일반 Ollama에 `ornith-1.5:9b`가 이미 있으면 다시 다운로드하지 않는다. 없다면 일반 Ollama를 실행한 상태에서 `ollama pull ornith-1.5:9b`를 먼저 실행한다. 다운로드가 끝나면 MAI·Ollama 및 모델 쓰기 작업을 종료한다.
 
 PowerShell에서 **외장하드의 MAI 프로젝트 루트**로 이동해 다음을 실행한다. `OLLAMA_MODELS`를 사용자 지정했다면 아래 원본 경로가 실제 일반 Ollama 서버의 저장 위치인지 확인한다.
 
 ```powershell
 $sourceModels = if ($env:OLLAMA_MODELS) { $env:OLLAMA_MODELS } else { Join-Path $env:USERPROFILE '.ollama\models' }
-& ./portable/portable-runtimes/python/python.exe ./portable/copy_ollama_models.py --source "$sourceModels" --destination ./portable/portable-models/ollama --model qwen3:4b-instruct-2507-q4_K_M
+& ./portable/portable-runtimes/python/python.exe ./portable/copy_ollama_models.py --source "$sourceModels" --destination ./portable/portable-models/ollama --model ornith-1.5:9b
 if ($LASTEXITCODE -ne 0) { throw 'Verifier 모델 복사 실패' }
 ```
 
-해당 모델의 매니페스트와 참조 blob만 SHA-256·크기를 검증해 추가한다. 다른 모델은 그대로 두며, 이미 일치하는 파일은 재사용한다. 복사 후 `start-portable.ps1`로 실행하고 별도 PowerShell 창에서 `./portable/portable-runtimes/ollama/ollama.exe show qwen3:4b-instruct-2507-q4_K_M`로 확인한다.
+해당 모델의 매니페스트와 참조 blob만 SHA-256·크기를 검증해 추가한다. 다른 모델은 그대로 두며, 이미 일치하는 파일은 재사용한다. 복사 후 `start-portable.ps1`로 실행하고 별도 PowerShell 창에서 `./portable/portable-runtimes/ollama/ollama.exe show ornith-1.5:9b`로 확인한다.
 
 `--include-llamacpp`는 목록 생성기 옵션이고 PowerShell 설치기 옵션이 아니다. GGUF 모델은 별도로 준비한다. 설치 준비는 실제 GPU·음성·새 PC의 완전 오프라인 실행을 보장하지 않는다.
 
@@ -169,4 +169,16 @@ MAI와 모델 서버를 종료하고 **별도 물리 디스크**에 백업한다
 
 사용자 업로드 이미지를 첨부한 채팅에서 Ollama의 메인 모델이 `vision` capability를 제공하면 원본 이미지 바이트를 모델 메시지에 직접 포함한다. 지원하지 않으면 기존 `VISION_MODEL`의 `image_analyze` 도구 경로를 유지한다. `VISION_MODEL`은 자동 제거하지 않는다. 첨부 이름은 계정별 업로드 디렉터리에서 검증하며 이미지만 직접 전달한다. llama.cpp 백엔드에서는 이 릴리스의 직접 이미지 전송 대신 기존 이미지 도구를 사용한다.
 
-Verifier 기본 태그는 `qwen3:4b-instruct-2507-q4_K_M`이며, 일반 Ollama에서 `ollama pull qwen3:4b-instruct-2507-q4_K_M`로 먼저 다운로드할 수 있다. 외장 SSD에는 `-CopyLocalModels -Models "qwen3:4b-instruct-2507-q4_K_M"` 또는 `-PullModels`로 추가한다. 이전 개인 매니페스트에 남은 모델은 자동 삭제하지 않는다.
+dev2 기본 메인·Verifier 공통 모델 태그는 `ornith-1.5:9b`이며, 일반 Ollama에서 `ollama pull ornith-1.5:9b`로 먼저 다운로드할 수 있다. 외장 SSD에는 `-CopyLocalModels -Models "ornith-1.5:9b"` 또는 `-PullModels`로 추가한다. 이전 개인 매니페스트에 남은 모델은 자동 삭제하지 않는다.
+
+## 실험: llama.cpp 모델 하나 + 메인/숫자/최종 KV 캐시 교체
+
+이 기능은 Ollama에서는 작동하지 않으며, 단일 모델 GGUF를 사용한다. `-SlotCache` 옵션으로 전용 llama.cpp 서버를 `--parallel 1 --slot-save-path`와 함께 시작한다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1 -Backend llamacpp -GgufPath ./portable/portable-models/gguf/model.gguf -ModelAlias local-model -SlotCache
+```
+
+메인·숫자·최종검증은 같은 모델을 사용한다. 모델 별칭은 어떤 9B/12B GGUF든 사용할 수 있으나 해당 모델을 사전에 설치해야 한다. 재시도 시 메인 슬롯 상태를 복원한다. 캐시는 `portable/portable-slot-cache`에 저장되며 정상적인 실행 종료 후 각 세션 파일을 삭제한다. 갑작스러운 전원 종료로 잔여 파일이 남을 수 있으므로 보관하지 말고 종료 후 안전하게 정리한다.
+
+이 실험은 llama.cpp 서버 슬롯 독점이 필요한 **명시적 옵트인 기능**이다. 동일 포트에 다른 프로그램을 붙이지 말고, 첫 실행은 충분한 VRAM 여유를 확보한 모델에서 테스트한다. 시스템 메모리가 부족한 12B 모델을 자동으로 안전하게 만들지는 않는다. 자세한 내용은 [KV 캐시 실험 문서](../docs/kv-cache-experiment.md)를 참조한다.

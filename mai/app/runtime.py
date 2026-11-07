@@ -20,6 +20,7 @@ from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig, ollama_generation_limit
 from ..llm.ollama import OllamaAdapter
 from ..llm.llamacpp import LlamaCppAdapter
+from ..llm.role_cache_runtime import RoleCacheRun
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
@@ -167,6 +168,13 @@ class MAIRuntime:
         self._ollama_client = AsyncClient(host=ollama_host)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
+        role_cache_flag = os.environ.get("MAI_EXPERIMENTAL_SLOT_CACHE", "false").lower()
+        if role_cache_flag not in {"true", "false"}:
+            raise ValueError("MAI_EXPERIMENTAL_SLOT_CACHE must be true or false")
+        self._role_cache_enabled = role_cache_flag == "true"
+        if self._role_cache_enabled and self.llm_backend != "llamacpp":
+            raise ValueError("KV role cache experiment requires LLM_BACKEND=llamacpp")
+        self._role_cache_lock = asyncio.Lock()
 
     def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
         clean_model = model.strip()
@@ -259,7 +267,17 @@ class MAIRuntime:
         register_tool_result_tools(registry, tool_result_store)
         return registry
 
-    async def run_user_message(
+    async def run_user_message(self, *args: Any, **kwargs: Any) -> MAIRunResult:
+        if not self._role_cache_enabled:
+            return await self._run_user_message_impl(*args, **kwargs)
+        async with self._role_cache_lock:
+            # Memory extraction may also call the same llama.cpp backend.
+            # It must finish before a slot checkpoint can be safely restored.
+            if self._background_tasks:
+                await asyncio.gather(*tuple(self._background_tasks))
+            return await self._run_user_message_impl(*args, **kwargs)
+
+    async def _run_user_message_impl(
         self,
         prompt: str,
         *,
@@ -287,6 +305,19 @@ class MAIRuntime:
         )
         adapter = self._adapter_for(selected_model)
         verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
+        role_cache_run: RoleCacheRun | None = None
+        if self._role_cache_enabled:
+            if self.verifier_model is not None and self.verifier_model != selected_model:
+                raise ValueError("KV role cache requires MAIN_MODEL and VERIFIER_MODEL to be identical")
+            directory = os.environ.get("MAI_SLOT_CACHE_DIR")
+            if not directory:
+                raise ValueError("MAI_SLOT_CACHE_DIR is required in KV role cache mode")
+            if not isinstance(adapter, LlamaCppAdapter):
+                raise ValueError("KV role cache requires llama.cpp adapter")
+            dedicated_adapter = LlamaCppAdapter(adapter.config, slot_id=0)
+            role_cache_run = RoleCacheRun(adapter=dedicated_adapter, cache_directory=Path(directory))
+            adapter = role_cache_run.main_adapter
+            verifier_adapter = role_cache_run.verifier_adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -315,8 +346,8 @@ class MAIRuntime:
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
-        try:
-            result = await agent.run_user_message(
+        async def execute_agent():
+            return await agent.run_user_message(
                 model_prompt,
                 prior_messages=messages,
                 images=inline_images,
@@ -332,6 +363,12 @@ class MAIRuntime:
                     )) if on_verification_audit is not None else None
                 ),
             )
+        try:
+            if role_cache_run is None:
+                result = await execute_agent()
+            else:
+                async with role_cache_run:
+                    result = await execute_agent()
         finally:
             await browser_manager.close_all()
         answer = result.content
