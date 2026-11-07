@@ -20,6 +20,7 @@ from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig, ollama_generation_limit
 from ..llm.ollama import OllamaAdapter
 from ..llm.llamacpp import LlamaCppAdapter
+from ..llm.llamacpp_router import SingleResidentRouter
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
@@ -171,6 +172,8 @@ class MAIRuntime:
         else:
             self._ollama_client = None
         self._llamacpp_execution_lock = asyncio.Lock()
+        self._llamacpp_router = (SingleResidentRouter(self.llamacpp_host)
+                                 if self.llm_backend == "llamacpp" else None)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 
@@ -195,7 +198,7 @@ class MAIRuntime:
         if adapter is None:
             adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True, options={"num_predict": ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)}))
                        if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True)))
+                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True), router=self._llamacpp_router))
             self._adapters[clean_model] = adapter
         return adapter
 
@@ -207,7 +210,7 @@ class MAIRuntime:
         if extractor is None:
             adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False, options={"num_predict": ollama_generation_limit("OLLAMA_MEMORY_MAX_OUTPUT_TOKENS", 2048)}))
                        if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=False)))
+                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=False), router=self._llamacpp_router))
             extractor = OllamaFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
@@ -261,6 +264,7 @@ class MAIRuntime:
                 registry, model=self.vision_model,
                 host=(self.ollama_host if self.llm_backend == "ollama" else self.llamacpp_host),
                 cwd=self.cwd, backend=self.llm_backend,
+                router=self._llamacpp_router,
             )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
