@@ -159,8 +159,14 @@ dev2는 Ollama를 사용하지 않고, **현재 적재된 llama.cpp GGUF**가 �
 - 사용자 채팅에 첨부한 PNG/JPEG/GIF/WEBP 이미지는 계정별 업로드 경로를 확인한 뒤, llama.cpp의 OpenAI 호환 `image_url` 데이터 URI로 전달한다.
 - 별도의 `image_analyze` 도구도 복원되었다. 이 도구는 실제 파일 경로와 질문을 받아, **현재 활성 모델**을 통해 이미지를 분석한다. Owner는 접근 가능한 로컬 파일을 지정할 수 있으며, Trial 도구는 해당 계정의 업로드 경로로 한정된다.
 - 모델이 이미지 입력을 지원하려면 해당 llama.cpp 빌드·채팅 템플릿·모델에서 멀티모달 처리가 지원되고 필요한 projector(예: `mmproj`)가 함께 적재되어야 한다. 텍스트 전용 GGUF로 이미지를 분석할 수는 없으며 이때 런타임 오류를 숨기거나 가짜 묘사를 반환하지 않는다.
-- Windows Portable: `powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1 -MmprojPath 'portable/portable-models/gguf/vision-mmproj.gguf'` (실제 projector가 있는 경우)
-- Linux Portable: `MAI_MMPROJ_PATH=portable/portable-models/gguf/vision-mmproj.gguf ./portable/start-portable-linux.sh` (실제 projector가 있는 경우)
+- Projector 경로는 `settings.yaml`의 `MODEL_MMPROJ_PATH`로 설정한다. 이 항목을 생략하면 텍스트 전용 GGUF 실행에 사용 가능한 projector를 억지로 붙이지 않는다. 예:
+  ```yaml
+  MODEL_GGUF_PATH: "portable/portable-models/gguf/gemma-4-12b-it-qat-q4_0.gguf"
+  MODEL_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf"
+  ```
+- Windows Portable: `powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1`
+- Linux Portable: `./portable/start-portable-linux.sh`
+- 사용자가 명시적으로 인자를 전달하면 Windows `-MmprojPath`, Linux 두 번째 위치 인자가 YAML 설정을 덮어쓴다. `MODEL_MMPROJ_PATH` 환경변수도 YAML보다 우선한다.
 - projector 파일은 자동 다운로드하거나 임의의 모델에 붙이지 않는다. 선택한 본체 GGUF에 맞는 파일을 사용해야 한다.
 - **별도 Vision 모델의 교대적재는 아직 미구현**이다. 텍스트 전용 Main + 별도 Vision GGUF를 번갈아 사용하려면 향후 단일 모델 적재 관리자를 추가해야 한다. 이 복원은 두 모델을 동시에 VRAM에 올리지 않는다.
 
@@ -177,7 +183,7 @@ dev2는 Ollama를 사용하지 않고, **현재 적재된 llama.cpp GGUF**가 �
 
 실행 중 다른 프로세스에서 llama.cpp의 동일한 슬롯을 사용하면
 KV 캐시가 섞일 수 있으므로 서버 접근을 분리한다.
-이미지 첨부 직접 인식은 현재 단일 모델 llama.cpp 경로에서 지원하지 않는다.
+이미지 첨부는 현재 선택한 GGUF가 멀티모달을 지원하고 호환 projector가 적재된 경우에만 동작한다.
 가중치 적재 여부, VRAM·RAM, GPU 전원 안정성은 실제 컴퓨터에서 검증해야 한다.
 
 ## 테스트
