@@ -62,7 +62,7 @@ class FactExtractor(Protocol):
         ...
 
 
-class OllamaFactExtractor:
+class SingleModelFactExtractor:
     """Small judgment-only post-response extractor using an Ollama adapter."""
 
     def __init__(self, adapter: LlamaCppAdapter, *, timeout_seconds: float | None = None) -> None:
