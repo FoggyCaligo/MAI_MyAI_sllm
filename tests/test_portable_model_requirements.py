@@ -62,7 +62,6 @@ def test_invalid_configured_model_fails(tmp_path):
 
 
 def test_portable_example_and_windows_source_generator_include_qwen_verifier():
-    from portable import resolve_portable_sources
     root = Path(__file__).resolve().parents[1]
     example = json.loads((root / "portable/portable-sources.example.json").read_text(encoding="utf-8"))
     assert "qwen3:4b-instruct-2507-q4_K_M" in example["models"]
