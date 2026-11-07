@@ -286,9 +286,13 @@ class FinalGroundingVerifier:
         *,
         reviewer_timeout_seconds: float | None = None,
         quality_review_enabled: bool | None = None,
+        blocking_mode: Literal["strict", "critical"] = "strict",
     ) -> None:
         if reviewer_timeout_seconds is not None and reviewer_timeout_seconds <= 0:
             raise ValueError("reviewer_timeout_seconds must be positive")
+        if blocking_mode not in ("strict", "critical"):
+            raise ValueError("blocking_mode must be strict or critical")
+        self.blocking_mode = blocking_mode
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
         if quality_review_enabled is None:
@@ -410,6 +414,30 @@ class FinalGroundingVerifier:
             )
             issues.append(VerificationIssue(code="evidence_coverage_insufficient", message=reason))
 
+        # Critical mode only blocks proven material mistakes. Missing evidence,
+        # uncertain equivalence, and coverage suggestions remain audit warnings.
+        # Do not reinterpret the reviewer's lack of evidence as a contradiction.
+        audit_issues = tuple(issues)
+        if self.blocking_mode == "critical":
+            blocking = []
+            for issue in audit_issues:
+                if issue.code in {
+                    "task_alignment_failed",
+                    "action_outcome_contradicted",
+                    "action_outcome_unverified",
+                }:
+                    blocking.append(issue)
+                elif issue.code == "claim_grounding_failed" and any(
+                    claim.verdict == "unsupported" and claim.defect == "contradiction"
+                    for claim in review.claims
+                ):
+                    blocking.append(issue)
+            issues = blocking
+        warnings = [
+            {"code": issue.code, "message": issue.message}
+            for issue in audit_issues if issue not in issues
+        ]
+
         self._log_result(
             numeric=("failed" if numeric_issue is not None else "pass") if allow_numeric_review else "skipped",
             evidence=review.evidence_verdict if allow_evidence_review else "skipped",
@@ -426,6 +454,8 @@ class FinalGroundingVerifier:
                 + review.retry_summary
             ) if issues else "",
             review_details={
+                "blocking_mode": self.blocking_mode,
+                "nonblocking_warnings": warnings,
                 "numeric_verdict": numeric_verdict,
                 "numeric_reason": numeric_reason,
                 "flagged_numeric_or_date_values": list(numeric_facts),
@@ -446,6 +476,7 @@ class FinalGroundingVerifier:
             on_audit_event("decision", {
                 "ok": result.ok,
                 "issues": [{"code": issue.code, "message": issue.message} for issue in issues],
+                "warnings": warnings,
                 "review_details": result.review_details,
             })
         return result
