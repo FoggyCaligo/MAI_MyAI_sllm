@@ -11,6 +11,11 @@ AGENT_MAX_NO_PROGRESS_ROUNDS: 2
 MAX_INLINE_TOOL_RESULT_CHARS: 8000
 SESSION_HISTORY_MESSAGES: 10
 MAI_ANSWER_QUALITY_REVIEW: false
+# false: skip ALL final verifier requests (numeric and factual); no verifier KV switching.
+MAI_VERIFIER_ENABLED: true
+# critical: only demonstrated contradictions, false completion or essential misalignment block.
+# strict: preserve prior rejection behavior.
+MAI_VERIFIER_BLOCKING_MODE: critical
 
 VOICE_SILENCE_SECONDS: 5
 VOICE_MATCH_THRESHOLD: 0.65
