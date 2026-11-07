@@ -114,9 +114,9 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, s
                     separators=(",", ":"),
                 )
                 + "\nUse execute_code when a task benefits from Python calculation, branching, loops, "
-                  "or multiple activated tool calls in one model round. Choose execute_code.target "
+                  "or multiple activated tool calls in one model round. Choose each CodeAct tool() call's is_remote argument "
                   "from the user's requested execution location and the declared runtime context. "
-                  "The target is structural; do not infer it with text matching. Direct native calls "
+                  "The execution target is structural; do not infer it with text matching. Direct native calls "
                   "remain available during this first CodeAct integration for compatibility."
             ),
         })
