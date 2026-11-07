@@ -355,8 +355,9 @@ class FinalGroundingVerifier:
 
         review = await self._review_final(
             candidate=candidate, messages=messages, tool_results=tool_results,
-            run_quality_review=(self.quality_review_enabled and allow_evidence_review
-                                and allow_semantic_review and allow_coverage_review),
+            run_quality_review=(self.quality_review_enabled and numeric_issue is None
+                                and allow_evidence_review and allow_semantic_review
+                                and allow_coverage_review),
             on_audit_event=on_audit_event,
         )
         if numeric_issue is not None:
