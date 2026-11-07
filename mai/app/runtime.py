@@ -157,6 +157,15 @@ class MAIRuntime:
         self._role_cache_lock = asyncio.Lock()
         self._slot_cache_dir = Path(os.environ.get("MAI_SLOT_CACHE_DIR", "portable/portable-slot-cache")).expanduser().resolve()
         self._slot_cache_dir.mkdir(parents=True, exist_ok=True)
+        verifier_setting = os.environ.get("MAI_VERIFIER_ENABLED", "true").strip().lower()
+        if verifier_setting not in {"true", "false"}:
+            raise ValueError("MAI_VERIFIER_ENABLED must be true or false")
+        self.verifier_enabled = verifier_setting == "true"
+        self.verifier_blocking_mode = os.environ.get(
+            "MAI_VERIFIER_BLOCKING_MODE", "critical"
+        ).strip().lower()
+        if self.verifier_blocking_mode not in {"critical", "strict"}:
+            raise ValueError("MAI_VERIFIER_BLOCKING_MODE must be critical or strict")
 
     def _adapter_for(self, model: str) -> LlamaCppAdapter:
         if model != self.model:
@@ -247,13 +256,21 @@ class MAIRuntime:
         selected_model = self.model
         model_prompt, inline_images = prompt, ()
         adapter = self._adapter_for(selected_model)
-        verifier_adapter = adapter
-        role_cache_run = RoleCacheRun(
-            adapter=LlamaCppAdapter(adapter.config, slot_id=0),
-            cache_directory=self._slot_cache_dir,
-        )
-        adapter = role_cache_run.main_adapter
-        verifier_adapter = role_cache_run.verifier_adapter
+        verifier_adapter = None
+        role_cache_run = None
+        if self.verifier_enabled:
+            selected_gguf = Path(os.environ.get("MODEL_GGUF_PATH", "portable/portable-models/gguf/active.gguf")).expanduser().resolve()
+            model_identity = str(selected_gguf)
+            if selected_gguf.is_file():
+                stat = selected_gguf.stat()
+                model_identity = f"{model_identity}:{stat.st_size}:{stat.st_mtime_ns}"
+            role_cache_run = RoleCacheRun(
+                adapter=LlamaCppAdapter(adapter.config, slot_id=0),
+                cache_directory=self._slot_cache_dir,
+                model_identity=model_identity,
+            )
+            adapter = role_cache_run.main_adapter
+            verifier_adapter = role_cache_run.verifier_adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -273,14 +290,23 @@ class MAIRuntime:
                 max_identical_failures=max_identical_failures,
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
-            final_verifier=FinalGroundingVerifier(
-                reviewer_adapter=verifier_adapter,
+            final_verifier=(
+                FinalGroundingVerifier(
+                    reviewer_adapter=verifier_adapter,
+                    blocking_mode=self.verifier_blocking_mode,
+                ) if self.verifier_enabled else None
             ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
         )
 
-        messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+        system_prompt = AGENT_SYSTEM_PROMPT
+        if not self.verifier_enabled:
+            system_prompt = system_prompt.replace(
+                "When ready to respond, produce a provisional answer for verification before delivery. If rejected, use the latest verifier feedback to correct unsupported claims through additional evidence or narrower statements; rejected drafts and verifier diagnoses are not factual evidence.",
+                "When ready, provide the best supported final answer directly; the optional final-answer verifier is disabled. Explicitly distinguish verified outcomes from uncertainty.",
+            )
+        messages: list[Mapping[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend(prior_messages)
         async def execute_agent():
             return await agent.run_user_message(
@@ -293,15 +319,19 @@ class MAIRuntime:
                 on_verification_audit=(
                     (lambda round_number, event, data: on_verification_audit(
                         round_number, event, {
-                            "verifier_model": verifier_adapter.config.model,
+                            "verifier_model": verifier_adapter.config.model if verifier_adapter is not None else None,
                             "data": dict(data),
                         },
                     )) if on_verification_audit is not None else None
                 ),
             )
         try:
-            async with role_cache_run:
+            if role_cache_run is None:
+                # Verifier disabled: no role checkpoint/restore and no reviewer calls.
                 result = await execute_agent()
+            else:
+                async with role_cache_run:
+                    result = await execute_agent()
         finally:
             await browser_manager.close_all()
         answer = result.content
