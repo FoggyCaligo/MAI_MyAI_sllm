@@ -1,6 +1,7 @@
 # Single-GGUF portable MAI. llama.cpp engine is replaceable independently of GGUF.
 param(
-    [string]$GgufPath
+    [string]$GgufPath,
+    [string]$MmprojPath
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -69,6 +70,23 @@ $quotedModelAlias = '"' + $modelAlias + '"'
 $serverArgs = @('-m', $quotedModelPath, '--alias', $quotedModelAlias,
                 '--host', '127.0.0.1', '--port', '8080', '--jinja',
                 '--parallel', '1', '--slot-save-path', $quotedCachePath)
+if (-not $MmprojPath -and $env:MAI_MMPROJ_PATH) { $MmprojPath = $env:MAI_MMPROJ_PATH }
+if ($MmprojPath) {
+    if (-not [IO.Path]::IsPathRooted($MmprojPath)) { $MmprojPath = Join-Path $root $MmprojPath }
+    if (-not (Test-Path -LiteralPath $MmprojPath -PathType Leaf)) { throw "Multimodal projector not found: $MmprojPath" }
+    $projectorFile = (Resolve-Path -LiteralPath $MmprojPath -ErrorAction Stop).Path
+    if (-not [IO.Path]::GetExtension($projectorFile).Equals('.gguf', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Multimodal projector must be a .gguf file: $projectorFile"
+    }
+    $projectorStream = [System.IO.File]::OpenRead($projectorFile)
+    try {
+        $projectorMagic = New-Object byte[] 4
+        if ($projectorStream.Read($projectorMagic, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($projectorMagic) -cne 'GGUF') {
+            throw "Multimodal projector file is not a GGUF: $projectorFile"
+        }
+    } finally { $projectorStream.Dispose() }
+    $serverArgs += @('--mmproj', ('"' + $projectorFile + '"'))
+}
 $llamaProcess = Start-Process -FilePath $llama -ArgumentList $serverArgs -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
 try {
     $ready = $false
