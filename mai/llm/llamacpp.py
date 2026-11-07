@@ -12,9 +12,13 @@ from .ollama import OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestEr
 
 
 class LlamaCppAdapter:
-    def __init__(self, config: ModelConfig, *, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(self, config: ModelConfig, *, client: httpx.AsyncClient | None = None,
+                 slot_id: int | None = None) -> None:
+        if slot_id is not None and slot_id < 0:
+            raise ValueError("slot_id must be nonnegative")
         self.config = config
         self._client = client
+        self.slot_id = slot_id
 
     async def chat(self, request: ChatRequest) -> ModelTurn:
         if request.options:
@@ -25,6 +29,11 @@ class LlamaCppAdapter:
             "tools": [dict(tool) for tool in request.tools],
             "stream": False,
         }
+        if self.slot_id is not None:
+            # Explicit slot affinity is required for checkpoint correctness.
+            # A dedicated --parallel 1 llama.cpp server is required by the caller.
+            payload["id_slot"] = self.slot_id
+            payload["cache_prompt"] = True
         if request.response_format is not None:
             if isinstance(request.response_format, Mapping):
                 payload["response_format"] = {"type": "json_schema", "json_schema": {
