@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_only_single_model_alias_is_configured():
     settings = load_settings(ROOT / "settings.yaml", environ={})
-    assert settings["MAIN_MODEL"] == "mai-model"
+    assert settings["MODEL_GGUF_PATH"] == "portable/portable-models/gguf/active.gguf"\n    assert "MAIN_MODEL" not in settings
     assert "LLAMACPP_HOST" in settings
     assert "MAI_MODEL_REQUEST_TIMEOUT_SECONDS" in settings
     for obsolete in ("VERIFIER_MODEL", "VISION_MODEL", "LLM_BACKEND", "OLLAMA_HOST", "OLLAMA_THINK"):
@@ -39,7 +39,7 @@ def test_portable_manifest_contains_no_ollama():
     assert set(example) == {"schema_version", "python", "uv", "llamacpp"}
     powershell = (ROOT / "portable/start-portable.ps1").read_text(encoding="utf-8")
     assert "--parallel" in powershell and "--slot-save-path" in powershell
-    assert "ollama.exe" not in powershell
+    assert "MODEL_GGUF_PATH" in powershell\n    assert "ollama.exe" not in powershell
     assert "ollama pull" not in (ROOT / "portable/prepare-portable.ps1").read_text(encoding="utf-8")
 
 
