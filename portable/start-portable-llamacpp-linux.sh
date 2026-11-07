@@ -58,7 +58,7 @@ projector = gguf("LLAMACPP_MAIN_MMPROJ_PATH")
 vision = gguf("LLAMACPP_VISION_GGUF_PATH")
 vision_projector = gguf("LLAMACPP_VISION_MMPROJ_PATH")
 if vision_projector and not vision: raise ValueError("Vision projector requires Vision GGUF")
-lines = ["version = 1", "[*]", "ctx-size = 16384", "n-gpu-layers = 99", "parallel = 1",
+lines = ["version = 1", "[*]", "ctx-size = 131072", "n-gpu-layers = 99", "parallel = 1",
          "[mai-main]", "model = " + str(main)]
 if projector: lines.append("mmproj = " + str(projector))
 lines += ["[mai-verifier]", "model = " + str(verifier)]

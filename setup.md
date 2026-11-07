@@ -304,3 +304,12 @@ python scripts/reset_trial.py 체험판
 ```
 
 `TRIAL_USERS`에 설정된 정확한 `user_id`만 받으며 안정적인 `db_id` 기준으로 해당 계정의 기억·대화·업로드를 초기화한다. 실제 실행에는 확인 입력이 필요하고 `--yes`로 생략할 수 있다. 경로를 별도 지정하려면 `--db`, `--chat-db`, `--upload-root`를 사용한다. 상대경로는 프로젝트 루트 기준이다.
+
+
+## 부록: 128K llama.cpp 컨텍스트와 웹 검색 문맥 관리
+
+Windows 및 Linux llama.cpp Portable 라우터의 기본 컨텍스트를 **131,072토큰(128K)**으로 설정한다. Ollama 앱의 Context length 슬라이더는 llama.cpp 설정에 영향을 주지 않는다. Windows에서 장비 메모리가 부족하면 `-ContextSize 32768` 등으로 실행별 하향할 수 있다.
+
+Main의 도구 반복 도중 검색/웹페이지 원문을 단순 누적하지 않도록, **최초 출력 이후의 후속 모델 이력**에는 `web_search`의 원래 제목·URL·스니펫, `web_fetch`의 문서 URL·제목·본문 앞 2,200자 및 원문 조회 ID를 남긴다. 원본 결과는 감사 로그와 실행별 `ToolResultStore`에 보존하고, 나머지는 기존 `tool_result_read`로 조회할 수 있다. 이것은 **원문 발췌**이지 의미 요약·사실 검증·완전한 문서 분석은 아니다. [도구 결과 상세](docs/TOOL_RESULT_PAGINATION.md)를 참고한다.
+
+128K는 VRAM 요구량을 증가시킬 수 있으며 16GB GPU에서 추론 성공을 보장하지 않는다. `--models-max 1`을 유지하더라도 KV 캐시와 비전 projector가 VRAM을 사용한다. 불안정하거나 GPU 오류가 발생하면 추론을 중단하고 컨텍스트를 줄여 재검증해야 한다.

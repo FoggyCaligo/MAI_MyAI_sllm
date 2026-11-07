@@ -651,7 +651,13 @@ class AgentLoop:
                 compact_history_content=compact_content, source_content=source_content,
             )
         source_content = _serialize_tool_content(value)
-        model_content, compact_content = self._model_contents(source_content)
+        if call.name in {"web_search", "web_fetch"} and self.tool_result_store is not None:
+            # Preserve full evidence for audit and on-demand reads, while
+            # keeping only literal source excerpts in subsequent model rounds.
+            views = self.tool_result_store.web_model_views(source_content, tool_name=call.name)
+            model_content, compact_content = views.initial_content, views.compact_history_content
+        else:
+            model_content, compact_content = self._model_contents(source_content)
         return ToolExecution(
             name=call.name,
             arguments=dict(call.arguments),

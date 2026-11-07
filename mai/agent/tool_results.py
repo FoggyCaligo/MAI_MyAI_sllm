@@ -73,6 +73,84 @@ class ToolResultStore:
             compact_history_content=compact_reference,
         )
 
+    def web_model_views(self, content: str, *, tool_name: str) -> ToolResultModelViews:
+        """Preserve the original output, but replace older web turns with source excerpts.
+
+        The first model turn still sees the existing bounded tool result. Later
+        turns receive deterministic excerpts and URLs, not AI-generated claims.
+        Full original text is available through tool_result_read during this run.
+        """
+        if tool_name not in {"web_search", "web_fetch"}:
+            return self.model_views(content)
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return self.model_views(content)
+        if not isinstance(payload, dict):
+            return self.model_views(content)
+        if tool_name == "web_search":
+            results = payload.get("results")
+            if not isinstance(results, list):
+                return self.model_views(content)
+            excerpt = {
+                "query": payload.get("query"),
+                "provider": payload.get("provider"),
+                "provider_pages": payload.get("provider_pages"),
+                "stopped_on_empty_page": payload.get("stopped_on_empty_page"),
+                "results": [
+                    {"rank": item.get("rank"), "title": item.get("title"),
+                     "url": item.get("url"), "snippet": item.get("snippet")}
+                    for item in results if isinstance(item, dict)
+                ],
+            }
+        else:
+            if not isinstance(payload.get("text"), str):
+                return self.model_views(content)
+            # This is a literal source excerpt, not a claim synthesis. The model
+            # must reread the source for any detail absent from these excerpts.
+            text = payload["text"]
+            excerpt = {
+                "url": payload.get("url"),
+                "final_url": payload.get("final_url"),
+                "title": payload.get("title"),
+                "status_code": payload.get("status_code"),
+                "content_type": payload.get("content_type"),
+                "truncated": payload.get("truncated"),
+                "source_text_excerpt": text[:2200],
+                "excerpt_incomplete": len(text) > 2200,
+                "links": [
+                    {"text": link.get("text"), "url": link.get("url")}
+                    for link in payload.get("links", [])[:6]
+                    if isinstance(link, dict)
+                ] if isinstance(payload.get("links"), list) else [],
+                "pagination": payload.get("pagination"),
+            }
+        stored = self.store(content)
+        # Always show the original response on first appearance (bounded by the
+        # existing paging limit), then the compact evidence in later history.
+        initial = self._page_text(stored=stored, offset=0, requested_limit=self.max_read_chars) if len(content) > self.max_inline_chars else content
+        excerpt.update({
+            "source_excerpt_only": True,
+            "full_original_result_id": stored.result_id,
+            "full_original_chars": len(content),
+            "read_full_with": "tool_result_read",
+            "max_read_chars": self.max_read_chars,
+        })
+        compact = json.dumps(excerpt, ensure_ascii=False, separators=(",", ":"))
+        if len(compact) > self.max_inline_chars:
+            # Never silently clip source URLs or invent missing evidence.
+            compact = json.dumps({
+                "source_excerpt_only": True,
+                "full_original_result_id": stored.result_id,
+                "full_original_chars": len(content),
+                "read_full_with": "tool_result_read",
+                "max_read_chars": self.max_read_chars,
+                "url": payload.get("final_url") or payload.get("url"),
+                "title": payload.get("title"),
+                "summary_exceeds_inline_budget": True,
+            }, ensure_ascii=False, separators=(",", ":"))
+        return ToolResultModelViews(initial_content=initial, compact_history_content=compact)
+
     def model_view(self, content: str) -> str:
         """Compatibility helper returning only the first model-visible view."""
 

@@ -22,3 +22,9 @@ def test_settings_uses_ornith_main_and_matching_projector():
     assert 'LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"' in content
     assert 'LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"' in content
     assert 'LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf"' in content
+
+def test_windows_and_linux_router_default_to_128k_context():
+    win = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
+    linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
+    assert "[int]$ContextSize = 131072" in win
+    assert '"ctx-size = 131072"' in linux

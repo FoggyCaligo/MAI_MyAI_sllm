@@ -335,3 +335,11 @@ Ollama 백엔드의 기존 `image_analyze` 별도 모델 경로는 변경하지 
 
 
 **Verifier HTTP 500 진단:** `/models/load` 실패 시 HTTP 코드·응답 본문(최대 800자), `/v1/chat/completions` 실패 시 HTTP 코드·모델 별칭·응답 본문(최대 1,000자)을 포함한 오류를 반환한다. 컨텍스트/VRAM/모델 GGUF 버전/라우터 서버 자체의 실패와 단순 JSON 파싱 오류를 혼동하지 않는다. 실기기 검증 전까지는 자동 재시도나 실패 응답 대체를 하지 않는다.
+
+### llama.cpp 128K context default (Windows / Ubuntu)
+
+Windows `start-portable-llamacpp-router.ps1` uses `-ContextSize 131072` by default, and Linux `start-portable-llamacpp-linux.sh` writes `ctx-size = 131072` for both aliases. `--models-max 1` and explicit unload/load confirmation stay unchanged.
+
+**Warning:** a 128K configured context is not a guarantee that the GPU can allocate it, complete inference at that length, or that the model was trained for 128K. Model weights, KV cache, projector and driver memory compete for capacity. In particular, 16 GB VRAM systems may hit allocation failures or CPU offloading; stop if the machine becomes unstable. On Windows, lower the size per launch with `-ContextSize 32768` or `-ContextSize 16384` if needed. The Linux launcher currently uses the fixed 128K preset; changing it requires editing its `ctx-size` line.
+
+The separate web history compacting feature retains original `web_search` / `web_fetch` output in the run-local result store and persistent audit log, while later Main turns receive only source-bound excerpts + URLs + original-result lookup IDs. See [tool result pagination](../docs/TOOL_RESULT_PAGINATION.md). This reduces repeated context but does not guarantee 128K stability or perfect KV reuse.
