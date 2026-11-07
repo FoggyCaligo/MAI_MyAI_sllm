@@ -154,14 +154,7 @@
   </header>
   <section id="remote-panel" hidden role="dialog" aria-label="원격 PC 연결 안내">
     <h2 id="remote-title">명령이 복사되었습니다</h2>
-    <p id="remote-instruction">원격 OS에 맞는 명령을 복사해 해당 셸에서 실행해주세요.</p>
-    <div>
-      <label for="remote-platform" style="font-size:12px;color:var(--text-dim)">원격 OS</label>
-      <select id="remote-platform" style="margin-left:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 7px">
-        <option value="windows">Windows PowerShell</option>
-        <option value="linux">Linux shell</option>
-      </select>
-    </div>
+    <p id="remote-instruction">PowerShell을 열어 붙여넣고 실행해주세요.</p>
     <div id="remote-status" role="status">연결 대기</div>
     <div id="remote-details" hidden>
       <p>클립보드 복사가 차단됐습니다. 아래 명령을 직접 선택하여 복사해주세요. 명령에는 일회용 연결 키가 포함되므로 공유하지 마세요.</p>
@@ -196,8 +189,8 @@
   const $loginPassword=document.getElementById('login-password');
   const $loginScreen=document.getElementById('login-screen'), $loginForm=document.getElementById('login-form'), $loginId=document.getElementById('login-id'), $loginBtn=document.getElementById('login-btn'), $loginError=document.getElementById('login-error');
   const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
-  const $remoteBtn=document.getElementById('remote-btn'), $remotePanel=document.getElementById('remote-panel'), $remoteCreate=document.getElementById('remote-create'), $remoteClose=document.getElementById('remote-close'), $remoteStatus=document.getElementById('remote-status'), $remoteError=document.getElementById('remote-error'), $remoteDetails=document.getElementById('remote-details'), $remotePlatform=document.getElementById('remote-platform');
-  let remoteSession=null, remotePollTimer=null, remoteCommandText='', remoteCredentials=null;
+  const $remoteBtn=document.getElementById('remote-btn'), $remotePanel=document.getElementById('remote-panel'), $remoteCreate=document.getElementById('remote-create'), $remoteClose=document.getElementById('remote-close'), $remoteStatus=document.getElementById('remote-status'), $remoteError=document.getElementById('remote-error'), $remoteDetails=document.getElementById('remote-details');
+  let remoteSession=null, remotePollTimer=null, remoteCommandText='';
   async function remoteApi(path,method='GET'){
     const response=await fetch(path,{method,headers:authHeaders()});
     const contentType=response.headers.get('content-type')||'';
@@ -210,7 +203,7 @@
   }
   function remoteReset(){
     if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
-    remoteSession=null;remoteCommandText='';remoteCredentials=null;$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
+    remoteSession=null;remoteCommandText='';$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
     $remoteDetails.hidden=true;$remoteClose.hidden=true;$remoteCreate.hidden=true;
     $remoteBtn.classList.remove('connected');$remoteBtn.textContent='원격 연결';
   }
@@ -218,7 +211,7 @@
     if(!remoteSession)return;
     try{
       const data=await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id));
-      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'원격 에이전트 연결 대기';
+      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'PowerShell 연결 대기';
       $remoteBtn.classList.toggle('connected',data.connected);
       $remoteBtn.textContent=data.connected?'원격 연결됨':'원격 연결';
       if(data.connected)$remoteCreate.hidden=true;
@@ -228,17 +221,13 @@
     $remotePanel.hidden=false;$remoteBtn.setAttribute('aria-expanded','true');
   }
   function buildRemoteCommand(data){
-    if(location.protocol!=='https:')throw new Error('원격 연결은 HTTPS에서만 허용됩니다.');
-    if($remotePlatform.value==='linux'){
-      const uri=new URL('/static/remote-agent-linux.sh',location.origin).href;
-      return `curl -fsSL '${uri}' | sh -s -- --server '${location.origin}' --session '${data.session_id}' --key '${data.agent_secret}'`;
-    }
     const uri=new URL('/static/remote-agent.ps1',location.origin).href;
+    if(new URL(uri).protocol!=='https:')throw new Error('원격 PowerShell 연결은 HTTPS에서만 허용됩니다.');
     return `& { $p = Join-Path $env:TEMP ([guid]::NewGuid().ToString()+'.ps1'); try { Invoke-WebRequest -Uri '${uri}' -OutFile $p -UseBasicParsing; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Server '${location.origin}' -Session '${data.session_id}' -Key '${data.agent_secret}'; if ($LASTEXITCODE -ne 0) { throw "MAI remote agent exited with code $LASTEXITCODE" } } finally { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue } }`;
   }
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
-      document.getElementById('remote-title').textContent='선택한 OS용 명령이 복사되었습니다';
+      document.getElementById('remote-title').textContent='명령이 복사되었습니다';
       $remoteDetails.hidden=true;$remoteCreate.hidden=false;
     }catch(err){
       document.getElementById('remote-title').textContent='명령을 직접 복사해주세요';
@@ -252,7 +241,6 @@
     try{
       const data=await remoteApi('/remote/sessions','POST');
       remoteSession={id:data.session_id};
-      remoteCredentials=data;
       remoteCommandText=buildRemoteCommand(data);
       $remoteClose.hidden=false;
       $remoteCreate.textContent='다시 복사';
@@ -269,19 +257,8 @@
     await beginRemoteConnection();
   });
   $remoteCreate.addEventListener('click',async()=>{
-    if(remoteCredentials){
-      remoteCommandText=buildRemoteCommand(remoteCredentials);
-      await copyRemoteCommand();
-    }else if(remoteCommandText)await copyRemoteCommand();
+    if(remoteCommandText)await copyRemoteCommand();
     else await beginRemoteConnection();
-  });
-  $remotePlatform.addEventListener('change',()=>{
-    if(remoteCredentials){
-      remoteCommandText=buildRemoteCommand(remoteCredentials);
-      document.getElementById('remote-command').textContent=remoteCommandText;
-      document.getElementById('remote-title').textContent='선택한 OS용 명령을 복사해주세요';
-      $remoteDetails.hidden=false;
-    }
   });
   $remoteClose.addEventListener('click',async()=>{
     if(!remoteSession)return;

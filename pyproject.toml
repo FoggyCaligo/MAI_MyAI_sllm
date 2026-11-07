@@ -49,7 +49,7 @@ include = ["mai*"]
 exclude = ["data*", "tests*"]
 
 [tool.setuptools.package-data]
-"mai.app" = ["static/*.html", "static/*.js", "static/*.ps1", "static/*.sh"]
+"mai.app" = ["static/*.html", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

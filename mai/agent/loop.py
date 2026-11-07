@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
-from .codeact import CodeActExecutor, CodeActInput, codeact_bindings, execute_code_schema
 from .guards import (
     AgentGuard,
     AgentGuardError,
@@ -61,13 +60,7 @@ def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
 
 
 
-def _insert_tool_catalog(
-    model_history: list[Message],
-    registry: ToolRegistry,
-    selected_tools: Sequence[str] = (),
-    *,
-    codeact_enabled: bool = True,
-) -> None:
+def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, selected_tools: Sequence[str] = ()) -> None:
     """Expose catalog metadata without exposing unactivated tool schemas."""
     # Catalog names and categories are structural registry metadata.
     # Full parameter schemas are available after explicit activation.
@@ -110,23 +103,6 @@ def _insert_tool_catalog(
                 "content": "Selected native-tool runtime context (JSON): "
                            + json.dumps(selected_contexts, ensure_ascii=False, separators=(",", ":")),
             })
-        if codeact_enabled:
-            model_history.insert(catalog_position + 2, {
-                "role": "system",
-                "content": (
-                    "Activated CodeAct bindings (JSON): "
-                + json.dumps(
-                    codeact_bindings(registry, selected_tools),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                + "\nUse execute_code when a task benefits from Python calculation, branching, loops, "
-                  "or multiple activated tool calls in one model round. Choose each CodeAct tool() call's is_remote argument "
-                  "from the user's requested execution location and the declared runtime context. "
-                  "The execution target is structural; do not infer it with text matching. Direct native calls "
-                  "remain available during this first CodeAct integration for compatibility."
-                ),
-            })
 
 
 class AgentRuntimeError(RuntimeError):
@@ -160,7 +136,6 @@ class ToolExecution:
     source_content_fingerprint: str | None = None
     compact_history_content: str | None = None
     source_content: str | None = None
-    children: tuple["ToolExecution", ...] = ()
 
     @property
     def audit_content(self) -> str:
@@ -230,7 +205,6 @@ class AgentLoop:
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
         tool_result_store: ToolResultStore | None = None,
-        codeact_enabled: bool = True,
     ) -> None:
         if max_semantic_verification_retries < 0:
             raise ValueError("max_semantic_verification_retries must be non-negative")
@@ -240,7 +214,6 @@ class AgentLoop:
         self.final_verifier = final_verifier
         self.max_semantic_verification_retries = max_semantic_verification_retries
         self.tool_result_store = tool_result_store
-        self.codeact_enabled = codeact_enabled
 
     async def run(
         self,
@@ -255,11 +228,10 @@ class AgentLoop:
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        if self.registry.has("tool_manual") or self.registry.has("execute_code"):
-            raise ValueError("tool_manual and execute_code are reserved agent runtime tools")
+        if self.registry.has("tool_manual"):
+            raise ValueError("tool_manual is reserved for native lazy tool activation")
         activated_tool_names: set[str] = set()
         manual_schema = _tool_manual_schema(self.registry.names())
-        codeact_schema = execute_code_schema()
         active_tools = (manual_schema,)
         active_tool_names = frozenset({"tool_manual"})
         guard = AgentGuard(self.guard_config)
@@ -334,27 +306,9 @@ class AgentLoop:
                     name for name in self.registry.names()
                     if name in activated_tool_names
                 ]
-                _insert_tool_catalog(
-                    model_history,
-                    self.registry,
-                    activated_order,
-                    codeact_enabled=self.codeact_enabled,
-                )
-                active_tools = (
-                    (
-                        manual_schema,
-                        *((codeact_schema,) if self.codeact_enabled else ()),
-                        *self.registry.native_schemas(activated_order),
-                    )
-                    if activated_order else (manual_schema,)
-                )
-                active_tool_names = frozenset(
-                    {
-                        "tool_manual",
-                        *(("execute_code",) if activated_order and self.codeact_enabled else ()),
-                        *activated_order,
-                    }
-                )
+                _insert_tool_catalog(model_history, self.registry, activated_order)
+                active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
+                active_tool_names = frozenset({"tool_manual", *activated_order})
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -410,8 +364,7 @@ class AgentLoop:
                             # Never pull tool results from prior conversation history.
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
-                                for parent in executions
-                                for execution in (parent.children if parent.children else (parent,))
+                                for execution in executions
                             ),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
@@ -553,8 +506,6 @@ class AgentLoop:
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
                     if on_tool_execution is not None:
-                        for child in execution.children:
-                            on_tool_execution(child)
                         on_tool_execution(execution)
                     _LOG.info(
                         "MAI tool result round=%d name=%s ok=%s handler_started=%s error_type=%s elapsed_ms=%d visible_chars=%d",
@@ -628,26 +579,14 @@ class AgentLoop:
         available_tool_names: frozenset[str],
         activated_tool_names: set[str],
     ) -> ToolExecution:
-        if call.name not in available_tool_names and (
-            self.registry.has(call.name) or call.name in {"tool_manual", "execute_code"}
-        ):
+        if call.name not in available_tool_names and (self.registry.has(call.name) or call.name == "tool_manual"):
             exc = ToolUnavailableInRoundError(
-                (
-                    "execute_code requires at least one tool to be activated with tool_manual first"
-                    if call.name == "execute_code"
-                    else (
-                        f"native tool '{call.name}' is registered but not activated in the current model round; "
-                        "activate it with tool_manual before using its schema. This is not a missing capability."
-                    )
-                )
+                f"native tool '{call.name}' is registered but not activated in the current model round; "
+                "activate it with tool_manual before using its schema. This is not a missing capability."
             )
             payload = {
                 "ok": False, "error_type": type(exc).__name__, "message": str(exc),
-                "required_activation": (
-                    {"name": "tool_manual", "constraint": "activate at least one registered tool"}
-                    if call.name == "execute_code"
-                    else {"name": "tool_manual", "arguments": {"tools": [call.name]}}
-                ),
+                "required_activation": {"name": "tool_manual", "arguments": {"tools": [call.name]}},
             }
             source_content = _serialize_tool_content(payload)
             model_content, compact_content = self._model_contents(source_content)
@@ -661,7 +600,6 @@ class AgentLoop:
                 source_content_fingerprint=content_fingerprint(source_content),
                 compact_history_content=compact_content, source_content=source_content,
             )
-        nested_executions: tuple[ToolExecution, ...] = ()
         try:
             if call.name == "tool_manual":
                 try:
@@ -696,39 +634,6 @@ class AgentLoop:
                 self.registry.model_context(names=requested)
                 value = {"activated_tools": requested, "available_next_round": True}
                 activated_tool_names.update(requested)
-            elif call.name == "execute_code":
-                try:
-                    request = CodeActInput.model_validate(call.arguments, strict=True)
-                except ValidationError as exc:
-                    raise ToolArgumentsError("invalid arguments for native tool 'execute_code'") from exc
-                executor = CodeActExecutor(
-                    self.registry,
-                    activated_tool_names=tuple(activated_tool_names),
-                )
-                codeact_result = await executor.execute(request)
-                child_items: list[ToolExecution] = []
-                for item in codeact_result.calls:
-                    child_source = _serialize_tool_content(
-                        item.result if item.ok else {
-                            "ok": False,
-                            "error_type": item.error_type,
-                            "message": item.message,
-                        }
-                    )
-                    child_model, child_compact = self._model_contents(child_source)
-                    child_items.append(ToolExecution(
-                        name=item.name,
-                        arguments=dict(item.arguments),
-                        ok=item.ok,
-                        content=child_model,
-                        error_type=item.error_type,
-                        handler_started=item.handler_started,
-                        source_content_fingerprint=content_fingerprint(child_source),
-                        compact_history_content=child_compact,
-                        source_content=child_source,
-                    ))
-                nested_executions = tuple(child_items)
-                value = codeact_result.as_dict()
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
@@ -761,7 +666,6 @@ class AgentLoop:
             handler_started=True,
             source_content_fingerprint=content_fingerprint(source_content),
             compact_history_content=compact_content, source_content=source_content,
-            children=nested_executions,
         )
 
     def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:
