@@ -19,6 +19,6 @@
   "models": [
     "ornith-1.5:9b",
     "lfm3-vl:2b",
-    "LiquidAI/lfm2.5-2.6b:q4_k_m"
+    "qwen3:4b-instruct-2507-q4_K_M"
   ]
 }
