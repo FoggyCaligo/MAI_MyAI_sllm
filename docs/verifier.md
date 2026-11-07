@@ -4,17 +4,17 @@
 
 ## 검증 순서와 설정
 
-`settings.yaml`의 `VERIFIER_MODEL`로 검증 전용 모델을 지정한다. 기본 구성은 본 모델 `ornith-1.5:9b`, 검증 모델 `granite4:3b-h`다. 같은 이름의 환경변수·`.env` 값이 YAML보다 우선하며, 설정을 생략하면 요청의 본 모델을 사용한다. 명시한 모델의 실패는 오류로 유지한다.
+`settings.yaml`의 `VERIFIER_MODEL`로 검증 전용 모델을 지정한다. 기본 구성은 본 모델 `ornith-1.5:9b`, 검증 모델 `qwen3:4b-instruct-2507-q4_K_M`다. 수치검증과 최종 사실검증은 같은 Qwen 모델을 사용하지만 별도 호출한다. 같은 이름의 환경변수·`.env` 값이 YAML보다 우선하며, 설정을 생략하면 요청의 본 모델을 사용한다. 명시한 모델의 실패는 오류로 유지한다.
 
-1. **수치 사전 검사:** Python이 사용자·전달된 도구 결과·승인된 이전 대화의 숫자와 날짜를 대조한다. 단순 표기 불일치는 의미상 동등성 검토 대상으로 보내며 Python 예외는 오류로 유지한다.
-2. **사실·수치 통합 검토:** 모델이 주장, 출처 범위, 시각, 외부 작업 성공 여부를 확인한다. 수치가 표시되면 같은 호출에 동등성 검토를 포함하고 `numeric_verdict`와 `numeric_reason`을 필수로 받는다. 별도 숫자 전용 모델 호출은 없다.
+1. **수치 사전 검사:** Python이 `conversation_context`의 유저 발화와 현재 요청의 성공한 도구 결과에서 수치·날짜를 대조한다. 단순 표기 불일치는 독립 숫자검증 모델 호출로 보내며 Python 예외는 오류로 유지한다.
+2. **최종 사실검토:** 별도 호출에서 현재 답변 후보의 주장, 근거 범위, 날짜, 외부 작업 성공 여부를 확인한다. 수치검증 프롬프트나 수치 전용 응답 스키마를 이 호출에 섞지 않는다.
 3. **선택적 답변 품질 검토:** 앞 단계가 통과한 경우에만 요청 부합도·정보 충족도·정직한 부분 답변 여부를 검사한다. 초안, 대화 요청, 사실 검토 결과를 받으며 도구 원문 전체는 받지 않는다.
 
 수치 정규화는 `Decimal`의 문맥 정밀도에 의존하지 않는다. 큰 정수·긴 소수의 유효 자릿수를 유지하고, `만·억` 환산은 십진 지수만 이동한다. 소수부 끝의 불필요한 0만 제거하며 큰 숫자를 생략하거나 정규화 예외를 성공으로 처리하지 않는다.
 
 `MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성해도 기본값은 `false`다. 명시적으로 `true`로 설정하면 기존 Quality Review를 활성화할 수 있다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 품질 검토는 사실 검증 통과 뒤 추가 모델 호출을 수행하므로 응답 지연이 발생할 수 있다. 기존 `.env` 또는 프로세스 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 배포 기본값보다 우선한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
-사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 판정이 필요한데 빠지면 형식 위반이다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
+사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 사전 검사의 의미 검토는 별도의 `numeric_verdict` 및 `reason` 구조화 응답을 사용하며, 최종 사실검토에는 수치 전용 필드가 없다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
 
 ## 입력 범위와 교정 제한
 
@@ -34,7 +34,7 @@
 
 채팅 감사 DB(`LOG_DB_PATH`)의 기존 `steps` 테이블에 `role=verifier_step`, `status=TRACE` 이벤트를 추가 기록한다. 기존 `ACCEPTED`와 `REJECTED` 단계는 유지한다. 각 TRACE의 `details_json`은 `event`, 실제 선택한 `verifier_model`, `data`를 포함하며 같은 `run_id`와 `round_number`로 연결한다.
 
-- `request`: 검증 단계(`factual` 또는 `quality`), 요청 시도 번호, 모델이 실제 받은 전체 메시지(시스템 프롬프트·근거 JSON 포함), 구조화 응답 스키마, `think`, `tools`.
+- `request`: 검증 단계(`numeric`, `factual` 또는 `quality`), 요청 시도 번호, 모델이 실제 받은 전체 메시지(시스템 프롬프트·근거 JSON 포함), 구조화 응답 스키마, `think`, `tools`.
 - `raw_response`: 모델이 반환한 원본 텍스트. 형식 오류라도 원문이 남는다.
 - `validated_response`: 스키마에 맞게 검증된 모델 판정 전체. 원본과 별개로 기록한다.
 - `error`: 요청 또는 스키마 검증의 예외 유형·메시지와 재시도 여부. 각 요청 시도마다 기록되며 최종 오류를 정상 승인으로 바꾸지 않는다.
@@ -46,7 +46,7 @@
 
 사실 검증기는 `main`의 주장 중심 구조화 응답을 따른다. 각 `claims[]` 항목에는 `claim`, `verdict`, `defect`, `reason`이 들어가며, 추가 `unit_reviews` 또는 `evidence_refs`를 요구하지 않는다. 별도의 문단 단위 주장 연결이나 출처 ID·원문 인용 일치 검사도 수행하지 않는다. 중요한 사실 주장을 빠짐없이 추출하고 근거의 의미·대상·범위가 실제로 부합하는지 판정하는 것은 사실 검증 LLM의 책임이다.
 
-일반지식이나 LLM의 확신 자체는 사실 근거가 아니다. 사용자 진술, 성공한 도구 결과, 승인된 이전 대화와 후보 임시답변의 차이를 구분한다. 실패한 도구 결과와 반려된 초안은 근거가 아니다. 근거가 없는 주장을 반대 사실이나 대체 수치로 만들어 내면 안 된다.
+일반지식이나 LLM의 확신 자체는 사실 근거가 아니다. `conversation_context`의 사용자 발언과 과거 어시스턴트 문맥을 구별하며, 현재 사용자 요청 이후 실행된 성공한 도구 결과만 `tool_results_in_execution_order`에 넣는다. 최종 검증 대상은 `candidate_final` 하나다. 실패한 도구 결과와 반려된 초안은 근거가 아니다. 근거가 없는 주장을 반대 사실이나 대체 수치로 만들어 내면 안 된다.
 
 유효한 근거 반려를 받으면 메인모델에 문제 주장과 `defect`·`reason`을 전달한다. 같은 성공 근거로 반복 반려되면 원문 재확인, 계산 접근 변경 또는 주장 축소·삭제를 지시하며, 같은 결과 재호출은 새 근거가 아니다. 새로운 LLM 호출 단계는 추가하지 않는다.
 
