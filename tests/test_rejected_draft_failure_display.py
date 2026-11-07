@@ -107,3 +107,48 @@ def test_verifier_feedback_for_non_claim_issue_never_invents_missing_claim():
         "수정 지시: 답변 범위가 요청과 다름 부분을 실제 근거와 요청에 맞게 수정하라. "
         "근거가 필요한 주장이라면 tool 호출로 보강하거나 해당 주장을 삭제하라."
     )
+
+
+class CapturingCorrectionModel:
+    def __init__(self):
+        self.requests = []
+
+    async def chat(self, request):
+        self.requests.append(request)
+        content = "Draft answer with a wrong fact" if len(self.requests) == 1 else "Corrected answer"
+        return ModelTurn(content=content, thinking="", tool_calls=(),
+                         assistant_message={"role": "assistant", "content": content})
+
+
+class RejectOnce:
+    def __init__(self):
+        self.calls = 0
+
+    async def verify(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return FinalVerificationResult(
+                ok=False,
+                issues=(VerificationIssue(code="claim_grounding_failed", message="wrong fact"),),
+            )
+        return FinalVerificationResult(ok=True, issues=())
+
+
+def test_correction_after_reviewer_switch_includes_draft_and_feedback():
+    model = CapturingCorrectionModel()
+    reviewer = RejectOnce()
+    loop = AgentLoop(model, ToolRegistry(), final_verifier=reviewer)
+    result = asyncio.run(loop.run([{"role": "user", "content": "Answer this"}]))
+    assert result.content == "Corrected answer"
+    assert len(model.requests) == 2
+    # This request is rebuilt from saved history; no server-side KV is required.
+    correction = model.requests[1].messages
+    joined = "\n".join(str(message.get("content", "")) for message in correction)
+    assert "rejected_provisional_answer" in joined
+    assert "Draft answer with a wrong fact" in joined
+    assert "verifier_feedback" in joined
+    assert "wrong fact" in joined
+    # Rejected answer must not be presented as accepted assistant history.
+    assert not any(message.get("role") == "assistant"
+                   and message.get("content") == "Draft answer with a wrong fact"
+                   for message in correction)
