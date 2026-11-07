@@ -1,4 +1,4 @@
-"""Restored main-style claim contract with the dev single-call numeric workflow."""
+"""Restored factual claim contract with independently invoked numeric verification."""
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from mai.agent.verification import (
     FinalGroundingVerifier,
     _ClaimReviewPayload,
-    _FactualNumericReviewPayload,
+    _NumericReviewPayload,
     _FactualReviewPayload,
     _FACTUAL_REVIEW_SYSTEM,
 )
@@ -84,23 +84,39 @@ def test_claim_only_factual_review_is_accepted_without_citation_gate():
     sent = json.loads(reviewer.calls[0].messages[1]["content"])
     assert "candidate_units" not in sent
     assert "conversation_context" in sent
-    assert "verified_prior_conversation" in sent
+    assert "verified_prior_conversation" not in sent
+    assert "user_evidence" not in sent
     assert "tool_results_in_execution_order" in sent
 
 
-def test_numeric_subtask_is_still_combined_in_one_factual_request():
-    reviewer = Reviewer(response(
-        numeric_verdict="supported",
-        numeric_reason="Matching amount via equivalent notation.",
-    ))
+def test_numeric_subtask_uses_independent_review_before_factual_review():
+    class TwoStageReviewer:
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, request):
+            self.calls.append(request)
+            if len(self.calls) == 1:
+                payload = {"numeric_verdict": "supported", "reason": "Equivalent numeric value."}
+            else:
+                payload = response()
+            body = json.dumps(payload)
+            return ModelTurn(body, "", (), {"role": "assistant", "content": body})
+
+    reviewer = TwoStageReviewer()
     result = asyncio.run(FinalGroundingVerifier(
         reviewer_adapter=reviewer, quality_review_enabled=False,
     ).verify(candidate="The value is 1,000.", messages=[
         {"role": "user", "content": "The value is one thousand."},
     ], tool_results=[]))
     assert result.ok
-    assert len(reviewer.calls) == 1
-    assert reviewer.calls[0].response_format == _FactualNumericReviewPayload.model_json_schema()
+    assert len(reviewer.calls) == 2
+    assert reviewer.calls[0].response_format == _NumericReviewPayload.model_json_schema()
+    assert reviewer.calls[1].response_format == _FactualReviewPayload.model_json_schema()
+    factual_input = json.loads(reviewer.calls[1].messages[1]["content"])
+    assert "verified_prior_conversation" not in factual_input
+    assert "user_evidence" not in factual_input
+    assert "flagged_numeric_or_date_values" not in factual_input
 
 
 def test_main_grounding_instructions_retained_without_citation_or_unit_contract():
