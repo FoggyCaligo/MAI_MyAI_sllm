@@ -78,7 +78,9 @@ if [ ! -x "$VENV_PYTHON" ]; then
   mkdir -p "$TARGET"
   unzip -oq "$ZIP_PATH" -d "$TARGET"
   python3 -m venv "$TARGET/.venv"
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -e "$TARGET"
+  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -e "$TARGET" --no-deps
+  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -r "$TARGET/remote-requirements.txt"
+  "$VENV_PYTHON" -m playwright install chromium
 fi
 
 export PYTHONPATH="$TARGET"
