@@ -73,14 +73,17 @@ fi
 
 TARGET="$BASE/$DIGEST"
 VENV_PYTHON="$TARGET/.venv/bin/python"
+INSTALL_READY="$TARGET/.installed-ok"
 
-if [ ! -x "$VENV_PYTHON" ]; then
+# A created venv is not evidence of completed dependency/Chromium installation.
+if [ ! -f "$INSTALL_READY" ]; then
   mkdir -p "$TARGET"
   unzip -oq "$ZIP_PATH" -d "$TARGET"
   python3 -m venv "$TARGET/.venv"
   "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -e "$TARGET" --no-deps
   "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -r "$TARGET/remote-requirements.txt"
   "$VENV_PYTHON" -m playwright install chromium
+  touch "$INSTALL_READY"
 fi
 
 export PYTHONPATH="$TARGET"
