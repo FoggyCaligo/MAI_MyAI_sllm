@@ -1,7 +1,7 @@
 # Optional single-router llama.cpp Portable launcher for MAI dev.
 # All roles use one API endpoint. Ollama launch scripts and MAI prompts are unchanged.
 param(
-    [ValidateRange(1,3)][int]$ModelsMax = 2,
+    [ValidateRange(1,1)][int]$ModelsMax = 1,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
     [ValidateRange(512,262144)][int]$ContextSize = 16384
 )
@@ -25,9 +25,8 @@ $MainVision = [bool]$config.LLAMACPP_MAIN_VISION
 $VisionGgufPath = [string]$config.LLAMACPP_VISION_GGUF_PATH
 $VisionMmprojPath = [string]$config.LLAMACPP_VISION_MMPROJ_PATH
 if ($VisionMmprojPath -and -not $VisionGgufPath) { throw 'LLAMACPP_VISION_MMPROJ_PATH requires LLAMACPP_VISION_GGUF_PATH' }
-if ($VisionGgufPath -and $ModelsMax -lt 3) {
-    Write-Warning 'Three model aliases configured, but ModelsMax allows only two resident models.'
-}
+# One resident model at a time. The router unloads idle main before loading verifier,
+# and unloads verifier before the next main correction round.
 function Resolve-Gguf([string]$raw, [string]$label) {
     if (-not $raw) { return $null }
     $candidate = if ([IO.Path]::IsPathRooted($raw)) { $raw } else { Join-Path $root $raw }
@@ -108,7 +107,7 @@ try {
     }
     if (-not $ready) { throw 'Router model aliases not registered within startup deadline' }
     Write-Host 'MAI dev llama.cpp router ready on 127.0.0.1:8080; Ollama remains unchanged.'
-    Write-Warning 'The two models may coexist in VRAM/RAM, but --models-max does not guarantee simultaneous residency.'
+    Write-Host 'MAI Portable single-resident mode: max one GGUF loaded by llama.cpp router.'
     & $python run_server.py
     if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
 } finally {
