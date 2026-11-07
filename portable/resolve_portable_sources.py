@@ -98,7 +98,7 @@ def main() -> None:
     selected = ("python", "uv", "ollama", "llamacpp") if args.include_llamacpp else ("python", "uv", "ollama")
     for name in selected:
         config[name] = resolve_one(*SOURCES[name])
-    config["models"] = ["ornith-1.5:9b", "gemma4:e4b", "LiquidAI/lfm2.5-2.6b:q4_k_m"]
+    config["models"] = ["ornith-1.5:9b", "lfm3-vl:2b", "qwen3:4b-instruct-2507-q4_K_M"]
     args.output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Publisher-digest-pinned manifest saved: {args.output}")
 
