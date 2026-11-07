@@ -19,16 +19,13 @@ Copy-Item .env.example .env
 
 ## 모델
 
-`settings.yaml`에서 모델 관련 값은 다음 하나다.
+`settings.yaml`에서 모델을 선택하는 값은 다음 하나다.
 
 ```yaml
-MAIN_MODEL: "mai-model"
+MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
 ```
 
-이 값은 **실제 GGUF 파일 이름이 아닌 llama.cpp 모델 alias**다.
-실행할 GGUF 파일은 시작 스크립트의 `-GgufPath` 또는
-`portable/portable-models/gguf/active.gguf`로 지정한다.
-한 번에 모델 한 개만 올린다.
+이 값은 **실제로 실행할 GGUF 파일의 경로**다. 상대경로는 MAI 프로젝트 루트 기준이며, 절대경로도 가능하다. 내부 모델 별칭은 `mai-model`로 고정된다. Portable 실행 시 `-GgufPath`로 일시적인 다른 경로를 지정할 수도 있다. 한 번에 모델 한 개만 올린다.
 
 ## Windows Portable 설치
 
