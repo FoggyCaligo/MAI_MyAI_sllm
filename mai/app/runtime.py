@@ -190,6 +190,29 @@ class MAIRuntime:
         async with self._llamacpp_model_scope():
             await self._postprocess_memory(**kwargs)
 
+    async def _preload_main_after_memory(
+        self, memory_task: asyncio.Task[None],
+    ) -> None:
+        """Restore the configured main model after approved-answer memory work.
+
+        This is a distinct best-effort *preparation* task, not part of the
+        approved answer or the memory commit. Errors are logged explicitly.
+        Waiting for the memory task avoids letting its fact extractor evict
+        the just-preloaded main model.
+        """
+        if self._llamacpp_router is None:
+            return
+        try:
+            await memory_task
+            async with self._llamacpp_model_scope():
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    await self._llamacpp_router.prepare(self.model, client)
+            _LOG.info("MAI main model preloaded model=%s", self.model)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOG.exception("MAI main model preload failed model=%s", self.model)
+
     def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
         clean_model = model.strip()
         if not clean_model:
@@ -402,6 +425,13 @@ class MAIRuntime:
         task.add_done_callback(
             lambda completed, user_id=principal.memory_user_id: self._forget_memory_task(user_id, completed)
         )
+        # Schedule after the approved result, without delaying delivery.
+        # A separate task means _await_pending_memory_update waits for memory
+        # persistence only, never for the optional preloading optimization.
+        if self._llamacpp_router is not None and self.verifier_model is not None:
+            preload_task = asyncio.create_task(self._preload_main_after_memory(task))
+            self._background_tasks.add(preload_task)
+            preload_task.add_done_callback(self._background_tasks.discard)
 
         return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools)
 
