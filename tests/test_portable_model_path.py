@@ -34,3 +34,24 @@ def test_model_path_rejects_bad_yaml(tmp_path):
     config.write_text("MODEL_GGUF_PATH: [\n", encoding="utf-8")
     with pytest.raises(ValueError, match="settings.yaml"):
         module.model_path(config)
+
+
+def test_prepare_and_start_share_settings_model_path():
+    root = Path(__file__).resolve().parents[1]
+    prepare = (root / "portable" / "prepare-portable.ps1").read_text(encoding="utf-8")
+    start = (root / "portable" / "start-portable.ps1").read_text(encoding="utf-8")
+    for script in (prepare, start):
+        assert "resolve_model_path.py" in script
+        assert "settings.yaml" in script
+    assert "$targetFile = if ([IO.Path]::IsPathRooted($configuredPath))" in prepare
+    assert "Join-Path $root 'portable/portable-models/gguf/active.gguf'" not in prepare
+
+
+def test_setup_uses_existing_model_without_required_modelfile():
+    root = Path(__file__).resolve().parents[1]
+    setup = (root / "setup.md").read_text(encoding="utf-8")
+    section = setup.split("## Windows Portable 설치", 1)[1].split("\n## ", 1)[0]
+    primary_install_command = next(
+        line for line in section.splitlines() if "prepare-portable.ps1" in line
+    )
+    assert "-ModelFile" not in primary_install_command
