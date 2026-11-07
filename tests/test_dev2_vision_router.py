@@ -21,7 +21,7 @@ spec.loader.exec_module(module)
 
 def write_gguf(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"GGUF" + b"\\x00" * 12)
+    path.write_bytes(b"GGUF" + b"\x00" * 12)
 
 
 def test_resolver_accepts_distinct_model_and_projector(tmp_path, monkeypatch):
@@ -31,9 +31,9 @@ def test_resolver_accepts_distinct_model_and_projector(tmp_path, monkeypatch):
         write_gguf(tmp_path / name)
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(
-        "VISION_GGUF_PATH: vision.gguf\\n"
-        "VISION_MMPROJ_PATH: mmproj.gguf\\n"
-        "VERIFIER_GGUF_PATH: verifier.gguf\\n", encoding="utf-8",
+        "VISION_GGUF_PATH: vision.gguf\n"
+        "VISION_MMPROJ_PATH: mmproj.gguf\n"
+        "VERIFIER_GGUF_PATH: verifier.gguf\n", encoding="utf-8",
     )
     actual = module.optional_models(cfg, tmp_path)
     assert actual["VISION_GGUF_PATH"] == str((tmp_path / "vision.gguf").resolve())
@@ -46,11 +46,11 @@ def test_resolver_rejects_non_gguf_and_orphan_projector(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     (tmp_path / "wrong.gguf").write_bytes(b"not a GGUF")
     cfg = tmp_path / "settings.yaml"
-    cfg.write_text("VISION_GGUF_PATH: wrong.gguf\\n", encoding="utf-8")
+    cfg.write_text("VISION_GGUF_PATH: wrong.gguf\n", encoding="utf-8")
     with pytest.raises(ValueError, match="header"):
         module.optional_models(cfg, tmp_path)
     write_gguf(tmp_path / "mmproj.gguf")
-    cfg.write_text("VISION_MMPROJ_PATH: mmproj.gguf\\n", encoding="utf-8")
+    cfg.write_text("VISION_MMPROJ_PATH: mmproj.gguf\n", encoding="utf-8")
     with pytest.raises(ValueError, match="requires"):
         module.optional_models(cfg, tmp_path)
 
@@ -59,7 +59,7 @@ def test_resolver_environment_takes_precedence(tmp_path, monkeypatch):
     write_gguf(tmp_path / "yaml.gguf")
     write_gguf(tmp_path / "override.gguf")
     cfg = tmp_path / "settings.yaml"
-    cfg.write_text("VISION_GGUF_PATH: yaml.gguf\\n", encoding="utf-8")
+    cfg.write_text("VISION_GGUF_PATH: yaml.gguf\n", encoding="utf-8")
     monkeypatch.setenv("VISION_GGUF_PATH", str(tmp_path / "override.gguf"))
     assert module.optional_models(cfg, tmp_path)["VISION_GGUF_PATH"].endswith("override.gguf")
 
