@@ -43,3 +43,21 @@ def test_legacy_verifier_selection_is_rejected(tmp_path):
     path.write_text('MODEL_GGUF_PATH: "main"\nVERIFIER_MODEL: "reviewer"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="unknown settings.yaml keys"):
         load_settings(path, environ={})
+
+
+def test_optional_projector_is_accepted_by_strict_settings(tmp_path):
+    path = tmp_path / "settings.yaml"
+    path.write_text(
+        'MODEL_GGUF_PATH: "main.gguf"\n'
+        'MODEL_MMPROJ_PATH: "projector.gguf"\n',
+        encoding="utf-8",
+    )
+    values = load_settings(path, environ={})
+    assert values["MODEL_MMPROJ_PATH"] == "projector.gguf"
+
+
+def test_blank_projector_is_rejected_by_strict_settings(tmp_path):
+    path = tmp_path / "settings.yaml"
+    path.write_text('MODEL_MMPROJ_PATH: ""\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="MODEL_MMPROJ_PATH"):
+        load_settings(path, environ={})
