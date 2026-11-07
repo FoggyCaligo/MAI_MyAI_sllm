@@ -19,13 +19,13 @@
 |---|---|
 | `run_server.py` | 프로젝트 루트의 설정·데이터를 사용하는 서버 진입점 |
 | `mai/app/server.py`, `resumable_chat.py` | 인증, API, 대화 작업, 진행 상황, 기록 |
-| `mai/app/runtime.py` | 모델·검증기·기억·권한별 도구 조립 |
+| `mai/app/runtime.py` | 단일 모델·역할별 KV 검증·기억·권한별 도구 조립 |
 | `mai/agent/runtime.py`, `loop.py`, `guards.py` | 모델과 도구 반복 실행, 교정, 진행 감시 |
 | `mai/agent/tool_results.py`, `verification.py` | 도구 결과 페이지네이션, 답변 검증 |
 | `mai/tools/` | 파일·문서·코드·웹·계산·터미널 등의 실행 기능 |
 | `mai/memory/` | 사실 추출, 영구 그래프, 개념 색인, 검색 |
 | `mai/remote/` | 소유자가 연결한 원격 실행 대상 |
-| `portable/` | 휴대용 준비·실행·모델 복사·백업과 로컬 런타임 폴더 |
+| `portable/` | 휴대용 준비·단일 GGUF 실행·llama.cpp 교체·백업과 로컬 런타임 폴더 |
 
 서버는 오래 유지하지만 브라우저 세션, 작업 그래프, 도구 활성화 집합과 도구 원문 저장소는 요청 단위다. 웹 작업은 브라우저 연결이 끊겨도 서버에서 계속될 수 있으나 서버 재시작 후 계산을 이어 가는 영속 큐는 아니다.
 
@@ -82,7 +82,7 @@ Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool
 
 설정 우선순위는 **기존 프로세스 환경변수 > `.env` > `settings.yaml`**이다. 일반 실행은 프로젝트 루트에서 `python run_server.py`다. 다른 폴더에서 절대경로로 실행해도 이 진입점은 프로젝트 루트로 이동한다. API를 별도로 직접 구동하는 경우 상대경로는 해당 프로세스의 작업 폴더 기준이다.
 
-배포 기본값은 요청 제한 500초, 본 모델 출력 한도 32,768토큰, 도구 결과 입력 8,000자, 최근 대화 10개 메시지, 별도 답변 품질 검토 비활성화다. `MAIN_MODEL`은 본 모델이며 `VERIFIER_MODEL`은 최종 사실·수치 의미 검증과 선택적 품질 검토에 사용하는 모델이다. dev2에서는 `MAIN_MODEL=ornith-1.5:9b`이고 `VERIFIER_MODEL`은 기본적으로 생략한다. 따라서 메인·수치·사실검증은 같은 모델 가중치를 사용하며 검증 호출 자체는 독립적이다. 모델을 12B GGUF로 교체하려면 llama.cpp의 모델 별칭만 일치시키면 된다. Verifier 설정을 생략한 구성에서는 기존처럼 해당 요청의 선택 모델을 사용하며, 명시한 빈 값은 오류다. `dev2`의 UI에서 본 모델을 바꾸면 숫자·최종검증에도 동일한 모델을 사용한다. 과거 `VERIFIER_MODEL` 환경변수는 dev2에서 무시된다. llama.cpp 실행에서는 서버의 `/v1/models`가 반환하는 현재 적재된 단일 모델 alias만 UI에 나타난다. 기억 추출은 본 모델을 `think=False`로 호출한다. 별도 Verifier의 실패를 본 모델로 재시도하지 않는다.
+dev2는 하나의 llama.cpp GGUF 모델과 역할별 KV 캐시 교체를 사용하는 포터블 전용 에이전트다. `MAIN_MODEL`은 서버에 전달하는 유일한 모델 alias다. 브라우저 모델 선택, Ollama 백엔드, 별도 `VERIFIER_MODEL`, 별도 `VISION_MODEL`은 제거됐다. 숫자검증과 사실검증은 같은 가중치를 사용하지만 논리적으로 독립 호출이다. KV 저장/복원은 `--parallel 1` 서버의 슬롯 0에서 수행한다. 메모리 사실 추출 역시 같은 모델을 사용하며, 사용자 턴 사이에 완료하도록 직렬화한다. 컨텍스트 상한을 별도로 축소하는 설정은 두지 않는다.
 
 `OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 설정 로더가 허용하지만 현재 실행 소비자가 없다. 값을 바꿔 동작이 달라진다고 안내하지 않는다. 본 모델은 `think=True`이며 개별 도구 제한 시간은 등록 인자로 정한다.
 
