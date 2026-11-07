@@ -112,7 +112,7 @@ class MAIRuntime:
         *,
         model: str,
         ollama_host: str,
-        llm_backend: str = "ollama",
+        llm_backend: str = "llamacpp",
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
