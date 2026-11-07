@@ -82,10 +82,10 @@ if [ ! -x "$VENV_PYTHON" ]; then
 fi
 
 export PYTHONPATH="$TARGET"
+export MAI_REMOTE_SERVER="$SERVER"
+export MAI_REMOTE_SESSION="$SESSION"
+export MAI_REMOTE_KEY="$KEY"
 echo "MAI remote Python worker ready: $TARGET"
 echo "Connected. Press Ctrl+C to stop accepting work."
 
-exec "$VENV_PYTHON" -m mai.remote.agent_client \
-  --server "$SERVER" \
-  --session "$SESSION" \
-  --key "$KEY"
+exec "$VENV_PYTHON" -m mai.remote.agent_client
