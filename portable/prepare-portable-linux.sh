@@ -14,20 +14,18 @@ for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
 install_chromium=0
+install_vulkan=0
 upgrade_llamacpp=0
 for arg in "$@"; do
   case "$arg" in
-    --install-chromium) install_chromium=1 ;;\n    --install-vulkan) ;;
+    --install-chromium) install_chromium=1 ;;
+    --install-vulkan) install_vulkan=1 ;;
     --upgrade-llamacpp) upgrade_llamacpp=1 ;;
     *) echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium] [--install-vulkan] [--upgrade-llamacpp]" >&2; exit 2 ;;
   esac
 done
 # GPU driver support is explicit, not an automatic privileged mutation.
 # AMD/Intel hosts can opt in to Ubuntu's Mesa Vulkan packages.
-install_vulkan=0
-for arg in "$@"; do
-  [[ "$arg" == "--install-vulkan" ]] && install_vulkan=1
-done
 if [[ "$install_vulkan" == 1 ]]; then
   command -v sudo >/dev/null || { echo "sudo required for --install-vulkan" >&2; exit 1; }
   sudo apt-get update
