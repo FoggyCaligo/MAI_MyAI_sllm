@@ -531,6 +531,8 @@ class AgentLoop:
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     executions.append(execution)
                     if on_tool_execution is not None:
+                        for child in execution.children:
+                            on_tool_execution(child)
                         on_tool_execution(execution)
                     _LOG.info(
                         "MAI tool result round=%d name=%s ok=%s handler_started=%s error_type=%s elapsed_ms=%d visible_chars=%d",
