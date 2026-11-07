@@ -1,8 +1,6 @@
-# MAI dev2 — Portable 단일 GGUF 모델
+# MAI dev2 — GGUF 기반 Portable
 
-dev2는 **하나의 GGUF 파일 + 하나의 llama.cpp 서버**로 실행한다.
-Ollama 서비스, 두 번째 Verifier 모델, 별도 Vision 모델, 브라우저 모델 선택기는 사용하지 않는다.
-한 모델이 main / numeric / final 검증을 순서대로 처리하고 역할별 KV 상태를 디스크에 저장/복원한다.
+기본 모드에서는 **메인 GGUF 하나와 llama.cpp 서버**로 실행한다. 별도 GGUF를 지정하면 실험적 llama.cpp 라우터(`--models-max 1`)로 메인·Verifier·Vision 모델을 교대 적재한다. 이 경우 기존 슬롯 KV 저장/복원 대신 대화 문맥을 재구성한다. MAI 실행에 Ollama 서비스는 필수가 아니다.
 
 원격 웹 공개 제공자 선택은 [한국어 원격 호스팅 설정](../docs/remote-hosting.md)을 참조한다.
 
@@ -19,7 +17,7 @@ MAI/
       python/                         # Portable Python
       uv/
       llamacpp/                       # 업그레이드 가능한 llama-server
-    portable-models/gguf/active.gguf  # 단 하나의 선택된 GGUF
+    portable-models/gguf/active.gguf  # 메인 GGUF (선택적 vision/verifier GGUF 추가 가능)
     portable-slot-cache/              # 실행별 임시 KV 저장 파일
 ```
 
@@ -67,6 +65,10 @@ Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 �
 실제 설정에서는 필요한 주석을 제거하고 기존 GGUF가 존재하는지 확인한다. 별도 비전이나 Verifier GGUF가 설정되면 `llama-server --models-preset ... --models-max 1`로 라우터 모드를 사용한다. `MAI_VERIFIER_ENABLED: false`인 경우 지정된 Verifier 모델은 사용하지 않는다. 이미지와 보조 모델은 기존 메인 모델의 KV를 공유하지 않으며, 라우터 교대 적재 시 각 모델의 프롬프트 문맥을 재평가한다.
 
 지원 이미지 입력은 PNG/JPEG/WebP(1장 최대 20MiB)이며, 모델·projector·llama.cpp 릴리스의 멀티모달 호환성 확인이 필요하다. 상세 설명은 [setup.md](../setup.md)의 교대 적재 항목을 참조한다.
+
+Windows에서 **무슨 항목을 내려받는지, 공식 배포처, SHA 검증 범위, 모델을 Ollama 없이 다운로드하는 명령**은 [setup.md의 상세 자동설치 안내](../setup.md#windows-portable-자동설치-정확히-무엇을-다운로드하나) 및 [GGUF 모델 준비](../setup.md#gguf-모델-준비-ollama-없이-다운로드-권장)를 참고한다.
+
+Playwright Python 패키지는 `uv pip install` 단계에서 MAI 의존성으로 설치되지만 Chromium 실행파일은 자동으로 내려받지 않는다. `browser_open`·`browser_click` 등의 웹 UI 조작을 사용하려면 `prepare-portable.ps1 -InstallChromium` 옵션을 추가한다. 설치 경로는 `portable/portable-runtimes/playwright-browsers/`다. Tailscale·cloudflared·Ollama 및 GGUF 모델은 기본 설치 다운로드 대상이 아니다.
 
 ## Windows 준비
 
