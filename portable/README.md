@@ -170,4 +170,15 @@ MAI와 모델 서버를 종료하고 **별도 물리 디스크**에 백업한다
 사용자 업로드 이미지를 첨부한 채팅에서 Ollama의 메인 모델이 `vision` capability를 제공하면 원본 이미지 바이트를 모델 메시지에 직접 포함한다. 지원하지 않으면 기존 `VISION_MODEL`의 `image_analyze` 도구 경로를 유지한다. `VISION_MODEL`은 자동 제거하지 않는다. 첨부 이름은 계정별 업로드 디렉터리에서 검증하며 이미지만 직접 전달한다. llama.cpp 백엔드에서는 이 릴리스의 직접 이미지 전송 대신 기존 이미지 도구를 사용한다.
 
 dev2 기본 메인·Verifier 공통 모델 태그는 `ornith-1.5:9b`이며, 일반 Ollama에서 `ollama pull ornith-1.5:9b`로 먼저 다운로드할 수 있다. 외장 SSD에는 `-CopyLocalModels -Models "ornith-1.5:9b"` 또는 `-PullModels`로 추가한다. 이전 개인 매니페스트에 남은 모델은 자동 삭제하지 않는다.
-\n## 실험: llama.cpp 모델 하나 + 메인/숫자/최종 KV 캐시 교체\n\n이 기능은 Ollama에서는 작동하지 않으며, 단일 모델 GGUF를 사용한다. `-SlotCache` 옵션으로 전용 llama.cpp 서버를 `--parallel 1 --slot-save-path`와 함께 시작한다.\n\n```powershell\npowershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1 -Backend llamacpp -GgufPath ./portable/portable-models/gguf/model.gguf -ModelAlias local-model -SlotCache\n```\n\n메인·숫자·최종검증은 같은 모델을 사용한다. 모델 별칭은 어떤 9B/12B GGUF든 사용할 수 있으나 해당 모델을 사전에 설치해야 한다. 재시도 시 메인 슬롯 상태를 복원한다. 캐시는 `portable/portable-slot-cache`에 저장되며 정상적인 실행 종료 후 각 세션 파일을 삭제한다. 갑작스러운 전원 종료로 잔여 파일이 남을 수 있으므로 보관하지 말고 종료 후 안전하게 정리한다.\n\n이 실험은 llama.cpp 서버 슬롯 독점이 필요한 **명시적 옵트인 기능**이다. 동일 포트에 다른 프로그램을 붙이지 말고, 첫 실행은 충분한 VRAM 여유를 확보한 모델에서 테스트한다. 시스템 메모리가 부족한 12B 모델을 자동으로 안전하게 만들지는 않는다. 자세한 내용은 [KV 캐시 실험 문서](../docs/kv-cache-experiment.md)를 참조한다.\n
+
+## 실험: llama.cpp 모델 하나 + 메인/숫자/최종 KV 캐시 교체
+
+이 기능은 Ollama에서는 작동하지 않으며, 단일 모델 GGUF를 사용한다. `-SlotCache` 옵션으로 전용 llama.cpp 서버를 `--parallel 1 --slot-save-path`와 함께 시작한다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1 -Backend llamacpp -GgufPath ./portable/portable-models/gguf/model.gguf -ModelAlias local-model -SlotCache
+```
+
+메인·숫자·최종검증은 같은 모델을 사용한다. 모델 별칭은 어떤 9B/12B GGUF든 사용할 수 있으나 해당 모델을 사전에 설치해야 한다. 재시도 시 메인 슬롯 상태를 복원한다. 캐시는 `portable/portable-slot-cache`에 저장되며 정상적인 실행 종료 후 각 세션 파일을 삭제한다. 갑작스러운 전원 종료로 잔여 파일이 남을 수 있으므로 보관하지 말고 종료 후 안전하게 정리한다.
+
+이 실험은 llama.cpp 서버 슬롯 독점이 필요한 **명시적 옵트인 기능**이다. 동일 포트에 다른 프로그램을 붙이지 말고, 첫 실행은 충분한 VRAM 여유를 확보한 모델에서 테스트한다. 시스템 메모리가 부족한 12B 모델을 자동으로 안전하게 만들지는 않는다. 자세한 내용은 [KV 캐시 실험 문서](../docs/kv-cache-experiment.md)를 참조한다.
