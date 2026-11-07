@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
+from .codeact import CodeActExecutor, CodeActInput, codeact_bindings, execute_code_schema
 from .guards import (
     AgentGuard,
     AgentGuardError,
@@ -103,6 +104,22 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, s
                 "content": "Selected native-tool runtime context (JSON): "
                            + json.dumps(selected_contexts, ensure_ascii=False, separators=(",", ":")),
             })
+        model_history.insert(catalog_position + 2, {
+            "role": "system",
+            "content": (
+                "Activated CodeAct bindings (JSON): "
+                + json.dumps(
+                    codeact_bindings(registry, selected_tools),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\nUse execute_code when a task benefits from Python calculation, branching, loops, "
+                  "or multiple activated tool calls in one model round. Choose execute_code.target "
+                  "from the user's requested execution location and the declared runtime context. "
+                  "The target is structural; do not infer it with text matching. Direct native calls "
+                  "remain available during this first CodeAct integration for compatibility."
+            ),
+        })
 
 
 class AgentRuntimeError(RuntimeError):
@@ -228,10 +245,11 @@ class AgentLoop:
     ) -> AgentRunResult:
         history: list[Message] = [dict(message) for message in messages]
         executions: list[ToolExecution] = []
-        if self.registry.has("tool_manual"):
-            raise ValueError("tool_manual is reserved for native lazy tool activation")
+        if self.registry.has("tool_manual") or self.registry.has("execute_code"):
+            raise ValueError("tool_manual and execute_code are reserved agent runtime tools")
         activated_tool_names: set[str] = set()
         manual_schema = _tool_manual_schema(self.registry.names())
+        codeact_schema = execute_code_schema()
         active_tools = (manual_schema,)
         active_tool_names = frozenset({"tool_manual"})
         guard = AgentGuard(self.guard_config)
@@ -307,8 +325,13 @@ class AgentLoop:
                     if name in activated_tool_names
                 ]
                 _insert_tool_catalog(model_history, self.registry, activated_order)
-                active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
-                active_tool_names = frozenset({"tool_manual", *activated_order})
+                active_tools = (
+                    (manual_schema, codeact_schema, *self.registry.native_schemas(activated_order))
+                    if activated_order else (manual_schema,)
+                )
+                active_tool_names = frozenset(
+                    {"tool_manual", *(("execute_code",) if activated_order else ()), *activated_order}
+                )
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -579,14 +602,26 @@ class AgentLoop:
         available_tool_names: frozenset[str],
         activated_tool_names: set[str],
     ) -> ToolExecution:
-        if call.name not in available_tool_names and (self.registry.has(call.name) or call.name == "tool_manual"):
+        if call.name not in available_tool_names and (
+            self.registry.has(call.name) or call.name in {"tool_manual", "execute_code"}
+        ):
             exc = ToolUnavailableInRoundError(
-                f"native tool '{call.name}' is registered but not activated in the current model round; "
-                "activate it with tool_manual before using its schema. This is not a missing capability."
+                (
+                    "execute_code requires at least one tool to be activated with tool_manual first"
+                    if call.name == "execute_code"
+                    else (
+                        f"native tool '{call.name}' is registered but not activated in the current model round; "
+                        "activate it with tool_manual before using its schema. This is not a missing capability."
+                    )
+                )
             )
             payload = {
                 "ok": False, "error_type": type(exc).__name__, "message": str(exc),
-                "required_activation": {"name": "tool_manual", "arguments": {"tools": [call.name]}},
+                "required_activation": (
+                    {"name": "tool_manual", "arguments": {"tools": []}}
+                    if call.name == "execute_code"
+                    else {"name": "tool_manual", "arguments": {"tools": [call.name]}}
+                ),
             }
             source_content = _serialize_tool_content(payload)
             model_content, compact_content = self._model_contents(source_content)
@@ -634,6 +669,16 @@ class AgentLoop:
                 self.registry.model_context(names=requested)
                 value = {"activated_tools": requested, "available_next_round": True}
                 activated_tool_names.update(requested)
+            elif call.name == "execute_code":
+                try:
+                    request = CodeActInput.model_validate(call.arguments, strict=True)
+                except ValidationError as exc:
+                    raise ToolArgumentsError("invalid arguments for native tool 'execute_code'") from exc
+                executor = CodeActExecutor(
+                    self.registry,
+                    activated_tool_names=tuple(activated_tool_names),
+                )
+                value = (await executor.execute(request)).as_dict()
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
