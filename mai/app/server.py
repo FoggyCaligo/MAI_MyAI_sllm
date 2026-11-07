@@ -150,8 +150,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", "mai-model"),
-        ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        llm_backend="llamacpp",
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
