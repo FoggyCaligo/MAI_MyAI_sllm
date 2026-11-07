@@ -51,7 +51,7 @@ Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool
 
 계정의 안정적인 `db_id`가 장기기억·대화·업로드 소유권의 기준이다. 로그인 `user_id`와 구별한다. 소유자는 MAI 운영체제 계정이 접근 가능한 파일·터미널 도구를 사용할 수 있다. 체험 계정은 허용된 읽기 도구와 자기 업로드 폴더 내 텍스트 쓰기만 사용하며 파일 삭제·이동·복사는 허용하지 않는다.
 
-소유자 PC 도구의 `is_remote=false` 또는 생략은 MAI 호스트, `true`는 해당 계정의 활성 원격 세션에서 실행한다. CodeAct에서는 원본 도구 인자 객체에 `is_remote`를 넣지 않고 `tool(..., is_remote=...)`의 공통 실행 대상 인자로 선택한다. 세션이 없거나 원격 워커가 해당 도구를 지원하지 않으면 해당 툴 호출은 실패 관측값이며 로컬로 대신 실행하지 않는다. 현재 원격 Python worker는 파일·코드·문서·CSV·터미널 등 `register_local_pc_tools()` 묶음을 재사용한다. Windows는 PowerShell bootstrap, Linux는 POSIX shell bootstrap으로 같은 `native.invoke` 프로토콜과 Python 도구 구현을 사용하며, 터미널 셸은 실제 원격 호스트 OS에 따라 결정된다. 서버의 공개 접속과 원격 PC 실행 연결은 서로 다른 기능이다.
+소유자 PC 도구의 `is_remote=false` 또는 생략은 MAI 호스트, `true`는 해당 계정의 활성 원격 세션에서 실행한다. CodeAct에서는 원본 도구 인자 객체에 `is_remote`를 넣지 않고 `tool(..., is_remote=...)`의 공통 실행 대상 인자로 선택한다. 세션이 없거나 원격 워커가 해당 도구를 지원하지 않으면 해당 툴 호출은 실패 관측값이며 로컬로 대신 실행하지 않는다. 현재 원격 Python worker는 파일·코드·문서·CSV·터미널 등 `register_local_pc_tools()` 묶음뿐 아니라 시간·계산·외부 정보 조회·브라우저 도구도 같은 등록 계약으로 재사용한다. 브라우저 세션을 유지하기 위해 Windows와 Linux 모두 장기 실행 Python agent client를 사용하며, Windows는 PowerShell bootstrap, Linux는 POSIX shell bootstrap으로 같은 `native.invoke` 프로토콜을 시작한다. 터미널 셸은 실제 원격 호스트 OS에 따라 결정된다. 장기기억·현재 요청의 `tool_result_read`·호스트 다운로드 링크처럼 MAI 호스트 상태 그 자체인 도구는 원격 PC에서 별도 실행하지 않는다. 서버의 공개 접속과 원격 PC 실행 연결은 서로 다른 기능이다.
 
 | 상태 | 기본 저장 위치·수명 |
 |---|---|
