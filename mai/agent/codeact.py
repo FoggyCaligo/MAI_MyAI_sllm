@@ -11,7 +11,6 @@ import ast
 import asyncio
 import builtins
 import io
-from contextlib import redirect_stdout
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -335,21 +334,26 @@ class CodeActExecutor:
             type_ignores=[],
         )
         ast.fix_missing_locations(wrapped)
+        stdout = io.StringIO()
+
+        def scoped_print(*args: Any, sep: str = " ", end: str = "\n") -> None:
+            # Never globally redirect sys.stdout while awaiting asynchronous tools.
+            # A different user's concurrent server activity must stay isolated.
+            builtins.print(*args, sep=sep, end=end, file=stdout)
+
         namespace: dict[str, Any] = {
             "__builtins__": _SAFE_BUILTINS,
             "tool": tool,
-            "print": print,
+            "print": scoped_print,
             "_codeact_tick": tick,
         }
         compiled = compile(wrapped, "<mai-codeact>", "exec")
         exec(compiled, namespace, namespace)
-        stdout = io.StringIO()
         try:
-            with redirect_stdout(stdout):
-                await asyncio.wait_for(
-                    namespace["__codeact_main__"](),
-                    timeout=self.timeout_seconds,
-                )
+            await asyncio.wait_for(
+                namespace["__codeact_main__"](),
+                timeout=self.timeout_seconds,
+            )
         except asyncio.TimeoutError as exc:
             raise CodeActLimitError(
                 f"CodeAct execution timed out after {self.timeout_seconds:g} seconds"
