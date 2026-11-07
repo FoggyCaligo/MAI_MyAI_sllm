@@ -6,16 +6,19 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source /etc/os-release
 [[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 24.04 ]] || { echo "Ubuntu 24.04 required" >&2; exit 1; }
 [[ -f "$root/.env" ]] || { echo "Missing .env" >&2; exit 1; }
-gguf="${1:-$root/portable/portable-models/gguf/active.gguf}"
-[[ -f "$gguf" && "$gguf" == *.gguf ]] || { echo "GGUF file is missing: $gguf" >&2; exit 1; }
 id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
 python="$cache/python/bin/python3"
 llama="$cache/llamacpp/bin/llama-server"
 [[ -x "$python" && -x "$llama" ]] || { echo "Missing Linux runtime; run prepare-portable-linux.sh" >&2; exit 1; }
 cd -- "$root"
-alias_name="$("$python" -c 'import yaml,pathlib; print(yaml.safe_load(pathlib.Path("settings.yaml").read_text(encoding="utf-8-sig"))["MAIN_MODEL"])')"
-[[ -n "$alias_name" ]] || { echo "MAIN_MODEL is empty" >&2; exit 1; }
+gguf="${1:-}"
+if [[ -z "$gguf" ]]; then
+  gguf="$("$python" -c 'import yaml,pathlib; print(yaml.safe_load(pathlib.Path("settings.yaml").read_text(encoding="utf-8-sig"))["MODEL_GGUF_PATH"])')"
+fi
+[[ "$gguf" = /* ]] || gguf="$root/$gguf"
+[[ -f "$gguf" && "$gguf" == *.gguf ]] || { echo "GGUF file is missing: $gguf" >&2; exit 1; }
+alias_name="mai-model"
 if (echo >/dev/tcp/127.0.0.1/8080) >/dev/null 2>&1; then
   echo "Port 8080 already occupied" >&2; exit 1
 fi
