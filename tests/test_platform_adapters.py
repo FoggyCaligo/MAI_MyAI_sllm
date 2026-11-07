@@ -20,7 +20,7 @@ def test_windows_adapter_preserves_existing_contract():
     assert win.output_encoding == "utf-8"
     assert windows_cmd_args(Path("C:/tmp/command.cmd")) == _windows_cmd_args(Path("C:/tmp/command.cmd"))
     assert powershell_command("Write-Output '한글'") == _powershell_command("Write-Output '한글'")
-    assert win.script_workspace("powershell").__enter__() is None
+    with win.script_workspace("powershell") as workspace:\n        assert workspace is None
     with win.script_workspace("default") as directory:
         assert directory is not None
 
@@ -47,7 +47,7 @@ def test_current_host_and_tool_context_consistent(tmp_path):
     assert context["posix_shell_syntax"] == (host.shell_family == "sh")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Linux POSIX integration only")
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux POSIX integration only")
 def test_linux_shell_execution_and_failure_code(tmp_path):
     result = asyncio.run(terminal_run(
         command="printf 'hello\\n'", default_cwd=tmp_path))
