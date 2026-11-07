@@ -10,7 +10,7 @@ LLAMACPP_HOST: "http://127.0.0.1:8080"  # llama.cpp 선택 시 필요
 OLLAMA_HOST: "http://127.0.0.1:11434"  # Ollama 선택 시 필요
 MAIN_MODEL: "ornith-1.5:9b"  # 실제 사용 가능한 모델명
 
-VERIFIER_MODEL: "qwen3:4b-instruct-2507"  # 수치검증 및 최종 사실검증 공통 모델
+VERIFIER_MODEL: "qwen3:4b-instruct-2507-q4_K_M"  # 수치검증 및 최종 사실검증 공통 모델
 VISION_MODEL : "lfm3-vl:2b"
 
 OLLAMA_REQUEST_TIMEOUT_SECONDS: 500
