@@ -4,6 +4,7 @@ from .calculator import CalculatorError, CalculatorInput, calculator, register_c
 from .code import code_edit, code_read, code_search, code_symbols, register_code_edit_tool, register_code_tools
 from .document_edit import document_edit, register_document_edit_tool
 from .external import register_external_information_tools
+from .images import ImageAnalyzer, ImageAnalyzeInput, register_image_tools
 from .filesystem import (
     register_filesystem_read_tools,
     register_filesystem_tools,
@@ -36,6 +37,8 @@ __all__ = [
     "CalculatorInput",
     "DuplicateToolError",
     "EmptyToolInput",
+    "ImageAnalyzer",
+    "ImageAnalyzeInput",
     "MarketDataError",
     "MarketDataNotFoundError",
     "MarketDataProtocolError",
@@ -66,6 +69,7 @@ __all__ = [
     "register_code_tools",
     "register_document_edit_tool",
     "register_external_information_tools",
+    "register_image_tools",
     "register_filesystem_read_tools",
     "register_filesystem_tools",
     "register_trial_file_write",
