@@ -21,6 +21,15 @@ if [[ -z "$gguf" ]]; then
 fi
 [[ "$gguf" = /* ]] || gguf="$root/$gguf"
 [[ -f "$gguf" && "$gguf" == *.gguf ]] || { echo "GGUF file is missing: $gguf" >&2; exit 1; }
+# Optional model paths come from the same validated settings.yaml resolver
+# used by Windows Portable.
+model_config="$("$python" "$root/portable/resolve_runtime_models.py" "$root/settings.yaml" "$root")"
+mapfile -t model_paths < <(printf '%s' "$model_config" | "$python" -c 'import json,sys; d=json.load(sys.stdin); [print(d[k]) for k in ("VISION_GGUF_PATH","VISION_MMPROJ_PATH","VERIFIER_GGUF_PATH")]')
+vision="${model_paths[0]:-}"
+projector="${model_paths[1]:-}"
+verifier="${model_paths[2]:-}"
+router_mode=false
+[[ -n "$vision" || -n "$verifier" ]] && router_mode=true
 alias_name="mai-model"
 if (echo >/dev/tcp/127.0.0.1/8080) >/dev/null 2>&1; then
   echo "Port 8080 already occupied" >&2; exit 1
@@ -29,6 +38,12 @@ if (echo >/dev/tcp/127.0.0.1/8000) >/dev/null 2>&1; then
   echo "MAI port 8000 already occupied" >&2; exit 1
 fi
 export MAIN_MODEL="$alias_name" LLAMACPP_HOST="http://127.0.0.1:8080" LLM_BACKEND="llamacpp"
+export MAI_ROUTER_MODE="$router_mode"
+export MAI_VISION_MODEL=""
+export MAI_VERIFIER_MODEL=""
+[[ -n "$vision" ]] && export MAI_VISION_MODEL="mai-vision"
+[[ -n "$verifier" ]] && export MAI_VERIFIER_MODEL="mai-verifier"
+export MAI_ACTIVE_GGUF_PATH="$gguf"
 export MAI_SLOT_CACHE_DIR="$root/portable/portable-slot-cache"
 mkdir -p -- "$MAI_SLOT_CACHE_DIR"
 unset VERIFIER_MODEL VISION_MODEL OLLAMA_HOST OLLAMA_MODELS || true
@@ -41,9 +56,27 @@ export LOG_DB_PATH="$root/data/log.sqlite3"
 export SENTENCE_BREAKER_DB_PATH="$root/data/sentence_breaker.sqlite3"
 export LD_LIBRARY_PATH="$(dirname "$llama"):${LD_LIBRARY_PATH:-}"
 llama_pid=""
-cleanup() { if [[ -n "$llama_pid" ]]; then kill "$llama_pid" 2>/dev/null || true; wait "$llama_pid" 2>/dev/null || true; fi; }
+preset=""
+cleanup() {
+  if [[ -n "$llama_pid" ]]; then kill "$llama_pid" 2>/dev/null || true; wait "$llama_pid" 2>/dev/null || true; fi
+  if [[ -n "$preset" ]]; then rm -f -- "$preset"; fi
+}
 trap cleanup EXIT
-"$llama" -m "$gguf" --alias "$alias_name" --host 127.0.0.1 --port 8080 --jinja --parallel 1 --slot-save-path "$MAI_SLOT_CACHE_DIR" &
+if [[ "$router_mode" == true ]]; then
+  preset="$MAI_SLOT_CACHE_DIR/router-models-$.ini"
+  {
+    printf '[mai-model]\\nmodel = %s\\nparallel = 1\\n' "$gguf"
+    if [[ -n "$vision" ]]; then
+      printf '\\n[mai-vision]\\nmodel = %s\\nparallel = 1\\n' "$vision"
+      if [[ -n "$projector" ]]; then printf 'mmproj = %s\\n' "$projector"; fi
+    fi
+    if [[ -n "$verifier" ]]; then printf '\\n[mai-verifier]\\nmodel = %s\\nparallel = 1\\n' "$verifier"; fi
+  } > "$preset"
+  chmod 600 "$preset"
+  "$llama" --models-preset "$preset" --models-max 1 --host 127.0.0.1 --port 8080 --jinja &
+else
+  "$llama" -m "$gguf" --alias "$alias_name" --host 127.0.0.1 --port 8080 --jinja --parallel 1 --slot-save-path "$MAI_SLOT_CACHE_DIR" &
+fi
 llama_pid=$!
 ready=0
 for attempt in {1..100}; do
