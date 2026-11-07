@@ -358,6 +358,9 @@ class AgentLoop:
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
                             messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
+                            # executions starts empty for this run and contains only tool calls
+                            # after the current user input, across any correction rounds.
+                            # Never pull tool results from prior conversation history.
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
