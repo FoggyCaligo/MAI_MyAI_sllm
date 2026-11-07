@@ -31,7 +31,7 @@ MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
 
 ```powershell
 python portable/resolve_portable_sources.py
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile "D:\\models\\my-model.gguf"
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile "D:\\models\\실제모델.gguf"
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
 ```
 
