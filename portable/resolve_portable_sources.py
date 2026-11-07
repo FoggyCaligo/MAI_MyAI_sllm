@@ -90,15 +90,13 @@ def resolve_one(owner: str, repo: str, asset_pattern: str) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().with_name("portable-sources.json"))
-    parser.add_argument("--include-llamacpp", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(f"Refusing to overwrite pinned manifest: {args.output}")
     config: dict[str, object] = {"schema_version": 1}
-    selected = ("python", "uv", "ollama", "llamacpp") if args.include_llamacpp else ("python", "uv", "ollama")
+    selected = ("python", "uv", "llamacpp")
     for name in selected:
         config[name] = resolve_one(*SOURCES[name])
-    config["models"] = ["ornith-1.5:9b", "lfm3-vl:2b"]
     args.output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Publisher-digest-pinned manifest saved: {args.output}")
 
