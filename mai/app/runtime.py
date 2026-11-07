@@ -24,7 +24,7 @@ from ..memory.admission import (
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor
+from ..memory.extraction.service import SingleModelFactExtractor
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -151,7 +151,7 @@ class MAIRuntime:
             now=lambda: datetime.now(timezone.utc),
         )
         self._adapters: dict[str, LlamaCppAdapter] = {}
-        self._fact_extractors: dict[str, OllamaFactExtractor] = {}
+        self._fact_extractors: dict[str, SingleModelFactExtractor] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
         self._role_cache_lock = asyncio.Lock()
@@ -167,12 +167,12 @@ class MAIRuntime:
             self._adapters[self.model] = adapter
         return adapter
 
-    def _fact_extractor_for(self, model: str) -> OllamaFactExtractor:
+    def _fact_extractor_for(self, model: str) -> SingleModelFactExtractor:
         if model != self.model:
             raise ValueError("memory extraction must use the single configured model")
         extractor = self._fact_extractors.get(self.model)
         if extractor is None:
-            extractor = OllamaFactExtractor(
+            extractor = SingleModelFactExtractor(
                 LlamaCppAdapter(ModelConfig(model=self.model, host=self.llamacpp_host, think=False))
             )
             self._fact_extractors[self.model] = extractor
@@ -353,7 +353,7 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
-        fact_extractor: OllamaFactExtractor,
+        fact_extractor: SingleModelFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
