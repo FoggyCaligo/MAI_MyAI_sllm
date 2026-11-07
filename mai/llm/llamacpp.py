@@ -1,6 +1,7 @@
 """Strict llama.cpp OpenAI-compatible chat adapter. No automatic provider fallback."""
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -106,9 +107,37 @@ class LlamaCppAdapter:
         return ModelTurn(content=content, thinking=thinking, tool_calls=tuple(calls), assistant_message=assistant)
 
 
+def _image_media_type(data: bytes) -> str:
+    """Validate supported image file signatures, independent of supplied names."""
+    if data.startswith(bytes.fromhex("89504e470d0a1a0a")):
+        return "image/png"
+    if data.startswith(bytes.fromhex("ffd8ff")):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    raise ModelProtocolError("unsupported image payload type")
+
+
 def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
-    """Convert MAI tool-call argument objects to OpenAI JSON strings."""
+    """Normalize MAI tool calls and binary user images to OpenAI-compatible messages."""
     result = dict(message)
+    images = result.pop("images", None)
+    if images is not None:
+        if result.get("role") != "user" or not isinstance(images, (list, tuple)) or not images:
+            raise ModelProtocolError("images require a non-empty user image sequence")
+        content = result.get("content", "")
+        if not isinstance(content, str):
+            raise ModelProtocolError("multimodal user text must be a string")
+        parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
+        for data in images:
+            if not isinstance(data, bytes) or not data:
+                raise ModelProtocolError("image data must be non-empty bytes")
+            mime = _image_media_type(data)
+            encoded = base64.b64encode(data).decode("ascii")
+            parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
+        result["content"] = parts
     calls = result.get("tool_calls")
     if calls is None:
         return result
