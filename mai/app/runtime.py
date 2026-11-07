@@ -46,6 +46,7 @@ from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
 from .uploads import principal_upload_directory
+from .main_model_images import prepare_main_image_input
 
 
 _LOG = logging.getLogger("uvicorn.error")
@@ -264,6 +265,7 @@ class MAIRuntime:
         *,
         principal: AccessPrincipal,
         prior_messages: Sequence[Mapping[str, Any]] = (),
+        attachments: Sequence[str] = (),
         model: str | None = None,
         remote_session_id: str | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
@@ -278,6 +280,11 @@ class MAIRuntime:
         previous_assistant_message = _previous_assistant_message(prior_messages)
 
         selected_model = self.model if model is None else model.strip()
+        model_prompt, inline_images = await prepare_main_image_input(
+            prompt=prompt, attachments=attachments, principal=principal,
+            upload_root=self.upload_root, model=selected_model, backend=self.llm_backend,
+            ollama_client=self._ollama_client, separate_vision_model=self.vision_model,
+        )
         adapter = self._adapter_for(selected_model)
         verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
         fact_extractor = self._fact_extractor_for(selected_model)
@@ -310,8 +317,9 @@ class MAIRuntime:
         messages.extend(prior_messages)
         try:
             result = await agent.run_user_message(
-                prompt,
+                model_prompt,
                 prior_messages=messages,
+                images=inline_images,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
                 on_verification_rejection=on_verification_rejection,
