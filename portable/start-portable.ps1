@@ -44,9 +44,14 @@ Remove-Item Env:VERIFIER_MODEL,Env:VISION_MODEL,Env:OLLAMA_HOST,Env:OLLAMA_MODEL
 if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
     throw 'Port 8080 is occupied. Stop the old llama.cpp server before launching portable MAI.'
 }
-$serverArgs = @('-m', $modelFile, '--alias', $modelAlias,
+# Start-Process joins ArgumentList items into a Windows command line.
+# Explicitly quote filesystem paths so portable SSD paths with spaces survive.
+$quotedModelPath = '"' + $modelFile + '"'
+$quotedCachePath = '"' + $env:MAI_SLOT_CACHE_DIR + '"'
+$quotedModelAlias = '"' + $modelAlias + '"'
+$serverArgs = @('-m', $quotedModelPath, '--alias', $quotedModelAlias,
                 '--host', '127.0.0.1', '--port', '8080', '--jinja',
-                '--parallel', '1', '--slot-save-path', $env:MAI_SLOT_CACHE_DIR)
+                '--parallel', '1', '--slot-save-path', $quotedCachePath)
 $llamaProcess = Start-Process -FilePath $llama -ArgumentList $serverArgs -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
 try {
     $ready = $false
