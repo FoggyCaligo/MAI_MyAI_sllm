@@ -13,7 +13,7 @@ import builtins
 import io
 from contextlib import redirect_stdout
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,7 +42,6 @@ class CodeActInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(min_length=1, max_length=12000)
-    target: Literal["local", "remote"] = "local"
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,10 +122,11 @@ def execute_code_schema() -> dict[str, Any]:
             "name": "execute_code",
             "description": (
                 "Execute constrained Python using only the tools activated with tool_manual. "
-                "Choose target='local' or target='remote' from the user's request and runtime context. "
-                "Inside code, call tools only as: await tool('exact_name', {arguments}). "
+                "Inside code, call tools as: await tool('exact_name', {arguments}, is_remote=False). "
+                "Set is_remote=True for a connected remote worker on a per-call basis. "
+                "The model selects targets from user intent, not text matching. "
                 "tool() returns {'ok': true, 'result': ...} or {'ok': false, 'error_type': ..., 'message': ...}. "
-                "Do not pass is_remote inside tool arguments; target selects the execution host structurally."
+                "Do not put is_remote in a tool's original arguments object."
             ),
             "parameters": CodeActInput.model_json_schema(),
         },
@@ -237,11 +237,13 @@ class CodeActExecutor:
                     f"CodeAct loop iteration limit exceeded ({self.max_loop_iterations})"
                 )
 
-        async def tool(name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        async def tool(name: str, arguments: Mapping[str, Any], *, is_remote: bool = False) -> dict[str, Any]:
             if not isinstance(name, str) or not name:
                 raise CodeActSyntaxError("tool name must be a non-empty string")
             if not isinstance(arguments, Mapping):
                 raise CodeActSyntaxError("tool arguments must be a mapping")
+            if type(is_remote) is not bool:
+                raise CodeActTargetError("is_remote must be a boolean")
             if name not in self.activated_tool_names:
                 raise CodeActSyntaxError(
                     f"tool '{name}' is not activated for this CodeAct run"
@@ -261,10 +263,10 @@ class CodeActExecutor:
                 raise CodeActTargetError(
                     "CodeAct tool arguments must not contain is_remote; use execute_code.target"
                 )
-            if request.target == "remote":
+            if is_remote:
                 if not routed:
                     raise CodeActTargetError(
-                        f"tool '{name}' does not support the remote CodeAct target"
+                        f"tool '{name}' does not have a remote worker implementation"
                     )
                 prepared["is_remote"] = True
             elif routed:
@@ -276,7 +278,7 @@ class CodeActExecutor:
                 evidence = CodeActToolEvidence(
                     name=name,
                     arguments=prepared,
-                    target=request.target,
+                    target="remote" if is_remote else "local",
                     ok=False,
                     error_type=type(exc).__name__,
                     message=str(exc),
@@ -292,7 +294,7 @@ class CodeActExecutor:
             evidence = CodeActToolEvidence(
                 name=name,
                 arguments=prepared,
-                target=request.target,
+                target="remote" if is_remote else "local",
                 ok=True,
                 result=value,
                 handler_started=True,
