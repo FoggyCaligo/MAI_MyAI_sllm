@@ -28,6 +28,15 @@ def build_registry(*, cwd: str | Path | None = None,
     register_calculator_tools(registry)
     register_external_information_tools(registry)
     register_browser_tools(registry, browser_manager or BrowserSessionManager())
+    vision_model = os.environ.get("MAI_REMOTE_VISION_MODEL")
+    if vision_model:
+        from mai.tools.images import register_image_tools
+        register_image_tools(
+            registry, model=vision_model,
+            host=os.environ.get("MAI_REMOTE_OLLAMA_HOST", "http://127.0.0.1:11434"),
+            cwd=cwd or os.getcwd(),
+            backend="ollama",
+        )
     return registry
 
 
