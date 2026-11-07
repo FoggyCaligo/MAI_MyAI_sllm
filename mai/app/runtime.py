@@ -111,35 +111,25 @@ class MAIRuntime:
         self,
         *,
         model: str,
-        ollama_host: str,
-        llm_backend: str = "llamacpp",
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
-        vision_model: str | None = None,
-        verifier_model: str | None = None,
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
-        if verifier_model is not None and not verifier_model.strip():
-            raise ValueError("verifier_model must be non-empty when configured")
         if max_inline_tool_result_chars is None:
             max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
         if max_inline_tool_result_chars < 1024:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.download_links = DownloadLinkStore()
         self.cwd = cwd
-        if llm_backend != "llamacpp":
-            raise ValueError("dev2 portable single-model runtime requires llama.cpp")
         self.llm_backend = "llamacpp"
         self.llamacpp_host = llamacpp_host
-        self.ollama_host = ollama_host
         self.model = model
-        # Only one model is permitted. Legacy argument names are ignored to
-        # avoid loading a verifier/vision model when old .env values persist.
+        # The running process only ever has one model; no verifier/vision model.
         self.verifier_model = None
         self.vision_model = None
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
@@ -164,7 +154,6 @@ class MAIRuntime:
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
-        self._role_cache_enabled = True
         self._role_cache_lock = asyncio.Lock()
         self._slot_cache_dir = Path(os.environ.get("MAI_SLOT_CACHE_DIR", "portable/portable-slot-cache")).expanduser().resolve()
         self._slot_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -188,9 +177,6 @@ class MAIRuntime:
             )
             self._fact_extractors[self.model] = extractor
         return extractor
-
-    async def list_models(self) -> tuple[str, ...]:
-        return (self.model,)
 
     def _registry_for(
         self,
@@ -254,16 +240,13 @@ class MAIRuntime:
 
         previous_assistant_message = _previous_assistant_message(prior_messages)
 
-        if model is not None and model != self.model:
+        if model is not None:
             raise ValueError("browser model selection is unavailable in dev2")
         if attachments:
             raise ValueError("image attachments require a supported single-model llama.cpp multimodal input path")
         selected_model = self.model
         model_prompt, inline_images = prompt, ()
         adapter = self._adapter_for(selected_model)
-        # dev2 deliberately unifies main and verifier selection with the
-        # browser/API model for this turn. Ignore any legacy VERIFIER_MODEL
-        # override from .env; dev retains independent verifier selection.
         verifier_adapter = adapter
         role_cache_run = RoleCacheRun(
             adapter=LlamaCppAdapter(adapter.config, slot_id=0),
