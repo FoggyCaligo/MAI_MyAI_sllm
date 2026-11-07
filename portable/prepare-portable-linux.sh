@@ -13,9 +13,23 @@ fi
 for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
-if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--install-chromium" ) ]]; then
-  echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium]" >&2; exit 2
+if [[ $# -gt 2 ]] || { [[ $# -gt 0 ]] && [[ " $* " != *" --install-chromium "* ]] && [[ " $* " != *" --install-vulkan "* ]]; }; then
+  echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium] [--install-vulkan]" >&2; exit 2
 fi
+# GPU driver support is explicit, not an automatic privileged mutation.
+# AMD/Intel hosts can opt in to Ubuntu's Mesa Vulkan packages.
+install_vulkan=0
+for arg in "$@"; do
+  [[ "$arg" == "--install-vulkan" ]] && install_vulkan=1
+done
+if [[ "$install_vulkan" == 1 ]]; then
+  command -v sudo >/dev/null || { echo "sudo required for --install-vulkan" >&2; exit 1; }
+  sudo apt-get update
+  sudo apt-get install -y libvulkan1 mesa-vulkan-drivers vulkan-tools pciutils
+fi
+# Report the current driver state without requiring root for normal startup.
+python3 "$root/portable/check-linux-gpu.py" --require
+
 manifest="$root/portable/portable-sources-linux.json"
 [[ -f "$manifest" ]] || { echo "Missing $manifest; create with portable/resolve_portable_sources_linux.py" >&2; exit 1; }
 export MAI_LINUX_ROOT="$root"
@@ -114,7 +128,7 @@ ollama="$cache/ollama/bin/ollama"
 echo "[Linux Portable] Installing MAI Python dependencies"
 UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root"
 "$python" -c 'import fastapi, ollama, uvicorn, playwright, mai'
-if [[ "${1:-}" == "--install-chromium" ]]; then
+if [[ " $* " == *" --install-chromium "* ]]; then
   export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
   "$python" -m playwright install chromium
 fi
