@@ -18,6 +18,7 @@ from typing import Any, Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..tools.registry import ToolArgumentsError, ToolRegistry
+from ..remote.session import RemoteToolInvocationError
 
 
 class CodeActError(RuntimeError):
@@ -291,8 +292,14 @@ class CodeActExecutor:
                     arguments=prepared,
                     target=target,
                     ok=False,
-                    error_type=type(exc).__name__,
-                    message=str(exc),
+                    error_type=(
+                        exc.remote_error_type if isinstance(exc, RemoteToolInvocationError)
+                        else type(exc).__name__
+                    ),
+                    message=(
+                        exc.remote_message if isinstance(exc, RemoteToolInvocationError)
+                        else str(exc)
+                    ),
                     handler_started=handler_started,
                 )
                 calls.append(evidence)
