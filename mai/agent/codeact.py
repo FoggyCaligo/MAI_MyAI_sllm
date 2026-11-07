@@ -307,8 +307,8 @@ class CodeActExecutor:
                 ast.AsyncFunctionDef(
                     name="__codeact_main__",
                     args=ast.arguments(
-                        posonlyargs=[], args=[], kwonlyargs=[],
-                        kw_defaults=[], defaults=[],
+                        posonlyargs=[], args=[], vararg=None, kwonlyargs=[],
+                        kw_defaults=[], kwarg=None, defaults=[],
                     ),
                     body=tree.body or [ast.Pass()],
                     decorator_list=[],
