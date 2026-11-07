@@ -113,9 +113,9 @@ def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
             if not isinstance(image_bytes, bytes) or not image_bytes:
                 raise OllamaProtocolError("image input must contain nonempty bytes")
             # Detect supported input encoding by signature, without changing bytes.
-            if image_bytes.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+            if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
                 mime = "image/png"
-            elif image_bytes.startswith(b"\\xff\\xd8\\xff"):
+            elif image_bytes.startswith(b"\xff\xd8\xff"):
                 mime = "image/jpeg"
             elif image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
                 mime = "image/webp"
