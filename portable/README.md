@@ -1,5 +1,7 @@
 # MAI Portable — 준비·실행·백업
 
+Windows/Linux 호스트 OS 인터페이스 구조와 이식성 제한은 [OS 경계 문서](../docs/platform-boundary.md)를 참조한다.
+
 외장 SSD에 소스·설정·DB·모델을 두고 Windows x64에서 실행한다. Ubuntu 24.04 x86-64는 실험적 지원이며 실행 환경을 호스트 캐시에 별도로 준비한다. 일반 설치·계정·음성·Tailscale 설정은 [설치 안내](../setup.md)를 따른다.
 
 ## 배치와 준비 조건

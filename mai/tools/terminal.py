@@ -2,20 +2,16 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import locale
-import tempfile
-from contextlib import nullcontext
 import json
 import os
-import signal
-import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .registry import ToolRegistry
+from ..platform import current_platform
+from ..platform.windows import windows_cmd_args, powershell_command
 
 
 class TerminalRunInput(BaseModel):
@@ -47,54 +43,25 @@ class TerminalOutputLimitError(TerminalRunError):
 
 
 def _shell_description() -> str:
-    if os.name == "nt":
-        return os.environ.get("COMSPEC") or "cmd.exe"
-    return "/bin/sh"
+    return current_platform().shell_description
 
 
 def _shell_family() -> str:
-    return "cmd" if os.name == "nt" else "sh"
+    return current_platform().shell_family
 
 
 def _windows_cmd_args(command_file: Path) -> list[str]:
-    """Launch UTF-8 CMD script under a UTF-8 code page, preserving its exit status."""
-    # subprocess.list2cmdline quotes argv on Windows already. Supplying a
-    # double-quoted string adds another quoting layer and makes CMD treat the
-    # quotes themselves as part of the batch filename.
-    return ["cmd.exe", "/d", "/c", str(command_file)]
+    """Compatibility shim for callers/testing the Windows command contract."""
+    return windows_cmd_args(command_file)
 
 
 def _powershell_command(command: str) -> list[str]:
-    """Return a Unicode-safe invocation with failure-preserving process status."""
-    prefix = (
-        "$ErrorActionPreference = 'Stop'; "
-        "$ProgressPreference = 'SilentlyContinue'; "
-        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
-        "$OutputEncoding = [Console]::OutputEncoding; "
-        "$global:LASTEXITCODE = 0; "
-    )
-    suffix = (
-        "\n$maiSucceeded = $?; $maiExitCode = $global:LASTEXITCODE; "
-        "if ($maiExitCode -ne 0) { exit $maiExitCode }; "
-        "if (-not $maiSucceeded) { exit 1 }"
-    )
-    payload = base64.b64encode((prefix + command + suffix).encode("utf-16-le")).decode("ascii")
-    return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-OutputFormat", "Text", "-EncodedCommand", payload]
+    """Compatibility shim; OS implementation lives in platform/windows.py."""
+    return powershell_command(command)
 
 
 def _terminate_process_tree(pid: int) -> None:
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-        return
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    current_platform().terminate_process_tree(pid)
 
 
 async def _communicate_bounded(process: asyncio.subprocess.Process, *, limit_bytes: int) -> tuple[bytes, bytes]:
@@ -132,38 +99,11 @@ async def _communicate_bounded(process: asyncio.subprocess.Process, *, limit_byt
     return bytes(output[0]), bytes(output[1])
 
 
-async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, shell: Literal['default', 'powershell'] = 'default') -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
-
-    # CMD is a batch language. Passing embedded newlines to /c is not a
-    # reliable way of executing a complete command block. A temporary UTF-8
-    # batch file preserves the exact input and can be removed in all outcomes.
-    with tempfile.TemporaryDirectory(prefix="mai-terminal-") if os.name == "nt" and shell == "default" else nullcontext(None) as temp_dir:
-        if shell == "powershell":
-            if os.name != "nt":
-                raise ValueError('PowerShell shell selection requires Windows')
-            command_args = _powershell_command(command)
-            process = await asyncio.create_subprocess_exec(
-                *command_args, cwd=str(cwd),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs,
-            )
-        elif os.name == "nt":
-            command_file = Path(temp_dir) / "command.cmd"
-            normalized_command = command.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
-            command_file.write_bytes(("@echo off\r\n@chcp 65001>nul\r\n" + normalized_command + "\r\nexit /b %errorlevel%\r\n").encode("utf-8"))
-            process = await asyncio.create_subprocess_exec(
-                *_windows_cmd_args(command_file), cwd=str(cwd),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs,
-            )
-        else:
-            process = await asyncio.create_subprocess_shell(
-                command, cwd=str(cwd),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **kwargs,
-            )
+async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
+                       shell: Literal["default", "powershell"] = "default") -> dict[str, Any]:
+    platform = current_platform()
+    with platform.script_workspace(shell) as workspace:
+        process = await platform.launch(command, cwd, shell, workspace)
 
         max_output_bytes = int(os.environ.get("TERMINAL_MAX_OUTPUT_BYTES", "1048576"))
         if max_output_bytes < 1:
@@ -177,27 +117,23 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None, s
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(collector, timeout=timeout_seconds)
         except asyncio.TimeoutError:
             timed_out = True
-            await asyncio.to_thread(_terminate_process_tree, process.pid)
+            await asyncio.to_thread(platform.terminate_process_tree, process.pid)
             stdout_bytes, stderr_bytes = await _communicate_bounded(process, limit_bytes=max_output_bytes)
         except BaseException:
             if not collector.done():
                 collector.cancel()
                 await asyncio.gather(collector, return_exceptions=True)
-            await asyncio.to_thread(_terminate_process_tree, process.pid)
+            await asyncio.to_thread(platform.terminate_process_tree, process.pid)
             await process.wait()
             raise
 
-    # Child CMD uses chcp 65001; PowerShell uses UTF-8 OutputEncoding.
-    # A child program that violates the contract must fail decoding, not
-    # silently substitute a different encoding or replace lost characters.
-    output_encoding = "utf-8" if os.name == "nt" else locale.getpreferredencoding(False)
     return {
         "command": command,
         "cwd": str(cwd),
-        "shell": "powershell.exe" if shell == "powershell" else _shell_description(),
-        "shell_family": "powershell" if shell == "powershell" else _shell_family(),
-        "stdout": stdout_bytes.decode(output_encoding, errors="strict"),
-        "stderr": stderr_bytes.decode(output_encoding, errors="strict"),
+        "shell": "powershell.exe" if shell == "powershell" else platform.shell_description,
+        "shell_family": "powershell" if shell == "powershell" else platform.shell_family,
+        "stdout": stdout_bytes.decode(platform.output_encoding, errors="strict"),
+        "stderr": stderr_bytes.decode(platform.output_encoding, errors="strict"),
         "returncode": process.returncode,
         "timed_out": timed_out,
     }
