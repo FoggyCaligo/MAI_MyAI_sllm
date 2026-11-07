@@ -41,7 +41,7 @@ from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
+from ..remote.routing import register_routed_pc_tools, register_routed_service_tools, register_routed_image_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -280,12 +280,18 @@ class MAIRuntime:
         # llama.cpp images are handled by the main model only.
         # Preserve Ollama image_analyze fallback unchanged.
         if self.llm_backend == "ollama" and self.vision_model is not None:
-            register_image_tools(
-                registry, model=self.vision_model,
-                host=(self.ollama_host if self.llm_backend == "ollama" else self.llamacpp_host),
-                cwd=self.cwd, backend=self.llm_backend,
-                router=self._llamacpp_router,
-            )
+            if principal.role is AccessRole.OWNER:
+                register_routed_image_tools(
+                    registry, owner_id=principal.db_id, model=self.vision_model,
+                    host=self.ollama_host, cwd=self.cwd, backend=self.llm_backend,
+                    router=self._llamacpp_router,
+                )
+            else:
+                register_image_tools(
+                    registry, model=self.vision_model, host=self.ollama_host,
+                    cwd=self.cwd, backend=self.llm_backend,
+                    router=self._llamacpp_router,
+                )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
