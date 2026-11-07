@@ -16,6 +16,27 @@ if ($ModelFile -and -not (Test-Path -LiteralPath $ModelFile -PathType Leaf)) {
     throw "-ModelFile not found: $ModelFile. Provide an existing .gguf path; D:\\models\\my-model.gguf is documentation placeholder, not a bundled model."
 }
 
+
+# Validate the selected model before provisioning any runtime.
+# A runtime install without a usable model can otherwise appear successful.
+$defaultModel = Join-Path $root 'portable/portable-models/gguf/active.gguf'
+$selectedModel = if ($ModelFile) { $ModelFile } else { $defaultModel }
+if (-not (Test-Path -LiteralPath $selectedModel -PathType Leaf)) {
+    throw "No GGUF model available before provisioning: $selectedModel. Supply -ModelFile with an existing GGUF or place active.gguf in portable/portable-models/gguf/."
+}
+if ([IO.Path]::GetExtension($selectedModel) -ine '.gguf') {
+    throw "Selected model must have .gguf extension: $selectedModel"
+}
+$preflightStream = [System.IO.File]::OpenRead($selectedModel)
+try {
+    $preflightMagic = New-Object byte[] 4
+    if ($preflightStream.Read($preflightMagic, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($preflightMagic) -cne 'GGUF') {
+        throw "Selected model does not have a GGUF header: $selectedModel"
+    }
+} finally {
+    $preflightStream.Dispose()
+}
+
 function Get-Required([object]$obj, [string]$property) {
     $value = $obj.PSObject.Properties[$property]
     if ($null -eq $value -or [string]::IsNullOrWhiteSpace([string]$value.Value)) {
