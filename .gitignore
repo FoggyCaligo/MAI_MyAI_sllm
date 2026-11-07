@@ -15,6 +15,7 @@ data/voice_profiles/
 # 별도 준비한 Portable 실행 환경과 대형 모델
 portable/portable-runtimes/
 portable/portable-models/
+portable/portable-slot-cache/
 
 # Portable 원본 다운로드와 로컬 배포 고정 목록
 portable/portable-downloads/
