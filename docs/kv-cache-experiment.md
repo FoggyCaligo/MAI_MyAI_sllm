@@ -15,7 +15,8 @@
 ## 구현 경계
 
 - `MAI_EXPERIMENTAL_SLOT_CACHE=true` 및 `LLM_BACKEND=llamacpp`일 때만 활성화한다.
-- `VERIFIER_MODEL`이 없거나 `MAIN_MODEL`과 같아야 한다. 다른 모델이면 명시적 오류로 종료한다.
+- 브라우저 UI의 모델 선택값이 해당 턴의 메인·숫자·최종검증에 모두 적용된다. 오래된 `.env`의 `VERIFIER_MODEL`은 무시된다.
+- llama.cpp 모델 목록은 서버에 **이미 적재된 단일 GGUF alias**만 노출한다. 브라우저 UI에서 임의의 다른 GGUF를 선택해 서버에 즉시 적재하는 기능은 아니다. 다른 GGUF를 시험할 때는 llama.cpp 서버를 종료하고 해당 GGUF로 재시작한다.
 - 같은 GGUF alias로 단일 llama.cpp 서버를 `--parallel 1`, `--slot-save-path`, `--cache-prompt`과 함께 실행한다.
 - 요청의 `id_slot=0`, `cache_prompt=true`를 강제한다. 실행 시작에 슬롯 0만 있고 유휴 상태인지, `/v1/models` alias가 일치하는지 확인한다.
 - MAI 사용자 턴 사이에서는 비동기 잠금을 사용해 순차 실행한다. 이전 메모리 후처리가 남아 있으면 기다린다.
