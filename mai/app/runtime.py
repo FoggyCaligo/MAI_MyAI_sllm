@@ -238,7 +238,11 @@ class MAIRuntime:
         register_external_information_tools(registry)
         register_browser_tools(registry, browser_manager)
         if self.vision_model is not None:
-            register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
+            register_image_tools(
+                registry, model=self.vision_model,
+                host=(self.ollama_host if self.llm_backend == "ollama" else self.llamacpp_host),
+                cwd=self.cwd, backend=self.llm_backend,
+            )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(

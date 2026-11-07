@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ollama import AsyncClient
+from ..llm.llamacpp import LlamaCppAdapter
+from ..llm.models import ModelConfig, ChatRequest
 from pydantic import BaseModel, ConfigDict, Field
 
 from .registry import ToolRegistry
@@ -35,6 +37,7 @@ class ImageAnalyzer:
         host: str,
         cwd: str | Path | None = None,
         max_bytes: int = 20 * 1024 * 1024,
+        backend: str = "ollama",
     ) -> None:
         clean_model = model.strip()
         if not clean_model:
@@ -44,7 +47,12 @@ class ImageAnalyzer:
         self.model = clean_model
         self.cwd = cwd
         self.max_bytes = max_bytes
-        self.client = AsyncClient(host=host)
+        self.backend = backend
+        self.client = AsyncClient(host=host) if backend == "ollama" else None
+        self.llama_adapter = (
+            LlamaCppAdapter(ModelConfig(model=model, host=host, think=False))
+            if backend == "llamacpp" else None
+        )
 
     async def analyze(self, *, path: str, question: str) -> dict[str, Any]:
         target = _resolve(path, self.cwd)
@@ -56,6 +64,14 @@ class ImageAnalyzer:
         if size > self.max_bytes:
             raise ValueError(f"image exceeds configured size limit: {size} > {self.max_bytes}")
 
+        if self.backend == "llamacpp":
+            turn = await self.llama_adapter.chat(ChatRequest(messages=(
+                {"role": "user", "content": question, "images": [target.read_bytes()]},
+            ), think=False))
+            content = turn.content
+            if not content.strip():
+                raise RuntimeError("vision model response is missing message content")
+            return {"path": str(target), "model": self.model, "analysis": content}
         response = await self.client.chat(
             model=self.model,
             messages=[{
@@ -86,13 +102,16 @@ def register_image_tools(
     host: str,
     cwd: str | Path | None = None,
     timeout_seconds: float | None = 120,
+    backend: str = "ollama",
 ) -> None:
-    analyzer = ImageAnalyzer(model=model, host=host, cwd=cwd)
+    analyzer = ImageAnalyzer(model=model, host=host, cwd=cwd, backend=backend)
     registry.add(
         name="image_analyze",
         description=(
-            "Analyze a local image with the configured Ollama vision model. Use this for screenshots, "
-            "photos, charts, diagrams, or other image files whose visual content must be understood."
+            ("Analyze a local image with the configured Ollama vision model. Use this for screenshots, "
+             if backend == "ollama" else
+             "Analyze a local image with the configured llama.cpp vision model. Use this for screenshots, ")
+            + "photos, charts, diagrams, or other image files whose visual content must be understood."
         ),
         input_model=ImageAnalyzeInput,
         handler=analyzer.analyze,
