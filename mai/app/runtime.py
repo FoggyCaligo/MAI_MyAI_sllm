@@ -41,7 +41,7 @@ from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..remote.routing import register_routed_pc_tools
+from ..remote.routing import register_routed_pc_tools, register_routed_service_tools, register_routed_image_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -78,7 +78,7 @@ Answer the current request fully; do not assume the user knows prior answers or 
 
 Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all native schemas: activate required tools by exact name and use their native schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: memory for user context, local tools for local resources, and information tools for external facts.
 
-MAI's owner-authorized remote connection lets you use the same routed PC tools on another connected computer. When the task targets that remote computer, set is_remote=true on every applicable call, including discovery, reads, edits, terminal commands, and verification. false or omission executes on the MAI host PC, even when the user is chatting from another device; tool_manual activation does not select the execution target. Use is_remote only on tools whose activated schema declares it. Establish paths, working directories, and shell syntax from the target PC's observations; host runtime context does not describe the remote PC. The runtime resolves the account's active remote session; do not supply a session identifier. A missing or disconnected remote session is an error: report it instead of substituting host execution.
+MAI's owner-authorized remote connection lets routed tools execute on another connected Windows or Linux computer. The model chooses the execution location structurally from the user's request; never infer it with string matching. In CodeAct, set is_remote=true or false on each tool(...) call. In the temporary direct-native compatibility path, use the tool schema's is_remote field when present. false or omission executes on the MAI host, even when the user is chatting from another device; tool_manual activation does not select an execution target. Discovery, reads, edits, terminal commands, external information calls, browser actions, and verification steps that concern the remote computer must consistently use the remote target. Establish paths, shell syntax, browser state, and other machine-specific facts from the selected target's observations; host runtime context does not describe the remote computer. The runtime resolves the account's active remote session; do not supply a session identifier. A missing, disconnected, or unsupported remote target is a failed tool result and never permission to substitute host execution.
 
 Use persistent-memory retrieval for missing user context. Activate the appropriate tool and read its schema before choosing arguments. Bounded or empty results are not exhaustive proof of absence.
 
@@ -102,6 +102,18 @@ class MAIRunResult:
     model: str
     model_rounds: int
     tools: tuple[dict[str, object], ...]
+
+
+def _leaf_tool_executions(executions: Sequence[Any]) -> tuple[Any, ...]:
+    """Expand CodeAct parents into their concrete native calls for downstream evidence."""
+    leaves: list[Any] = []
+    for execution in executions:
+        children = tuple(getattr(execution, "children", ()) or ())
+        if children:
+            leaves.extend(children)
+        else:
+            leaves.append(execution)
+    return tuple(leaves)
 
 
 class FileDownloadLinkInput(BaseModel):
@@ -255,20 +267,31 @@ class MAIRuntime:
     ) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
-        register_time_tools(registry)
-        register_calculator_tools(registry)
-        register_external_information_tools(registry)
-        register_browser_tools(registry, browser_manager)
+        if principal.role is AccessRole.OWNER:
+            register_routed_service_tools(
+                registry, owner_id=principal.db_id, browser_manager=browser_manager,
+            )
+        else:
+            register_time_tools(registry)
+            register_calculator_tools(registry)
+            register_external_information_tools(registry)
+            register_browser_tools(registry, browser_manager)
         # A separate vision inference can evict main mid-tool-turn and lose KV.
         # llama.cpp images are handled by the main model only.
         # Preserve Ollama image_analyze fallback unchanged.
         if self.llm_backend == "ollama" and self.vision_model is not None:
-            register_image_tools(
-                registry, model=self.vision_model,
-                host=(self.ollama_host if self.llm_backend == "ollama" else self.llamacpp_host),
-                cwd=self.cwd, backend=self.llm_backend,
-                router=self._llamacpp_router,
-            )
+            if principal.role is AccessRole.OWNER:
+                register_routed_image_tools(
+                    registry, owner_id=principal.db_id, model=self.vision_model,
+                    host=self.ollama_host, cwd=self.cwd, backend=self.llm_backend,
+                    router=self._llamacpp_router,
+                )
+            else:
+                register_image_tools(
+                    registry, model=self.vision_model, host=self.ollama_host,
+                    cwd=self.cwd, backend=self.llm_backend,
+                    router=self._llamacpp_router,
+                )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
@@ -341,6 +364,7 @@ class MAIRuntime:
             ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
+            codeact_enabled=principal.role is AccessRole.OWNER,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
@@ -368,6 +392,7 @@ class MAIRuntime:
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions
+        evidence_executions = _leaf_tool_executions(tool_executions)
 
         tools = tuple({
             "name": execution.name,
@@ -375,7 +400,7 @@ class MAIRuntime:
             "ok": execution.ok,
             "error_type": execution.error_type,
             "result": execution.content,
-        } for execution in tool_executions)
+        } for execution in evidence_executions)
 
         task = asyncio.create_task(
             self._postprocess_memory_with_model_scope(
@@ -383,7 +408,7 @@ class MAIRuntime:
                 previous_assistant_message=previous_assistant_message,
                 final_answer=answer,
                 principal=principal,
-                tool_executions=tool_executions,
+                tool_executions=evidence_executions,
                 fact_extractor=fact_extractor,
             )
         )
