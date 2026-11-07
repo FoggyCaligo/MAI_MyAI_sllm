@@ -65,6 +65,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 파일 교체에는 `-PreserveAndReinstallExisting`을 사용해 기존 파일을 보존할 수 있다.
 GGUF 배포처/라이선스를 확인하고 해당 파일을 별도 백업한다.
 
+## Linux Vulkan GPU (AMD / Intel / NVIDIA)
+
+Ubuntu 24.04 x64 host GPU drivers are **host OS dependencies**, not files
+to copy to an NTFS portable SSD. For AMD RX 6800 XT, the standard Linux
+`amdgpu` kernel driver plus Mesa RADV user-space Vulkan driver is a
+supported route. Check the Linux host:
+
+```bash
+python3 portable/check-linux-gpu.py --require
+```
+
+To explicitly install Mesa Vulkan runtime packages on an **AMD/Intel**
+Ubuntu host (requires sudo, internet and confirmation of package changes):
+
+```bash
+bash portable/prepare-portable-linux.sh --install-vulkan
+```
+
+NVIDIA hosts require the matching NVIDIA kernel/user-space Vulkan driver
+(e.g. via Ubuntu's `ubuntu-drivers` mechanism), not the Mesa RADV driver.
+The provisioning command does not attempt an unsolicited NVIDIA driver
+installation. After installing/upgrading GPU drivers, reboot when required.
+If `vulkaninfo` finds only software rendering (llvmpipe/lavapipe), the
+GPU preflight fails instead of silently allowing a CPU Vulkan device.
+
+**Important**: This verifies a real Vulkan-capable GPU is detected;
+it does not prove MAI's inference engine actually offloads layers to it.
+On the Ollama-backed dev branch, actual AMD GPU acceleration depends
+on the bundled Ollama GPU backend and its host prerequisites.
+On dev2 llama.cpp Vulkan needs a separate actual model load and inference test.
+Check runtime logs / utilization after starting MAI.
+
 ## Linux / Ubuntu 24.04 x64
 
 Linux에서도 Python·uv·llama.cpp Vulkan 바이너리를 호스트 캐시에 배치하고
