@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ollama import AsyncClient
 import httpx
 
 from ..agent.guards import GuardConfig
@@ -164,7 +163,12 @@ class MAIRuntime:
         )
         self._adapters: dict[str, OllamaAdapter | LlamaCppAdapter] = {}
         self._fact_extractors: dict[str, OllamaFactExtractor] = {}
-        self._ollama_client = AsyncClient(host=ollama_host)
+        # llama.cpp mode has no Ollama client, process or Python SDK dependency.
+        if self.llm_backend == "ollama":
+            from ollama import AsyncClient
+            self._ollama_client = AsyncClient(host=ollama_host)
+        else:
+            self._ollama_client = None
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 

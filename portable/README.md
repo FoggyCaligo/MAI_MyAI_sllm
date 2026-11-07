@@ -300,3 +300,15 @@ The existing `prepare-portable-linux.sh` and `start-portable-linux.sh` continue 
 **Host portability boundary:** Linux native Python, llama.cpp binaries and Python dependencies are cached under `~/.cache/mai-portable/<path-id>` (or `XDG_CACHE_HOME`). Moving the SSD to an **unprepared** Linux computer still requires the initial provisioning step, executable host tools, writable data filesystem, Vulkan drivers and adequate GPU/RAM; this is not yet guaranteed plug-and-run on arbitrary Linux hardware. Linux remote-agent bootstrap is still Windows PowerShell-only; a Linux MAI host can use local tools, but attaching a **Linux remote target** requires a separate remote worker implementation. Playwright Chromium and audio/microphone capabilities have native host dependencies.
 
 Before merging, run `python -m pytest -q` on Ubuntu and test actual Vulkan inference, image input, main tool calls, verifier JSON output, local file/code/CSV/document/terminal tool paths, browser Chromium, and remote Windows worker separately. No live Ubuntu inference has been run for this addition.
+
+
+### llama.cpp mode without Ollama installation or active Ollama server
+
+The llama.cpp router starts its own local API server and uses `LlamaCppAdapter` over HTTP. It does **not** need a running Ollama program, Ollama daemon, Ollama model store, or the `ollama` Python package at MAI startup. The SDK is imported and an `AsyncClient` is created **only** if `LLM_BACKEND=ollama`; the llama.cpp path does not construct one. Ollama mode remains available and requires its own Python dependency plus a running Ollama server.
+
+If a prior Portable Python environment is missing dependencies unrelated to Ollama, provision it with the existing `prepare-portable.ps1` procedure. Avoid installing or starting the Ollama application merely to run the llama.cpp router.
+
+Regression tests (run in the Portable Python environment):
+```powershell
+./portable/portable-runtimes/python/python.exe -m pytest -q tests/test_optional_ollama_dependency.py tests/test_llamacpp_adapter.py tests/test_ollama_adapter.py tests/test_final_grounding_verifier.py
+```

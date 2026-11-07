@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from ollama import AsyncClient
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.models import ModelConfig, ChatRequest
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,7 +47,11 @@ class ImageAnalyzer:
         self.cwd = cwd
         self.max_bytes = max_bytes
         self.backend = backend
-        self.client = AsyncClient(host=host) if backend == "ollama" else None
+        if backend == "ollama":
+            from ollama import AsyncClient
+            self.client = AsyncClient(host=host)
+        else:
+            self.client = None
         self.llama_adapter = (
             LlamaCppAdapter(ModelConfig(model=model, host=host, think=False))
             if backend == "llamacpp" else None

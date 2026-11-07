@@ -13,8 +13,6 @@ from uuid import uuid4
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from ollama import AsyncClient, ResponseError
-
 from .models import ChatRequest, ModelConfig, ModelTurn, NativeToolCall
 
 _LOG = logging.getLogger("uvicorn.error")
@@ -50,7 +48,12 @@ class OllamaAdapter:
 
     def __init__(self, config: ModelConfig, *, client: OllamaChatClient | None = None) -> None:
         self.config = config
-        self._client: OllamaChatClient = client or AsyncClient(host=config.host)
+        if client is None:
+            # Do not import the Ollama SDK merely because MAI imports its adapters.
+            # llama.cpp-only Portable must start without the ollama Python package.
+            from ollama import AsyncClient
+            client = AsyncClient(host=config.host)
+        self._client: OllamaChatClient = client
 
     async def chat(self, request: ChatRequest) -> ModelTurn:
         think = self.config.think if request.think is None else request.think
@@ -91,7 +94,11 @@ class OllamaAdapter:
             raise OllamaChatTimeoutError(
                 f"Ollama chat request exceeded {self.config.request_timeout_seconds:g} seconds"
             ) from exc
-        except ResponseError as exc:
+        except Exception as exc:
+            # Preserve provider-specific error translation, without a top-level
+            # dependency on the optional Ollama SDK.
+            if type(exc).__name__ != "ResponseError" or not type(exc).__module__.startswith("ollama"):
+                raise
             _LOG.error("MAI Ollama request rejected id=%s model=%s elapsed_seconds=%.3f", request_id, self.config.model, time.perf_counter() - started)
             raise OllamaRequestError("Ollama chat request failed") from exc
 
