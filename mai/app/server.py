@@ -662,6 +662,7 @@ async def chat(
             prior_messages=prior,
             model=selected_model,
             remote_session_id=request.remote_session_id,
+            **({"attachments": attachments} if attachments else {}),
             on_tool_execution=publish_tool,
             on_model_turn=publish_model_turn,
             on_verification_rejection=publish_verification_rejection,
