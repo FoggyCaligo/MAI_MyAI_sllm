@@ -106,7 +106,7 @@ def test_numeric_subtask_uses_independent_review_before_factual_review():
     reviewer = TwoStageReviewer()
     result = asyncio.run(FinalGroundingVerifier(
         reviewer_adapter=reviewer, quality_review_enabled=False,
-    ).verify(candidate="The value is 1,000.", messages=[
+    ).verify(candidate="The value is 1,000 units.", messages=[
         {"role": "user", "content": "The value is one thousand."},
     ], tool_results=[]))
     assert result.ok
