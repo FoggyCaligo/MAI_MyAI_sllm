@@ -79,7 +79,7 @@ def test_verifier_csv_contract_requires_matching_computed_lineage():
 
     assert "source SHA-256" in _FACTUAL_REVIEW_SYSTEM
     assert "matching result" in _FACTUAL_REVIEW_SYSTEM
-    assert "do not independently recount" in _FACTUAL_REVIEW_SYSTEM
+    assert "Never substitute a reviewer-invented count" in _FACTUAL_REVIEW_SYSTEM
 
 
 def test_csv_aggregate_accepts_registry_serialized_arguments(tmp_path):
