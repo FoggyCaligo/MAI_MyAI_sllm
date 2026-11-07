@@ -39,14 +39,14 @@ def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str)
             handler=invoke,
             timeout_seconds=None,
             category=definition.category,
-            metadata=definition.metadata,
+            metadata={**dict(definition.metadata), "codeact_execution_target": "routed_pc"},
         )
     registry.add_model_context(
         key="remote_execution_target",
         tools=local.names(),
         context={
-            "default": "Every routed PC tool accepts is_remote (boolean, default false). The MAI host PC runs the call when false or omitted.",
-            "remote": "Set is_remote=true on any routed PC tool to run on the owner-authorized connected remote PC.",
+            "default": "Direct native PC calls accept is_remote (boolean, default false). In CodeAct, choose execute_code.target instead and do not pass is_remote inside tool arguments.",
+            "remote": "CodeAct target='remote' routes supported PC tool calls to the owner-authorized connected remote PC. Direct native calls may still set is_remote=true during the compatibility phase.",
             "session_selection": "The server resolves the account's active remote session. The model must not supply any session identifier.",
             "failures": "A missing or disconnected remote session is an error, not permission to execute locally.",
         },
