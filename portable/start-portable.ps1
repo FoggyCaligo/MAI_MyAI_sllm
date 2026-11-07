@@ -93,7 +93,7 @@ if ($routerMode) {
     if ($verifierMode) {
         $ini += @("", "[mai-verifier]", "model = $(& $normalize $verifierPath)", "parallel = 1")
     }
-    $ini | Set-Content -LiteralPath $presetPath -Encoding UTF8
+    [System.IO.File]::WriteAllLines($presetPath, [string[]]$ini, (New-Object System.Text.UTF8Encoding($false)))
     $serverArgs = @('--models-preset', ('"' + $presetPath + '"'),
                     '--models-max', '1', '--host', '127.0.0.1',
                     '--port', '8080', '--jinja')
