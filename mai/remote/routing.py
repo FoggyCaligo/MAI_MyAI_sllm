@@ -108,3 +108,22 @@ def register_routed_service_tools(
     register_browser_tools(local, browser_manager)
     _add_routed_definitions(registry, local, owner_id=owner_id)
     _add_remote_context(registry, local.names(), "remote_service_execution_target")
+
+
+def register_routed_image_tools(
+    registry: ToolRegistry, *, owner_id: str, model: str, host: str,
+    cwd: str | None, backend: str, router: Any,
+) -> None:
+    """Expose image_analyze with optional remote-side vision inference.
+
+    A remote target must configure its own vision model. No host image bytes
+    are silently copied to a remote model: paths resolve on the selected PC.
+    """
+    from mai.tools.images import register_image_tools
+
+    local = ToolRegistry()
+    register_image_tools(
+        local, model=model, host=host, cwd=cwd, backend=backend, router=router,
+    )
+    _add_routed_definitions(registry, local, owner_id=owner_id)
+    _add_remote_context(registry, local.names(), "remote_image_execution_target")
