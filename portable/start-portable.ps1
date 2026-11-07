@@ -120,6 +120,16 @@ try {
     & $python run_server.py
     if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
 } finally {
-    if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
+    if (-not $llamaProcess.HasExited) {
+        if ($routerMode) {
+            # Router spawns child llama-server model processes: stop the tree.
+            & taskkill.exe /PID $llamaProcess.Id /T /F 2>$null | Out-Null
+            if (-not $llamaProcess.HasExited) {
+                Stop-Process -Id $llamaProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Stop-Process -Id $llamaProcess.Id
+        }
+    }
     if ($routerMode) { Remove-Item -LiteralPath $presetPath -Force -ErrorAction SilentlyContinue }
 }
