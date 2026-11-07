@@ -70,7 +70,15 @@ $quotedModelAlias = '"' + $modelAlias + '"'
 $serverArgs = @('-m', $quotedModelPath, '--alias', $quotedModelAlias,
                 '--host', '127.0.0.1', '--port', '8080', '--jinja',
                 '--parallel', '1', '--slot-save-path', $quotedCachePath)
-if (-not $MmprojPath -and $env:MAI_MMPROJ_PATH) { $MmprojPath = $env:MAI_MMPROJ_PATH }
+if (-not $MmprojPath) {
+    if ($env:MODEL_MMPROJ_PATH) {
+        $MmprojPath = $env:MODEL_MMPROJ_PATH
+    } else {
+        $MmprojPath = & $python (Join-Path $root 'portable/resolve_model_path.py') (Join-Path $root 'settings.yaml') --key MODEL_MMPROJ_PATH --optional
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot read settings.yaml MODEL_MMPROJ_PATH; see error above.' }
+        if ($null -ne $MmprojPath) { $MmprojPath = [string]$MmprojPath }
+    }
+}
 if ($MmprojPath) {
     if (-not [IO.Path]::IsPathRooted($MmprojPath)) { $MmprojPath = Join-Path $root $MmprojPath }
     if (-not (Test-Path -LiteralPath $MmprojPath -PathType Leaf)) { throw "Multimodal projector not found: $MmprojPath" }
