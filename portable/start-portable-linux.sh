@@ -41,7 +41,10 @@ export LOG_DB_PATH="$root/data/log.sqlite3"
 export SENTENCE_BREAKER_DB_PATH="$root/data/sentence_breaker.sqlite3"
 export LD_LIBRARY_PATH="$(dirname "$llama"):${LD_LIBRARY_PATH:-}"
 # An optional projector is required by some multimodal GGUF models.
-mmproj="${2:-${MAI_MMPROJ_PATH:-}}"
+mmproj="${2:-${MODEL_MMPROJ_PATH:-}}"
+if [[ -z "$mmproj" ]]; then
+  mmproj="$("$python" "$root/portable/resolve_model_path.py" "$root/settings.yaml" --key MODEL_MMPROJ_PATH --optional)"
+fi
 mmproj_args=()
 if [[ -n "$mmproj" ]]; then
   [[ "$mmproj" = /* ]] || mmproj="$root/$mmproj"
