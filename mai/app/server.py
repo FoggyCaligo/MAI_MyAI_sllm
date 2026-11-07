@@ -79,36 +79,6 @@ def _history_limit() -> int:
     return value
 
 
-def _visible_models_for_principal(
-    principal: AccessPrincipal,
-    *,
-    runtime_model: str,
-    installed_models: tuple[str, ...] | None = None,
-) -> tuple[str, ...]:
-    if principal.role is AccessRole.TRIAL:
-        return (runtime_model,)
-    if principal.role is AccessRole.OWNER:
-        if installed_models is None:
-            raise ValueError("installed_models is required for owner model selection")
-        return installed_models
-    raise ValueError(f"unsupported access role: {principal.role!r}")
-
-
-def _selected_model_for_principal(
-    principal: AccessPrincipal,
-    *,
-    runtime_model: str,
-    requested_model: str | None,
-) -> str | None:
-    if principal.role is AccessRole.OWNER:
-        return requested_model
-    if principal.role is AccessRole.TRIAL:
-        if requested_model is not None and requested_model.strip() != runtime_model:
-            raise PermissionError("trial accounts are restricted to the configured default model")
-        return None
-    raise ValueError(f"unsupported access role: {principal.role!r}")
-
-
 def _store_login_session(principal: AccessPrincipal) -> str:
     previous_tokens = [
         token
@@ -179,14 +149,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
 
     _runtime = MAIRuntime(
-        model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
+        model=os.environ.get("MAIN_MODEL", "mai-model"),
         ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        llm_backend=os.environ.get("LLM_BACKEND", "ollama"),
+        llm_backend="llamacpp",
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
-        vision_model=os.environ.get("VISION_MODEL") or None,
-        verifier_model=os.environ.get("VERIFIER_MODEL"),
         upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
@@ -241,7 +209,6 @@ class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1)
     session_id: str = Field(default="default", min_length=1)
-    model: str | None = None
     remote_session_id: str | None = None
     attachments: list[str] = Field(default_factory=list)
 
@@ -447,25 +414,6 @@ async def voice_transcribe(
     return {"text": _voice().transcribe_verified(principal.db_id, recording)}
 
 
-@app.get("/models")
-async def models(authorization: str | None = Header(default=None)) -> dict[str, object]:
-    _, principal = _principal_from_authorization(authorization)
-    runtime = _get_runtime()
-    if principal.role is AccessRole.TRIAL:
-        visible = _visible_models_for_principal(principal, runtime_model=runtime.model)
-        return {"models": visible, "current": runtime.model, "locked": True}
-    try:
-        installed = await runtime.list_models()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
-    visible = _visible_models_for_principal(
-        principal,
-        runtime_model=runtime.model,
-        installed_models=installed,
-    )
-    return {"models": visible, "current": runtime.model, "locked": False}
-
-
 @app.get("/download/{token}")
 async def download_file(token: str) -> FileResponse:
     """Serve an owner-issued bearer link without restricting local file paths."""
@@ -589,15 +537,6 @@ async def chat(
             raise HTTPException(status_code=403, detail="not your remote session")
         if not remote_session.connected:
             raise HTTPException(status_code=409, detail="remote agent is not connected")
-    try:
-        selected_model = _selected_model_for_principal(
-            principal,
-            runtime_model=runtime.model,
-            requested_model=request.model,
-        )
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
     audit = AuditLogStore(_db_path("LOG_DB_PATH"))
     run_id = secrets.token_urlsafe(18)
     audit.start(run_id, db_id=principal.db_id, session_id=request.session_id, prompt=request.message)
@@ -655,12 +594,11 @@ async def chat(
         prior = _session_history(principal, request.session_id, limit=limit) if limit else []
         _append_session_message(principal, request.session_id, role="user", content=request.message,
                                 metadata={"attachments": attachments} if attachments else None)
-        active_model = selected_model or runtime.model
+        active_model = runtime.model
         result = await runtime.run_user_message(
             request.message,
             principal=principal,
             prior_messages=prior,
-            model=selected_model,
             remote_session_id=request.remote_session_id,
             **({"attachments": attachments} if attachments else {}),
             on_tool_execution=publish_tool,
@@ -680,7 +618,7 @@ async def chat(
                 "detail": exc.user_visible_error,
             "unverified_answer": exc.context.last_rejected_draft,
             "verifier_feedback": exc.context.last_verifier_feedback,
-                "model": selected_model or runtime.model,
+                "model": runtime.model,
                 "model_rounds": exc.context.model_rounds,
                 "verification_rejections": verification_rejections,
                 "tools": [_tool_payload(execution) for execution in exc.context.tool_executions],
@@ -693,7 +631,7 @@ async def chat(
             content={
                 "error_type": type(exc).__name__,
                 "detail": str(exc),
-                "model": selected_model or runtime.model,
+                "model": runtime.model,
                 "model_rounds": 0,
                 "verification_rejections": verification_rejections,
                 "tools": [],
