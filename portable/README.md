@@ -48,18 +48,7 @@ Tailscale/Cloudflare 최초 설정과 전환 방법은 [원격 호스팅 가이�
 
 문서의 `D:\\models\\my-model.gguf`(또는 `실제모델.gguf`)는 **설명용 가상 경로**이며 파일을 제공한다는 의미가 아니다. `-ModelFile`에는 직접 내려받거나 준비한 **실제 GGUF 파일의 경로**를 지정한다. 이미 `portable/portable-models/gguf/active.gguf`에 사용할 GGUF가 있으면 `-ModelFile` 없이 설치해도 된다.
 
-PowerShell에서 다음으로 확인한다.
-
-```powershell
-# 실제 GGUF 경로를 지정한다. 경로의 공백과 한글은 따옴표로 감싼다.
-$model = 'F:\\모델\\실제모델.gguf'
-Test-Path -LiteralPath $model -PathType Leaf
-# True일 때만 다음 명령을 실행
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile $model
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
-```
-
-모델이 이미 외장 드라이브의 `portable/portable-models/gguf/active.gguf`에 존재한다면 `-ModelFile` 옵션을 생략하거나, 외부 경로를 직접 지정하여 `start-portable.ps1 -GgufPath 'F:\\모델\\실제모델.gguf'`로 시작할 수 있다.
+이미 `settings.yaml`의 `MODEL_GGUF_PATH`에 GGUF가 있으면 `-ModelFile`을 생략한다. 다른 파일에서 가져올 때만 `-ModelFile`을 지정하며, 설치 스크립트는 설정 경로로 복사한다.
 
 Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 없다는 이유만으로 GGUF가 아니라고 단정할 수 없으며**, 반대로 모두 GGUF인 것도 아니다. `ollama show 모델명 --modelfile`로 `FROM`이 가리키는 파일을 확인하고 처음 4바이트가 `GGUF`인지 검사한 뒤, 해당 모델 데이터 파일만 정확히 선택하여 복사해야 한다. 템플릿이나 부가 설정은 GGUF 파일에 포함되지 않을 수 있다.
 
@@ -67,20 +56,19 @@ Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 �
 
 ## Windows 준비
 
-프로젝트 루트에서:
+프로젝트 루트에서 모델 경로는 `settings.yaml`의 `MODEL_GGUF_PATH`를 기준으로 한다. 현재 기본값 `portable/portable-models/gguf/active.gguf`가 이미 있으면 복사 옵션 없이 설치한다.
 
 ```powershell
+# 최초 사용자는 .env.example을 복사한 뒤 계정 비밀번호를 설정한다.
 Copy-Item .env.example .env
-# .env의 OWNER_USERS 비밀번호를 개인 값으로 반드시 수정
-
 python portable/resolve_portable_sources.py
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile "D:\\models\\실제모델.gguf"
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
 ```
 
-기본 모델 파일 위치는 `portable/portable-models/gguf/active.gguf`다. 별도 위치에 있는 파일로 시작하려면 `-GgufPath`를 지정한다. **모델 파일과 엔진 바이너리는 서로 다른 디렉터리**에 있다.
+새 원본 GGUF에서 모델을 가져와야 할 때만 `-ModelFile 'C:\path\to\model.gguf'`를 지정한다. 설치 스크립트는 원본을 `MODEL_GGUF_PATH`에 복사한다. 기존 대상 파일은 덮어쓰지 않으며 교체 시 `-PreserveAndReinstallExisting`로 백업한다. 처음 설치 시 경로 해석에는 PyYAML이 설치된 Python이 필요하다.
 
-`settings.yaml`의 `MODEL_GGUF_PATH`에서 GGUF 파일을 선택한다. 예: `portable/portable-models/gguf/active.gguf`. 내부 llama.cpp alias는 `mai-model`로 고정되어 모델을 바꾸더라도 변경할 필요가 없다. 모델 파일 경로를 바꾸면 서버를 재시작한다.
+기존 Ollama SHA blob을 재활용할 때는 본체의 GGUF 헤더와 실제 모델 파일인지 확인한 다음 `active.gguf`로 복사한다. projector 등 별도 blob은 본체에 합치지 않는다. 현재 모델을 사용하려면 설치 뒤 모델 로드 및 Vulkan 추론을 검증해야 한다.
 
 ## llama.cpp만 업그레이드하기
 
