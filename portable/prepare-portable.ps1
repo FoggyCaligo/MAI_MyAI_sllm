@@ -11,21 +11,37 @@ Set-StrictMode -Version Latest
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-# Reject a missing example model immediately, before downloading runtimes/dependencies.
-if ($ModelFile -and -not (Test-Path -LiteralPath $ModelFile -PathType Leaf)) {
-    throw "-ModelFile not found: $ModelFile. Provide an existing .gguf path; D:\\models\\my-model.gguf is documentation placeholder, not a bundled model."
+# Resolve the destination from settings.yaml before any runtime downloads.
+# Use the existing portable Python where available; otherwise the Python
+# already used to generate portable-sources.json. PyYAML is required.
+$settingsPath = Join-Path $root 'settings.yaml'
+$helperPath = Join-Path $PSScriptRoot 'resolve_model_path.py'
+$portablePython = Join-Path $PSScriptRoot 'portable-runtimes/python/python.exe'
+if (Test-Path -LiteralPath $portablePython -PathType Leaf) {
+    $bootstrapPython = $portablePython
+} else {
+    $bootstrapCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $bootstrapCommand) {
+        throw 'Python with PyYAML is required to read MODEL_GGUF_PATH before provisioning. Install Python or provide the existing portable Python runtime.'
+    }
+    $bootstrapPython = $bootstrapCommand.Source
 }
-
-
-# Validate the selected model before provisioning any runtime.
-# A runtime install without a usable model can otherwise appear successful.
-$defaultModel = Join-Path $root 'portable/portable-models/gguf/active.gguf'
-$selectedModel = if ($ModelFile) { $ModelFile } else { $defaultModel }
+$configuredPath = & $bootstrapPython $helperPath $settingsPath
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($configuredPath)) {
+    throw 'Cannot read settings.yaml MODEL_GGUF_PATH before provisioning (Python with PyYAML required).'
+}
+$configuredPath = $configuredPath.Trim()
+$targetFile = if ([IO.Path]::IsPathRooted($configuredPath)) { $configuredPath } else { Join-Path $root $configuredPath }
+$targetFile = [IO.Path]::GetFullPath($targetFile)
+if ([IO.Path]::GetExtension($targetFile) -ine '.gguf') {
+    throw "MODEL_GGUF_PATH must end in .gguf: $targetFile"
+}
+$selectedModel = if ($ModelFile) { $ModelFile } else { $targetFile }
 if (-not (Test-Path -LiteralPath $selectedModel -PathType Leaf)) {
-    throw "No GGUF model available before provisioning: $selectedModel. Supply -ModelFile with an existing GGUF or place active.gguf in portable/portable-models/gguf/."
+    throw "Model not found: $selectedModel. Put a GGUF at MODEL_GGUF_PATH or provide -ModelFile to copy a GGUF there."
 }
-if ([IO.Path]::GetExtension($selectedModel) -ine '.gguf') {
-    throw "Selected model must have .gguf extension: $selectedModel"
+if ($ModelFile -and [IO.Path]::GetExtension($selectedModel) -ine '.gguf') {
+    throw "-ModelFile must point to a .gguf file: $selectedModel"
 }
 $preflightStream = [System.IO.File]::OpenRead($selectedModel)
 try {
@@ -35,6 +51,10 @@ try {
     }
 } finally {
     $preflightStream.Dispose()
+}
+$sourceFullPath = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $selectedModel).Path)
+if ($ModelFile -and $sourceFullPath -ine $targetFile -and (Test-Path -LiteralPath $targetFile -PathType Leaf) -and -not $PreserveAndReinstallExisting) {
+    throw "Configured GGUF already exists: $targetFile. Use -PreserveAndReinstallExisting to back up before replacing it."
 }
 
 function Get-Required([object]$obj, [string]$property) {
@@ -150,38 +170,23 @@ if ($InstallChromium) {
     & $python -m playwright install chromium
     if ($LASTEXITCODE -ne 0) { throw 'Portable Chromium installation failed' }
 }
-# Model weights remain independent from the llama.cpp runtime directory.
-if ($ModelFile) {
-    $sourceFile = (Resolve-Path -LiteralPath $ModelFile -ErrorAction Stop).Path
-    if ([IO.Path]::GetExtension($sourceFile) -ine '.gguf') { throw '-ModelFile must point to a GGUF file.' }
-    $ggufStream = [System.IO.File]::OpenRead($sourceFile)
-    try {
-        $magic = New-Object byte[] 4
-        if ($ggufStream.Read($magic, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($magic) -cne 'GGUF') {
-            throw "-ModelFile is not GGUF content: $sourceFile"
-        }
-    } finally {
-        $ggufStream.Dispose()
-    }
-    $targetDir = Join-Path $root 'portable/portable-models/gguf'
+# Model destination is the same MODEL_GGUF_PATH that start-portable.ps1 uses.
+if ($ModelFile -and $sourceFullPath -ine $targetFile) {
+    $targetDir = Split-Path -Parent $targetFile
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
-    $targetFile = Join-Path $targetDir 'active.gguf'
-    if (([IO.Path]::GetFullPath($sourceFile)) -ne ([IO.Path]::GetFullPath($targetFile))) {
-        if (Test-Path -LiteralPath $targetFile -PathType Leaf) {
-            if (-not $PreserveAndReinstallExisting) {
-                throw 'active.gguf already exists. Pass -PreserveAndReinstallExisting to back it up before replacing.'
-            }
-            $backup = "$targetFile.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
-            Move-Item -LiteralPath $targetFile -Destination $backup -ErrorAction Stop
-            Write-Host "Preserved old GGUF: $backup"
-        }
-        Copy-Item -LiteralPath $sourceFile -Destination $targetFile -ErrorAction Stop
-        if ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ne
-            (Get-FileHash -LiteralPath $targetFile -Algorithm SHA256).Hash) {
-            Remove-Item -LiteralPath $targetFile -Force -ErrorAction SilentlyContinue
-            throw 'GGUF copy checksum mismatch'
-        }
+    if (Test-Path -LiteralPath $targetFile -PathType Leaf) {
+        $backup = "$targetFile.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
+        if (Test-Path -LiteralPath $backup) { throw "Backup already exists: $backup" }
+        Move-Item -LiteralPath $targetFile -Destination $backup -ErrorAction Stop
+        Write-Host "Preserved old GGUF: $backup"
+    }
+    Copy-Item -LiteralPath $sourceFullPath -Destination $targetFile -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $sourceFullPath -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $targetFile -Algorithm SHA256).Hash) {
+        Remove-Item -LiteralPath $targetFile -Force -ErrorAction SilentlyContinue
+        throw 'GGUF copy checksum mismatch'
     }
 }
+
 Write-Host "Portable installation prepared under $root"
-Write-Host 'Verify portable/portable-models/gguf/active.gguf and run portable/start-portable.ps1. If no model was copied, supply a real GGUF file or use -GgufPath.'
+Write-Host "Model selected via settings.yaml: $targetFile"; Write-Host "Run portable/start-portable.ps1 after checking your llama.cpp compatibility."
