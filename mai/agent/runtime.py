@@ -43,6 +43,7 @@ class AgentRuntime:
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
         tool_result_store: ToolResultStore | None = None,
+        codeact_enabled: bool = True,
     ) -> None:
         self.loop = AgentLoop(
             adapter,
@@ -51,6 +52,7 @@ class AgentRuntime:
             final_verifier=final_verifier,
             max_semantic_verification_retries=max_semantic_verification_retries,
             tool_result_store=tool_result_store,
+            codeact_enabled=codeact_enabled,
         )
     async def run(
         self,
