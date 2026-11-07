@@ -1,76 +1,95 @@
-"""Long-lived transport client for an owner-authorized MAI remote host.
+"""Cross-platform long-lived HTTPS polling client for MAI remote tools.
 
-The transport is OS-neutral. Platform-specific behavior belongs to the native
-tool implementations executed by mai.remote.python_worker/build_registry.
+The secret comes from the launch environment rather than process argv. A single
+worker instance retains browser sessions until disconnect. No fallback to host.
 """
 from __future__ import annotations
 
-import argparse
 import asyncio
+import os
 import sys
-import time
 from typing import Any
 
 import httpx
 
-from .python_worker import execute_native
+from .python_worker import RemoteWorker
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--server", required=True)
-    parser.add_argument("--session", required=True)
-    parser.add_argument("--key", required=True)
-    return parser
+class RemoteAgentProtocolError(RuntimeError):
+    """Invalid remote-session transport response."""
 
 
-async def run_agent(*, server: str, session: str, key: str) -> None:
+async def run_agent(*, server: str, session: str, key: str,
+                    worker: RemoteWorker | None = None) -> None:
     if not server.lower().startswith("https://"):
         raise ValueError("HTTPS MAI server required")
+    if not session or not key:
+        raise ValueError("remote session and key are required")
     base = server.rstrip("/")
+    url = f"{base}/remote/agent/{session}"
     headers = {"X-MAI-Agent-Secret": key}
-    timeout = httpx.Timeout(40.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-        try:
+    active_worker = worker or RemoteWorker()
+    try:
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=httpx.Timeout(40.0, connect=15.0),
+            follow_redirects=False,
+        ) as client:
             while True:
-                response = await client.post(f"{base}/remote/agent/{session}/poll")
+                response = await client.post(url + "/poll")
                 response.raise_for_status()
                 body = response.json()
-                request = body.get("request")
-                if request is None:
+                if not isinstance(body, dict) or "request" not in body:
+                    raise RemoteAgentProtocolError("poll response missing request field")
+                command = body["request"]
+                if command is None:
                     continue
-                request_id = request["request_id"]
-                operation = request["operation"]
-                arguments = request["arguments"]
-                payload: dict[str, Any] = {"request_id": request_id, "ok": False}
+                if not isinstance(command, dict):
+                    raise RemoteAgentProtocolError("poll request must be an object")
+                request_id = command.get("request_id")
+                if not isinstance(request_id, str) or not request_id:
+                    raise RemoteAgentProtocolError("poll request_id is invalid")
+                outcome: dict[str, Any] = {"request_id": request_id, "ok": False}
                 try:
-                    if operation != "native.invoke":
-                        raise RuntimeError(f"Unsupported operation {operation}")
-                    name = arguments["name"]
-                    native_arguments = arguments["arguments"]
-                    if not isinstance(name, str) or not isinstance(native_arguments, dict):
-                        raise TypeError("native.invoke requires a tool name and object arguments")
-                    payload["result"] = await execute_native(name, native_arguments)
-                    payload["ok"] = True
+                    if command.get("operation") != "native.invoke":
+                        raise RemoteAgentProtocolError(
+                            f"unsupported remote operation: {command.get('operation')!r}"
+                        )
+                    args = command.get("arguments")
+                    if not isinstance(args, dict):
+                        raise RemoteAgentProtocolError("native.invoke arguments must be an object")
+                    value = await active_worker.execute_native(
+                        args.get("name"), args.get("arguments"),
+                    )
+                    outcome.update({"ok": True, "result": {"value": value}})
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
-                    payload["error_type"] = type(exc).__name__
-                    payload["error"] = str(exc)
-                result = await client.post(
-                    f"{base}/remote/agent/{session}/result",
-                    json=payload,
-                )
-                result.raise_for_status()
+                    outcome.update({
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    })
+                delivered = await client.post(url + "/result", json=outcome)
+                delivered.raise_for_status()
+    finally:
+        try:
+            await active_worker.close()
         finally:
+            # A network failure must not mask the primary disconnect error.
             try:
-                await client.delete(f"{base}/remote/agent/{session}", timeout=5.0)
-            except Exception:
-                pass
+                async with httpx.AsyncClient(headers=headers, timeout=5) as client:
+                    await client.delete(url)
+            except httpx.HTTPError as exc:
+                print(f"MAI remote session revoke failed: {exc}", file=sys.stderr)
 
 
 def main() -> int:
-    args = _parser().parse_args()
     try:
-        asyncio.run(run_agent(server=args.server, session=args.session, key=args.key))
+        asyncio.run(run_agent(
+            server=os.environ["MAI_REMOTE_SERVER"],
+            session=os.environ["MAI_REMOTE_SESSION"],
+            key=os.environ["MAI_REMOTE_KEY"],
+        ))
     except KeyboardInterrupt:
         return 130
     return 0
