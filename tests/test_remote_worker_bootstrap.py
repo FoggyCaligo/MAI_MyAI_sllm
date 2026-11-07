@@ -13,6 +13,7 @@ def test_remote_worker_bundle_contains_python_registry_and_project_metadata():
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
         paths = set(archive.namelist())
     assert "pyproject.toml" in paths
+    assert "remote-requirements.txt" in paths
     assert "mai/remote/python_worker.py" in paths
     assert "mai/tools/registry.py" in paths
     assert "mai/tools/filesystem.py" in paths
@@ -24,6 +25,8 @@ def test_powershell_bootstrap_delegates_session_to_persistent_python_client():
     assert "Initialize-MaiRemotePython" in content
     assert "X-MAI-Bundle-SHA256" in content
     assert "-m mai.remote.agent_client" in content
+    assert "remote-requirements.txt" in content
+    assert "playwright install chromium" in content
     assert "mai.remote.python_worker" not in content
     assert "'file.read' {" not in content
     assert "'file.write' {" not in content
@@ -36,6 +39,8 @@ def test_linux_remote_agent_bootstraps_same_python_worker():
     assert "X-MAI-Bundle-SHA256" in content
     assert "sha256sum" in content
     assert "-m mai.remote.agent_client" in content
+    assert "remote-requirements.txt" in content
+    assert "playwright install chromium" in content
     assert "MAI_REMOTE_SERVER" in content
     assert "MAI_REMOTE_SESSION" in content
     assert "MAI_REMOTE_KEY" in content
