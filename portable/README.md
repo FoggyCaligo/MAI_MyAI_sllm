@@ -91,6 +91,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.
 
 단일 모델이므로 서버 실행 중에 다른 모델을 추가 적재하지 않는다.
 종료한 뒤 `settings.yaml`의 `MODEL_GGUF_PATH`를 다른 GGUF 경로로 바꾸거나 `-ModelFile`을 지정해 `active.gguf`를 교체할 수 있다. 시작 시 `-GgufPath`를 명시하면 해당 실행에 한하여 YAML 경로를 덮어쓴다.
+비전 지원 모델의 projector가 필요한 경우 같은 `settings.yaml`에 `MODEL_MMPROJ_PATH`를 지정한다. 옵션을 생략하면 projector는 적재하지 않는다. 모델을 교체하면 기존 projector 경로가 새로운 모델과 호환되는지도 반드시 확인한다.
 파일 교체에는 `-PreserveAndReinstallExisting`을 사용해 기존 파일을 보존할 수 있다.
 GGUF 배포처/라이선스를 확인하고 해당 파일을 별도 백업한다.
 
@@ -144,7 +145,7 @@ OS별 공통 도구 인터페이스와 남은 이식성 제한은 [OS 경계 문
 
 ## 유의사항
 
-- 마이크·원격 PC·계정·도구 기능은 그대로 남지만 **이미지 첨부 직접 인식은 현재 llama.cpp 단일 모델 경로에 연결되지 않았다.** 별도의 비전 모델을 자동 적재하지 않으며, 지원되지 않는 이미지를 보내면 명시적 오류가 난다.
+- 마이크·원격 PC·계정·도구 기능은 그대로 남지만 **이미지 첨부 및 `image_analyze`는 비전 지원 GGUF와 호환 projector를 llama.cpp에 적재했을 때 사용할 수 있다.** 별도의 비전 모델을 자동 적재하지 않으며, 지원되지 않는 이미지를 보내면 명시적 오류가 난다.
 - 컨텍스트를 32K 등으로 인위적으로 제한하지 않았다. 물리적 VRAM/RAM 한계는 존재한다.
 - KV 캐시 파일은 대화에서 파생된 내용을 포함할 수 있다. 정상 작업 종료 시 삭제하고, 강제 전원 차단 이후 남은 파일은 서버 종료를 확인한 후 정리한다.
 - 포터블 설치/백업은 GPU 전원 차단을 해결하지 않는다. 전원 차단이 반복됐다면 전원공급장치, GPU 드라이버, Windows 이벤트 로그 등을 우선 확인한다.
