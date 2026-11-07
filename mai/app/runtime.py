@@ -266,9 +266,9 @@ class MAIRuntime:
                 principal=principal, upload_root=self.upload_root,
             )
             model_prompt = (
-                prompt + "\\n\\n[Visual inspection from separate vision model; "
-                "not independently verified evidence]\\n" + observation +
-                "\\n[/Visual inspection]"
+                prompt + "\n\n[Visual inspection from separate vision model; "
+                "not independently verified evidence]\n" + observation +
+                "\n[/Visual inspection]"
             )
         adapter = self._adapter_for(selected_model)
         # In router mode the model is reloaded between requests; role-cache
