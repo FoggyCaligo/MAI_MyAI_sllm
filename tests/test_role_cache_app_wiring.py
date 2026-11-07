@@ -53,8 +53,8 @@ def test_portable_main_and_verifier_use_single_llamacpp_model(tmp_path, monkeypa
     monkeypatch.setattr(runtime_module.AgentRuntime, "run_user_message", fake_agent)
 
     runtime = runtime_module.MAIRuntime(
-        model="one-model", verifier_model=None, llm_backend="llamacpp",
-        ollama_host="http://127.0.0.1:11434", llamacpp_host="http://127.0.0.1:8080",
+        model="one-model",
+        llamacpp_host="http://127.0.0.1:8080",
         memory_db_path=tmp_path / "memory.db",
         sentence_breaker_db_path=tmp_path / "segmenter.db",
         upload_root=tmp_path / "uploads", cwd=tmp_path,
@@ -79,8 +79,8 @@ def test_browser_cannot_override_fixed_single_model(tmp_path, monkeypatch):
                         lambda **kwargs: SimpleNamespace(close=lambda: None))
     monkeypatch.setenv("MAI_SLOT_CACHE_DIR", str(tmp_path / "cache"))
     runtime = runtime_module.MAIRuntime(
-        model="one-model", verifier_model="old-model", llm_backend="llamacpp",
-        ollama_host="http://127.0.0.1:11434", llamacpp_host="http://127.0.0.1:8080",
+        model="one-model",
+        llamacpp_host="http://127.0.0.1:8080",
         memory_db_path=tmp_path / "memory.db",
         sentence_breaker_db_path=tmp_path / "segmenter.db",
         upload_root=tmp_path / "uploads", cwd=tmp_path,
@@ -89,18 +89,16 @@ def test_browser_cannot_override_fixed_single_model(tmp_path, monkeypatch):
         principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
         with pytest.raises(ValueError, match="model selection is unavailable"):
             run(runtime.run_user_message("Hi.", principal=principal, model="other-model"))
-        assert runtime.verifier_model is None
     finally:
         runtime.close()
 
 
-def test_experiment_cannot_use_ollama_backend(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAI_EXPERIMENTAL_SLOT_CACHE", "true")
+def test_llamacpp_is_only_supported_runtime_backend(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter",
                         lambda **kwargs: SimpleNamespace(close=lambda: None))
-    with pytest.raises(ValueError, match="requires llama.cpp"):
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
         runtime_module.MAIRuntime(
-            model="one-model", llm_backend="ollama", ollama_host="http://127.0.0.1:11434",
+            model="one-model", llm_backend="ollama",
             memory_db_path=tmp_path / "memory.db",
             sentence_breaker_db_path=tmp_path / "segmenter.db",
         )
