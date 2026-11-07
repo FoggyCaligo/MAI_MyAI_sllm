@@ -15,11 +15,13 @@ for utility in python3 curl tar sha256sum flock zstd git; do
 done
 install_chromium=0
 install_vulkan=0
+with_llamacpp=0
 for arg in "$@"; do
   case "$arg" in
     --install-chromium) install_chromium=1 ;;
     --install-vulkan) install_vulkan=1 ;;
-    *) echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium] [--install-vulkan]" >&2; exit 2 ;;
+    --with-llamacpp) with_llamacpp=1 ;;
+    *) echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium] [--install-vulkan] [--with-llamacpp]" >&2; exit 2 ;;
   esac
 done
 # GPU driver support is explicit, not an automatic privileged mutation.
@@ -36,6 +38,7 @@ manifest="$root/portable/portable-sources-linux.json"
 [[ -f "$manifest" ]] || { echo "Missing $manifest; create with portable/resolve_portable_sources_linux.py" >&2; exit 1; }
 export MAI_LINUX_ROOT="$root"
 export MAI_LINUX_MANIFEST="$manifest"
+export MAI_LINUX_WITH_LLAMACPP="$with_llamacpp"
 cache_base="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable"
 # Each SSD copy gets its own host cache; model/DB files remain on the SSD.
 cache_id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
@@ -52,7 +55,10 @@ root = Path(os.environ["MAI_LINUX_MANIFEST"])
 data = json.loads(root.read_text(encoding="utf-8"))
 if data.get("schema_version") != 1 or data.get("target") != "ubuntu-24.04-amd64":
     raise ValueError("Linux manifest schema or target mismatch")
-for name in ("python", "uv", "ollama"):
+if os.environ.get("MAI_LINUX_WITH_LLAMACPP") == "1" and "llamacpp" not in data:
+    raise ValueError("Manifest lacks llama.cpp; regenerate with --include-llamacpp")
+names = ("python", "uv", "ollama", "llamacpp") if os.environ.get("MAI_LINUX_WITH_LLAMACPP") == "1" else ("python", "uv", "ollama")
+for name in names:
     entry = data.get(name)
     if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not isinstance(entry.get("sha256"), str):
         raise ValueError(f"Missing Linux source manifest entry: {name}")
@@ -101,6 +107,13 @@ install_archive() {
     mkdir -p "$staging/runtime/bin"
     cp -- "$exe" "$staging/runtime/bin/uv"
     chmod +x "$staging/runtime/bin/uv"
+  elif [[ "$name" == llamacpp ]]; then
+    local server
+    server="$(find "$staging" -type f -name llama-server -print -quit)"
+    [[ -n "$server" ]] || { echo "Missing llama-server in pinned Linux release" >&2; exit 1; }
+    mkdir -p "$staging/runtime"
+    cp -a -- "$(dirname "$server")" "$staging/runtime/bin"
+    chmod +x "$staging/runtime/bin/llama-server"
   elif [[ "$name" == ollama ]]; then
     [[ -f "$staging/bin/ollama" ]] || { echo "Missing bin/ollama in archive" >&2; exit 1; }
     mv -- "$staging/bin" "$staging/runtime-bin"
@@ -113,7 +126,9 @@ install_archive() {
   rm -r -- "$staging"
 }
 
-for name in uv python ollama; do
+runtimes=(uv python ollama)
+if [[ "$with_llamacpp" == 1 ]]; then runtimes+=(llamacpp); fi
+for name in "${runtimes[@]}"; do
   file="$(fetch "$name")"
   digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]]["sha256"].lower())' "$manifest" "$name")"
   install_archive "$name" "$file" "$digest"
@@ -125,6 +140,7 @@ ollama="$cache/ollama/bin/ollama"
 "$python" -c 'import sys; assert sys.version_info[:2] == (3,11); print(sys.version)'
 "$uv" --version
 "$ollama" --version
+if [[ "$with_llamacpp" == 1 ]]; then "$cache/llamacpp/bin/llama-server" --version; fi
 
 # Never provision a Python environment on NTFS. Linux native packages live in host cache.
 echo "[Linux Portable] Installing MAI Python dependencies"
@@ -135,4 +151,5 @@ if [[ "$install_chromium" == 1 ]]; then
   "$python" -m playwright install chromium
 fi
 echo "[Linux Portable] Host runtime prepared: $cache"
+if [[ "$with_llamacpp" == 1 ]]; then echo "llama.cpp available: portable/start-portable-llamacpp-linux.sh"; fi
 echo "Run: bash '$root/portable/start-portable-linux.sh'"

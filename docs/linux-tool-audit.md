@@ -1,0 +1,38 @@
+# MAI dev: Linux 도구 호환성 점검 (2026-11-07)
+
+이 문서는 GitHub 소스 정적 점검 결과다. Linux 장비에서의 전체 실행 성공 판정은 아니다.
+
+| 도구/기능 | 소스 검사 결과 | Linux 실기기 검증 |
+|---|---|---|
+| terminal_run | `mai/platform/linux.py`: `/bin/sh`, 독립 프로세스 그룹, `killpg`; `shell=powershell` 명시적 거절 | 미실행 |
+| 로컬 file_read / file_write | `mai/tools/filesystem.py`: pathlib 기반, PS1 BOM 처리에 OS 조건 있음 | 미실행 |
+| code / code_edit | `mai/tools/code.py`: pathlib 기반 파일 작업, 일반 파일 API | 미실행 |
+| CSV 집계 | `mai/tools/csv_aggregate.py`: Python 파일/집계 경로 | 미실행 |
+| 문서 편집 | `mai/tools/document_edit.py`: tempfile와 Path | 미실행 |
+| browser_* | `mai/tools/browser.py`: Playwright Chromium, Linux 브라우저 바이너리 및 시스템 라이브러리 필요 | 미실행 |
+| image_analyze / 첨부 이미지 | `mai/tools/images.py`, `mai/llm/llamacpp.py`: llama.cpp OpenAI 이미지 메시지 구성; GPU/projector/model 실측 필요 | 미실행 |
+| 원격 is_remote=true | `mai/remote/routing.py`는 native.invoke로 라우팅. 원격 접속 대상의 워커 부트스트랩은 `mai/app/static/remote-agent.ps1`와 UI의 PowerShell 명령만 제공 | Linux 원격 대상 **미지원** |
+| 음성 | `mai/app/voice.py`의 faster-whisper 및 설치 의존성, 오디오/마이크 환경 | 미실행 |
+| 원격 웹 공개 | Tailscale / Cloudflare **호스트별 설치·로그인** 필요 | 미실행 |
+
+## 설치 전 차단 요인
+
+1. 기존 `portable/start-portable-linux.sh`는 Ollama용이다. llama.cpp는 `start-portable-llamacpp-linux.sh`를 실행해야 한다.
+2. Linux에서 처음 실행하는 PC에는 `prepare-portable-linux.sh --with-llamacpp`로 호스트 캐시를 구성해야 한다. SSD의 Windows 실행 파일은 Linux에서 동작하지 않는다.
+3. `settings.yaml`의 프로젝트 기준 GGUF 상대경로는 공통 사용 가능하지만, GPU Vulkan 드라이버와 `vulkaninfo`, `libvulkan`, Linux 네이티브 의존성, 실행 가능한 마운트와 SQLite 읽기/쓰기 권한은 대상 호스트별로 확인한다.
+4. `remote-agent.ps1`은 Windows 대상용 워커이므로 Linux 컴퓨터를 원격 작업 대상으로 등록하려면 Linux용 별도 워커와 UI 다운로드/실행 경로를 개발해야 한다. Linux MAI 서버에서 Windows 원격 대상으로 접속하는 경우와 구분한다.
+5. `terminal_run` 도구 설명에 Windows CMD/PowerShell 안내가 길게 포함되어 있지만, 런타임 컨텍스트는 POSIX `/bin/sh`를 지정한다. LLM이 Windows 문법을 잘못 선택하는 상황은 실제 테스트가 필요하다.
+
+## Ubuntu 24.04에서 확인할 스모크 테스트
+
+```bash
+python3 portable/check-linux-gpu.py --require
+bash -n portable/prepare-portable-linux.sh
+bash -n portable/start-portable-llamacpp-linux.sh
+bash portable/prepare-portable-linux.sh --with-llamacpp
+bash portable/start-portable-llamacpp-linux.sh
+```
+
+실제 동작을 확인할 때는 웹 로그인 후 `terminal_run`에서 `pwd; uname -a`, 한글 파일 읽기/쓰기, Python 코드 편집, CSV 집계, DOCX 수정, Chromium 웹 접근, Gemma 4 이미지 분석, LFM Verifier JSON 검증, 원격 Windows 작업을 순서대로 시행한다. 테스트 실패는 누락된 OS 의존성·모델 미지원·도구 구현 결함으로 구분해 기록한다.
+
+**결론:** Linux 로컬 native 도구의 OS 경계는 구현되어 있지만, 전체 도구/플러그인과 원격 Linux 워커까지 즉시 사용 가능하다고 인증할 근거는 없다.
