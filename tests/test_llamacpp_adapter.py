@@ -58,3 +58,28 @@ def test_tool_result_history_preserves_call_identity():
     assert turns[2]["tool_call_id"] == identifier
     assert turns[2]["role"] == "tool"
     assert "tool_name" not in turns[2]
+
+
+def test_empty_structured_verifier_response_is_protocol_error_with_diagnostics():
+    import json
+    async def run():
+        def reply(request):
+            body = json.loads(request.content)
+            assert body["model"] == "mai-verifier"
+            assert body["response_format"]["type"] == "json_schema"
+            return httpx.Response(200, json={
+                "choices": [{"finish_reason": "length",
+                             "message": {"role": "assistant", "content": "",
+                                         "reasoning_content": "not finished"}}],
+                "usage": {"prompt_tokens": 7800, "completion_tokens": 391},
+            })
+        async with httpx.AsyncClient(transport=httpx.MockTransport(reply)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(model="mai-verifier", host="http://test"), client=client)
+            return await adapter.chat(ChatRequest(
+                messages=[{"role": "user", "content": "review"}],
+                think=False,
+                response_format={"type": "object", "properties": {"ok": {"type": "boolean"}},
+                                 "required": ["ok"]},
+            ))
+    with pytest.raises(OllamaProtocolError, match="finish_reason='length'"):
+        asyncio.run(run())
