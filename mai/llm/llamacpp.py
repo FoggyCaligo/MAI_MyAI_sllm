@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import base64
 from collections.abc import Mapping
 from typing import Any
 
@@ -100,6 +101,30 @@ class LlamaCppAdapter:
 def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
     """Convert MAI tool-call argument objects to OpenAI JSON strings."""
     result = dict(message)
+    images = result.pop("images", None)
+    if images:
+        if result.get("role") != "user" or not isinstance(images, (list, tuple)):
+            raise OllamaProtocolError("llama.cpp image inputs must belong to a user turn")
+        content = result.get("content", "")
+        if not isinstance(content, str):
+            raise OllamaProtocolError("multimodal user text must be a string")
+        parts = [{"type": "text", "text": content}]
+        for image_bytes in images:
+            if not isinstance(image_bytes, bytes) or not image_bytes:
+                raise OllamaProtocolError("image input must contain nonempty bytes")
+            # Detect supported input encoding by signature, without changing bytes.
+            if image_bytes.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+                mime = "image/png"
+            elif image_bytes.startswith(b"\\xff\\xd8\\xff"):
+                mime = "image/jpeg"
+            elif image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+                mime = "image/webp"
+            else:
+                raise OllamaProtocolError("llama.cpp inline image must be PNG, JPEG or WebP")
+            parts.append({"type": "image_url", "image_url": {
+                "url": f"data:{mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+            }})
+        result["content"] = parts
     calls = result.get("tool_calls")
     if calls is None:
         return result
