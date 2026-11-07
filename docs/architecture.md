@@ -75,8 +75,8 @@ Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool
 - `web_fetch`는 공개 HTTP(S) 주소만 허용하고 리다이렉트도 사설·루프백 주소인지 검사한다.
 - `market_data`는 한국 상장주식 현재 시세·평가 정보 조회이며 제공처 형식 변경은 오류로 드러낸다.
 - `current_time`은 호스트의 실제 지역·UTC 시각과 시간대를 제공한다. 중요한 산술은 계산기 도구를 사용한다.
-- Ollama 메인 모델에 `vision` capability가 있으면 사용자가 첨부한 이미지 원본을 직접 입력한다. 그 외 모델에서는 별도 `VISION_MODEL`의 `image_analyze` 도구를 이용한다. 이미지 파일은 업로드 권한과 용량을 검사하며, PDF/구조화 문서는 기존 읽기 도구를 유지한다.
-- `VISION_MODEL`이 없으면 이미지 도구를 등록하지 않는다. 음성 인식·화자 비교와 브라우저 음성 합성의 설정은 [설치](../setup.md)를 따른다.
+- 이미지 입력은 현재 단일 llama.cpp 모델 경로에서 지원하지 않으며 이미지를 포함한 사용자 요청은 명시적으로 실패한다. 별도 이미지 모델을 몰래 적재하지 않는다. PDF·구조화 문서의 파일 읽기 도구는 유지한다.
+- 음성 인식·화자 비교와 브라우저 음성 합성 설정은 [설치](../setup.md)를 따른다.
 
 ## 설정과 실행
 
@@ -84,7 +84,7 @@ Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool
 
 dev2는 하나의 llama.cpp GGUF 모델과 역할별 KV 캐시 교체를 사용하는 포터블 전용 에이전트다. `MAIN_MODEL`은 서버에 전달하는 유일한 모델 alias다. 브라우저 모델 선택, Ollama 백엔드, 별도 `VERIFIER_MODEL`, 별도 `VISION_MODEL`은 제거됐다. 숫자검증과 사실검증은 같은 가중치를 사용하지만 논리적으로 독립 호출이다. KV 저장/복원은 `--parallel 1` 서버의 슬롯 0에서 수행한다. 메모리 사실 추출 역시 같은 모델을 사용하며, 사용자 턴 사이에 완료하도록 직렬화한다. 컨텍스트 상한을 별도로 축소하는 설정은 두지 않는다.
 
-`OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 설정 로더가 허용하지만 현재 실행 소비자가 없다. 값을 바꿔 동작이 달라진다고 안내하지 않는다. 본 모델은 `think=True`이며 개별 도구 제한 시간은 등록 인자로 정한다.
+과거 Ollama 전용 및 미사용 옵션은 `settings.yaml` 허용 목록에서 제거했다. `MAI_MODEL_REQUEST_TIMEOUT_SECONDS`는 모델 추론 요청 제한 시간이며, 컨텍스트 토큰 상한을 자동으로 줄이지 않는다. 도구 호출 제한은 등록 함수 계약을 따른다.
 
 Tailscale Funnel 시작 실패는 로그와 `/health`에 표시하면서 로컬 서버는 유지한다. 폐기된 `TAILSCALE_SERVE` 설정은 다른 의미로 조용히 바꾸지 않는다.
 
