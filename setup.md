@@ -27,6 +27,27 @@ MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
 
 이 값은 **실제로 실행할 GGUF 파일의 경로**다. 상대경로는 MAI 프로젝트 루트 기준이며, 절대경로도 가능하다. 내부 모델 별칭은 `mai-model`로 고정된다. Portable 실행 시 `-GgufPath`로 일시적인 다른 경로를 지정할 수도 있다. 한 번에 모델 한 개만 올린다.
 
+## GGUF 경로 오류와 Ollama sha256 Blob
+
+문서의 `D:\\models\\my-model.gguf`(또는 `실제모델.gguf`)는 **설명용 가상 경로**이며 파일을 제공한다는 의미가 아니다. `-ModelFile`에는 직접 내려받거나 준비한 **실제 GGUF 파일의 경로**를 지정한다. 이미 `portable/portable-models/gguf/active.gguf`에 사용할 GGUF가 있으면 `-ModelFile` 없이 설치해도 된다.
+
+PowerShell에서 다음으로 확인한다.
+
+```powershell
+# 실제 GGUF 경로를 지정한다. 경로의 공백과 한글은 따옴표로 감싼다.
+$model = 'F:\\모델\\실제모델.gguf'
+Test-Path -LiteralPath $model -PathType Leaf
+# True일 때만 다음 명령을 실행
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile $model
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
+```
+
+모델이 이미 외장 드라이브의 `portable/portable-models/gguf/active.gguf`에 존재한다면 `-ModelFile` 옵션을 생략하거나, 외부 경로를 직접 지정하여 `start-portable.ps1 -GgufPath 'F:\\모델\\실제모델.gguf'`로 시작할 수 있다.
+
+Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 없다는 이유만으로 GGUF가 아니라고 단정할 수 없으며**, 반대로 모두 GGUF인 것도 아니다. `ollama show 모델명 --modelfile`로 `FROM`이 가리키는 파일을 확인하고 처음 4바이트가 `GGUF`인지 검사한 뒤, 해당 모델 데이터 파일만 정확히 선택하여 복사해야 한다. 템플릿이나 부가 설정은 GGUF 파일에 포함되지 않을 수 있다.
+
+`start-portable.ps1`은 YAML 경로를 별도 `portable/resolve_model_path.py`에서 읽는다. 경로가 없으면 모델 파일 위치를 분명히 알려주는 오류를 출력한다. 이미 설치한 Python/uv/llama.cpp를 모델 경로 오류만으로 새로 다운로드할 필요는 없다.
+
 ## Windows Portable 설치
 
 ```powershell
