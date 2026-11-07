@@ -27,7 +27,7 @@ from .login_rate_limit import LoginRateLimiter
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
-from .tailscale import TailscaleFunnel, TailscaleFunnelError
+from ..hosting import HostingError, create_hosting
 from .uploads import principal_upload_directory
 from .voice import VoiceService
 
@@ -41,7 +41,8 @@ _STATIC_DIR = Path(__file__).with_name("static")
 _runtime: MAIRuntime | None = None
 _access_policy: AccessPolicy | None = None
 _chat_session_store: ChatSessionStore | None = None
-_tailscale: TailscaleFunnel | None = None
+_hosting = None
+_hosting_provider = 'none'
 _auth_sessions: dict[str, AccessPrincipal] = {}
 _voice_service: VoiceService | None = None
 _login_rate_limiter: LoginRateLimiter | None = None
@@ -168,15 +169,10 @@ async def _remote_idle_reaper() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global _runtime, _access_policy, _chat_session_store, _tailscale, _voice_service, _login_rate_limiter
+    global _runtime, _access_policy, _chat_session_store, _hosting, _hosting_provider, _voice_service, _login_rate_limiter
     _voice_service = VoiceService()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
-    if _env_bool("TAILSCALE_SERVE", False):
-        raise ValueError(
-            "TAILSCALE_SERVE is retired because MAI requires public Funnel access; "
-            "remove it or set it to false and set TAILSCALE_FUNNEL=true"
-        )
     _access_policy = AccessPolicy.from_env_values(
         owner_users=os.environ.get("OWNER_USERS"),
         trial_users=os.environ.get("TRIAL_USERS"),
@@ -202,20 +198,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         cwd=os.environ.get("MAI_CWD") or None,
     )
     print(f"MAI local: http://{host}:{port}", flush=True)
-    if _env_bool("TAILSCALE_FUNNEL", False):
-        funnel = TailscaleFunnel(port=port)
+    _hosting_provider = os.environ.get("REMOTE_HOSTING_PROVIDER", "none").strip().lower()
+    _hosting = create_hosting(provider=_hosting_provider, port=port)
+    if _hosting is not None:
         try:
-            status_text = funnel.start()
-        except TailscaleFunnelError:
-            logger.exception("MAI Tailscale Funnel startup failed; local server remains available")
-            _tailscale = None
+            status_text = _hosting.start()
+        except (HostingError, RuntimeError, OSError):
+            logger.exception("MAI remote hosting (%s) failed; local server remains available", _hosting_provider)
+            _hosting = None
         else:
-            _tailscale = funnel
-            print("MAI Tailscale Funnel (public internet):", flush=True)
-            print(status_text, flush=True)
+            print(f"MAI remote hosting ({_hosting_provider}): {status_text}", flush=True)
     else:
-        print("MAI Tailscale Funnel: disabled (set TAILSCALE_FUNNEL=true to enable)", flush=True)
-    idle_reaper = asyncio.create_task(_remote_idle_reaper())
+        print("MAI remote hosting: disabled", flush=True)
     try:
         yield
     finally:
@@ -225,9 +219,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except asyncio.CancelledError:
             pass
         _auth_sessions.clear()
-        if _tailscale is not None:
-            _tailscale.stop()
-            _tailscale = None
+        if _hosting is not None:
+            _hosting.stop()
+            _hosting = None
         if _runtime is not None:
             _runtime.close()
             _runtime = None
@@ -329,7 +323,8 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "model": runtime.model,
         "vision_model": runtime.vision_model,
-        "tailscale_funnel": _tailscale is not None,
+        "tailscale_funnel": _hosting is not None and _hosting_provider == "tailscale",
+        "remote_hosting_provider": _hosting_provider if _hosting is not None else "none",
     }
 
 
