@@ -17,7 +17,7 @@ from typing import Any, Literal, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..tools.registry import ToolRegistry
+from ..tools.registry import ToolArgumentsError, ToolRegistry
 
 
 class CodeActError(RuntimeError):
@@ -54,6 +54,7 @@ class CodeActToolEvidence:
     result: Any | None = None
     error_type: str | None = None
     message: str | None = None
+    handler_started: bool = True
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -61,6 +62,7 @@ class CodeActToolEvidence:
             "arguments": self.arguments,
             "target": self.target,
             "ok": self.ok,
+            "handler_started": self.handler_started,
         }
         if self.ok:
             payload["result"] = self.result
@@ -273,11 +275,12 @@ class CodeActExecutor:
             except Exception as exc:
                 evidence = CodeActToolEvidence(
                     name=name,
-                    arguments=dict(arguments),
+                    arguments=prepared,
                     target=request.target,
                     ok=False,
                     error_type=type(exc).__name__,
                     message=str(exc),
+                    handler_started=not isinstance(exc, ToolArgumentsError),
                 )
                 calls.append(evidence)
                 return {
@@ -288,10 +291,11 @@ class CodeActExecutor:
 
             evidence = CodeActToolEvidence(
                 name=name,
-                arguments=dict(arguments),
+                arguments=prepared,
                 target=request.target,
                 ok=True,
                 result=value,
+                handler_started=True,
             )
             calls.append(evidence)
             return {"ok": True, "result": value}
