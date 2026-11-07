@@ -15,14 +15,17 @@ if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) {
     throw 'Missing .env; create it from .env.example and configure credentials.'
 }
 
-if (-not $GgufPath) { $GgufPath = Join-Path $root 'portable/portable-models/gguf/active.gguf' }
+if (-not $GgufPath) {
+    $GgufPath = & $python -c 'import pathlib,yaml; p=pathlib.Path("settings.yaml"); d=yaml.safe_load(p.read_text(encoding="utf-8-sig")); print(d["MODEL_GGUF_PATH"])'
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($GgufPath)) { throw 'Invalid settings.yaml MODEL_GGUF_PATH' }
+    $GgufPath = $GgufPath.Trim()
+}
+if (-not [IO.Path]::IsPathRooted($GgufPath)) { $GgufPath = Join-Path $root $GgufPath }
 $modelFile = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
 if (-not [IO.Path]::GetExtension($modelFile).Equals('.gguf', [StringComparison]::OrdinalIgnoreCase)) {
     throw "Single portable model must be a .gguf file: $modelFile"
 }
-$modelAlias = & $python -c 'import pathlib,yaml; p=pathlib.Path("settings.yaml"); d=yaml.safe_load(p.read_text(encoding="utf-8-sig")); print(d["MAIN_MODEL"])'
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($modelAlias)) { throw 'Invalid settings.yaml MAIN_MODEL alias' }
-$modelAlias = $modelAlias.Trim()
+$modelAlias = "mai-model"
 
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
