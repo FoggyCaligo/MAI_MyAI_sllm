@@ -304,11 +304,12 @@ class MAIRuntime:
             ollama_client=self._ollama_client, separate_vision_model=self.vision_model,
         )
         adapter = self._adapter_for(selected_model)
-        verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
+        # dev2 deliberately unifies main and verifier selection with the
+        # browser/API model for this turn. Ignore any legacy VERIFIER_MODEL
+        # override from .env; dev retains independent verifier selection.
+        verifier_adapter = adapter
         role_cache_run: RoleCacheRun | None = None
         if self._role_cache_enabled:
-            if self.verifier_model is not None and self.verifier_model != selected_model:
-                raise ValueError("KV role cache requires MAIN_MODEL and VERIFIER_MODEL to be identical")
             directory = os.environ.get("MAI_SLOT_CACHE_DIR")
             if not directory:
                 raise ValueError("MAI_SLOT_CACHE_DIR is required in KV role cache mode")
