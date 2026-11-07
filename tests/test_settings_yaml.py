@@ -38,9 +38,8 @@ def test_missing_settings_fails(tmp_path: Path) -> None:
         load_settings(tmp_path / "settings.yaml", environ={})
 
 
-def test_verifier_model_setting_has_independent_environment_precedence(tmp_path):
+def test_legacy_verifier_selection_is_rejected(tmp_path):
     path = tmp_path / "settings.yaml"
     path.write_text('MAIN_MODEL: "main"\nVERIFIER_MODEL: "reviewer"\n', encoding="utf-8")
-    env = {"VERIFIER_MODEL": "explicit-reviewer"}
-    load_settings(path, environ=env)
-    assert env == {"MAIN_MODEL": "main", "VERIFIER_MODEL": "explicit-reviewer"}
+    with pytest.raises(ValueError, match="unknown settings.yaml keys"):
+        load_settings(path, environ={})
