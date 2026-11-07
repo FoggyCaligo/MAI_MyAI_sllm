@@ -353,6 +353,7 @@ class MAIRuntime:
             ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
+            codeact_enabled=principal.role is AccessRole.OWNER,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
