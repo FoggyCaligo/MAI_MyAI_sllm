@@ -61,7 +61,7 @@ async def prepare_main_image_input(
         # request, but never provide file paths that suggest an image tool
         # fallback or silently claim that the model has seen pixels.
         return (
-            prompt + "\\n\\n[MAI runtime attachment notice: The user attached image file(s), "
+            prompt + "\n\n[MAI runtime attachment notice: The user attached image file(s), "
             "but this main model has no enabled image input capability. "
             "No image pixels were provided to the model and image_analyze is "
             "not available. Tell the user you cannot inspect these images "
