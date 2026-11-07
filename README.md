@@ -8,7 +8,7 @@ MAI는 사용자의 컴퓨터에서 로컬 언어 모델로 실행되는 범용 
 - [외장 SSD Portable 준비·실행·백업](portable/README.md)
 - [실행 구조와 개발 계약](docs/architecture.md)
 
-단일 GGUF와 Portable Python/llama.cpp를 설치한 뒤 프로젝트 루트에서 실행한다.
+`settings.yaml`의 `MODEL_GGUF_PATH`로 단일 GGUF 파일을 선택한다. Portable Python/llama.cpp 설치 후 프로젝트 루트에서 실행한다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
