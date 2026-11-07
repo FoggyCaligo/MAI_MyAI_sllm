@@ -10,17 +10,17 @@ from mai.app.settings import load_settings
 
 def test_yaml_populates_defaults_but_preserves_explicit_env(tmp_path: Path) -> None:
     path = tmp_path / "settings.yaml"
-    path.write_text('MAIN_MODEL: "model-a"\nMAI_ANSWER_QUALITY_REVIEW: true\n', encoding="utf-8")
-    env = {"MAIN_MODEL": "user-selected"}
-    assert load_settings(path, environ=env) == {"MAIN_MODEL": "model-a", "MAI_ANSWER_QUALITY_REVIEW": "true"}
-    assert env == {"MAIN_MODEL": "user-selected", "MAI_ANSWER_QUALITY_REVIEW": "true"}
+    path.write_text('MODEL_GGUF_PATH: "model-a"\nMAI_ANSWER_QUALITY_REVIEW: true\n', encoding="utf-8")
+    env = {"MODEL_GGUF_PATH": "user-selected"}
+    assert load_settings(path, environ=env) == {"MODEL_GGUF_PATH": "model-a", "MAI_ANSWER_QUALITY_REVIEW": "true"}
+    assert env == {"MODEL_GGUF_PATH": "user-selected", "MAI_ANSWER_QUALITY_REVIEW": "true"}
 
 
 @pytest.mark.parametrize("content,error", [
     ("UNKNOWN_SETTING: 3\n", ValueError),
-    ("MAIN_MODEL: one\nMAIN_MODEL: two\n", ValueError),
-    ("MAIN_MODEL: [bad]\n", TypeError),
-    ("MAIN_MODEL: ''\n", ValueError),
+    ("MODEL_GGUF_PATH: one\nMODEL_GGUF_PATH: two\n", ValueError),
+    ("MODEL_GGUF_PATH: [bad]\n", TypeError),
+    ("MODEL_GGUF_PATH: ''\n", ValueError),
     ("VERIFIER_MODEL: ''\n", ValueError),
     ("- item\n", TypeError),
 ])
@@ -40,6 +40,6 @@ def test_missing_settings_fails(tmp_path: Path) -> None:
 
 def test_legacy_verifier_selection_is_rejected(tmp_path):
     path = tmp_path / "settings.yaml"
-    path.write_text('MAIN_MODEL: "main"\nVERIFIER_MODEL: "reviewer"\n', encoding="utf-8")
+    path.write_text('MODEL_GGUF_PATH: "main"\nVERIFIER_MODEL: "reviewer"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="unknown settings.yaml keys"):
         load_settings(path, environ={})
