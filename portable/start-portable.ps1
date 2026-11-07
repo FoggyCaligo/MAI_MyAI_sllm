@@ -1,92 +1,69 @@
+# Single-GGUF portable MAI. llama.cpp engine is replaceable independently of GGUF.
 param(
-    [ValidateSet('ollama','llamacpp')]
-    [string]$Backend = 'ollama',
-    [string]$GgufPath,
-    [string]$ModelAlias,
-    [switch]$SlotCache
+    [string]$GgufPath
 )
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-$python = Join-Path $root 'portable/portable-runtimes\python\python.exe'
-if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-    throw "Portable Python not found: $python. Provision the portable runtime following portable/README.md."
+
+$python = Join-Path $root 'portable/portable-runtimes/python/python.exe'
+$llama = Join-Path $root 'portable/portable-runtimes/llamacpp/llama-server.exe'
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Portable Python is missing: $python" }
+if (-not (Test-Path -LiteralPath $llama -PathType Leaf)) { throw "Portable llama.cpp server is missing: $llama" }
+if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) {
+    throw 'Missing .env; create it from .env.example and configure credentials.'
 }
-$envPath = Join-Path $root '.env'
-if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
-    throw "Missing local .env; create from .env.example and configure credentials."
+
+if (-not $GgufPath) { $GgufPath = Join-Path $root 'portable/portable-models/gguf/active.gguf' }
+$modelFile = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
+if (-not [IO.Path]::GetExtension($modelFile).Equals('.gguf', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Single portable model must be a .gguf file: $modelFile"
 }
+$modelAlias = & $python -c 'import pathlib,yaml; p=pathlib.Path("settings.yaml"); d=yaml.safe_load(p.read_text(encoding="utf-8-sig")); print(d["MAIN_MODEL"])'
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($modelAlias)) { throw 'Invalid settings.yaml MAIN_MODEL alias' }
+$modelAlias = $modelAlias.Trim()
+
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
-$env:OLLAMA_MODELS = Join-Path $root 'portable/portable-models\ollama'
-$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $root 'portable/portable-runtimes\playwright-browsers'
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $root 'portable/portable-runtimes/playwright-browsers'
 $env:MAI_CWD = $root
 $env:MAI_UPLOAD_ROOT = Join-Path $root 'mai_uploads'
-$env:MEMORY_DB_PATH = Join-Path $root 'data\memory.sqlite3'
-$env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data\sentence_breaker.sqlite3'
-$env:CHAT_DB_PATH = Join-Path $root 'data\chat.sqlite3'
-$env:LOG_DB_PATH = Join-Path $root 'data\log.sqlite3'
-$env:LLM_BACKEND = $Backend
-if ($SlotCache -and $Backend -ne "llamacpp") { throw "-SlotCache requires -Backend llamacpp" }
-if ($SlotCache) { $env:MAI_EXPERIMENTAL_SLOT_CACHE = "true" }
-$ollama = Join-Path $root 'portable/portable-runtimes\ollama\ollama.exe'
-$llama = Join-Path $root 'portable/portable-runtimes\llamacpp\llama-server.exe'
-if ($Backend -eq 'ollama') {
-    if (-not (Test-Path -LiteralPath $ollama -PathType Leaf)) { throw "Portable Ollama runtime is missing: $ollama" }
-    if (-not (Test-Path -LiteralPath $env:OLLAMA_MODELS -PathType Container)) {
-        throw "Portable Ollama model directory is missing: $env:OLLAMA_MODELS"
+$env:MEMORY_DB_PATH = Join-Path $root 'data/memory.sqlite3'
+$env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data/sentence_breaker.sqlite3'
+$env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
+$env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
+$env:MAIN_MODEL = $modelAlias
+$env:LLM_BACKEND = 'llamacpp'
+$env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
+$env:MAI_SLOT_CACHE_DIR = Join-Path $root 'portable/portable-slot-cache'
+New-Item -ItemType Directory -Force -Path $env:MAI_SLOT_CACHE_DIR | Out-Null
+# Ignore obsolete multi-model environment overrides from earlier MAI builds.
+Remove-Item Env:VERIFIER_MODEL,Env:VISION_MODEL,Env:OLLAMA_HOST,Env:OLLAMA_MODELS -ErrorAction SilentlyContinue
+
+if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
+    throw 'Port 8080 is occupied. Stop the old llama.cpp server before launching portable MAI.'
+}
+$serverArgs = @('-m', $modelFile, '--alias', $modelAlias,
+                '--host', '127.0.0.1', '--port', '8080', '--jinja',
+                '--parallel', '1', '--slot-save-path', $env:MAI_SLOT_CACHE_DIR)
+$llamaProcess = Start-Process -FilePath $llama -ArgumentList $serverArgs -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
+try {
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 100; $attempt++) {
+        if ($llamaProcess.HasExited) { throw "llama.cpp exited with code $($llamaProcess.ExitCode)" }
+        try {
+            $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
+            if ($response.data.Count -eq 1 -and $response.data[0].id -eq $modelAlias) {
+                $ready = $true
+                break
+            }
+        } catch { }
+        Start-Sleep -Seconds 1
     }
-    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) { throw 'Ollama port 11434 is already occupied' }
-    # Explicitly configure the server started by this script, independent of the installed Ollama app.
-    $env:OLLAMA_CONTEXT_LENGTH = '131072'
-    $ollamaProcess = Start-Process -FilePath $ollama -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollama) -PassThru -NoNewWindow
-    try {
-        $ready = $false
-        for ($attempt = 0; $attempt -lt 40; $attempt++) {
-            if ($ollamaProcess.HasExited) { throw "Ollama exited with code $($ollamaProcess.ExitCode)" }
-            try {
-                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 -UseBasicParsing
-                if ($response.StatusCode -eq 200) { $ready = $true; break }
-            } catch [System.Net.WebException] { }
-            Start-Sleep -Milliseconds 500
-        }
-        if (-not $ready) { throw 'Ollama startup did not become ready in 20 seconds' }
-        & $python run_server.py
-        if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
-    } finally {
-        if (-not $ollamaProcess.HasExited) { Stop-Process -Id $ollamaProcess.Id }
-    }
-} else {
-    if (-not (Test-Path -LiteralPath $llama -PathType Leaf)) { throw "Portable llama.cpp runtime is missing: $llama" }
-    if (-not $GgufPath -or -not $ModelAlias) { throw 'Specify -GgufPath and -ModelAlias for llama.cpp' }
-    $resolvedModel = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
-    $env:MAIN_MODEL = $ModelAlias
-    $args = @('-m', $resolvedModel, '--alias', $ModelAlias, '--host', '127.0.0.1', '--port', '8080', '--jinja')
-    if ($SlotCache) {
-        # This dedicated local server contains exactly one slot and one model.
-        $cacheDir = Join-Path $root 'portable/portable-slot-cache'
-        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-        $env:MAI_SLOT_CACHE_DIR = $cacheDir
-        $env:MAIN_MODEL = $ModelAlias
-        $env:VERIFIER_MODEL = $ModelAlias
-        $args += @('--parallel', '1', '--slot-save-path', $cacheDir, '--cache-prompt')
-    }
-    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) { throw 'llama.cpp port 8080 is already occupied' }
-    $llamaProcess = Start-Process -FilePath $llama -ArgumentList $args -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
-    try {
-        $ready = $false
-        for ($attempt = 0; $attempt -lt 100; $attempt++) {
-            if ($llamaProcess.HasExited) { throw "llama.cpp exited with code $($llamaProcess.ExitCode)" }
-            try {
-                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2 -UseBasicParsing
-                if ($response.StatusCode -eq 200) { $ready = $true; break }
-            } catch [System.Net.WebException] { }
-            Start-Sleep -Seconds 1
-        }
-        if (-not $ready) { throw 'llama.cpp did not become ready within 100 seconds' }
-        & $python run_server.py
-        if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
-    } finally {
-        if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
-    }
+    if (-not $ready) { throw 'llama.cpp did not expose the selected single-model alias' }
+    & $python run_server.py
+    if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
+} finally {
+    if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
 }
