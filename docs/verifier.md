@@ -4,7 +4,7 @@
 
 ## 검증 순서와 설정
 
-`dev2`는 별도 `VERIFIER_MODEL`이나 브라우저 모델 선택을 사용하지 않는다. 하나의 GGUF 모델이 main, numeric, factual 검증을 **서로 다른 요청**으로 순차 처리하며, llama.cpp 단일 슬롯의 역할별 KV 캐시를 저장·복원한다. REJECT 시 main 캐시를 복원한다. `settings.yaml`의 `MAIN_MODEL`은 단일 llama.cpp alias이고, 실제 GGUF 파일은 Portable 실행기에 지정한다. `dev`의 다중 모델 구성과는 별개의 브랜치다.
+`dev2`는 별도 `VERIFIER_MODEL`이나 브라우저 모델 선택을 사용하지 않는다. 하나의 GGUF 모델이 main, numeric, factual 검증을 **서로 다른 요청**으로 순차 처리하며, llama.cpp 단일 슬롯의 역할별 KV 캐시를 저장·복원한다. REJECT 시 main 캐시를 복원한다. `settings.yaml`의 `MODEL_GGUF_PATH`가 실제 단일 GGUF 파일을 선택하며 llama.cpp 내부 alias는 `mai-model`로 고정된다. `dev`의 다중 모델 구성과는 별개의 브랜치다.
 
 1. **수치 사전 검사:** Python이 `conversation_context`의 유저 발화와 현재 요청의 성공한 도구 결과에서 수치·날짜를 대조한다. 단순 표기 불일치는 독립 숫자검증 모델 호출로 보내며 Python 예외는 오류로 유지한다.
 2. **최종 사실검토:** 별도 호출에서 현재 답변 후보의 주장, 근거 범위, 날짜, 외부 작업 성공 여부를 확인한다. 수치검증 프롬프트나 수치 전용 응답 스키마를 이 호출에 섞지 않는다.
