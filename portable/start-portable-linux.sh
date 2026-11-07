@@ -63,7 +63,7 @@ cleanup() {
 }
 trap cleanup EXIT
 if [[ "$router_mode" == true ]]; then
-  preset="$MAI_SLOT_CACHE_DIR/router-models-$.ini"
+  preset="$MAI_SLOT_CACHE_DIR/router-models-$$.ini"
   {
     printf '[mai-model]\\nmodel = %s\\nparallel = 1\\n' "$gguf"
     if [[ -n "$vision" ]]; then
