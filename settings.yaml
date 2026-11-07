@@ -2,6 +2,11 @@
 # MODEL_GGUF_PATH는 실제 GGUF 모델 파일 경로다. llama.cpp 내부 alias는 mai-model로 고정.
 # 일반 환경변수와 .env가 이 파일보다 우선한다.
 MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
+# Optional separate vision model; leave blank by omitting both keys to disable.
+# VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
+# VISION_MMPROJ_PATH: "portable/portable-models/gguf/mmproj.gguf"
+# Optional compact verifier (e.g., LFM GGUF); disabled by default.
+# VERIFIER_GGUF_PATH: "portable/portable-models/gguf/lfm2.5-2.6b.gguf"
 LLAMACPP_HOST: "http://127.0.0.1:8080"
 MAI_MODEL_REQUEST_TIMEOUT_SECONDS: 500
 

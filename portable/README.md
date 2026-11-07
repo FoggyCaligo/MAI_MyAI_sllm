@@ -1,8 +1,6 @@
-# MAI dev2 — Portable 단일 GGUF 모델
+# MAI dev2 — GGUF 기반 Portable
 
-dev2는 **하나의 GGUF 파일 + 하나의 llama.cpp 서버**로 실행한다.
-Ollama 서비스, 두 번째 Verifier 모델, 별도 Vision 모델, 브라우저 모델 선택기는 사용하지 않는다.
-한 모델이 main / numeric / final 검증을 순서대로 처리하고 역할별 KV 상태를 디스크에 저장/복원한다.
+기본 모드에서는 **메인 GGUF 하나와 llama.cpp 서버**로 실행한다. 별도 GGUF를 지정하면 실험적 llama.cpp 라우터(`--models-max 1`)로 메인·Verifier·Vision 모델을 교대 적재한다. 이 경우 기존 슬롯 KV 저장/복원 대신 대화 문맥을 재구성한다. MAI 실행에 Ollama 서비스는 필수가 아니다.
 
 원격 웹 공개 제공자 선택은 [한국어 원격 호스팅 설정](../docs/remote-hosting.md)을 참조한다.
 
@@ -19,7 +17,7 @@ MAI/
       python/                         # Portable Python
       uv/
       llamacpp/                       # 업그레이드 가능한 llama-server
-    portable-models/gguf/active.gguf  # 단 하나의 선택된 GGUF
+    portable-models/gguf/active.gguf  # 메인 GGUF (선택적 vision/verifier GGUF 추가 가능)
     portable-slot-cache/              # 실행별 임시 KV 저장 파일
 ```
 
@@ -53,6 +51,24 @@ Tailscale/Cloudflare 최초 설정과 전환 방법은 [원격 호스팅 가이�
 Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 없다는 이유만으로 GGUF가 아니라고 단정할 수 없으며**, 반대로 모두 GGUF인 것도 아니다. `ollama show 모델명 --modelfile`로 `FROM`이 가리키는 파일을 확인하고 처음 4바이트가 `GGUF`인지 검사한 뒤, 해당 모델 데이터 파일만 정확히 선택하여 복사해야 한다. 템플릿이나 부가 설정은 GGUF 파일에 포함되지 않을 수 있다.
 
 `start-portable.ps1`은 YAML 경로를 별도 `portable/resolve_model_path.py`에서 읽는다. 경로가 없으면 모델 파일 위치를 분명히 알려주는 오류를 출력한다. 이미 설치한 Python/uv/llama.cpp를 모델 경로 오류만으로 새로 다운로드할 필요는 없다.
+
+## 선택적 비전·Verifier 교대 모델
+
+기본 `active.gguf`는 그대로 보존한다. 추가 GGUF가 준비되면 `settings.yaml`에 아래처럼 경로를 지정한다.
+
+```yaml
+# VERIFIER_GGUF_PATH: "portable/portable-models/gguf/lfm2.5-2.6b.gguf"
+# VISION_GGUF_PATH: "portable/portable-models/gguf/gemma3-12b.gguf"
+# VISION_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-gemma3.gguf"
+```
+
+실제 설정에서는 필요한 주석을 제거하고 기존 GGUF가 존재하는지 확인한다. 별도 비전이나 Verifier GGUF가 설정되면 `llama-server --models-preset ... --models-max 1`로 라우터 모드를 사용한다. `MAI_VERIFIER_ENABLED: false`인 경우 지정된 Verifier 모델은 사용하지 않는다. 이미지와 보조 모델은 기존 메인 모델의 KV를 공유하지 않으며, 라우터 교대 적재 시 각 모델의 프롬프트 문맥을 재평가한다.
+
+지원 이미지 입력은 PNG/JPEG/WebP(1장 최대 20MiB)이며, 모델·projector·llama.cpp 릴리스의 멀티모달 호환성 확인이 필요하다. 상세 설명은 [setup.md](../setup.md)의 교대 적재 항목을 참조한다.
+
+Windows에서 **무슨 항목을 내려받는지, 공식 배포처, SHA 검증 범위, 모델을 Ollama 없이 다운로드하는 명령**은 [setup.md의 상세 자동설치 안내](../setup.md#windows-portable-자동설치-정확히-무엇을-다운로드하나) 및 [GGUF 모델 준비](../setup.md#gguf-모델-준비-ollama-없이-다운로드-권장)를 참고한다.
+
+Playwright Python 패키지는 `uv pip install` 단계에서 MAI 의존성으로 설치되지만 Chromium 실행파일은 자동으로 내려받지 않는다. `browser_open`·`browser_click` 등의 웹 UI 조작을 사용하려면 `prepare-portable.ps1 -InstallChromium` 옵션을 추가한다. 설치 경로는 `portable/portable-runtimes/playwright-browsers/`다. Tailscale·cloudflared·Ollama 및 GGUF 모델은 기본 설치 다운로드 대상이 아니다.
 
 ## Windows 준비
 
@@ -144,7 +160,7 @@ OS별 공통 도구 인터페이스와 남은 이식성 제한은 [OS 경계 문
 
 ## 유의사항
 
-- 마이크·원격 PC·계정·도구 기능은 그대로 남지만 **이미지 첨부 직접 인식은 현재 llama.cpp 단일 모델 경로에 연결되지 않았다.** 별도의 비전 모델을 자동 적재하지 않으며, 지원되지 않는 이미지를 보내면 명시적 오류가 난다.
+- 이미지 첨부 인식은 **선택적**이다. `settings.yaml`에 `VISION_GGUF_PATH`(및 필요한 경우 `VISION_MMPROJ_PATH`)를 설정하면 Windows/Ubuntu Portable이 llama.cpp 라우터를 사용해 메인·비전 모델을 교대 적재한다(`--models-max 1`). 이미지의 시각적 관찰 결과를 메인 모델에 전달한다. 모델별 KV 캐시는 공유하지 않고 라우터 교대 시 대화 문맥을 재구성한다. 실제 GPU 시동 및 정확도는 검증이 필요하다.
 - 컨텍스트를 32K 등으로 인위적으로 제한하지 않았다. 물리적 VRAM/RAM 한계는 존재한다.
 - KV 캐시 파일은 대화에서 파생된 내용을 포함할 수 있다. 정상 작업 종료 시 삭제하고, 강제 전원 차단 이후 남은 파일은 서버 종료를 확인한 후 정리한다.
 - 포터블 설치/백업은 GPU 전원 차단을 해결하지 않는다. 전원 차단이 반복됐다면 전원공급장치, GPU 드라이버, Windows 이벤트 로그 등을 우선 확인한다.

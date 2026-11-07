@@ -37,6 +37,15 @@ try {
 } finally {
     $ggufStream.Dispose()
 }
+$modelsJson = & $python (Join-Path $PSScriptRoot 'resolve_runtime_models.py') (Join-Path $root 'settings.yaml') $root
+if ($LASTEXITCODE -ne 0 -or -not $modelsJson) { throw 'Failed to resolve optional vision/verifier GGUF models' }
+$configuredModels = $modelsJson | ConvertFrom-Json
+$visionPath = [string]$configuredModels.VISION_GGUF_PATH
+$projectorPath = [string]$configuredModels.VISION_MMPROJ_PATH
+$verifierPath = [string]$configuredModels.VERIFIER_GGUF_PATH
+$visionMode = -not [string]::IsNullOrWhiteSpace($visionPath)
+$verifierMode = -not [string]::IsNullOrWhiteSpace($verifierPath)
+$routerMode = $visionMode -or $verifierMode
 $modelAlias = "mai-model"
 
 $env:PYTHONNOUSERSITE = '1'
@@ -49,6 +58,9 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data/sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
 $env:MAIN_MODEL = $modelAlias
+$env:MAI_ROUTER_MODE = if ($routerMode) { 'true' } else { 'false' }
+$env:MAI_VERIFIER_MODEL = if ($verifierMode) { 'mai-verifier' } else { '' }
+$env:MAI_VISION_MODEL = if ($visionMode) { 'mai-vision' } else { '' }
 # Exact launched GGUF identity for model-scoped cache filenames (honors -GgufPath).
 $env:MAI_ACTIVE_GGUF_PATH = $modelFile
 $env:LLM_BACKEND = 'llamacpp'
@@ -66,9 +78,30 @@ if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen
 $quotedModelPath = '"' + $modelFile + '"'
 $quotedCachePath = '"' + $env:MAI_SLOT_CACHE_DIR + '"'
 $quotedModelAlias = '"' + $modelAlias + '"'
-$serverArgs = @('-m', $quotedModelPath, '--alias', $quotedModelAlias,
-                '--host', '127.0.0.1', '--port', '8080', '--jinja',
-                '--parallel', '1', '--slot-save-path', $quotedCachePath)
+$presetPath = Join-Path $env:MAI_SLOT_CACHE_DIR 'router-models.ini'
+if ($routerMode) {
+    # Router enforces at most one model resident. Model KV is rebuilt from
+    # conversation after a swap; slot checkpoint restore is disabled.
+    $normalize = { param([string]$path) ($path -replace '\\', '/') }
+    $mainIni = & $normalize $modelFile
+    $visionIni = & $normalize $visionPath
+    $ini = @("[mai-model]", "model = $mainIni")
+    if ($visionMode) {
+        $ini += @("", "[mai-vision]", "model = $(& $normalize $visionPath)")
+        if ($projectorPath) { $ini += "mmproj = $(& $normalize $projectorPath)" }
+    }
+    if ($verifierMode) {
+        $ini += @("", "[mai-verifier]", "model = $(& $normalize $verifierPath)")
+    }
+    [System.IO.File]::WriteAllLines($presetPath, [string[]]$ini, (New-Object System.Text.UTF8Encoding($false)))
+    $serverArgs = @('--models-preset', ('"' + $presetPath + '"'),
+                    '--models-max', '1', '--host', '127.0.0.1',
+                    '--port', '8080', '--jinja', '--parallel', '1')
+} else {
+    $serverArgs = @('-m', $quotedModelPath, '--alias', $quotedModelAlias,
+                    '--host', '127.0.0.1', '--port', '8080', '--jinja',
+                    '--parallel', '1', '--slot-save-path', $quotedCachePath)
+}
 $llamaProcess = Start-Process -FilePath $llama -ArgumentList $serverArgs -WorkingDirectory (Split-Path $llama) -PassThru -NoNewWindow
 try {
     $ready = $false
@@ -76,7 +109,7 @@ try {
         if ($llamaProcess.HasExited) { throw "llama.cpp exited with code $($llamaProcess.ExitCode)" }
         try {
             $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
-            if ($response.data.Count -eq 1 -and $response.data[0].id -eq $modelAlias) {
+            if ($routerMode -or ($response.data.Count -eq 1 -and $response.data[0].id -eq $modelAlias)) {
                 $ready = $true
                 break
             }
@@ -87,5 +120,16 @@ try {
     & $python run_server.py
     if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
 } finally {
-    if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
+    if (-not $llamaProcess.HasExited) {
+        if ($routerMode) {
+            # Router spawns child llama-server model processes: stop the tree.
+            & taskkill.exe /PID $llamaProcess.Id /T /F 2>$null | Out-Null
+            if (-not $llamaProcess.HasExited) {
+                Stop-Process -Id $llamaProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Stop-Process -Id $llamaProcess.Id
+        }
+    }
+    if ($routerMode) { Remove-Item -LiteralPath $presetPath -Force -ErrorAction SilentlyContinue }
 }
