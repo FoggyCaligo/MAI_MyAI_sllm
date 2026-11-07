@@ -154,7 +154,7 @@
   </header>
   <section id="remote-panel" hidden role="dialog" aria-label="원격 PC 연결 안내">
     <h2 id="remote-title">명령이 복사되었습니다</h2>
-    <p id="remote-instruction">PowerShell을 열어 붙여넣고 실행해주세요.</p>
+    <p id="remote-instruction">원격 OS에 맞는 명령을 복사해 해당 셸에서 실행해주세요.</p>
     <div>
       <label for="remote-platform" style="font-size:12px;color:var(--text-dim)">원격 OS</label>
       <select id="remote-platform" style="margin-left:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 7px">
@@ -238,7 +238,7 @@
   }
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
-      document.getElementById('remote-title').textContent='명령이 복사되었습니다';
+      document.getElementById('remote-title').textContent='선택한 OS용 명령이 복사되었습니다';
       $remoteDetails.hidden=true;$remoteCreate.hidden=false;
     }catch(err){
       document.getElementById('remote-title').textContent='명령을 직접 복사해주세요';
