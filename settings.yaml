@@ -8,13 +8,13 @@
 LLM_BACKEND: ollama
 LLAMACPP_HOST: "http://127.0.0.1:8080"  # llama.cpp 선택 시 필요
 # llama.cpp Portable 라우터 전용 모델 경로 (프로젝트 루트 기준 상대 경로 또는 절대 경로).
-# 기존 Ollama 실행에서는 사용하지 않음. 아래 파일명은 예시이며 실제 GGUF 파일에 맞게 수정.
-LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma-3-12b-it-Q4_K_M.gguf"
-LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/verifier.gguf"
+# 기존 Ollama 실행에서는 사용하지 않음. 파일은 각 경로에 별도로 준비해야 함.
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma-4-12b-it-qat-q4_0.gguf"
+LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf"
 # 비전 지원 메인 모델에서 별도 projector를 사용하는 경우 주석 해제:
-# LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-model-f16.gguf"
-# 별도 projector 없는 통합 비전 아키텍처에서만 true로 설정 (llama.cpp 지원 필요).
-LLAMACPP_MAIN_VISION: false
+LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf"
+# 메인 Gemma 4에 이미지 첨부를 직접 전달 (실제 멀티모달 지원은 llama.cpp 실기기 검증 필요).
+LLAMACPP_MAIN_VISION: true
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
 # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
