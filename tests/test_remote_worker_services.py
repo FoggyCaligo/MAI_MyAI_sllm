@@ -84,3 +84,60 @@ def test_worker_keeps_browser_state_across_native_calls():
             ("close", None),
         ]
     asyncio.run(exercise())
+
+
+def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
+    from types import SimpleNamespace
+    from mai.remote import routing
+
+    host = ToolRegistry()
+    register_routed_service_tools(
+        host, owner_id="valid-owner", browser_manager=BrowserSessionManager(),
+    )
+    routed = []
+    monkeypatch.setattr(
+        routing.remote_sessions, "owner_session",
+        lambda owner_id: SimpleNamespace(session_id="authenticated-session"),
+    )
+
+    async def fake_execute(self, operation, arguments, *, is_remote):
+        routed.append((self.owner_id, self.remote_session_id, operation, arguments, is_remote))
+        return {"value": {"expression": "7+5", "result": "REMOTE-12"}}
+
+    monkeypatch.setattr(routing.ExecutionTarget, "execute", fake_execute)
+
+    async def exercise():
+        value = await host.get("calculator").invoke(
+            {"expression": "7+5", "is_remote": True}
+        )
+        assert value["result"] == "REMOTE-12"
+    asyncio.run(exercise())
+    assert routed == [(
+        "valid-owner", "authenticated-session", "native.invoke",
+        {"name": "calculator", "arguments": {"expression": "7+5"}}, True,
+    )]
+
+
+def test_remote_transport_missing_value_envelope_fails(monkeypatch):
+    from types import SimpleNamespace
+    from mai.remote import routing
+
+    host = ToolRegistry()
+    register_routed_service_tools(
+        host, owner_id="valid-owner", browser_manager=BrowserSessionManager(),
+    )
+    monkeypatch.setattr(
+        routing.remote_sessions, "owner_session",
+        lambda owner_id: SimpleNamespace(session_id="authenticated-session"),
+    )
+
+    async def invalid_result(self, operation, arguments, *, is_remote):
+        return {"result": "old worker protocol"}
+
+    monkeypatch.setattr(routing.ExecutionTarget, "execute", invalid_result)
+    async def exercise():
+        with pytest.raises(RemoteExecutionError, match="invalid tool-result envelope"):
+            await host.get("calculator").invoke(
+                {"expression": "1+2", "is_remote": True}
+            )
+    asyncio.run(exercise())
