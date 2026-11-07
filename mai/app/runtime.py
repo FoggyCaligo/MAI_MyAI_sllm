@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
 import os
@@ -169,8 +170,22 @@ class MAIRuntime:
             self._ollama_client = AsyncClient(host=ollama_host)
         else:
             self._ollama_client = None
+        self._llamacpp_execution_lock = asyncio.Lock()
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
+
+    @asynccontextmanager
+    async def _llamacpp_model_scope(self):
+        """Prevent background memory inference and other MAI runs from evicting an active main model."""
+        if self.llm_backend == "llamacpp":
+            async with self._llamacpp_execution_lock:
+                yield
+        else:
+            yield
+
+    async def _postprocess_memory_with_model_scope(self, **kwargs):
+        async with self._llamacpp_model_scope():
+            await self._postprocess_memory(**kwargs)
 
     def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
         clean_model = model.strip()
@@ -324,22 +339,23 @@ class MAIRuntime:
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
         messages.extend(prior_messages)
         try:
-            result = await agent.run_user_message(
-                model_prompt,
-                prior_messages=messages,
-                images=inline_images,
-                on_tool_execution=on_tool_execution,
-                on_model_turn=on_model_turn,
-                on_verification_rejection=on_verification_rejection,
-                on_verification_audit=(
-                    (lambda round_number, event, data: on_verification_audit(
-                        round_number, event, {
-                            "verifier_model": verifier_adapter.config.model,
-                            "data": dict(data),
-                        },
-                    )) if on_verification_audit is not None else None
-                ),
-            )
+            async with self._llamacpp_model_scope():
+                result = await agent.run_user_message(
+                    model_prompt,
+                    prior_messages=messages,
+                    images=inline_images,
+                    on_tool_execution=on_tool_execution,
+                    on_model_turn=on_model_turn,
+                    on_verification_rejection=on_verification_rejection,
+                    on_verification_audit=(
+                        (lambda round_number, event, data: on_verification_audit(
+                            round_number, event, {
+                                "verifier_model": verifier_adapter.config.model,
+                                "data": dict(data),
+                            },
+                        )) if on_verification_audit is not None else None
+                    ),
+                )
         finally:
             await browser_manager.close_all()
         answer = result.content
@@ -355,7 +371,7 @@ class MAIRuntime:
         } for execution in tool_executions)
 
         task = asyncio.create_task(
-            self._postprocess_memory(
+            self._postprocess_memory_with_model_scope(
                 prompt=prompt,
                 previous_assistant_message=previous_assistant_message,
                 final_answer=answer,

@@ -17,9 +17,8 @@ cd -- "$root"
 if (echo >/dev/tcp/127.0.0.1/8080) >/dev/null 2>&1 || (echo >/dev/tcp/127.0.0.1/8000) >/dev/null 2>&1; then
   echo "Port 8080 or 8000 occupied" >&2; exit 1
 fi
-models_max="${1:-2}"
-if [[ -z "$models_max" ]]; then models_max=2; fi
-case "$models_max" in 1|2|3) ;; *) echo "Usage: bash portable/start-portable-llamacpp-linux.sh [1|2|3]" >&2; exit 2 ;; esac
+models_max="${1:-1}"
+[[ "$models_max" == 1 ]] || { echo "Single-resident router only: models-max must be 1" >&2; exit 2; }
 mkdir -p "$cache/llamacpp"
 ini="$(mktemp "$cache/llamacpp/mai-router.XXXXXX.ini")"
 router_pid=""
@@ -77,7 +76,7 @@ export LLM_BACKEND=llamacpp MAIN_MODEL=mai-main VERIFIER_MODEL=mai-verifier
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
 if [[ "$separate_vision" == true ]]; then
   export VISION_MODEL=mai-vision
-  if (( models_max < 3 )); then echo "Warning: 3 models configured but models-max is 2" >&2; fi
+  # Separate vision model is loadable on demand, never simultaneously with main or verifier.
 elif [[ "$main_vision" == true ]]; then
   export VISION_MODEL=mai-main
 else

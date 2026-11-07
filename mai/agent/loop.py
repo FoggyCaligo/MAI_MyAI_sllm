@@ -271,7 +271,7 @@ class AgentLoop:
                     model_history.append({
                         "role": "system",
                         "content": (
-                            "The preceding provisional answer was rejected before release. "
+                            "The preceding provisional answer was rejected before release; its text is included below only as a draft to reconstruct, never as evidence. "
                             "Continue the SAME agent run with the existing native tools: "
                             "re-observe the unsupported facts using tools or remove/narrow them. "
                             "Do not treat any rejected draft or verifier diagnosis as evidence. "
@@ -297,6 +297,7 @@ class AgentLoop:
                                 "reconsider_initial_hypothesis": hypothesis_reconsideration_pending,
                                 "unchanged_evidence_rejections": unchanged_evidence_rejections,
                                 "correction_contract": latest_correction_contract,
+                                "rejected_provisional_answer": history[latest_rejected].get("content", ""),
                                 "verifier_feedback": history[latest_feedback].get("content", ""),
                             }, ensure_ascii=False)
                         ),
