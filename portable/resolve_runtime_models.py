@@ -2,19 +2,23 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
 import yaml
+from dotenv import dotenv_values
 
 
 def optional_models(settings: Path, root: Path) -> dict[str, str]:
     config = yaml.safe_load(settings.read_text(encoding="utf-8-sig"))
     if not isinstance(config, dict):
         raise ValueError("settings.yaml must be a mapping")
+    # Match MAI's server precedence: process environment > .env > YAML.
+    dot_env = dotenv_values(root / ".env") if (root / ".env").is_file() else {}
     result = {}
     for key in ("VISION_GGUF_PATH", "VISION_MMPROJ_PATH", "VERIFIER_GGUF_PATH"):
-        raw = config.get(key)
+        raw = os.environ.get(key, dot_env.get(key, config.get(key)))
         if raw is None or raw == "":
             result[key] = ""
             continue
