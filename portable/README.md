@@ -4,7 +4,9 @@ dev2는 **하나의 GGUF 파일 + 하나의 llama.cpp 서버**로 실행한다.
 Ollama 서비스, 두 번째 Verifier 모델, 별도 Vision 모델, 브라우저 모델 선택기는 사용하지 않는다.
 한 모델이 main / numeric / final 검증을 순서대로 처리하고 역할별 KV 상태를 디스크에 저장/복원한다.
 
-원격 웹 공개 제공자 선택은 [Remote Hosting 어댑터 안내](../docs/remote-hosting.md)를 참조한다.\n\n## 파일 구조
+원격 웹 공개 제공자 선택은 [한국어 원격 호스팅 설정](../docs/remote-hosting.md)을 참조한다.
+
+## 파일 구조
 
 ```text
 MAI/
@@ -23,6 +25,24 @@ MAI/
 
 Windows에서는 llama.cpp **Vulkan x64** 바이너리를 사용한다. GPU 드라이버는 별도로 설치해야 한다.
 OS/드라이버/모델이 호환되지 않으면 실행이 실패할 수 있다. GPU 메모리 자동 안전 보장은 없다.
+
+## 원격 웹 호스팅과 원격 PC 작업
+
+Portable 실행 스크립트는 MAI 서버 자체를 시작한다. 웹의 외부 공개 방법은 **호스트 OS에 설치된 커넥터**가 담당하며 Portable에 Tailscale이나 cloudflared 로그인 상태까지 자동 포함되지 않는다.
+
+```yaml
+# settings.yaml (기본값)
+REMOTE_HOSTING_PROVIDER: tailscale  # tailscale | cloudflare | none
+```
+
+- **Tailscale(기본):** Windows/Linux 호스트에 Tailscale을 설치하고 로그인한 뒤 Funnel을 허용한다. `tailscale funnel status`로 공개 상태를 확인한다. 설치·로그인하지 않은 PC에서는 커넥터 시작이 실패할 수 있으나 로컬 MAI는 계속 실행한다.
+- **Cloudflare:** 호스트에 `cloudflared`를 설치하고 PATH에 등록한다. Cloudflare Dashboard에서 관리형 Named Tunnel과 공개 호스트명 → `http://127.0.0.1:8000` 경로를 만들고, Git 제외 `.env`에 `CLOUDFLARE_TUNNEL_TOKEN=실제토큰`을 입력한다.
+- **none:** 이번 MAI 프로세스에서 원격 호스팅 커넥터를 새로 실행하지 않는다.
+- **기존 설정 정리:** 구형 `TAILSCALE_FUNNEL`은 더 이상 사용하지 않는다. 이전 `.env` 파일에서 제거할 수 있다. `REMOTE_HOSTING_PROVIDER`가 `.env`에 있으면 YAML보다 우선한다.
+- **제공자 전환:** 기존 Tailscale Funnel은 백그라운드에서 유지될 수 있으므로 `tailscale funnel status` 확인 후 불필요한 공개 규칙을 직접 해제한다. `none`으로 전환해도 이전에 다른 프로세스가 열어 둔 공개 경로까지 자동으로 닫지는 않는다.
+- **원격 PC 관리:** MAI 웹 호스팅과 별도의 `mai/remote/` 기능이다. `dev` 원격 PC 세션은 연결 시도 10분, 연결 확인 3분 및 **실제 원격 작업 없이 10시간 경과하면 자동 만료** 규칙을 갖는다. 이 제한은 웹 터널을 끄지 않는다.
+
+Tailscale/Cloudflare 최초 설정과 전환 방법은 [원격 호스팅 가이드](../docs/remote-hosting.md)를 확인한다. MAI 웹 로그인에 강한 비밀번호를 설정하고, `TRIAL_USERS`의 권한을 점검한 뒤 외부 접속을 테스트한다.
 
 ## Windows 준비
 
