@@ -37,6 +37,72 @@ Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 �
 
 `start-portable.ps1`은 YAML 경로를 별도 `portable/resolve_model_path.py`에서 읽는다. 경로가 없으면 모델 파일 위치를 분명히 알려주는 오류를 출력한다. 이미 설치한 Python/uv/llama.cpp를 모델 경로 오류만으로 새로 다운로드할 필요는 없다.
 
+## GGUF 모델 다운로드 — Ollama 없이 설치하기
+
+MAI의 `prepare-portable.ps1`은 **모델 가중치를 자동으로 다운로드하지 않는다.** 원하는 모델의 GGUF 파일을 먼저 준비하고 `settings.yaml`의 `MODEL_GGUF_PATH`를 설정한다. 공개 GGUF 모델은 Ollama 클라이언트 없이 Hugging Face CLI로 다운로드할 수 있다. 공식 사용법: https://huggingface.co/docs/huggingface_hub/en/guides/cli
+
+프로젝트 루트의 PowerShell에서 실행한다.
+
+```powershell
+# 다운로드용 CLI 설치 (기존 Portable 실행에 필수인 도구는 아님)
+python -m pip install --upgrade huggingface_hub
+hf download --help
+
+# 실제 Hugging Face 모델 페이지의 Files 목록에서 저장소 ID와 파일명을 확인한다.
+# 다음 OWNER/REPO, MODEL-Q4_K_M.gguf는 예시 자리표시자이므로 실제 값으로 교체한다.
+hf download OWNER/REPO MODEL-Q4_K_M.gguf --local-dir "./portable/portable-models/gguf"
+```
+
+원하는 파일이 `portable/portable-models/gguf/MODEL-Q4_K_M.gguf`로 다운로드됐다면 `settings.yaml`에 **실제 다운로드한 파일명**을 지정한다.
+
+```yaml
+MODEL_GGUF_PATH: "portable/portable-models/gguf/MODEL-Q4_K_M.gguf"
+```
+
+분할 GGUF는 모든 파트가 필요하며, 이미지 모델은 호환되는 `mmproj` 등 추가 파일이 필요할 수 있다. 공개되지 않았거나 동의가 필요한 모델은 해당 모델의 라이선스·인증을 먼저 확인해야 한다. 특정 버전을 재현하려면 `hf download`에 `--revision`으로 저장소 커밋 SHA를 지정할 수 있다. 파일의 GGUF 헤더만으로 모델 종류·호환성·안전성이 확인되지는 않는다.
+
+### 대안: Ollama에 이미 설치된 모델 복사
+
+Ollama가 있다면 다음 명령으로 `FROM`이 가리키는 blob 경로를 확인한다.
+
+```powershell
+ollama show gemma3:12b --modelfile
+```
+
+`sha256-...` 이름의 파일이 **정말 GGUF 모델 본체인지** 파일 헤더와 크기·메타데이터를 확인한 후 `portable/portable-models/gguf/`에 원하는 `.gguf` 이름으로 **복사**한다. Ollama blob에는 템플릿·projector 등 본체 이외의 데이터가 포함될 수 있고, Ollama 템플릿이 llama.cpp에 자동 이식되는 것은 아니다. 원본 blob은 삭제하지 않는다.
+
+## 자동설치 스크립트가 다운로드하는 항목과 출처
+
+`python portable/resolve_portable_sources.py`는 GitHub 릴리스 메타데이터에서 **공식 배포 URL과 제공자 선언 SHA-256**을 읽어 `portable/portable-sources.json`을 만든다. 이 단계는 실행파일이나 GGUF를 다운로드하지 않으며 기존 매니페스트는 자동 덮어쓰지 않는다.
+
+| 항목 | 공식 제공처 | 목적 및 내려받는 파일 |
+|---|---|---|
+| Portable Python | `astral-sh/python-build-standalone` | Windows x64 CPython 3.11 `install_only.tar.gz` |
+| uv | `astral-sh/uv` | Windows x64 `uv-x86_64-pc-windows-msvc.zip` |
+| llama.cpp | `ggml-org/llama.cpp` | Windows x64 Vulkan `llama-*-bin-win-vulkan-x64.zip` |
+
+`prepare-portable.ps1`이 매니페스트에 고정된 세 압축파일을 `portable/portable-downloads/`에 다운로드하고 SHA-256을 검사한 뒤 `portable/portable-runtimes/`에 설치한다. 선택된 **정확한 버전·URL·SHA-256**은 다운로드 전에 다음 명령으로 확인할 수 있다.
+
+```powershell
+Get-Content ./portable/portable-sources.json -Raw
+Get-Content ./pyproject.toml
+```
+
+이후 Portable Python에 `uv pip install --python <Portable Python> <프로젝트 경로>`로 MAI 및 다음 **직접 의존성 전체**와 각 패키지의 하위 의존성을 설치한다. `pyproject.toml`에서 변경 여부를 확인할 수 있다.
+
+- 웹·API: `markdown-it-py`, `beautifulsoup4`(`bs4`), `ddgs`, `fastapi`, `httpx`, `pydantic`, `python-dotenv`, `PyYAML`, `python-multipart`, `uvicorn`
+- 브라우저: `playwright`
+- 문서: `openpyxl`, `pypdf`, `python-docx`, `python-pptx`
+- 음성·연산: `speakeronnx`, `vadonnx`, `scipy`, `faster-whisper`, `numpy`
+- 코드 분석: `tree-sitter`, `tree-sitter-javascript`, `tree-sitter-typescript`, `tree-sitter-c`, `tree-sitter-cpp`, `tree-sitter-java`, `tree-sitter-go`, `tree-sitter-rust`, `tree-sitter-ruby`
+- Git 직접 설치: `sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main`
+
+`pytest`, `jsonschema`는 선택적인 `[dev]` 개발 의존성이며 기본 설치 항목은 아니다. Python 패키지와 하위 의존성 전체를 별도 해시 잠금파일로 고정한 구조는 아니다. 특히 `sentence-breaker`는 변경 가능한 `main`을 참조한다. **세 런타임 파일의 SHA 검증이 모든 Python 의존성을 검증한다는 뜻은 아니다.**
+
+Playwright Python 패키지는 위 기본 의존성에 포함되지만, **Chromium 브라우저 실행파일은 기본 명령으로 설치되지 않는다.** `-InstallChromium`을 지정한 경우에만 `python -m playwright install chromium`을 추가 실행하여 `portable/portable-runtimes/playwright-browsers/`에 브라우저 바이너리를 다운로드한다.
+
+자동설치로 **내려받지 않는 항목:** GGUF 메인/비전/Verifier 모델 및 projector, Ollama 클라이언트, Tailscale, cloudflared, GPU 드라이버, Hugging Face CLI. `-ModelFile`은 모델을 다운로드하는 옵션이 아니라 **이미 있는 GGUF를 복사하는 옵션**이다.
+
 ## Windows Portable 설치
 
 모델 경로는 `settings.yaml`의 `MODEL_GGUF_PATH` 하나를 기준으로 한다. 기본값은 `portable/portable-models/gguf/active.gguf`이며, 실제 GGUF가 해당 경로에 존재하면 `-ModelFile`을 지정하지 않는다. 예시 경로는 실제 모델을 제공하지 않는다.
