@@ -75,7 +75,7 @@ Current-candidate review boundary:
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
 - A candidate assertion is "unsupported" when the supplied evidence contradicts it, does not support it, or supports only a narrower statement.
-- General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity alone does not establish them. Claims about the user's own statements may be grounded in current user input or previously verified conversation. Do not waive the tool-evidence requirement merely because knowledge is widely known.
+- General technical or encyclopedic claims require observed tool evidence (or source material explicitly provided by the user); model familiarity alone does not establish them. Claims about the user's own statements may be grounded in user-role messages in conversation_context. Do not waive the tool-evidence requirement merely because knowledge is widely known.
 - Evaluate whether the actual evidence establishes each claim by meaning and context, not by word presence, pre-listed topics, or text heuristics. Explain concrete missing evidence or contradiction for each rejected material claim.
 - Compare quantities with their units, time periods, aggregation levels, and subjects: six quarters cannot be silently changed into six months even if both use the numeral six.
 - For structured totals, identify the source records, grouping key, aggregation scope, and whether rows or distinct entities were counted. Never substitute a reviewer-invented count; a precise source location and supported calculation are required to dispute a stated value.
@@ -92,7 +92,7 @@ Claim-level evidence grounding:
 - Interpret statements about fiction within the story's fictional world. Do not require real-world evidence that a fictional character or event actually exists. Distinguish claims about the text's content from claims about real-world publication history or authorship.
 - Reject actual changes to identities, relationships, actions, negation, timing, quantities, plot events, or attribution not established by the source. If equivalence is genuinely unclear, report the specific semantic uncertainty rather than treating nonmatching scripts as missing evidence.
 - Apply these rules to all languages and literary texts as appropriate; do not rely on fixed name dictionaries, keyword matching, or spelling-based heuristics.
-- Previous assistant answers are factual evidence only when provided in verified_prior_conversation, which contains answers previously accepted by the final verifier. Treat these as evidence of what was established at that time, not proof that changing external state remains current. Other assistant text is context only. Current user messages and observed tool results are evidence.
+- Treat assistant-role messages in conversation_context as conversational context, not independent factual evidence. User-role messages in conversation_context are evidence of what the user said, not independent proof of external-world facts. The current turn's observed tool results are evidence of tool observations.
 - The supplied tool evidence contains successful tool results only. Failed tool calls are intentionally omitted from grounding evidence and must not be assumed to support factual claims.
 - A successful web_search result is observed search evidence. Its titles, URLs, and snippets may support claims that the corresponding search result or clearly identified official source stated those details. Prefer fetched page text when it is available, but do not reject solely because the supporting details are in a search result snippet rather than a later web_fetch result.
 - Check that each material claim's temporal framing is consistent with the current date/time and the dates or timestamps established by the supplied evidence.
@@ -286,20 +286,9 @@ class FinalGroundingVerifier:
         *,
         reviewer_timeout_seconds: float | None = None,
         quality_review_enabled: bool | None = None,
-        verified_prior_conversation: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         if reviewer_timeout_seconds is not None and reviewer_timeout_seconds <= 0:
             raise ValueError("reviewer_timeout_seconds must be positive")
-        # Supplied by the session store, which persists assistant messages only
-        # after final verification passes. Do not infer trust from an arbitrary
-        # assistant role in the running agent's scratch history.
-        self.verified_prior_conversation = tuple(
-            {"role": message["role"], "content": message["content"]}
-            for message in verified_prior_conversation
-        )
-        for message in self.verified_prior_conversation:
-            if message["role"] not in {"user", "assistant"} or not isinstance(message["content"], str):
-                raise ValueError("verified prior conversation must contain user/assistant text messages")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
         if quality_review_enabled is None:
@@ -474,9 +463,6 @@ class FinalGroundingVerifier:
             content = message.get("content")
             if isinstance(content, str):
                 evidence.update(_extract_material_numeric_facts(content, include_date_aliases=True))
-        for message in self.verified_prior_conversation:
-            if message["role"] == "assistant":
-                evidence.update(_extract_material_numeric_facts(message["content"], include_date_aliases=True))
         for _, ok, _, content in tool_results:
             if not ok:
                 continue
@@ -509,7 +495,6 @@ class FinalGroundingVerifier:
         """Run the historical independent numeric/date equivalence reviewer."""
         payload = _review_payload(
             candidate=candidate, messages=messages, tool_results=tool_results,
-            verified_prior_conversation=self.verified_prior_conversation,
         )
         payload["flagged_numeric_or_date_values"] = list(unsupported_facts)
         request = ChatRequest(
@@ -528,8 +513,7 @@ class FinalGroundingVerifier:
         tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
         on_audit_event: VerificationAuditObserver | None = None,
     ) -> FinalReview:
-        payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results,
-                                  verified_prior_conversation=self.verified_prior_conversation)
+        payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
         payload_model = _FactualReviewPayload
         fact_request = ChatRequest(
             messages=(
@@ -730,25 +714,21 @@ def _review_payload(
     candidate: str,
     messages: Sequence[Mapping[str, Any]],
     tool_results: Sequence[ToolVerificationResult],
-    verified_prior_conversation: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     user_messages = [
         str(message.get("content"))
         for message in messages
         if message.get("role") == "user" and isinstance(message.get("content"), str)
     ]
-    # Do not reduce the main model's conversation window to another fixed
-    # ten-message slice. Exclude tool results; keep any unverified draft text
-    # as context only, never in the verified prior-evidence collection.
+    # Preserve user/assistant role labels in a single conversation_context.
+    # User-role entries are evidence of user utterances; assistant-role entries
+    # provide context, not independent evidence of external facts.
+    # Exclude the current provisional answer at messages[-1].
     context_messages = [
         {"role": message["role"], "content": message["content"]}
         for message in messages[:-1]
         if message.get("role") in {"user", "assistant"}
         and isinstance(message.get("content"), str)
-    ]
-    accepted_messages = [
-        {"role": message["role"], "content": message["content"]}
-        for message in verified_prior_conversation
     ]
     tool_evidence = [
         {
@@ -765,8 +745,6 @@ def _review_payload(
         "authoritative_current_time": current_time(),
         "current_user_request": _clip_text(user_messages[-1], 4000) if user_messages else "",
         "conversation_context": context_messages,
-        "user_evidence": user_messages,
-        "verified_prior_conversation": accepted_messages,
         "tool_results_in_execution_order": tool_evidence,
         "candidate_final": candidate,
     }
@@ -775,7 +753,11 @@ def _review_payload(
 def _select_review_tool_results(
     tool_results: Sequence[ToolVerificationResult],
 ) -> tuple[tuple[int, ToolVerificationResult], ...]:
-    """Return every successful tool result in original execution order."""
+    """Return successful tool results from this agent run, in execution order.
+
+    The caller passes only ToolExecution records collected after the latest user
+    message started the run; historical conversation tools are not included.
+    """
     return tuple(
         (index, result)
         for index, result in enumerate(tool_results)
