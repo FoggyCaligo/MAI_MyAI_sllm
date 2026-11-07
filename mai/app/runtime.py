@@ -35,6 +35,7 @@ from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
+from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..remote.routing import register_routed_pc_tools
@@ -42,6 +43,7 @@ from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
+from .main_model_images import prepare_main_image_input
 from .uploads import principal_upload_directory
 
 
@@ -194,6 +196,7 @@ class MAIRuntime:
         tool_result_store: ToolResultStore,
         browser_manager: BrowserSessionManager,
         remote_session_id: str | None = None,
+        image_adapter: Any | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
@@ -201,6 +204,12 @@ class MAIRuntime:
         register_calculator_tools(registry)
         register_external_information_tools(registry)
         register_browser_tools(registry, browser_manager)
+        if image_adapter is not None:
+            register_image_tools(
+                registry, adapter=image_adapter, cwd=self.cwd,
+                allowed_root=(principal_upload_directory(self.upload_root, principal)
+                              if principal.role is AccessRole.TRIAL else None),
+            )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
@@ -251,10 +260,11 @@ class MAIRuntime:
 
         if model is not None:
             raise ValueError("browser model selection is unavailable in dev2")
-        if attachments:
-            raise ValueError("image attachments require a supported single-model llama.cpp multimodal input path")
         selected_model = self.model
-        model_prompt, inline_images = prompt, ()
+        model_prompt, inline_images = prepare_main_image_input(
+            prompt=prompt, attachments=attachments, principal=principal,
+            upload_root=self.upload_root,
+        )
         adapter = self._adapter_for(selected_model)
         verifier_adapter = None
         role_cache_run = None
@@ -276,7 +286,10 @@ class MAIRuntime:
         working = WorkingGraph()
         tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
         browser_manager = BrowserSessionManager()
-        registry = self._registry_for(principal, working, tool_result_store, browser_manager, remote_session_id)
+        registry = self._registry_for(
+            principal, working, tool_result_store, browser_manager,
+            remote_session_id, image_adapter=adapter,
+        )
 
         max_identical_failures = int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5"))
         agent = AgentRuntime(
