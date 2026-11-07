@@ -8,7 +8,7 @@ def test_configuration_template_separates_secrets_and_defaults() -> None:
     env = Path(".env.example").read_text(encoding="utf-8")
     settings = load_settings(Path("settings.yaml"), environ={})
     assert settings["MAIN_MODEL"] == "ornith-1.5:9b"
-    assert settings["VERIFIER_MODEL"] == "qwen3:4b-instruct-2507-q4_K_M"
+    assert settings["VERIFIER_MODEL"] == "LiquidAI/lfm2.5-2.6b:q4_k_m"
     assert settings["MAI_ANSWER_QUALITY_REVIEW"] == "false"
     assert settings["SESSION_HISTORY_MESSAGES"] == "10"
     assert "MAIN_MODEL=" not in env
