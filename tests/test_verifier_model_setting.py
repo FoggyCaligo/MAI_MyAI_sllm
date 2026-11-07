@@ -1,4 +1,4 @@
-"""Production model selection keeps the reviewer independent of the main model."""
+"""dev2 routes reviewer to browser-selected main model even with legacy override."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -66,10 +66,10 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
                 )
             await asyncio.gather(*runtime._background_tasks)
             assert result.model == main
-        assert [name for name, request in requests] == [main, verifier_model or main]
+        assert [name for name, request in requests] == [main, main]
         assert audit_events
         assert all(entry[0] == 1 for entry in audit_events)
-        assert all(entry[2]["verifier_model"] == (verifier_model or main) for entry in audit_events)
+        assert all(entry[2]["verifier_model"] == main for entry in audit_events)
         assert [entry[1] for entry in audit_events] == (
             ["request", "error"] if reviewer_fails
             else ["request", "raw_response", "validated_response", "decision"]

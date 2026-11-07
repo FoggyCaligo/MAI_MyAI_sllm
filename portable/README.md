@@ -179,6 +179,6 @@ dev2 기본 메인·Verifier 공통 모델 태그는 `ornith-1.5:9b`이며, 일�
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1 -Backend llamacpp -GgufPath ./portable/portable-models/gguf/model.gguf -ModelAlias local-model -SlotCache
 ```
 
-메인·숫자·최종검증은 같은 모델을 사용한다. 모델 별칭은 어떤 9B/12B GGUF든 사용할 수 있으나 해당 모델을 사전에 설치해야 한다. 재시도 시 메인 슬롯 상태를 복원한다. 캐시는 `portable/portable-slot-cache`에 저장되며 정상적인 실행 종료 후 각 세션 파일을 삭제한다. 갑작스러운 전원 종료로 잔여 파일이 남을 수 있으므로 보관하지 말고 종료 후 안전하게 정리한다.
+메인·숫자·최종검증은 브라우저에서 선택한 같은 모델을 사용한다. llama.cpp에서는 현재 실행 중인 단일 GGUF의 별칭만 UI에 표시되며, 다른 GGUF로 바꾸려면 서버를 해당 모델로 재시작해야 한다. 모델 별칭은 어떤 9B/12B GGUF든 사용할 수 있으나 해당 모델을 사전에 설치해야 한다. 재시도 시 메인 슬롯 상태를 복원한다. 캐시는 `portable/portable-slot-cache`에 저장되며 정상적인 실행 종료 후 각 세션 파일을 삭제한다. 갑작스러운 전원 종료로 잔여 파일이 남을 수 있으므로 보관하지 말고 종료 후 안전하게 정리한다.
 
 이 실험은 llama.cpp 서버 슬롯 독점이 필요한 **명시적 옵트인 기능**이다. 동일 포트에 다른 프로그램을 붙이지 말고, 첫 실행은 충분한 VRAM 여유를 확보한 모델에서 테스트한다. 시스템 메모리가 부족한 12B 모델을 자동으로 안전하게 만들지는 않는다. 자세한 내용은 [KV 캐시 실험 문서](../docs/kv-cache-experiment.md)를 참조한다.
