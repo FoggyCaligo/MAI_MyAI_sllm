@@ -1,31 +1,14 @@
-# MAI 공개 기본 설정. 비밀번호나 토큰을 저장하지 않는다.
-# 우선순위: 기존 환경변수 > .env > 이 파일.
-# 선택한 백엔드 주소와 모델은 실제 실행 가능한 값이어야 한다.
-# VISION_MODEL은 선택 사항이며 없으면 이미지 도구를 등록하지 않는다.
-# 시간·출력·반복·문맥·음성 관련 항목은 기본값으로 사용할 수 있다.
-# 값이 로드되어도 실행에서 사용되지 않는 항목은 docs/architecture.md를 참고한다.
-# 음성 패키지·마이크·브라우저 권한과 GPU 환경은 별도 준비한다.
-LLM_BACKEND: ollama
-LLAMACPP_HOST: "http://127.0.0.1:8080"  # llama.cpp 선택 시 필요
-OLLAMA_HOST: "http://127.0.0.1:11434"  # Ollama 선택 시 필요
-MAIN_MODEL: "ornith-1.5:9b"  # 실제 사용 가능한 모델명
-
-# dev2: VERIFIER_MODEL 미설정 시 메인 모델 하나가 숫자·최종검증도 수행
-# KV 슬롯 교체 실험은 llama.cpp 전용: MAI_EXPERIMENTAL_SLOT_CACHE=true
-VISION_MODEL : "lfm3-vl:2b"
-
-OLLAMA_REQUEST_TIMEOUT_SECONDS: 500
-OLLAMA_THINK: true
-OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768  # 본 모델 요청당 출력 한도, .env 값 우선
-MAI_DEBUG_MODEL_INPUT: false
+# dev2: 포터블 단일 모델 전용. 엔진은 llama.cpp 하나이며 모델은 하나만 선택한다.
+# MODEL_GGUF_PATH는 실제 GGUF 모델 파일 경로다. llama.cpp 내부 alias는 mai-model로 고정.
+# 일반 환경변수와 .env가 이 파일보다 우선한다.
+MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
+LLAMACPP_HOST: "http://127.0.0.1:8080"
+MAI_MODEL_REQUEST_TIMEOUT_SECONDS: 500
 
 AGENT_MAX_IDENTICAL_CALLS: 3
 AGENT_MAX_IDENTICAL_FAILURES: 2
 AGENT_MAX_NO_PROGRESS_ROUNDS: 2
-TOOL_TIMEOUT_SECONDS: 60
-TERMINAL_TIMEOUT_SECONDS: 120
 MAX_INLINE_TOOL_RESULT_CHARS: 8000
-MEMORY_RECALL_INCLUDE_UTTERANCES: false
 SESSION_HISTORY_MESSAGES: 10
 MAI_ANSWER_QUALITY_REVIEW: false
 

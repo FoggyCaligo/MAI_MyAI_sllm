@@ -4,7 +4,7 @@ import pytest
 
 from mai.llm.llamacpp import LlamaCppAdapter, _openai_message, _openai_messages
 from mai.llm.models import ChatRequest, ModelConfig
-from mai.llm.ollama import OllamaProtocolError
+from mai.llm.errors import ModelProtocolError
 
 
 def test_llamacpp_tool_call_and_thinking_round_trip():
@@ -42,7 +42,7 @@ def test_malformed_response_fails_visibly():
         )) as client:
             adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
             return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hi"}]))
-    with pytest.raises(OllamaProtocolError):
+    with pytest.raises(ModelProtocolError):
         asyncio.run(run())
 
 

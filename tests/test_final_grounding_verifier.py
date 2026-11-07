@@ -911,8 +911,8 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
 
 @pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
 def test_reviewer_retries_only_transient_server_statuses(status, attempts) -> None:
-    from ollama import ResponseError
-    from mai.llm.ollama import OllamaRequestError
+    import httpx
+    from mai.llm.errors import ModelRequestError
 
     class FailingReviewer:
         def __init__(self) -> None:
@@ -921,12 +921,13 @@ def test_reviewer_retries_only_transient_server_statuses(status, attempts) -> No
         async def chat(self, request):
             self.count += 1
             try:
-                raise ResponseError("server failure", status_code=status)
-            except ResponseError as exc:
-                raise OllamaRequestError("request failed") from exc
+                response = httpx.Response(status, request=httpx.Request("POST", "http://example.test/chat"))
+                raise httpx.HTTPStatusError("server failure", request=response.request, response=response)
+            except httpx.HTTPStatusError as exc:
+                raise ModelRequestError("request failed") from exc
 
     reviewer = FailingReviewer()
-    with pytest.raises(OllamaRequestError, match="request failed"):
+    with pytest.raises(ModelRequestError, match="request failed"):
         run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
             candidate="설명",
             messages=[],

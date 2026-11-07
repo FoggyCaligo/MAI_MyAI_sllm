@@ -7,11 +7,11 @@ from mai.app.settings import load_settings
 def test_configuration_template_separates_secrets_and_defaults() -> None:
     env = Path(".env.example").read_text(encoding="utf-8")
     settings = load_settings(Path("settings.yaml"), environ={})
-    assert settings["MAIN_MODEL"] == "ornith-1.5:9b"
+    assert settings["MODEL_GGUF_PATH"] == "portable/portable-models/gguf/active.gguf"
     assert "VERIFIER_MODEL" not in settings
     assert settings["MAI_ANSWER_QUALITY_REVIEW"] == "false"
     assert settings["SESSION_HISTORY_MESSAGES"] == "10"
-    assert "MAIN_MODEL=" not in env
+    assert "MODEL_GGUF_PATH=" not in env
     assert "SESSION_HISTORY_MESSAGES=" not in env
     assert 'TRIAL_USERS=[{"user_id":"체험판","user_pw":"0000","db_id":"trial-default"}]' in env
     assert "TOOL_REQUIREMENT_VERIFIER" not in env

@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
-# Run MAI on Ubuntu 24.04 using host-cached Linux binaries and SSD-backed data.
+# Ubuntu portable single-model llama.cpp runner (host-cached binary, SSD GGUF).
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo "Linux x86-64 required" >&2; exit 1; }
 source /etc/os-release
 [[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 24.04 ]] || { echo "Ubuntu 24.04 required" >&2; exit 1; }
-[[ -f "$root/.env" ]] || { echo "Missing .env at $root" >&2; exit 1; }
-[[ -d "$root/portable/portable-models/ollama/manifests" ]] || { echo "Missing Ollama model manifests on SSD" >&2; exit 1; }
+[[ -f "$root/.env" ]] || { echo "Missing .env" >&2; exit 1; }
 id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
 python="$cache/python/bin/python3"
-ollama="$cache/ollama/bin/ollama"
-[[ -f "$python" && -f "$ollama" ]] || { echo "Linux runtime missing; run: bash '$root/portable/prepare-portable-linux.sh'" >&2; exit 1; }
-# Fail on existing Ollama rather than silently talking to another device/model.
-if (echo >/dev/tcp/127.0.0.1/11434) >/dev/null 2>&1; then
-  echo "Port 11434 is occupied; stop existing Ollama first" >&2; exit 1
+llama="$cache/llamacpp/bin/llama-server"
+[[ -x "$python" && -x "$llama" ]] || { echo "Missing Linux runtime; run prepare-portable-linux.sh" >&2; exit 1; }
+cd -- "$root"
+gguf="${1:-}"
+if [[ -z "$gguf" ]]; then
+  gguf="$("$python" -c 'import yaml,pathlib; print(yaml.safe_load(pathlib.Path("settings.yaml").read_text(encoding="utf-8-sig"))["MODEL_GGUF_PATH"])')"
+fi
+[[ "$gguf" = /* ]] || gguf="$root/$gguf"
+[[ -f "$gguf" && "$gguf" == *.gguf ]] || { echo "GGUF file is missing: $gguf" >&2; exit 1; }
+alias_name="mai-model"
+if (echo >/dev/tcp/127.0.0.1/8080) >/dev/null 2>&1; then
+  echo "Port 8080 already occupied" >&2; exit 1
 fi
 if (echo >/dev/tcp/127.0.0.1/8000) >/dev/null 2>&1; then
-  echo "MAI port 8000 is occupied" >&2; exit 1
+  echo "MAI port 8000 already occupied" >&2; exit 1
 fi
-export OLLAMA_HOST="http://127.0.0.1:11434"
-export OLLAMA_MODELS="$root/portable/portable-models/ollama"
-export OLLAMA_NO_CLOUD=true
+export MAIN_MODEL="$alias_name" LLAMACPP_HOST="http://127.0.0.1:8080" LLM_BACKEND="llamacpp"
+export MAI_SLOT_CACHE_DIR="$root/portable/portable-slot-cache"
+mkdir -p -- "$MAI_SLOT_CACHE_DIR"
+unset VERIFIER_MODEL VISION_MODEL OLLAMA_HOST OLLAMA_MODELS || true
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
 export MAI_CWD="$root" MAI_UPLOAD_ROOT="$root/mai_uploads"
@@ -29,29 +36,17 @@ export MEMORY_DB_PATH="$root/data/memory.sqlite3"
 export CHAT_DB_PATH="$root/data/chat.sqlite3"
 export LOG_DB_PATH="$root/data/log.sqlite3"
 export SENTENCE_BREAKER_DB_PATH="$root/data/sentence_breaker.sqlite3"
-export LLM_BACKEND="ollama"
-cd -- "$root"
-ollama_pid=""
-cleanup() {
-  if [[ -n "$ollama_pid" ]]; then
-    kill "$ollama_pid" 2>/dev/null || true
-    wait "$ollama_pid" 2>/dev/null || true
-  fi
-}
+export LD_LIBRARY_PATH="$(dirname "$llama"):${LD_LIBRARY_PATH:-}"
+llama_pid=""
+cleanup() { if [[ -n "$llama_pid" ]]; then kill "$llama_pid" 2>/dev/null || true; wait "$llama_pid" 2>/dev/null || true; fi; }
 trap cleanup EXIT
-"$ollama" serve &
-ollama_pid=$!
+"$llama" -m "$gguf" --alias "$alias_name" --host 127.0.0.1 --port 8080 --jinja --parallel 1 --slot-save-path "$MAI_SLOT_CACHE_DIR" &
+llama_pid=$!
 ready=0
-for attempt in {1..80}; do
-  if ! kill -0 "$ollama_pid" 2>/dev/null; then
-    echo "Portable Ollama exited during startup" >&2; exit 1
-  fi
-  if curl --silent --fail --max-time 1 http://127.0.0.1:11434/api/tags >/dev/null; then
-    ready=1
-    break
-  fi
-  sleep 0.5
+for attempt in {1..100}; do
+  kill -0 "$llama_pid" 2>/dev/null || { echo "llama.cpp exited before ready" >&2; exit 1; }
+  if curl --silent --fail --max-time 1 http://127.0.0.1:8080/v1/models >/dev/null; then ready=1; break; fi
+  sleep 1
 done
-[[ "$ready" == 1 ]] || { echo "Portable Ollama did not become ready" >&2; exit 1; }
-echo "[Linux Portable] Ollama ready; launching MAI on http://127.0.0.1:8000"
+[[ "$ready" == 1 ]] || { echo "llama.cpp did not become ready" >&2; exit 1; }
 "$python" "$root/run_server.py"

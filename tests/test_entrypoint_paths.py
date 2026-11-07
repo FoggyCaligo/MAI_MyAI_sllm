@@ -19,8 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
     "scripts/reset_trial.py",
     "portable/resolve_portable_sources.py",
     "portable/resolve_portable_sources_linux.py",
-    "portable/copy_ollama_models.py",
-    "portable/model_requirements.py",
     "portable/portable_backup.py",
     "portable/verify_portable_backup.py",
 ])

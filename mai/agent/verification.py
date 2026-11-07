@@ -23,12 +23,12 @@ import re
 from typing import Any, Callable, Literal, Mapping, Sequence
 
 import httpx
-from ollama import ResponseError
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest
-from ..llm.ollama import OllamaAdapter, OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
+from ..llm.llamacpp import LlamaCppAdapter
+from ..llm.errors import ModelTimeoutError, ModelProtocolError, ModelRequestError
 from ..tools.time import current_time
 
 
@@ -282,7 +282,7 @@ class FinalGroundingVerifier:
 
     def __init__(
         self,
-        reviewer_adapter: OllamaAdapter | None = None,
+        reviewer_adapter: LlamaCppAdapter | None = None,
         *,
         reviewer_timeout_seconds: float | None = None,
         quality_review_enabled: bool | None = None,
@@ -628,17 +628,17 @@ class FinalGroundingVerifier:
             except Exception as exc:
                 retryable = isinstance(exc, (
                     TimeoutError,
-                    OllamaChatTimeoutError,
-                    OllamaProtocolError,
+                    ModelTimeoutError,
+                    ModelProtocolError,
                     ValidationError,
                     httpx.NetworkError,
                     httpx.TimeoutException,
                     httpx.RemoteProtocolError,
                 ))
-                if isinstance(exc, OllamaRequestError):
+                if isinstance(exc, ModelRequestError):
                     cause = exc.__cause__
-                    retryable = isinstance(cause, ResponseError) and (
-                        cause.status_code == 429 or 500 <= cause.status_code <= 599
+                    retryable = isinstance(cause, httpx.HTTPStatusError) and (
+                        cause.response.status_code == 429 or 500 <= cause.response.status_code <= 599
                     )
                 if on_audit_event is not None:
                     on_audit_event("error", {

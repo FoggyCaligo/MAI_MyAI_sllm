@@ -13,9 +13,15 @@ fi
 for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
-if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--install-chromium" ) ]]; then
-  echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium]" >&2; exit 2
-fi
+install_chromium=0
+upgrade_llamacpp=0
+for arg in "$@"; do
+  case "$arg" in
+    --install-chromium) install_chromium=1 ;;
+    --upgrade-llamacpp) upgrade_llamacpp=1 ;;
+    *) echo "Usage: bash portable/prepare-portable-linux.sh [--install-chromium] [--upgrade-llamacpp]" >&2; exit 2 ;;
+  esac
+done
 manifest="$root/portable/portable-sources-linux.json"
 [[ -f "$manifest" ]] || { echo "Missing $manifest; create with portable/resolve_portable_sources_linux.py" >&2; exit 1; }
 export MAI_LINUX_ROOT="$root"
@@ -36,7 +42,7 @@ root = Path(os.environ["MAI_LINUX_MANIFEST"])
 data = json.loads(root.read_text(encoding="utf-8"))
 if data.get("schema_version") != 1 or data.get("target") != "ubuntu-24.04-amd64":
     raise ValueError("Linux manifest schema or target mismatch")
-for name in ("python", "uv", "ollama"):
+for name in ("python", "uv", "llamacpp"):
     entry = data.get(name)
     if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not isinstance(entry.get("sha256"), str):
         raise ValueError(f"Missing Linux source manifest entry: {name}")
@@ -64,9 +70,17 @@ fetch() {
 install_archive() {
   local name="$1" archive="$2" hash="$3" staging="$cache/$name.incomplete" dest="$cache/$name" record="$cache/$name/.mai-source-sha256"
   if [[ -e "$dest" ]]; then
-    [[ -f "$record" && "$(cat "$record")" == "$hash" ]] || { echo "Existing $name runtime is not validated: $dest" >&2; exit 1; }
-    echo "[Linux Portable] Reusing $name"
-    return
+    if [[ -f "$record" && "$(cat "$record")" == "$hash" ]]; then
+      echo "[Linux Portable] Reusing $name"
+      return
+    fi
+    if [[ "$name" != llamacpp || "$upgrade_llamacpp" != 1 ]]; then
+      echo "Existing $name runtime differs; use --upgrade-llamacpp only for a pinned llama.cpp update" >&2
+      exit 1
+    fi
+    backup="$dest.before-portable-$(date +%Y%m%d%H%M%S)"
+    mv -- "$dest" "$backup"
+    echo "[Linux Portable] Preserved old llama.cpp in $backup"
   fi
   [[ ! -e "$staging" ]] || { echo "Incomplete prior runtime: $staging" >&2; exit 1; }
   mkdir -p "$staging"
@@ -85,19 +99,18 @@ install_archive() {
     mkdir -p "$staging/runtime/bin"
     cp -- "$exe" "$staging/runtime/bin/uv"
     chmod +x "$staging/runtime/bin/uv"
-  elif [[ "$name" == ollama ]]; then
-    [[ -f "$staging/bin/ollama" ]] || { echo "Missing bin/ollama in archive" >&2; exit 1; }
-    mv -- "$staging/bin" "$staging/runtime-bin"
+  elif [[ "$name" == llamacpp ]]; then
+    server="$(find "$staging" -type f -name llama-server -print -quit)"
+    [[ -n "$server" ]] || { echo "Missing llama-server in archive" >&2; exit 1; }
     mkdir -p "$staging/runtime"
-    mv -- "$staging/runtime-bin" "$staging/runtime/bin"
-    if [[ -d "$staging/lib" ]]; then mv -- "$staging/lib" "$staging/runtime/lib"; fi
+    cp -a -- "$(dirname "$server")" "$staging/runtime/bin"
   fi
   printf '%s' "$hash" > "$staging/runtime/.mai-source-sha256"
   mv -- "$staging/runtime" "$dest"
   rm -r -- "$staging"
 }
 
-for name in uv python ollama; do
+for name in uv python llamacpp; do
   file="$(fetch "$name")"
   digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]]["sha256"].lower())' "$manifest" "$name")"
   install_archive "$name" "$file" "$digest"
@@ -105,16 +118,16 @@ done
 
 python="$cache/python/bin/python3"
 uv="$cache/uv/bin/uv"
-ollama="$cache/ollama/bin/ollama"
+llamacpp="$cache/llamacpp/bin/llama-server"
 "$python" -c 'import sys; assert sys.version_info[:2] == (3,11); print(sys.version)'
 "$uv" --version
-"$ollama" --version
+"$llamacpp" --version
 
 # Never provision a Python environment on NTFS. Linux native packages live in host cache.
 echo "[Linux Portable] Installing MAI Python dependencies"
 UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root"
-"$python" -c 'import fastapi, ollama, uvicorn, playwright, mai'
-if [[ "${1:-}" == "--install-chromium" ]]; then
+"$python" -c 'import fastapi, uvicorn, playwright, mai'
+if [[ "$install_chromium" == 1 ]]; then
   export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
   "$python" -m playwright install chromium
 fi

@@ -1,6 +1,6 @@
 # MAI — 개인 컴퓨터용 로컬 AI 비서
 
-MAI는 사용자의 컴퓨터에서 로컬 언어 모델로 실행되는 범용 AI 비서다. 대화하면서 기억을 검색하고, 웹·파일·문서·코드·터미널 도구로 작업한다. 기본 추론 백엔드는 Ollama이며 llama.cpp를 명시적으로 선택할 수 있다.
+MAI는 사용자의 컴퓨터에서 로컬 언어 모델로 실행되는 범용 AI 비서다. 대화하면서 기억을 검색하고, 웹·파일·문서·코드·터미널 도구로 작업한다. dev2는 하나의 GGUF 모델과 llama.cpp만 사용하는 포터블 단일 모델 에이전트다. 메인/수치/최종 검증은 동일한 가중치와 역할별 KV 캐시 교체로 처리한다.
 
 ## 시작하기
 
@@ -8,11 +8,10 @@ MAI는 사용자의 컴퓨터에서 로컬 언어 모델로 실행되는 범용 
 - [외장 SSD Portable 준비·실행·백업](portable/README.md)
 - [실행 구조와 개발 계약](docs/architecture.md)
 
-일반 설치를 마친 뒤 프로젝트 루트에서 실행한다.
+`settings.yaml`의 `MODEL_GGUF_PATH`로 단일 GGUF 파일을 선택한다. Portable Python/llama.cpp 설치 후 프로젝트 루트에서 실행한다.
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python run_server.py
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
 ```
 
 브라우저에서 `http://127.0.0.1:8000`에 접속한다. 외부 접속은 별도 Tailscale Funnel 설정이 필요하다. 파일 수정·삭제와 터미널 명령은 실제 PC에 반영되므로 계정 권한과 작업 대상을 확인한다.
@@ -26,7 +25,7 @@ python run_server.py
 | 파일·코드 | 폴더 탐색, 텍스트 읽기·쓰기·복사·이동·삭제, 코드 검색·구조 분석·정확한 문자열 편집 |
 | 문서 | PDF·DOCX·XLSX·CSV·PPTX 읽기와 지원되는 위치의 기존 문서 수정 |
 | 터미널·원격 PC | 소유자 권한으로 명령 실행, 연결된 원격 PC에 같은 도구 사용 |
-| 이미지·음성 | 설정된 이미지 모델로 분석, 음성 인식·화자 비교, 브라우저 음성 합성 |
+| 이미지·음성 | 이미지 직접 인식은 아직 미연결, 음성 인식·화자 비교, 브라우저 음성 합성 |
 | 웹 앱 | 로그인, 대화 기록, 진행 상황, 업로드, 파일 다운로드 링크 |
 
 문서 편집은 DOCX 문단·표 셀, XLSX 셀, PPTX 도형 텍스트, CSV 기존 셀, PDF 페이지 회전·삭제를 지원한다. 새 문서 생성이나 PDF 본문 직접 수정은 `document_edit`의 지원 범위가 아니다. 코드 구조 분석은 Python과 JavaScript·TypeScript·TSX·C·C++·Java·Go·Rust·Ruby를 지원한다.

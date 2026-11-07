@@ -9,16 +9,13 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ollama import AsyncClient
-import httpx
 
 from ..agent.guards import GuardConfig
 from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver, VerificationRejectionObserver, VerificationAuditObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
-from ..llm.models import ModelConfig, ollama_generation_limit
-from ..llm.ollama import OllamaAdapter
+from ..llm.models import ModelConfig
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.role_cache_runtime import RoleCacheRun
 from ..memory.admission import (
@@ -27,7 +24,7 @@ from ..memory.admission import (
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor
+from ..memory.extraction.service import SingleModelFactExtractor
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -38,7 +35,6 @@ from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
-from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..remote.routing import register_routed_pc_tools
@@ -47,7 +43,6 @@ from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
 from .uploads import principal_upload_directory
-from .main_model_images import prepare_main_image_input
 
 
 _LOG = logging.getLogger("uvicorn.error")
@@ -116,35 +111,27 @@ class MAIRuntime:
         self,
         *,
         model: str,
-        ollama_host: str,
-        llm_backend: str = "ollama",
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
-        vision_model: str | None = None,
-        verifier_model: str | None = None,
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
-        if verifier_model is not None and not verifier_model.strip():
-            raise ValueError("verifier_model must be non-empty when configured")
         if max_inline_tool_result_chars is None:
             max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
         if max_inline_tool_result_chars < 1024:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.download_links = DownloadLinkStore()
         self.cwd = cwd
-        if llm_backend not in {"ollama", "llamacpp"}:
-            raise ValueError("LLM_BACKEND must be ollama or llamacpp")
-        self.llm_backend = llm_backend
+        self.llm_backend = "llamacpp"
         self.llamacpp_host = llamacpp_host
-        self.ollama_host = ollama_host
         self.model = model
-        self.verifier_model = verifier_model.strip() if verifier_model is not None else None
-        self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
+        # The running process only ever has one model; no verifier/vision model.
+        self.verifier_model = None
+        self.vision_model = None
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
         self.upload_root.mkdir(parents=True, exist_ok=True)
@@ -163,73 +150,33 @@ class MAIRuntime:
             self.recall,
             now=lambda: datetime.now(timezone.utc),
         )
-        self._adapters: dict[str, OllamaAdapter | LlamaCppAdapter] = {}
-        self._fact_extractors: dict[str, OllamaFactExtractor] = {}
-        self._ollama_client = AsyncClient(host=ollama_host)
+        self._adapters: dict[str, LlamaCppAdapter] = {}
+        self._fact_extractors: dict[str, SingleModelFactExtractor] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
-        role_cache_flag = os.environ.get("MAI_EXPERIMENTAL_SLOT_CACHE", "false").lower()
-        if role_cache_flag not in {"true", "false"}:
-            raise ValueError("MAI_EXPERIMENTAL_SLOT_CACHE must be true or false")
-        self._role_cache_enabled = role_cache_flag == "true"
-        if self._role_cache_enabled and self.llm_backend != "llamacpp":
-            raise ValueError("KV role cache experiment requires LLM_BACKEND=llamacpp")
         self._role_cache_lock = asyncio.Lock()
+        self._slot_cache_dir = Path(os.environ.get("MAI_SLOT_CACHE_DIR", "portable/portable-slot-cache")).expanduser().resolve()
+        self._slot_cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
-        clean_model = model.strip()
-        if not clean_model:
-            raise ValueError("model must be non-empty")
-        adapter = self._adapters.get(clean_model)
+    def _adapter_for(self, model: str) -> LlamaCppAdapter:
+        if model != self.model:
+            raise ValueError("dev2 supports only its single configured MAIN_MODEL")
+        adapter = self._adapters.get(self.model)
         if adapter is None:
-            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True, options={"num_predict": ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)}))
-                       if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True)))
-            self._adapters[clean_model] = adapter
+            adapter = LlamaCppAdapter(ModelConfig(model=self.model, host=self.llamacpp_host, think=True))
+            self._adapters[self.model] = adapter
         return adapter
 
-    def _fact_extractor_for(self, model: str) -> OllamaFactExtractor:
-        clean_model = model.strip()
-        if not clean_model:
-            raise ValueError("model must be non-empty")
-        extractor = self._fact_extractors.get(clean_model)
+    def _fact_extractor_for(self, model: str) -> SingleModelFactExtractor:
+        if model != self.model:
+            raise ValueError("memory extraction must use the single configured model")
+        extractor = self._fact_extractors.get(self.model)
         if extractor is None:
-            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False, options={"num_predict": ollama_generation_limit("OLLAMA_MEMORY_MAX_OUTPUT_TOKENS", 2048)}))
-                       if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=False)))
-            extractor = OllamaFactExtractor(adapter)
-            self._fact_extractors[clean_model] = extractor
+            extractor = SingleModelFactExtractor(
+                LlamaCppAdapter(ModelConfig(model=self.model, host=self.llamacpp_host, think=False))
+            )
+            self._fact_extractors[self.model] = extractor
         return extractor
-
-    async def list_models(self) -> tuple[str, ...]:
-        if self.llm_backend == "llamacpp":
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(self.llamacpp_host.rstrip("/") + "/v1/models")
-                response.raise_for_status()
-                body = response.json()
-            if not isinstance(body, dict) or not isinstance(body.get("data"), list):
-                raise RuntimeError("llama.cpp /v1/models response is invalid")
-            names = []
-            for entry in body["data"]:
-                if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-                    raise RuntimeError("llama.cpp model entry is missing id")
-                names.append(entry["id"])
-            return tuple(names)
-        response = await self._ollama_client.list()
-        raw_models = getattr(response, "models", None)
-        if raw_models is None and isinstance(response, Mapping):
-            raw_models = response.get("models")
-        if raw_models is None:
-            raise RuntimeError("Ollama list response is missing models")
-        names: list[str] = []
-        for item in raw_models:
-            name = getattr(item, "model", None)
-            if name is None and isinstance(item, Mapping):
-                name = item.get("model") or item.get("name")
-            if not isinstance(name, str) or not name.strip():
-                raise RuntimeError("Ollama model entry is missing a model name")
-            names.append(name.strip())
-        return tuple(names)
 
     def _registry_for(
         self,
@@ -245,8 +192,6 @@ class MAIRuntime:
         register_calculator_tools(registry)
         register_external_information_tools(registry)
         register_browser_tools(registry, browser_manager)
-        if self.vision_model is not None:
-            register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
@@ -268,8 +213,6 @@ class MAIRuntime:
         return registry
 
     async def run_user_message(self, *args: Any, **kwargs: Any) -> MAIRunResult:
-        if not self._role_cache_enabled:
-            return await self._run_user_message_impl(*args, **kwargs)
         async with self._role_cache_lock:
             # Memory extraction may also call the same llama.cpp backend.
             # It must finish before a slot checkpoint can be safely restored.
@@ -297,28 +240,20 @@ class MAIRuntime:
 
         previous_assistant_message = _previous_assistant_message(prior_messages)
 
-        selected_model = self.model if model is None else model.strip()
-        model_prompt, inline_images = await prepare_main_image_input(
-            prompt=prompt, attachments=attachments, principal=principal,
-            upload_root=self.upload_root, model=selected_model, backend=self.llm_backend,
-            ollama_client=self._ollama_client, separate_vision_model=self.vision_model,
-        )
+        if model is not None:
+            raise ValueError("browser model selection is unavailable in dev2")
+        if attachments:
+            raise ValueError("image attachments require a supported single-model llama.cpp multimodal input path")
+        selected_model = self.model
+        model_prompt, inline_images = prompt, ()
         adapter = self._adapter_for(selected_model)
-        # dev2 deliberately unifies main and verifier selection with the
-        # browser/API model for this turn. Ignore any legacy VERIFIER_MODEL
-        # override from .env; dev retains independent verifier selection.
         verifier_adapter = adapter
-        role_cache_run: RoleCacheRun | None = None
-        if self._role_cache_enabled:
-            directory = os.environ.get("MAI_SLOT_CACHE_DIR")
-            if not directory:
-                raise ValueError("MAI_SLOT_CACHE_DIR is required in KV role cache mode")
-            if not isinstance(adapter, LlamaCppAdapter):
-                raise ValueError("KV role cache requires llama.cpp adapter")
-            dedicated_adapter = LlamaCppAdapter(adapter.config, slot_id=0)
-            role_cache_run = RoleCacheRun(adapter=dedicated_adapter, cache_directory=Path(directory))
-            adapter = role_cache_run.main_adapter
-            verifier_adapter = role_cache_run.verifier_adapter
+        role_cache_run = RoleCacheRun(
+            adapter=LlamaCppAdapter(adapter.config, slot_id=0),
+            cache_directory=self._slot_cache_dir,
+        )
+        adapter = role_cache_run.main_adapter
+        verifier_adapter = role_cache_run.verifier_adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -365,11 +300,8 @@ class MAIRuntime:
                 ),
             )
         try:
-            if role_cache_run is None:
+            async with role_cache_run:
                 result = await execute_agent()
-            else:
-                async with role_cache_run:
-                    result = await execute_agent()
         finally:
             await browser_manager.close_all()
         answer = result.content
@@ -421,7 +353,7 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
-        fact_extractor: OllamaFactExtractor,
+        fact_extractor: SingleModelFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)

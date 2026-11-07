@@ -6,13 +6,6 @@ import os
 from typing import Any, Mapping, Sequence
 
 
-def ollama_generation_limit(name: str, default: int) -> int:
-    value = int(os.environ.get(name, str(default)))
-    if value <= 0:
-        raise ValueError('output token limit must be positive')
-    return value
-
-
 JsonObject = dict[str, Any]
 Message = dict[str, Any]
 ToolSchema = dict[str, Any]
@@ -20,24 +13,24 @@ ThinkSetting = bool | str
 
 
 def _request_timeout_seconds_from_env() -> float:
-    return float(os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS", "300"))
+    return float(os.environ.get("MAI_MODEL_REQUEST_TIMEOUT_SECONDS", "500"))
 
 
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
-    """Configuration for one Ollama-backed model adapter."""
+    """Configuration for the single llama.cpp inference model."""
 
     model: str
-    host: str = "http://127.0.0.1:11434"
+    host: str = "http://127.0.0.1:8080"
     think: ThinkSetting = True
     options: Mapping[str, Any] = field(default_factory=dict)
     request_timeout_seconds: float = field(default_factory=_request_timeout_seconds_from_env)
 
     def __post_init__(self) -> None:
         if not self.model.strip():
-            raise ValueError("model must be a non-empty Ollama model name")
+            raise ValueError("model must be a non-empty llama.cpp model alias")
         if not self.host.strip():
-            raise ValueError("host must be a non-empty Ollama host")
+            raise ValueError("host must be a non-empty llama.cpp host")
         if self.request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be positive")
 

@@ -16,7 +16,6 @@ from urllib.request import Request, urlopen
 SOURCES = {
     "python": ("astral-sh", "python-build-standalone", r"cpython-3\.11\.[0-9]+\+[^/]+-x86_64-pc-windows-msvc-install_only\.tar\.gz"),
     "uv": ("astral-sh", "uv", r"uv-x86_64-pc-windows-msvc\.zip"),
-    "ollama": ("ollama", "ollama", r"ollama-windows-amd64\.zip"),
     "llamacpp": ("ggml-org", "llama.cpp", r"llama-.*-bin-win-vulkan-x64\.zip"),
 }
 
@@ -90,15 +89,13 @@ def resolve_one(owner: str, repo: str, asset_pattern: str) -> dict[str, str]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().with_name("portable-sources.json"))
-    parser.add_argument("--include-llamacpp", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(f"Refusing to overwrite pinned manifest: {args.output}")
     config: dict[str, object] = {"schema_version": 1}
-    selected = ("python", "uv", "ollama", "llamacpp") if args.include_llamacpp else ("python", "uv", "ollama")
+    selected = ("python", "uv", "llamacpp")
     for name in selected:
         config[name] = resolve_one(*SOURCES[name])
-    config["models"] = ["ornith-1.5:9b", "lfm3-vl:2b"]
     args.output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Publisher-digest-pinned manifest saved: {args.output}")
 
