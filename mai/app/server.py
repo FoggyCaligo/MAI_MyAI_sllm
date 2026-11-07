@@ -576,7 +576,8 @@ async def chat(
 ) -> ChatResponse | JSONResponse:
     _, principal = _principal_from_authorization(authorization)
     runtime = _get_runtime()
-    attachments = _validated_image_attachments(request.attachments, principal, runtime.upload_root)
+    attachments = (_validated_image_attachments(request.attachments, principal, runtime.upload_root)
+                   if request.attachments else [])
     if request.remote_session_id is not None:
         if principal.role is not AccessRole.OWNER:
             raise HTTPException(status_code=403, detail="remote management is owner only")
