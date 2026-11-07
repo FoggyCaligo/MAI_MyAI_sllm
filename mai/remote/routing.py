@@ -57,10 +57,7 @@ def _add_routed_definitions(
             handler=invoke,
             timeout_seconds=None,
             category=definition.category,
-            metadata={
-                **dict(definition.metadata),
-                "codeact_execution_target": "routed_pc",
-            },
+            metadata=dict(definition.metadata),
         )
 
 
@@ -70,8 +67,9 @@ def _add_remote_context(registry: ToolRegistry, names: tuple[str, ...], key: str
         tools=names,
         context={
             "default": (
-                "Owner tools support structural per-call is_remote (boolean, default false). "
-                "CodeAct provides is_remote as a tool() keyword, not an original argument."
+                "Owner native-tool calls accept is_remote (boolean, default false) "
+                "when that field is declared in the activated tool schema. "
+                "Pass is_remote in the native tool arguments object."
             ),
             "remote": (
                 "is_remote=true executes on the connected owner-authorized Windows or Linux worker. "
