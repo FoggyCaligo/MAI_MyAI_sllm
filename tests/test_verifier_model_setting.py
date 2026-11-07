@@ -14,8 +14,7 @@ def build(tmp_path, monkeypatch, **overrides):
     monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter",
                         lambda **kwargs: SimpleNamespace(close=lambda: None))
     values = dict(
-        model="single-model", llm_backend="llamacpp",
-        ollama_host="http://localhost:11434",
+        model="single-model",
         llamacpp_host="http://localhost:8080",
         memory_db_path=tmp_path / "memory.db",
         sentence_breaker_db_path=tmp_path / "segmenter.db",
@@ -26,13 +25,11 @@ def build(tmp_path, monkeypatch, **overrides):
 
 
 def test_main_and_memory_extractor_bind_to_one_model(tmp_path, monkeypatch):
-    runtime = build(tmp_path, monkeypatch, verifier_model="legacy-different-model", vision_model="legacy-vision")
+    runtime = build(tmp_path, monkeypatch)
     try:
         main = runtime._adapter_for("single-model")
         assert isinstance(main, LlamaCppAdapter)
         assert main.config.model == runtime.model
-        assert runtime.verifier_model is None
-        assert runtime.vision_model is None
         assert runtime._adapter_for("single-model") is main
         assert runtime._fact_extractor_for("single-model") is runtime._fact_extractor_for("single-model")
         assert tuple(runtime._adapters) == ("single-model",)
@@ -51,6 +48,8 @@ def test_legacy_other_model_cannot_be_loaded(tmp_path, monkeypatch):
         runtime.close()
 
 
-def test_ollama_backend_is_not_allowed(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="requires llama.cpp"):
+def test_legacy_multi_model_constructor_options_are_not_supported(tmp_path, monkeypatch):
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        build(tmp_path, monkeypatch, verifier_model="legacy-verifier")
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
         build(tmp_path, monkeypatch, llm_backend="ollama")
