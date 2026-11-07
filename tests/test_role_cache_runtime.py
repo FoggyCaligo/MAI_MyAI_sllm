@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -67,7 +68,7 @@ def test_llamacpp_adapter_pins_requests_to_cache_slot_zero():
     requests = []
 
     async def reply(request):
-        requests.append(request.json())
+        requests.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{
             "message": {"role": "assistant", "content": "ok"},
             "finish_reason": "stop",
