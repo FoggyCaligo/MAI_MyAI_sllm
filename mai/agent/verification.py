@@ -127,6 +127,38 @@ If no requested external state change is claimed, action_verdict=not_applicable.
 Return the required structured schema. retry_summary is concise, actionable English.
 """.strip()
 
+_CRITICAL_FACTUAL_REVIEW_SYSTEM = """
+You are a final-answer critical-error reviewer, not an exhaustive citation auditor.
+Judge only the current candidate_final using the current user request and actual
+user/tool evidence. Do not call tools, rewrite, or demand optional completeness.
+Return the required _FactualReviewPayload schema with concise reasons.
+
+Use claim verdicts supported / unsupported / uncertain and defect values
+none / contradiction / scope_expansion / unsupported_inference / missing_evidence.
+Mark contradiction ONLY when observed evidence directly refutes the actual claim,
+not because a claim is absent from a search result. Do not invent counter-evidence.
+A factual statement lacking explicit evidence can be missing_evidence or uncertain,
+not a proven contradiction. Do not expand a claim beyond the candidate text.
+Preserve quantities, dates, units, scope, user statements and tool outcomes.
+Treat model knowledge and the reviewer's guesses as neither proof nor counterproof.
+For arithmetic/date equivalence leave independent numeric checking to its stage.
+Do not reject translations because of transliterated names or harmless phrasing.
+
+For an explicitly requested external change, action_verdict is:
+not_applicable if no completed action was claimed;
+verified only if tool results establish that exact completed outcome;
+unverified if completion was claimed beyond observed success;
+contradicted only if observed results directly show failure.
+Do not claim an action was done merely because it was planned.
+If no tool or external action was requested, use not_applicable.
+
+List only material claims, avoid insignificant wording differences, and keep
+retry_summary actionable and short. Do not judge task completeness, coverage,
+style, or optional research. Evidence verdict is unsupported if any material
+claim is unsupported; uncertainty must remain uncertainty.
+""".strip()
+
+
 _QUALITY_REVIEW_SYSTEM = """
 You are an answer-quality reviewer. Factual grounding has already accepted this provisional answer; do not recheck facts or demand new research. Use the current request, conversation context, established evidence and factual review summary. No tools or answer rewriting; return the structured schema.
 
@@ -549,7 +581,7 @@ class FinalGroundingVerifier:
         payload_model = _FactualReviewPayload
         fact_request = ChatRequest(
             messages=(
-                {"role": "system", "content": _FACTUAL_REVIEW_SYSTEM},
+                {"role": "system", "content": (_CRITICAL_FACTUAL_REVIEW_SYSTEM if self.blocking_mode == "critical" else _FACTUAL_REVIEW_SYSTEM)},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ),
             tools=(), think=False, response_format=payload_model.model_json_schema(),
