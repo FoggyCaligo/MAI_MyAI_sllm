@@ -10,10 +10,10 @@ from mai.app.settings import load_settings
 
 def test_yaml_populates_defaults_but_preserves_explicit_env(tmp_path: Path) -> None:
     path = tmp_path / "settings.yaml"
-    path.write_text('MAIN_MODEL: "model-a"\nOLLAMA_THINK: true\n', encoding="utf-8")
+    path.write_text('MAIN_MODEL: "model-a"\nMAI_ANSWER_QUALITY_REVIEW: true\n', encoding="utf-8")
     env = {"MAIN_MODEL": "user-selected"}
-    assert load_settings(path, environ=env) == {"MAIN_MODEL": "model-a", "OLLAMA_THINK": "true"}
-    assert env == {"MAIN_MODEL": "user-selected", "OLLAMA_THINK": "true"}
+    assert load_settings(path, environ=env) == {"MAIN_MODEL": "model-a", "MAI_ANSWER_QUALITY_REVIEW": "true"}
+    assert env == {"MAIN_MODEL": "user-selected", "MAI_ANSWER_QUALITY_REVIEW": "true"}
 
 
 @pytest.mark.parametrize("content,error", [
