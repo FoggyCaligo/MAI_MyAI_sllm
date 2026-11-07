@@ -105,16 +105,15 @@ try {
             $source -split "\r?\n" | ForEach-Object {
                 if ($_ -match '^OWNER_USERS=') { 'OWNER_USERS=' + $ownerJson }
                 elseif ($_ -match '^TRIAL_USERS=') { 'TRIAL_USERS=[]' }
-                elseif ($_ -match '^TAILSCALE_FUNNEL=') { 'TAILSCALE_FUNNEL=false' }
                 else { $_ }
             }
         )
         $lines += 'MAIN_MODEL=' + $model
         [System.IO.File]::WriteAllText($envPath, ($lines -join [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host 'Created .env: local-only, Trial disabled, Funnel disabled, vision enabled.'
+        Write-Host 'Created .env: Trial disabled, vision enabled. Hosting provider follows settings.yaml (Tailscale default).';
     }
     else {
-        Write-Host 'Existing .env preserved; no login, model, or Funnel settings changed.'
+        Write-Host 'Existing .env preserved; no login, model, or hosting provider settings changed.'
     }
 
     Write-Host ''
@@ -122,7 +121,7 @@ try {
     Write-Host "To start (in a non-administrator terminal):"
     Write-Host "  cd '$InstallPath'"
     Write-Host '  .\.venv\Scripts\python.exe run_server.py'
-    Write-Host 'Tailscale/Funnel is intentionally NOT enabled by this installer.'
+    Write-Host 'Remote hosting follows settings.yaml (Tailscale default); install/login to Tailscale separately.'
 }
 finally {
     Pop-Location
