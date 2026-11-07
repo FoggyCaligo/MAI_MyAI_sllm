@@ -1,62 +1,54 @@
-# KV 캐시 교체 실험 — dev 기준 독립 브랜치
+# dev2: 단일 모델 + 역할별 KV 캐시 교체 실험
 
-이 브랜치는 **현재 dev**에서 만들었다. 기존 dev 및 dev2 코드를 변경하지 않는다.
+이 브랜치는 `dev2`를 기반으로 한 단일 모델 실험이다. 메인 모델과 숫자/사실 검증은 **동일한 llama.cpp GGUF 가중치 한 벌**을 순차적으로 사용한다. 모델 크기는 9B나 12B 등으로 고정하지 않는다.
 
-## 목표
+## 동작
 
-하나의 동일한 llama.cpp 모델 가중치를 GPU에 유지하면서 세 역할의
-프롬프트/KV 캐시를 순차 교체한다.
+- **main**: 모델에 도구와 대화 문맥을 전달해 임시답변 생성
+- **numeric**: 숫자 검사에서 별도의 언어모델 검토가 필요한 경우 숫자 전용 프롬프트와 체크포인트로 전환
+- **final**: 최종 사실검증 프롬프트/체크포인트로 전환
+- **REJECT**: 다음 main 호출 시 기존 main KV 캐시를 복원하고 도구/피드백을 추가해 계속 실행
+- **ACCEPT/오류**: 실행별 체크포인트 파일을 삭제하려 시도 (전원 차단으로 남은 파일은 수동 정리)
 
-1. main: 작업, 도구 호출, 임시답변 생성
-2. numeric: 숫자 검증
-3. final: 전체 사실 검증
-4. REJECT가 나면 main 체크포인트를 복원한 다음 최신 교정 피드백 처리
+메인/숫자/사실 검증의 구조화 응답 및 실제 검증 프롬프트 자체는 변경하지 않는다. 세 역할이 같은 모델 가중치를 공유해도 **서로 다른 프롬프트와 KV 상태**를 갖는다. 매번 입력 Prefix가 동일해야 기존 KV가 활용되며 다른 부분은 다시 Prefill한다. 호출 횟수나 연산량이 자동으로 감소하지는 않는다.
 
-복원 후 이어지는 요청이 저장 당시의 프롬프트 토큰 Prefix와 동일해야
-실제 Prefill 재사용 이점이 있다. 저장 당시의 KV 상태에서 임의의
-새 프롬프트를 이어붙이는 것은 안전하지 않다.
+## 구현 경계
 
-## 현재 구현 수준
+- `MAI_EXPERIMENTAL_SLOT_CACHE=true` 및 `LLM_BACKEND=llamacpp`일 때만 활성화한다.
+- `VERIFIER_MODEL`이 없거나 `MAIN_MODEL`과 같아야 한다. 다른 모델이면 명시적 오류로 종료한다.
+- 같은 GGUF alias로 단일 llama.cpp 서버를 `--parallel 1`, `--slot-save-path`, `--cache-prompt`과 함께 실행한다.
+- 요청의 `id_slot=0`, `cache_prompt=true`를 강제한다. 실행 시작에 슬롯 0만 있고 유휴 상태인지, `/v1/models` alias가 일치하는지 확인한다.
+- MAI 사용자 턴 사이에서는 비동기 잠금을 사용해 순차 실행한다. 이전 메모리 후처리가 남아 있으면 기다린다.
+- 서버 외부에서 같은 포트로 요청을 보내면 독점이 깨질 수 있다. 실험 중 다른 클라이언트가 llama.cpp 8080 포트에 연결되지 않게 한다.
+- 실행별 캐시 파일은 민감한 문맥의 표현을 포함할 수 있어 git에 포함하지 않는다. 임의 삭제 전에 서버 요청이 종료됐는지 확인한다.
+- Verifier 컨텍스트를 인위적으로 32K로 제한하는 기능은 이 브랜치에 포함하지 않는다.
 
-- `mai/llm/slot_cache.py`: llama.cpp 슬롯 save/restore/erase용 HTTP
-  클라이언트, main/numeric/final 별 체크포인트, 역할 전환 상태기계
-- `tests/test_slot_cache.py`: 가짜 llama.cpp 서버를 이용한 성공 및
-  실패 시나리오
-- 기본 MAI AgentLoop에는 **연결되지 않음**.
-  지금은 `LLM_BACKEND=ollama`의 동작이 바뀌지 않는다.
+## Portable 실행
 
-## 실험을 켜기 전에 필요한 것
+Windows에서는 이전에 준비한 llama.cpp Vulkan 런타임 및 해당 모델 GGUF가 필요하다.
 
-- llama.cpp 버전에서 슬롯 API 지원 확인
-- 별도의 하나의 슬롯과 모델 고정 (`--parallel 1` 등)
-- `--slot-save-path`를 안전한 전용 디렉터리로 설정
-- 서버에 대한 다른 요청 차단 및 모델/토크나이저/채팅 템플릿 불변 조건 확인
-- 저장 및 복원 API 호출의 타이밍: **추론 요청이 완전히 종료된 이후**
-- 각 요청을 정확히 같은 슬롯으로 보내고 다른 요청의 끼어들기를 막는
-  서버 측 슬롯 affinity 검증
-- 캐시 파일의 계정/세션 격리, 작업 종료 후 삭제 및 장애 복구
-- llama.cpp와 Ollama 간 자동 백엔드 전환 없음
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1 -Backend llamacpp -GgufPath ./portable/portable-models/gguf/model.gguf -ModelAlias local-model -SlotCache
+```
 
-현재 `LlamaCppAdapter`는 OpenAI 호환 `/v1/chat/completions`을 사용하며
-슬롯 ID 고정 및 요청 간 독점 예약을 보장하지 않는다. 이 조건을
-구현·검증하기 전에는 실제 AgentLoop에 캐시 저장/복원을 연결하면
-다른 요청의 캐시를 덮을 수 있다.
+이 실행기는 `MAI_EXPERIMENTAL_SLOT_CACHE`, `MAI_SLOT_CACHE_DIR`, `MAIN_MODEL`, `VERIFIER_MODEL`을 단일 모델로 설정한다. 일반 `dev2`의 `LLM_BACKEND=ollama` 실행은 기존대로 동작하며 캐시 슬롯 기능은 사용하지 않는다.
 
-따라서 본 브랜치의 코드는 **호출 가능한 격리 실험용 구성요소**이며,
-실제 MAI 응답 시간/VRAM 개선이 입증된 기능으로 간주하지 않는다.
+일반 PC 직접 실행에서는 llama.cpp를 별도로 **동일한 인수로 시작**하고, 다음 환경변수를 지정해야 한다.
+
+```powershell
+$env:LLM_BACKEND = "llamacpp"
+$env:MAI_EXPERIMENTAL_SLOT_CACHE = "true"
+$env:MAI_SLOT_CACHE_DIR = "C:\\MAI-KV-CACHE"
+$env:MAIN_MODEL = "local-model"
+$env:VERIFIER_MODEL = "local-model"
+python run_server.py
+```
 
 ## 검증
 
 ```bash
-python -m pytest -q tests/test_slot_cache.py
+python -m pytest -q tests/test_slot_cache.py tests/test_role_cache_runtime.py
 python -m pytest -q
 ```
 
-실측 시에는 다음을 함께 기록한다: CPU/GPU 메모리 사용량, 슬롯
-save_ms/restore_ms, Prefill 토큰 수, 전체 ACCEPT 소요시간,
-REJECT 후 복귀시간 및 실패율.
-
-## 안전
-
-슬롯 캐시 저장 파일에는 사용자의 입력에서 파생된 민감한 표현이
-포함될 수 있으므로 외부 공유·Git 커밋·무기한 보관을 금지한다.
+현재 구현은 코드 및 가짜 HTTP 서버 수준의 실험으로, 실제 Windows Vulkan llama.cpp 및 12B 실행에서 정확도·지연·메모리 안정성이 확인된 것은 아니다. 이전 PC 강제 종료 원인도 아직 확인되지 않았다. **먼저 9B·짧은 질문으로 시험한 후** 최대 VRAM, CPU/RAM, 저장/복원 시간, 입력 Prefix 재사용률을 기록하는 편이 안전하다.
