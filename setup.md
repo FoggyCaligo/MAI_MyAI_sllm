@@ -1,6 +1,6 @@
-# MAI 설치 및 설정 가이드 (Windows)
+# MAI 설치 및 설정 가이드 (Windows / Ubuntu 24.04)
 
-MAI를 처음 설치하는 사용자를 위한 문서임. **1장 공통 준비 → 2장 설치 방식 하나 선택 → 3장 선택형 고급 설정** 순서로 진행함. Python·Ollama가 이미 설치되어 있는지와 관계없이, Portable 방식은 별도의 저장 공간에 런타임을 구성함.
+MAI를 처음 설치하는 사용자를 위한 문서. **1장 공통 설정 → 2장 실행 환경 준비 → 3장 고급 설정 → 4장 점검·업데이트** 순서로 진행한다. Windows와 Ubuntu 24.04는 OS별 네이티브 런타임이 필요하다. Portable의 모델·설정·데이터는 외장 SSD에 유지하되 Linux 실행 바이너리와 Python 패키지는 Linux 호스트 캐시에 설치한다. 현재 dev는 llama.cpp와 Ollama 백엔드를 모두 포함하며, 아래에서는 GGUF를 사용하는 llama.cpp Portable 경로를 우선 설명한다.
 
 > 중요: 설치와 사용 중 파일 변경·삭제 또는 터미널 실행이 가능하므로 데이터 백업 권장. 설치 스크립트는 다운로드한 실행 파일을 설치·실행하므로 내용을 먼저 확인할 것. 비밀번호 및 인증 토큰을 Git에 올리지 말 것.
 
@@ -48,7 +48,7 @@ cp .env.example .env
 
 **A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VERIFIER_MODEL`은 검증 전용 모델이며 기본값은 `LiquidAI/lfm2.5-2.6b:q4_k_m`다. 해당 키를 생략하면 기존처럼 본 모델로 검증한다. `VISION_MODEL`은 별도 이미지 인식 도구용 선택 설정이다. Ollama의 메인 모델에 `vision` capability가 있을 때 업로드 이미지 첨부는 메인 모델에 직접 전달되며, 그 외에는 기존 `VISION_MODEL`의 `image_analyze` 도구를 활용한다. 전체 텍스트 MAI 실행에는 이미지 모델이 필수는 아니다.
 
-**Verifier 품질 검토:** 기본 `MAI_ANSWER_QUALITY_REVIEW=false`는 사실 검증 통과 후 요청 부합도·정보 충족도를 별도 검토함. 추가 모델 호출로 응답이 느려질 수 있음. 기존 `.env`·환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 그 값이 우선하므로 변경 후 확인할 것.
+**Verifier 품질 검토:** `MAI_ANSWER_QUALITY_REVIEW=false`는 추가 응답 품질 검토를 비활성화하는 설정이다. 기본 사실·숫자 검증과는 다른 설정이며, 메인·Verifier 프롬프트를 전환하지 않는다. 기존 `.env`·환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 그 값이 우선하므로 변경 후 확인할 것.
 
 **B. 동작·성능 조정 설정:** `OLLAMA_REQUEST_TIMEOUT_SECONDS`, `OLLAMA_AGENT_MAX_OUTPUT_TOKENS`, `AGENT_MAX_IDENTICAL_CALLS`, `AGENT_MAX_IDENTICAL_FAILURES`, `AGENT_MAX_NO_PROGRESS_ROUNDS`, `MAX_INLINE_TOOL_RESULT_CHARS`, `SESSION_HISTORY_MESSAGES`, `MAI_ANSWER_QUALITY_REVIEW`, `VOICE_*` 중 음성 동작 파라미터. 값을 잘못 지정하면 오류가 날 수 있으므로 '임의 값이어도 무조건 실행됨'이라는 의미가 아님. 기본값을 유지하면 수동 입력은 필요하지 않음.
 
@@ -67,7 +67,7 @@ cp .env.example .env
 
 MAI는 Verifier의 컨텍스트 길이를 별도로 제한하지 않는다. 큰 컨텍스트에서는 GPU 메모리가 부족해 CPU 오프로딩이 발생할 수 있으므로 `ollama ps`를 확인한다. LFM2.5-2.6B는 메모리 부담을 낮추기 위한 기본 Verifier 모델이며, 기존 `.env` 또는 환경변수의 `VERIFIER_MODEL`이 우선한다.
 
-## 2. 기본 설치: 아래 두 방식 중 하나만 선택
+## 2. 실행 환경 선택: 일반 설치 또는 Portable
 
 ### 2-A. 일반 설치 — Python과 Ollama를 PC에 설치
 
@@ -106,6 +106,133 @@ python run_server.py
 ### 2-B. 외장 SSD Portable 설치
 
 준비·실행·모델 선택 복사·Ubuntu·백업은 [Portable 안내](portable/README.md) 한곳에서 관리한다. 일반 설치와 달리 `portable/` 아래 별도 실행 환경을 사용한다. 계정과 Tailscale·음성 설정은 아래 공통 안내를 따른다.
+
+
+### 2-C. llama.cpp GGUF Portable — Windows와 Ubuntu 공통 설정
+
+**현재 권장 Portable 실행 경로:** MAI 소스·설정·GGUF·DB는 동일한 SSD에 놓고, **Windows는 Windows 실행 파일**, **Linux는 Linux 실행 파일**로 llama.cpp 라우터를 실행한다. 이 실행 방식은 **서버 하나(127.0.0.1:8080)에서 메인·Verifier GGUF를 각각 라우팅**한다. 라우터의 최대 상주 모델 수 기본값은 2이고, 실제 동시 VRAM 적재는 메모리 상태에 따라 달라진다. 기존 Agent·Verifier 프롬프트 및 검증 흐름은 유지한다.
+
+**모델 경로는 명령 인자 대신 프로젝트 루트의 `settings.yaml`에 둔다.** 현재 파일은 다음 구성을 가리킨다.
+
+```yaml
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma-4-12b-it-qat-q4_0.gguf"
+LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf"
+LLAMACPP_MAIN_VISION: true
+LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf"
+```
+
+상대 경로는 프로젝트 루트 기준이다. 메인 모델·projector의 조합이 실제로 이미지 입력을 처리하는지는 llama.cpp 버전과 모델로 확인해야 한다. **파일 경로·GGUF 헤더 검사만으로 비전 추론 성공은 증명되지 않는다.**
+
+#### 2-C-1. Hugging Face에서 GGUF 내려받기 (실사용 예시)
+
+모델 저장소 및 파일명은 각 제작자의 Hugging Face 파일 목록과 대조한다. 아래는 **Gemma 4 QAT Q4_0 메인 모델, 전용 mmproj, LFM2.5 Q4_K_M Verifier**를 현재 `settings.yaml` 경로에 다운로드하는 예시다.
+
+1. Python 3.11 이상이 설치된 인터넷 연결 PC에서 Hugging Face CLI 준비:
+
+```bash
+python -m pip install -U "huggingface_hub[cli]"
+hf --help
+```
+
+2. 프로젝트 **루트**에서 다음 명령 실행 (Windows Git Bash 또는 Linux Bash):
+
+```bash
+hf download google/gemma-4-12B-it-qat-q4_0-gguf gemma-4-12b-it-qat-q4_0.gguf --local-dir "./portable/portable-models/gguf"
+hf download google/gemma-4-12B-it-qat-q4_0-gguf mmproj-gemma-4-12b-it-qat-q4_0.gguf --local-dir "./portable/portable-models/gguf"
+hf download LiquidAI/LFM2.5-2.6B-GGUF LFM2.5-2.6B-Q4_K_M.gguf --local-dir "./portable/portable-models/gguf"
+```
+
+공식 파일 확인: [Gemma 4 GGUF](https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/tree/main), [LFM GGUF](https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/tree/main). 접근 승인이 필요한 저장소에서는 `hf auth login` 후 이용 약관·라이선스 조건에 따라 다운로드한다. **다운로드 명령은 모델 파일만 가져오며, llama.cpp 바이너리나 MAI Python 패키지를 설치하지 않는다.** 저장 경로·파일명은 `settings.yaml`과 정확히 일치해야 한다.
+
+3. 다운로드 확인:
+
+```bash
+ls -lh portable/portable-models/gguf/*.gguf
+```
+
+Windows PowerShell에서는 `Get-ChildItem ./portable/portable-models/gguf/*.gguf`를 쓴다. GGUF 전체 파일 크기, 디스크 공간, 배포자 파일 해시를 함께 확인하는 것이 좋다. **Main GGUF와 mmproj는 한 쌍으로 관리**한다. 모델 교체 때는 두 파일의 호환성을 다시 검증한다.
+
+#### 2-C-2. Windows llama.cpp Portable 설치·실행
+
+현재 설치기는 Ollama 지원을 병행하므로 **llama.cpp만 실행하더라도 준비 단계에서 Ollama CLI 및 일부 Ollama Python 패키지를 설치할 수 있다**. Ollama 프로그램을 **실행**할 필요는 없다. 이는 향후 단일 백엔드 정리와 구분되는 현재의 설치 동작이다.
+
+Windows PowerShell에서 프로젝트 루트 기준:
+
+```powershell
+python portable/resolve_portable_sources.py --include-llamacpp
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable-llamacpp-router.ps1
+```
+
+`portable-sources.json`이 이미 있으면 첫 번째 명령은 덮어쓰지 않고 실패한다. 기존 매니페스트를 보존한 후 새로 생성하거나 기존 매니페스트에 `llamacpp` 항목이 유효한지 점검한다. `-InstallChromium`은 브라우저 도구를 사용할 때 설치 명령에 추가한다. 메인과 Verifier의 GGUF가 준비되기 전에는 라우터가 기동되지 않는다.
+
+#### 2-C-3. Ubuntu 24.04 Linux llama.cpp Portable 설치·실행
+
+지원 기준은 **Ubuntu 24.04 x86-64**다. 외장 SSD에 동일한 저장소·GGUF·설정·DB를 유지하되 Linux 네이티브 Python·llama.cpp 실행 파일과 의존성은 **Linux PC의 호스트 캐시**에 준비한다. Windows의 `python.exe` 또는 `llama-server.exe`를 Linux에서 재사용하지 않는다.
+
+먼저 인터넷이 되는 PC의 프로젝트 루트에서 Linux용 릴리스 URL·발행자 SHA-256을 고정한 매니페스트 생성:
+
+```bash
+python3 portable/resolve_portable_sources_linux.py --include-llamacpp
+```
+
+기존 `portable/portable-sources-linux.json`이 있다면 **덮어쓰지 않으므로**, 내용을 보존하고 갱신된 릴리스를 선택해야 한다. 이후 **실제 Ubuntu 24.04 대상 PC에서** 실행:
+
+```bash
+bash portable/prepare-portable-linux.sh --with-llamacpp
+bash portable/start-portable-llamacpp-linux.sh
+```
+
+선택적 준비 옵션: `--install-vulkan`(호스트 AMD/Intel Mesa Vulkan 패키지), `--install-chromium`(Playwright 브라우저 파일). 시스템 드라이버·권한 및 추가 Chromium Linux 시스템 라이브러리가 필요할 수 있다. 준비 스크립트는 `check-linux-gpu.py --require` 검사에 실패하면 중단한다. 첫 실행은 호스트 캐시 준비를 필요로 하므로 **미준비 Linux PC에 SSD를 꽂는 것만으로 즉시 실행된다고 보장하지 않는다.**
+
+**도구 지원 경계:** Linux 로컬 `terminal_run`은 `/bin/sh`를 사용하며 파일·코드·CSV·문서 도구는 OS 독립 Python 경로를 쓴다. 반면 **Linux를 원격 작업 대상 PC로 연결하는 워커는 아직 Windows PowerShell 전용**이다. 실제 Linux 브라우저·GPU 비전·음성·외장 SSD의 SQLite 쓰기 권한은 대상 PC에서 별도 점검한다. [Linux 도구 감사](docs/linux-tool-audit.md)를 참조한다.
+
+#### 2-C-4. llama.cpp 업데이트 방법 (OS별 공통 원칙)
+
+llama.cpp는 MAI 코드나 GGUF 파일과 **독립적으로 교체 가능한 네이티브 추론 엔진**이다. 안전한 갱신 순서는 **MAI 종료 → 기존 실행 환경과 매니페스트 백업 → 새 릴리스의 발행자 SHA-256으로 매니페스트 고정 → 새 바이너리 설치 → 실행·추론·비전·Verifier 테스트 → 실패 시 원복**이다. 진행 중인 MAI 서버/라우터를 종료하고 DB 백업부터 진행한다.
+
+**Windows — 기존 런타임을 보존한 후 갱신**
+
+1. `portable/portable-sources.json`을 백업한다. 기존 파일을 덮어쓰지 않고 보존한 뒤 아래 명령으로 새로운 매니페스트를 만든다.
+2. 변경된 llama.cpp 릴리스는 기존 설치 영수증과 다르므로 **기존 `portable/portable-runtimes/llamacpp` 디렉터리를 다른 이름으로 옮겨 보존**해야 한다. 현재 설치기는 해시가 다른 기존 런타임을 자동 덮어쓰지 않는다.
+3. 새 매니페스트로 설치기를 실행하고 `llama-server.exe`가 존재하는지 확인한다.
+
+```powershell
+# MAI 및 llama.cpp 라우터를 완전히 종료한 후
+Copy-Item ./portable/portable-sources.json ./portable/portable-sources.previous.json
+Move-Item ./portable/portable-sources.json ./portable/portable-sources.saved.json
+python portable/resolve_portable_sources.py --include-llamacpp
+
+# 현재 버전의 llama.cpp만 보존해두고 다른 런타임은 그대로 재사용
+Move-Item ./portable/portable-runtimes/llamacpp ./portable/portable-runtimes/llamacpp.before-update
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
+./portable/portable-runtimes/llamacpp/llama-server.exe --version
+```
+
+`llamacpp.before-update`가 이미 있다면 다른 백업 이름을 지정한다. 기존 `portable-sources.saved.json`이 이미 있으면 안전한 다른 이름으로 보존한다. **매니페스트에 Python·uv·Ollama 출처까지 바뀌었다면** 현재 설치기는 해당 항목의 영수증 불일치도 거부하므로, 이 경우에는 기존 매니페스트의 **검증된 다른 런타임 항목을 유지하면서 llama.cpp 항목만 새 릴리스 값으로 교체**하는 편이 안전하다. 단, 출처 URL·SHA-256은 반드시 GitHub가 게시한 값이어야 한다. 모델 GGUF는 엔진 갱신 때문에 재다운로드할 필요는 없지만 호환성은 재검증한다.
+
+**Ubuntu — 호스트 캐시의 Linux llama.cpp만 보존 후 갱신**
+
+Linux 설치 준비 스크립트도 SHA-256이 다른 기존 llama.cpp 런타임을 자동 교체하지 않는다. 기존 매니페스트를 백업하고 새 URL/공식 해시로 `llamacpp` 항목을 갱신한 뒤, **호스트 캐시 안의 해당 llama.cpp 디렉터리만 백업**한다.
+
+```bash
+# MAI와 라우터 종료, 매니페스트의 새 llamacpp URL/SHA-256을 검증한 후
+root="$(pwd -P)"
+id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
+cache_base="$(printf '%s' "$HOME/.cache")"
+if [ -n "$XDG_CACHE_HOME" ]; then cache_base="$XDG_CACHE_HOME"; fi
+cache="$cache_base/mai-portable/$id"
+mv "$cache/llamacpp" "$cache/llamacpp.before-update"
+bash portable/prepare-portable-linux.sh --with-llamacpp
+"$cache/llamacpp/bin/llama-server" --version
+```
+
+일부 셸은 `XDG_CACHE_HOME` 미설정 시 빈 문자열을 사용하며, 사용자는 호스트별 권한과 설치 디렉터리를 확인해야 한다. `llamacpp.before-update`가 있으면 백업 이름을 변경한다. Linux 매니페스트의 Python·uv·Ollama 릴리스 항목도 바뀌면 해당 캐시의 영수증 불일치로 설치가 중단될 수 있으므로 원본 항목을 유지한 채 `llamacpp` 항목만 갱신한다.
+
+**갱신 후 검사 (Windows/Linux 공통):** `/v1/models`에서 `mai-main`과 `mai-verifier`가 표시되는지, 실제 메인 응답·도구 호출·Gemma 4 이미지 입력·LFM Verifier JSON 구조화 검증이 성공하는지 확인한다. 모델 목록 등록만으로 추론 성공을 확정할 수 없다. 문제가 생기면 MAI 종료 후 이전 바이너리와 이전 매니페스트를 복원한다. llama.cpp 업데이트는 GGUF와 mmproj 형식을 새 버전이 지원하는지 확인하며 진행한다.
+
+**현재 상태:** Windows 및 Linux 실행 스크립트가 별개인 이유는 OS 네이티브 바이너리·셸이 다르기 때문이다. llama.cpp를 공통 추론 백엔드로 통일하더라도 이 **OS별 런처 구분은 필요**하다. 사용자는 하나의 `setup.md`에서 통합 관리하고, 엔진과 GGUF 경로는 `settings.yaml` 및 Portable 매니페스트를 통해 관리할 수 있다.
+
 
 ## 3. 고급 설정 (선택)
 
