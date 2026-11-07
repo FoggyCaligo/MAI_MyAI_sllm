@@ -14,7 +14,7 @@ Copy-Item .env.example .env
 `.env`의 `OWNER_USERS`에서 `user_pw`를 개인 비밀번호로 변경한다.
 기존 DB가 있다면 사용자의 `db_id`를 변경하지 않는다.
 시험 계정을 사용하지 않으면 `TRIAL_USERS=[]`로 지정하고,
-외부 공개가 필요 없다면 `TAILSCALE_FUNNEL=false`로 설정한다.
+외부 공개를 원하지 않는다면 `settings.yaml`의 `REMOTE_HOSTING_PROVIDER: none`으로 변경한다. 기본값은 `tailscale`이며 Tailscale 설치·로그인·Funnel 허용이 선행되어야 실제 공개가 가능하다.
 비밀번호, 개인 DB, API 토큰은 Git에 커밋하지 않는다.
 
 ## 모델
@@ -41,10 +41,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps
 새 llama.cpp 릴리스로 교체해도 GGUF와 DB는 유지된다.
 기존 엔진은 `-PreserveAndReinstallExisting`로 백업 후 교체할 수 있다.
 
-서버는 `http://127.0.0.1:8000`에서 접근한다.
+서버는 `http://127.0.0.1:8000`에서 접근한다. 위의 모델 경로는 **실제 보유한 GGUF 파일로 교체**해야 한다. `sha256-...` 파일은 Ollama 저장소의 Blob일 수 있으므로, GGUF 헤더가 있는 모델 데이터인지 먼저 확인한 뒤 복사해야 한다. 단일 GGUF 파일이 아닌 모델 구성은 별도로 확인한다.
+
+## 원격 웹 호스팅: Tailscale(기본) / Cloudflare
+
+```yaml
+REMOTE_HOSTING_PROVIDER: tailscale     # tailscale | cloudflare | none
+```
+
+Tailscale Funnel은 호스트에 Tailscale을 설치·로그인하고 Funnel 권한을 허용해야 공개된다. `cloudflare`를 선택하려면 호스트에 cloudflared를 설치하고, Cloudflare Dashboard에서 관리형 Named Tunnel 및 `http://127.0.0.1:8000`으로 연결할 공개 호스트명을 만든 후 `.env`에 `CLOUDFLARE_TUNNEL_TOKEN`을 지정한다. `none`은 이번 MAI 프로세스의 원격 공개 실행을 건너뛴다.
+
+기존 `TAILSCALE_FUNNEL`은 사용하지 않는 구형 설정이므로 `.env`에 남아 있다면 삭제할 수 있다. Tailscale Funnel은 MAI 종료 이후에도 유지될 수 있으므로 다른 제공자로 전환 시 `tailscale funnel status`로 기존 공개 경로를 확인하고 필요한 경우 명시적으로 해제한다. 자세한 내용은 [한국어 원격 호스팅 설정](docs/remote-hosting.md)을 참고한다.
+
+호스팅과 원격 PC 명령 실행 세션은 별개다. 원격 PC 연결 시간 정책은 각 브랜치의 원격 세션 코드를 따른다.
 
 ## 실행 제약
 
+- `REMOTE_HOSTING_PROVIDER` 기본값: `tailscale` (`none`/`cloudflare`도 가능)
 - `LLAMACPP_HOST` 기본값: `http://127.0.0.1:8080`
 - 숫자/사실 검증 및 메모리 사실 추출: 같은 모델을 순차 실행
 - `MAI_MODEL_REQUEST_TIMEOUT_SECONDS`: 추론 요청 제한 시간
