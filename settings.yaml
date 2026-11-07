@@ -1,7 +1,7 @@
 # dev2: 포터블 단일 모델 전용. 엔진은 llama.cpp 하나이며 모델은 하나만 선택한다.
-# MAIN_MODEL은 llama.cpp --alias 와 일치한다. GGUF 파일은 실행기 -GgufPath로 지정.
+# MODEL_GGUF_PATH는 실제 GGUF 모델 파일 경로다. llama.cpp 내부 alias는 mai-model로 고정.
 # 일반 환경변수와 .env가 이 파일보다 우선한다.
-MAIN_MODEL: "mai-model"
+MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
 LLAMACPP_HOST: "http://127.0.0.1:8080"
 MAI_MODEL_REQUEST_TIMEOUT_SECONDS: 500
 
