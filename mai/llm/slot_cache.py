@@ -9,12 +9,16 @@ Ollama does not expose this endpoint.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 import re
 from typing import Any, Mapping
 
 import httpx
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 class CacheRole(str, Enum):
@@ -101,7 +105,7 @@ class LlamaCppSlotCacheManager:
         url = f"{self.base_url}/slots/{self.slot_id}?action={action}"
         try:
             if self._client is None:
-                async with httpx.AsyncClient(timeout=60) as client:
+                async with httpx.AsyncClient(timeout=300) as client:
                     response = await client.post(url, json=body or {})
             else:
                 response = await self._client.post(url, json=body or {})
@@ -132,6 +136,7 @@ class CacheRoleSwitcher:
         async with self._transition_lock:
             if target == self.active:
                 return
+            started = time.perf_counter()
             previous = self.active
             if previous is not None:
                 # Save before touching the active cache. A failure leaves
@@ -145,3 +150,6 @@ class CacheRoleSwitcher:
             else:
                 await self.manager.erase_active()
             self.active = target
+            _LOG.info("MAI role KV cache switched from=%s to=%s elapsed_ms=%d",
+                      previous.value if previous else "empty", target.value,
+                      int((time.perf_counter() - started) * 1000))
