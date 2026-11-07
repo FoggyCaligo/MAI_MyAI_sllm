@@ -36,7 +36,7 @@ root = Path(os.environ["MAI_LINUX_MANIFEST"])
 data = json.loads(root.read_text(encoding="utf-8"))
 if data.get("schema_version") != 1 or data.get("target") != "ubuntu-24.04-amd64":
     raise ValueError("Linux manifest schema or target mismatch")
-for name in ("python", "uv", "ollama"):
+for name in ("python", "uv", "llamacpp"):
     entry = data.get(name)
     if not isinstance(entry, dict) or not isinstance(entry.get("url"), str) or not isinstance(entry.get("sha256"), str):
         raise ValueError(f"Missing Linux source manifest entry: {name}")
@@ -85,19 +85,18 @@ install_archive() {
     mkdir -p "$staging/runtime/bin"
     cp -- "$exe" "$staging/runtime/bin/uv"
     chmod +x "$staging/runtime/bin/uv"
-  elif [[ "$name" == ollama ]]; then
-    [[ -f "$staging/bin/ollama" ]] || { echo "Missing bin/ollama in archive" >&2; exit 1; }
-    mv -- "$staging/bin" "$staging/runtime-bin"
+  elif [[ "$name" == llamacpp ]]; then
+    server="$(find "$staging" -type f -name llama-server -print -quit)"
+    [[ -n "$server" ]] || { echo "Missing llama-server in archive" >&2; exit 1; }
     mkdir -p "$staging/runtime"
-    mv -- "$staging/runtime-bin" "$staging/runtime/bin"
-    if [[ -d "$staging/lib" ]]; then mv -- "$staging/lib" "$staging/runtime/lib"; fi
+    cp -a -- "$(dirname "$server")" "$staging/runtime/bin"
   fi
   printf '%s' "$hash" > "$staging/runtime/.mai-source-sha256"
   mv -- "$staging/runtime" "$dest"
   rm -r -- "$staging"
 }
 
-for name in uv python ollama; do
+for name in uv python llamacpp; do
   file="$(fetch "$name")"
   digest="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]]["sha256"].lower())' "$manifest" "$name")"
   install_archive "$name" "$file" "$digest"
@@ -105,15 +104,15 @@ done
 
 python="$cache/python/bin/python3"
 uv="$cache/uv/bin/uv"
-ollama="$cache/ollama/bin/ollama"
+llamacpp="$cache/llamacpp/bin/llama-server"
 "$python" -c 'import sys; assert sys.version_info[:2] == (3,11); print(sys.version)'
 "$uv" --version
-"$ollama" --version
+"$llamacpp" --version
 
 # Never provision a Python environment on NTFS. Linux native packages live in host cache.
 echo "[Linux Portable] Installing MAI Python dependencies"
 UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root"
-"$python" -c 'import fastapi, ollama, uvicorn, playwright, mai'
+"$python" -c 'import fastapi, uvicorn, playwright, mai'
 if [[ "${1:-}" == "--install-chromium" ]]; then
   export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
   "$python" -m playwright install chromium
