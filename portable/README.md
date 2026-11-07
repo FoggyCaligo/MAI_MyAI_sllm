@@ -224,3 +224,44 @@ MAI와 모델 서버를 종료하고 **별도 물리 디스크**에 백업한다
 사용자 업로드 이미지를 첨부한 채팅에서 Ollama의 메인 모델이 `vision` capability를 제공하면 원본 이미지 바이트를 모델 메시지에 직접 포함한다. 지원하지 않으면 기존 `VISION_MODEL`의 `image_analyze` 도구 경로를 유지한다. `VISION_MODEL`은 자동 제거하지 않는다. 첨부 이름은 계정별 업로드 디렉터리에서 검증하며 이미지만 직접 전달한다. llama.cpp 백엔드에서는 이 릴리스의 직접 이미지 전송 대신 기존 이미지 도구를 사용한다.
 
 Verifier 기본 태그는 `LiquidAI/lfm2.5-2.6b:q4_k_m`이며, 일반 Ollama에서 `ollama pull LiquidAI/lfm2.5-2.6b:q4_k_m`로 먼저 다운로드할 수 있다. 외장 SSD에는 `-CopyLocalModels -Models "LiquidAI/lfm2.5-2.6b:q4_k_m"` 또는 `-PullModels`로 추가한다. 이전 개인 매니페스트에 남은 모델은 자동 삭제하지 않는다.
+
+
+## Optional llama.cpp router (dev; Ollama remains the default)
+
+This is **opt-in** and does not replace `portable/start-portable.ps1` or change MAI's agent, prompts, verifier stages, and Ollama behavior. Unlike `dev2` slot checkpointing, **no KV save/restore, model-role swapping, or forced single loaded model** is introduced. llama.cpp may hold independent main and verifier GGUF models simultaneously, subject to available RAM/VRAM. The router is one public API server (`127.0.0.1:8080`) and may spawn separate per-model child processes internally.
+
+1. Create the Windows pinned sources manifest **once** (do not overwrite an existing manifest automatically):
+   ```powershell
+   python portable/resolve_portable_sources.py --include-llamacpp
+   ```
+   Review `portable/portable-sources.json` for exact URLs, versions, and publisher checksums. It includes official **Python 3.11, uv, Ollama, and llama.cpp Vulkan Windows x64 release archives**. Ollama is still downloaded by the existing installer even when running llama.cpp; there is no requirement to **start** Ollama in llama.cpp mode. The installer additionally installs MAI and its `pyproject.toml` Python dependencies (and transitive dependencies); `-InstallChromium` downloads Chromium separately. **It does not download GGUF models or mmproj files.**
+2. Run the existing installer (use the previously generated and reviewed manifest):
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
+   ```
+3. Put GGUFs in `portable/portable-models/gguf/`. Download public models with Hugging Face CLI:
+   ```powershell
+   python -m pip install --upgrade huggingface_hub
+   hf download OWNER/REPO MODEL.gguf --local-dir "./portable/portable-models/gguf"
+   ```
+   Replace the placeholder owner/repo and filename with the actual model listing; download any required matching `mmproj` separately.
+4. Start the **optional** single-router launcher (the existing Ollama command stays unchanged):
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable-llamacpp-router.ps1 -MainGgufPath "portable/portable-models/gguf/main.gguf" -VerifierGgufPath "portable/portable-models/gguf/verifier.gguf" -MainMmprojPath "portable/portable-models/gguf/mmproj.gguf"
+   ```
+   Omit `-MainMmprojPath` when the main model has no vision projector. For a separate vision model add `-VisionGgufPath` and its matching `-VisionMmprojPath`; increase `-ModelsMax 3` if all three should be eligible to remain loaded. The launcher generates an untracked `mai-models.generated.ini` in `portable/portable-runtimes/llamacpp/`. It sets **MAIN_MODEL=mai-main**, **VERIFIER_MODEL=mai-verifier**, optionally **VISION_MODEL=mai-vision** and connects all through `LLAMACPP_HOST=http://127.0.0.1:8080`. The main image input uses standard OpenAI `image_url` payloads if `-MainMmprojPath` is supplied.
+   
+   Projector presence is a **configuration assertion**, not proof the selected model supports images; end-to-end image inference must be checked. The verified GGUF magic only confirms the file container format. A router response from `/v1/models` confirms registration, not inference readiness. For main/verifier tool/JSON contracts, conduct an actual end-to-end smoke test.
+   
+   `--models-max 2` means **up to two model instances**; it does not guarantee both stay in GPU memory and may result in memory pressure. Start with shorter contexts (`-ContextSize 8192`) on a 16GB GPU. Roles are separate models, but **verifier behavior and prompts are unchanged**.
+   
+   **Important:** `dev`'s native Ubuntu 24.04 Portable preparation script currently provisions the **Ollama** Linux binary. This new llama.cpp router launcher is **Windows-only until Linux llama.cpp binary provisioning and a native Linux launcher are added and tested**. Do not run a Windows llama-server binary on Linux.
+
+### Regression checks (before merge)
+
+```powershell
+python -m pytest -q tests/test_dev_optional_llamacpp_router.py tests/test_llamacpp_adapter.py tests/test_main_model_image_input.py tests/test_final_grounding_verifier.py tests/test_ollama_adapter.py
+python -m pytest -q
+```
+
+Then verify original Ollama Portable startup is unchanged and llama.cpp mode performs a real main tool call, a structured Verifier review, a main-image request (when configured), and memory extraction. These hardware integration checks have not been run by this change.
