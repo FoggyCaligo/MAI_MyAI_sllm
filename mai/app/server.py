@@ -149,7 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
 
     _runtime = MAIRuntime(
-        model=os.environ.get("MAIN_MODEL", "mai-model"),
+        model="mai-model",
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
