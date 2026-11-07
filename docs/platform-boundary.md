@@ -72,3 +72,21 @@ runtime-specific details.
   credentials, or KV checkpoint files into a repository or Git LFS.
 - Use an independent encrypted backup for long-lived MAI memories and a restore
   procedure. Git alone is not a complete lifetime backup.
+
+## Owner remote-PC session inactivity
+
+An unconnected session keeps its original 600-second setup deadline. Once
+the remote agent first polls, a 180-second liveness lease is refreshed by its
+polls/results. **A separate ten-hour idle-work clock is NOT refreshed by agent
+heartbeats**. It is initially set when the agent connects, then refreshed
+when MAI dispatches a remote operation or receives an authenticated result
+for an outstanding operation. An authenticated web login alone is not work.
+
+The server checks the deadline on every remote operation/poll and runs a
+once-per-minute idle reaper, closing expired sessions and rejecting their
+one-time agent credentials. The next remote session must be created and
+authorized anew. This revokes MAI's remote command authority; it does **not**
+stop the MAI web server, Tailscale Funnel or arbitrary local programs on the
+remote PC.
+
+Check with `python -m pytest -q tests/test_remote_idle_timeout.py`.
