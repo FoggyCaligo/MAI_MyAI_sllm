@@ -14,21 +14,21 @@ def setup_config(tmp_path, models):
     manifest = tmp_path / "portable-sources.json"
     manifest.write_text(json.dumps({"schema_version": 1, "models": models}), encoding="utf-8")
     settings = tmp_path / "settings.yaml"
-    settings.write_text('MAIN_MODEL: "ornith-1.5:9b"\nVISION_MODEL: "gemma4:e4b"\nVERIFIER_MODEL: "qwen3:4b-instruct-2507-q4_K_M"\n', encoding="utf-8")
+    settings.write_text('MAIN_MODEL: "ornith-1.5:9b"\nVISION_MODEL: "gemma4:e4b"\nVERIFIER_MODEL: "LiquidAI/lfm2.5-2.6b:q4_k_m"\n', encoding="utf-8")
     return manifest, settings
 
 
 def test_legacy_manifest_adds_configured_verifier_and_preserves_extra_models(tmp_path):
     manifest, settings = setup_config(tmp_path, ["ornith-1.5:9b", "gemma4:e4b", "extra:1"])
     assert required_models(manifest, settings, environ={}) == [
-        "ornith-1.5:9b", "gemma4:e4b", "extra:1", "qwen3:4b-instruct-2507-q4_K_M",
+        "ornith-1.5:9b", "gemma4:e4b", "extra:1", "LiquidAI/lfm2.5-2.6b:q4_k_m",
     ]
 
 
 def test_old_lfm_manifest_retains_legacy_model_and_includes_current_verifier(tmp_path):
     manifest, settings = setup_config(tmp_path, ["ornith-1.5:9b", "gemma4:e4b", "lfm2.5:8b"])
     assert required_models(manifest, settings, environ={}) == [
-        "ornith-1.5:9b", "gemma4:e4b", "lfm2.5:8b", "qwen3:4b-instruct-2507-q4_K_M",
+        "ornith-1.5:9b", "gemma4:e4b", "lfm2.5:8b", "LiquidAI/lfm2.5-2.6b:q4_k_m",
     ]
 
 
@@ -48,7 +48,7 @@ def test_respects_environment_dotenv_yaml_precedence_and_deduplicates(tmp_path):
     assert json.loads(process.stdout)[-1] == "dotenv:2"
 
 
-@pytest.mark.parametrize("models", [[], "qwen3:4b-instruct-2507-q4_K_M", [None], [""], ["  "]])
+@pytest.mark.parametrize("models", [[], "LiquidAI/lfm2.5-2.6b:q4_k_m", [None], [""], ["  "]])
 def test_invalid_manifest_models_fail(tmp_path, models):
     manifest, settings = setup_config(tmp_path, models)
     with pytest.raises(ValueError):
@@ -64,8 +64,8 @@ def test_invalid_configured_model_fails(tmp_path):
 def test_portable_example_and_windows_source_generator_include_qwen_verifier():
     root = Path(__file__).resolve().parents[1]
     example = json.loads((root / "portable/portable-sources.example.json").read_text(encoding="utf-8"))
-    assert "qwen3:4b-instruct-2507-q4_K_M" in example["models"]
-    assert "LiquidAI/lfm2.5-2.6b:q4_k_m" not in example["models"]
+    assert "LiquidAI/lfm2.5-2.6b:q4_k_m" in example["models"]
+    assert "qwen3:4b-instruct-2507-q4_K_M" not in example["models"]
     # The pinned release resolver must use the same default model tag.
     source = (root / "portable/resolve_portable_sources.py").read_text(encoding="utf-8")
-    assert 'qwen3:4b-instruct-2507-q4_K_M' in source
+    assert 'LiquidAI/lfm2.5-2.6b:q4_k_m' in source
