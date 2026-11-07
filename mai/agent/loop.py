@@ -61,7 +61,13 @@ def _tool_manual_schema(available_names: Sequence[str]) -> dict[str, Any]:
 
 
 
-def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, selected_tools: Sequence[str] = ()) -> None:
+def _insert_tool_catalog(
+    model_history: list[Message],
+    registry: ToolRegistry,
+    selected_tools: Sequence[str] = (),
+    *,
+    codeact_enabled: bool = True,
+) -> None:
     """Expose catalog metadata without exposing unactivated tool schemas."""
     # Catalog names and categories are structural registry metadata.
     # Full parameter schemas are available after explicit activation.
@@ -104,10 +110,11 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, s
                 "content": "Selected native-tool runtime context (JSON): "
                            + json.dumps(selected_contexts, ensure_ascii=False, separators=(",", ":")),
             })
-        model_history.insert(catalog_position + 2, {
-            "role": "system",
-            "content": (
-                "Activated CodeAct bindings (JSON): "
+        if codeact_enabled:
+            model_history.insert(catalog_position + 2, {
+                "role": "system",
+                "content": (
+                    "Activated CodeAct bindings (JSON): "
                 + json.dumps(
                     codeact_bindings(registry, selected_tools),
                     ensure_ascii=False,
@@ -118,8 +125,8 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, s
                   "from the user's requested execution location and the declared runtime context. "
                   "The execution target is structural; do not infer it with text matching. Direct native calls "
                   "remain available during this first CodeAct integration for compatibility."
-            ),
-        })
+                ),
+            })
 
 
 class AgentRuntimeError(RuntimeError):
@@ -223,6 +230,7 @@ class AgentLoop:
         final_verifier: FinalGroundingVerifier | None = None,
         max_semantic_verification_retries: int = 2,
         tool_result_store: ToolResultStore | None = None,
+        codeact_enabled: bool = True,
     ) -> None:
         if max_semantic_verification_retries < 0:
             raise ValueError("max_semantic_verification_retries must be non-negative")
@@ -232,6 +240,7 @@ class AgentLoop:
         self.final_verifier = final_verifier
         self.max_semantic_verification_retries = max_semantic_verification_retries
         self.tool_result_store = tool_result_store
+        self.codeact_enabled = codeact_enabled
 
     async def run(
         self,
@@ -325,13 +334,26 @@ class AgentLoop:
                     name for name in self.registry.names()
                     if name in activated_tool_names
                 ]
-                _insert_tool_catalog(model_history, self.registry, activated_order)
+                _insert_tool_catalog(
+                    model_history,
+                    self.registry,
+                    activated_order,
+                    codeact_enabled=self.codeact_enabled,
+                )
                 active_tools = (
-                    (manual_schema, codeact_schema, *self.registry.native_schemas(activated_order))
+                    (
+                        manual_schema,
+                        *((codeact_schema,) if self.codeact_enabled else ()),
+                        *self.registry.native_schemas(activated_order),
+                    )
                     if activated_order else (manual_schema,)
                 )
                 active_tool_names = frozenset(
-                    {"tool_manual", *(("execute_code",) if activated_order else ()), *activated_order}
+                    {
+                        "tool_manual",
+                        *(("execute_code",) if activated_order and self.codeact_enabled else ()),
+                        *activated_order,
+                    }
                 )
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
