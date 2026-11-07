@@ -2,11 +2,9 @@
 # All network downloads must specify exact source URLs and SHA-256 digests.
 param(
     [Parameter(Mandatory=$true)][string]$Manifest,
-    [switch]$CopyLocalModels,
+    [string]$ModelFile,
     [switch]$InstallChromium,
-    [switch]$PullModels,
-    [switch]$PreserveAndReinstallExisting,
-    [string]$Models
+    [switch]$PreserveAndReinstallExisting
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -102,29 +100,15 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
 
 }
 
-$selectedModels = @()
-if (-not [string]::IsNullOrWhiteSpace($Models)) {
-    $selectedModels = @($Models.Split(','))
-    if (@($selectedModels | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
-        throw '-Models requires non-empty comma-separated model identifiers'
-    }
-}
-if ($selectedModels.Count -gt 0 -and -not $CopyLocalModels) {
-    throw '-Models requires -CopyLocalModels'
-}
-if ($CopyLocalModels -and $PullModels) {
-    throw '-CopyLocalModels and -PullModels cannot be used together'
-}
 $config = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($config.schema_version -ne 1) { throw 'Unsupported portable provisioning manifest version' }
 $runtimes = Join-Path $root 'portable/portable-runtimes'
 New-Item -ItemType Directory -Force -Path $runtimes | Out-Null
 Install-VerifiedArchive $config.uv (Join-Path $runtimes 'uv') 'uv.exe'
 Install-VerifiedArchive $config.python (Join-Path $runtimes 'python') 'python.exe'
-Install-VerifiedArchive $config.ollama (Join-Path $runtimes 'ollama') 'ollama.exe'
-if ($null -ne $config.llamacpp) {
-    Install-VerifiedArchive $config.llamacpp (Join-Path $runtimes 'llamacpp') 'llama-server.exe'
-}
+if ($null -eq $config.llamacpp) { throw 'Manifest must include pinned llama.cpp Vulkan release.' }
+if ($null -ne $config.ollama -or $null -ne $config.models) { throw 'Use a dev2 single-model manifest without Ollama entries.' }
+Install-VerifiedArchive $config.llamacpp (Join-Path $runtimes 'llamacpp') 'llama-server.exe'
 $python = Join-Path $runtimes 'python\python.exe'
 & $python -c 'import sys; print(sys.version)'
 if ($LASTEXITCODE -ne 0) { throw 'Portable Python cannot start' }
@@ -134,66 +118,36 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python cannot start' }
 $uv = Join-Path $runtimes 'uv\uv.exe'
 & $uv pip install --python $python "$root"
 if ($LASTEXITCODE -ne 0) { throw 'MAI dependency installation failed' }
-& $python -c 'import fastapi, ollama, uvicorn, playwright, mai'
+& $python -c 'import fastapi, uvicorn, playwright, mai'
 if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
 if ($InstallChromium) {
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $runtimes 'playwright-browsers'
     & $python -m playwright install chromium
     if ($LASTEXITCODE -ne 0) { throw 'Portable Chromium installation failed' }
 }
-if ($CopyLocalModels) {
-    $sourceModels = if ($env:OLLAMA_MODELS) { $env:OLLAMA_MODELS } else { Join-Path $env:USERPROFILE '.ollama\models' }
-    if (-not (Test-Path -LiteralPath $sourceModels -PathType Container)) {
-        throw "Source Ollama models not found: $sourceModels"
-    }
-    $targetModels = Join-Path $root 'portable/portable-models\ollama'
-    if ($selectedModels.Count -gt 0) {
-        $copyArgs = @('portable/copy_ollama_models.py', '--source', $sourceModels, '--destination', $targetModels)
-        foreach ($model in $selectedModels) {
-            $copyArgs += @('--model', $model)
+# Model weights remain independent from the llama.cpp runtime directory.
+if ($ModelFile) {
+    $sourceFile = (Resolve-Path -LiteralPath $ModelFile -ErrorAction Stop).Path
+    if ([IO.Path]::GetExtension($sourceFile) -ine '.gguf') { throw '-ModelFile must point to a GGUF file.' }
+    $targetDir = Join-Path $root 'portable/portable-models/gguf'
+    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+    $targetFile = Join-Path $targetDir 'active.gguf'
+    if (([IO.Path]::GetFullPath($sourceFile)) -ne ([IO.Path]::GetFullPath($targetFile))) {
+        if (Test-Path -LiteralPath $targetFile -PathType Leaf) {
+            if (-not $PreserveAndReinstallExisting) {
+                throw 'active.gguf already exists. Pass -PreserveAndReinstallExisting to back it up before replacing.'
+            }
+            $backup = "$targetFile.before-portable-$(Get-Date -Format 'yyyyMMddHHmmss')"
+            Move-Item -LiteralPath $targetFile -Destination $backup -ErrorAction Stop
+            Write-Host "Preserved old GGUF: $backup"
         }
-        & $python @copyArgs
-        if ($LASTEXITCODE -ne 0) { throw 'Selective Ollama model copy failed' }
-    } else {
-        if (Test-Path -LiteralPath $targetModels) { throw "Refusing to overwrite existing models: $targetModels" }
-        New-Item -ItemType Directory -Force -Path $targetModels | Out-Null
-        & robocopy $sourceModels $targetModels /E /COPY:DAT /DCOPY:DAT /R:1 /W:1
-        if ($LASTEXITCODE -ge 8) { throw "Model copy failed with robocopy code $LASTEXITCODE" }
-    }
-}
-if ($PullModels) {
-    $requiredModelsJson = & $python 'portable/model_requirements.py' --manifest $manifestPath --settings (Join-Path $root 'settings.yaml')
-    if ($LASTEXITCODE -ne 0) { throw 'Portable Ollama model requirements could not be resolved' }
-    $requiredModels = @($requiredModelsJson | ConvertFrom-Json)
-    if ($requiredModels.Count -eq 0) { throw 'Portable model resolver returned no models' }
-    Write-Host ('Provisioning configured Ollama models: ' + ($requiredModels -join ', '))
-    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue) {
-        throw 'Port 11434 is already in use; stop the existing Ollama service before model provisioning'
-    }
-    $env:OLLAMA_MODELS = Join-Path $root 'portable/portable-models\ollama'
-    New-Item -ItemType Directory -Path $env:OLLAMA_MODELS -Force | Out-Null
-    $ollamaExe = Join-Path $runtimes 'ollama\ollama.exe'
-    $process = Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WorkingDirectory (Split-Path $ollamaExe) -PassThru -NoNewWindow
-    try {
-        $ready = $false
-        for ($attempt = 0; $attempt -lt 50; $attempt++) {
-            if ($process.HasExited) { throw 'Ollama exited before becoming ready' }
-            try {
-                $probe = Invoke-WebRequest -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 -UseBasicParsing
-                if ($probe.StatusCode -eq 200) { $ready = $true; break }
-            } catch [System.Net.WebException] { }
-            Start-Sleep -Milliseconds 500
+        Copy-Item -LiteralPath $sourceFile -Destination $targetFile -ErrorAction Stop
+        if ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath $targetFile -Algorithm SHA256).Hash) {
+            Remove-Item -LiteralPath $targetFile -Force -ErrorAction SilentlyContinue
+            throw 'GGUF copy checksum mismatch'
         }
-        if (-not $ready) { throw 'Ollama service did not start' }
-        foreach ($model in $requiredModels) {
-            & $ollamaExe pull $model
-            if ($LASTEXITCODE -ne 0) { throw "Model pull failed: $model" }
-            & $ollamaExe show $model
-            if ($LASTEXITCODE -ne 0) { throw "Model verification failed: $model" }
-        }
-    } finally {
-        if (-not $process.HasExited) { Stop-Process -Id $process.Id }
     }
 }
 Write-Host "Portable installation prepared under $root"
-Write-Host 'Verify all model tags and run portable/start-portable.ps1; this script does not fabricate missing models.'
+Write-Host 'Verify portable/portable-models/gguf/active.gguf and run portable/start-portable.ps1.'
