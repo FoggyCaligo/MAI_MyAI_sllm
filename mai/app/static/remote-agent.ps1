@@ -60,86 +60,20 @@ function Initialize-MaiRemotePython {
 }
 
 Initialize-MaiRemotePython
+
+# The shared Python agent owns one native registry and browser manager for this
+# authenticated session. PowerShell only provisions the environment; it does
+# not create a fresh Python process for every native.invoke request.
+$env:MAI_REMOTE_SERVER = $Server
+$env:MAI_REMOTE_SESSION = $Session
+$env:MAI_REMOTE_KEY = $Key
 Write-Host 'Connected. Close this PowerShell window or press Ctrl+C to stop accepting work.'
 try {
-    while ($true) {
-        $reply = Invoke-RestMethod -Uri "$Server/remote/agent/$Session/poll" -Method Post -Headers $headers -TimeoutSec 30
-        if ($null -eq $reply.request) { continue }
-        $req = $reply.request
-        $out = @{request_id=$req.request_id;ok=$false}
-        try {
-            $a = $req.arguments
-            $result = $null
-            switch ($req.operation) {
-                'native.invoke' {
-                    # The bootstrap must provision a Python environment containing MAI before
-                    # this operation is dispatched. An absent worker is a real failure.
-                    $python = [Environment]::GetEnvironmentVariable('MAI_REMOTE_PYTHON', 'Process')
-                    if ([string]::IsNullOrWhiteSpace($python)) {
-                        throw 'MAI_REMOTE_PYTHON is not configured; remote Python worker is unavailable'
-                    }
-                    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-                        throw "Remote Python executable is missing: $python"
-                    }
-                    $payload = @{ name = [string]$a.name; arguments = $a.arguments } | ConvertTo-Json -Compress -Depth 40
-                    $psi = New-Object Diagnostics.ProcessStartInfo
-                    $psi.FileName = $python
-                    $psi.Arguments = '-m mai.remote.python_worker'
-                    $psi.UseShellExecute = $false
-                    $psi.RedirectStandardInput = $true
-                    $psi.RedirectStandardOutput = $true
-                    $psi.RedirectStandardError = $true
-                    $psi.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
-                    $psi.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
-                    $psi.CreateNoWindow = $true
-                    $process = New-Object Diagnostics.Process
-                    $process.StartInfo = $psi
-                    if (-not $process.Start()) { throw 'Unable to launch remote Python worker' }
-                    try {
-                        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-                        $stderrTask = $process.StandardError.ReadToEndAsync()
-                        # Windows PowerShell 5.1 uses .NET Framework, whose ProcessStartInfo
-                        # has no StandardInputEncoding property. Send exact UTF-8 bytes
-                        # to the redirected stdin stream instead of using the default
-                        # locale-dependent StreamWriter encoding.
-                        $payloadBytes = [Text.Encoding]::UTF8.GetBytes($payload + "`n")
-                        $stdin = $process.StandardInput.BaseStream
-                        $stdin.Write($payloadBytes, 0, $payloadBytes.Length)
-                        $stdin.Flush()
-                        $stdin.Close()
-                        if (-not $process.WaitForExit(110000)) {
-                            $process.Kill()
-                            throw 'Remote Python worker timed out after 110 seconds'
-                        }
-                        $stdout = $stdoutTask.GetAwaiter().GetResult()
-                        $stderr = $stderrTask.GetAwaiter().GetResult()
-                        if ($process.ExitCode -ne 0) {
-                            throw "Remote Python worker failed (exit $($process.ExitCode)): $stderr"
-                        }
-                        $parsed = $stdout | ConvertFrom-Json
-                        if ($null -eq $parsed.result) {
-                            throw 'Remote Python worker returned no result'
-                        }
-                        $result = $parsed.result
-                    } finally {
-                        $process.Dispose()
-                    }
-                }
-                default { throw "Unsupported operation $($req.operation)" }
-            }
-            $out.ok=$true
-            $out.result=$result
-        } catch {
-            $out.error_type='RemoteAgentCommandError'
-            $out.error=$_.Exception.Message
-        }
-        $json = $out | ConvertTo-Json -Depth 12 -Compress
-        Invoke-RestMethod -Uri "$Server/remote/agent/$Session/result" -Method Post -Headers $headers -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($json)) | Out-Null
+    & $env:MAI_REMOTE_PYTHON -m mai.remote.agent_client
+    if ($LASTEXITCODE -ne 0) {
+        throw "MAI remote agent client exited with status $LASTEXITCODE"
     }
 } finally {
-    try {
-        Invoke-RestMethod -Uri "$Server/remote/agent/$Session" -Method Delete -Headers $headers -TimeoutSec 5 | Out-Null
-    } catch {
-        Write-Warning "Unable to revoke session over network: $($_.Exception.Message)"
-    }
+    Remove-Item Env:MAI_REMOTE_KEY -ErrorAction SilentlyContinue
+    Remove-Item Env:MAI_REMOTE_SESSION -ErrorAction SilentlyContinue
 }
