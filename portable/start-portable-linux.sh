@@ -5,6 +5,9 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo "Linux x86-64 required" >&2; exit 1; }
 source /etc/os-release
 [[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 24.04 ]] || { echo "Ubuntu 24.04 required" >&2; exit 1; }
+# Diagnose hardware Vulkan support before the model runtime is started.
+python3 "$root/portable/check-linux-gpu.py" --require
+
 [[ -f "$root/.env" ]] || { echo "Missing .env at $root" >&2; exit 1; }
 [[ -d "$root/portable/portable-models/ollama/manifests" ]] || { echo "Missing Ollama model manifests on SSD" >&2; exit 1; }
 id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
