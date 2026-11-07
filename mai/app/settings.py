@@ -10,7 +10,7 @@ import yaml
 # The YAML file is deliberately a flat mapping of existing environment-setting names.
 # This keeps the pre-existing typed validation at each consumer intact.
 _ALLOWED_KEYS = frozenset((
-    "MODEL_GGUF_PATH", "LLAMACPP_HOST", "MAI_MODEL_REQUEST_TIMEOUT_SECONDS",
+    "MODEL_GGUF_PATH", "MODEL_MMPROJ_PATH", "LLAMACPP_HOST", "MAI_MODEL_REQUEST_TIMEOUT_SECONDS",
     "AGENT_MAX_IDENTICAL_CALLS", "AGENT_MAX_IDENTICAL_FAILURES",
     "AGENT_MAX_NO_PROGRESS_ROUNDS", "MAX_INLINE_TOOL_RESULT_CHARS",
     "SESSION_HISTORY_MESSAGES", "MAI_ANSWER_QUALITY_REVIEW",
