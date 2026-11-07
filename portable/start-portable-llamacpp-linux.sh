@@ -9,7 +9,7 @@ python3 "$root/portable/check-linux-gpu.py" --require
 [[ -f "$root/.env" ]] || { echo "Missing .env" >&2; exit 1; }
 id="$(printf %s "$root" | sha256sum | cut -c1-24)"
 cache="$HOME/.cache/mai-portable/$id"
-if [[ -n "$XDG_CACHE_HOME" ]]; then cache="$XDG_CACHE_HOME/mai-portable/$id"; fi
+if [[ -n "${XDG_CACHE_HOME:-}" ]]; then cache="$XDG_CACHE_HOME/mai-portable/$id"; fi
 python="$cache/python/bin/python3"
 llama="$cache/llamacpp/bin/llama-server"
 [[ -x "$python" && -x "$llama" ]] || { echo "Run prepare-portable-linux.sh --with-llamacpp first" >&2; exit 1; }
@@ -17,7 +17,7 @@ cd -- "$root"
 if (echo >/dev/tcp/127.0.0.1/8080) >/dev/null 2>&1 || (echo >/dev/tcp/127.0.0.1/8000) >/dev/null 2>&1; then
   echo "Port 8080 or 8000 occupied" >&2; exit 1
 fi
-models_max="$1"
+models_max="${1:-2}"
 if [[ -z "$models_max" ]]; then models_max=2; fi
 case "$models_max" in 1|2|3) ;; *) echo "Usage: bash portable/start-portable-llamacpp-linux.sh [1|2|3]" >&2; exit 2 ;; esac
 mkdir -p "$cache/llamacpp"
@@ -90,7 +90,7 @@ export MEMORY_DB_PATH="$root/data/memory.sqlite3"
 export CHAT_DB_PATH="$root/data/chat.sqlite3"
 export LOG_DB_PATH="$root/data/log.sqlite3"
 export SENTENCE_BREAKER_DB_PATH="$root/data/sentence_breaker.sqlite3"
-export LD_LIBRARY_PATH="$cache/llamacpp/bin:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$cache/llamacpp/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 command -v setsid >/dev/null || { echo "Missing setsid" >&2; exit 1; }
 setsid "$llama" --models-preset "$ini" --models-max "$models_max" --host 127.0.0.1 --port 8080 --jinja &
 router_pid=$!
