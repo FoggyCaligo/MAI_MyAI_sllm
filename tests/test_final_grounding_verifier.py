@@ -46,7 +46,7 @@ class SequenceAdapter:
         return turn(self.contents.pop(0))
 
 
-from mai.agent.verification import _FactualReviewPayload, _QualityReviewPayload, _FactualNumericReviewPayload
+from mai.agent.verification import _FactualReviewPayload, _QualityReviewPayload, _NumericReviewPayload
 
 
 def _kind(request):
@@ -55,8 +55,8 @@ def _kind(request):
         return "factual"
     if schema == _QualityReviewPayload.model_json_schema():
         return "quality"
-    if schema == _FactualNumericReviewPayload.model_json_schema():
-        return "combined"
+    if schema == _NumericReviewPayload.model_json_schema():
+        return "numeric"
     raise AssertionError("unexpected structured review schema")
 
 
@@ -100,8 +100,10 @@ class ReviewerAdapter:
             result = self._quality
             self._quality = None
             return turn(json.dumps(result))
+        if kind == "numeric":
+            return turn(json.dumps({"numeric_verdict": "supported", "reason": "Equivalent to observed evidence."}))
         if kind != "factual":
-            raise AssertionError("legacy reviewer does not supply numeric verdicts")
+            raise AssertionError("unexpected review kind")
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         evidence, alignment, reasons = self.reviews.pop(0)
@@ -119,6 +121,7 @@ class StructuredReviewerAdapter:
         self.reviews = list(reviews)
         self.requests = []
         self._quality = None
+        self._pending_fact = None
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
@@ -127,14 +130,24 @@ class StructuredReviewerAdapter:
             result = self._quality
             self._quality = None
             return turn(json.dumps(result, ensure_ascii=False))
-        if not self.reviews:
-            raise AssertionError("unexpected extra reviewer call")
-        review = dict(self.reviews.pop(0))
+        if kind == "numeric":
+            if not self.reviews:
+                raise AssertionError("unexpected extra numeric reviewer call")
+            self._pending_fact = dict(self.reviews.pop(0))
+            review = self._pending_fact
+            return turn(json.dumps({
+                "numeric_verdict": review.get("numeric_verdict", "supported"),
+                "reason": review.get("numeric_reason", "Equivalent numeric/date evidence."),
+            }, ensure_ascii=False))
         if kind == "quality":
-            return turn(json.dumps(review, ensure_ascii=False))
+            if not self.reviews:
+                raise AssertionError("unexpected extra quality reviewer call")
+            return turn(json.dumps(self.reviews.pop(0), ensure_ascii=False))
+        if not self.reviews and self._pending_fact is None:
+            raise AssertionError("unexpected extra reviewer call")
+        review = self._pending_fact if self._pending_fact is not None else dict(self.reviews.pop(0))
+        self._pending_fact = None
         fact, quality = _split_legacy_review(review)
-        if kind == "combined":
-            fact.update(numeric_verdict=review["numeric_verdict"], numeric_reason=review["numeric_reason"])
         self._quality = quality if fact["evidence_verdict"] == "supported" else None
         return turn(json.dumps(reviewer_payload(fact, request), ensure_ascii=False))
 
@@ -193,7 +206,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 3  # combined rejection, then factual + quality after correction
+    assert len(reviewer.requests) == 4  # numeric + factual rejection, then factual + quality
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     assert rejected not in str(main.requests[1].messages)  # rejected drafts remain quarantined
@@ -257,7 +270,7 @@ def test_evidence_reviewer_unsupported_rejects_and_retries() -> None:
     assert "claim_grounding_failed" in main.requests[1].messages[-1]["content"]
 
 
-def test_numeric_budget_exhaustion_uses_combined_reviews() -> None:
+def test_numeric_budget_exhaustion_uses_independent_reviews() -> None:
     main = SequenceAdapter(["가격은 72,000원입니다."] * 4)
     reviewer = StructuredReviewerAdapter([
         {
@@ -296,7 +309,7 @@ def test_numeric_budget_exhaustion_uses_combined_reviews() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 3
+    assert len(reviewer.requests) == 6  # three numeric and three factual checks
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -506,7 +519,7 @@ def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
     ))
 
     assert result.ok is True
-    assert len(reviewer.requests) == 2  # combined numeric/factual, quality
+    assert len(reviewer.requests) == 3  # numeric, factual, quality
     numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert numeric_payload["flagged_numeric_or_date_values"] == ["2026"]
     assert reviewer.requests[0].response_format["properties"]["numeric_verdict"]
@@ -1105,7 +1118,7 @@ def test_count_review_contract_requires_source_based_recount():
     assert "grouping key" in _FACTUAL_REVIEW_SYSTEM
     assert "reviewer-invented count" in _FACTUAL_REVIEW_SYSTEM
     assert "precise source location" in _FACTUAL_REVIEW_SYSTEM
-    assert "never invent a counter-total" in _NUMERIC_REVIEW_SYSTEM
+    assert "unsupported assumptions" in _NUMERIC_REVIEW_SYSTEM
 
     result = FinalVerificationResult(
         ok=False,
