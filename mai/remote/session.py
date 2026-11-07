@@ -48,15 +48,36 @@ class RemoteSession:
     in_flight: dict[str, asyncio.Future] = field(default_factory=dict)
     last_seen: float = field(default_factory=time.monotonic)
     closed: bool = False
+    # Set on first successful agent poll; never refreshed by heartbeat-only polls.
+    last_activity: float | None = None
 
 
 # A newly created, unconnected command is valid for ten minutes.
 # Once connected, the lease is refreshed on every Agent poll/result.
 _PENDING_SECONDS = 600
 _ACTIVE_LEASE_SECONDS = 180
+# Close a connected remote session after ten hours without remote work.
+_IDLE_SECONDS = 10 * 60 * 60
 
 
 class RemoteSessionManager:
+    @staticmethod
+    def _idle_expired(session: RemoteSession, now: float) -> bool:
+        return session.last_activity is not None and now - session.last_activity >= _IDLE_SECONDS
+
+    @classmethod
+    def _valid(cls, session: RemoteSession, now: float) -> bool:
+        return not session.closed and now < session.expires_at and not cls._idle_expired(session, now)
+
+    async def expire_inactive(self) -> int:
+        """Revoke idle sessions, including pending/in-flight remote commands."""
+        now = time.monotonic()
+        ids = [sid for sid, session in list(self._sessions.items())
+               if self._idle_expired(session, now)]
+        for sid in ids:
+            await self.close(sid)
+        return len(ids)
+
     def __init__(self) -> None:
         self._sessions: dict[str, RemoteSession] = {}
         self._lock = asyncio.Lock()
@@ -64,7 +85,7 @@ class RemoteSessionManager:
     async def create(self, owner_id: str, ttl_seconds: int = _PENDING_SECONDS) -> RemoteSession:
         async with self._lock:
             for existing in self._sessions.values():
-                if existing.owner_id == owner_id and not existing.closed and time.monotonic() < existing.expires_at:
+                if existing.owner_id == owner_id and self._valid(existing, time.monotonic()):
                     if not existing.connected:
                         return existing
                     raise RemoteExecutionError("owner already has an active remote session")
@@ -83,8 +104,7 @@ class RemoteSessionManager:
         active = [
             session for session in self._sessions.values()
             if session.owner_id == owner_id
-            and not session.closed
-            and time.monotonic() < session.expires_at
+            and self._valid(session, time.monotonic())
         ]
         if len(active) > 1:
             raise RemoteExecutionError("multiple remote sessions for one owner")
@@ -92,7 +112,7 @@ class RemoteSessionManager:
 
     def get(self, session_id: str) -> RemoteSession:
         session = self._sessions.get(session_id)
-        if session is None or session.closed or time.monotonic() >= session.expires_at:
+        if session is None or not self._valid(session, time.monotonic()):
             raise RemoteExecutionError("remote session missing, closed, or expired")
         return session
 
@@ -129,6 +149,7 @@ class RemoteSessionManager:
         request_id = secrets.token_urlsafe(16)
         future = asyncio.get_running_loop().create_future()
         session.in_flight[request_id] = future
+        session.last_activity = time.monotonic()
         _LOG.info("MAI remote dispatch session=%s request=%s operation=%s", session_id, request_id, operation.operation)
         await session.pending.put({"request_id": request_id, **operation.model_dump()})
         try:
@@ -140,6 +161,7 @@ class RemoteSessionManager:
         session = self.authenticate_agent(session_id, secret)
         if not session.connected:
             session.connected = True
+            session.last_activity = time.monotonic()
         session.last_seen = time.monotonic()
         session.expires_at = session.last_seen + _ACTIVE_LEASE_SECONDS
         try:
@@ -149,6 +171,7 @@ class RemoteSessionManager:
         self.get(session_id)
         session.last_seen = time.monotonic()
         session.expires_at = session.last_seen + _ACTIVE_LEASE_SECONDS
+        self.get(session_id)  # A heartbeat must not extend the 10-hour work idle deadline.
         return request
 
     def resolve(self, session_id: str, secret: str, response: AgentResponse) -> None:
@@ -158,6 +181,7 @@ class RemoteSessionManager:
         future = session.in_flight.get(response.request_id)
         if future is None or future.done():
             raise RemoteExecutionError("unknown, expired, or duplicate request ID")
+        session.last_activity = time.monotonic()
         if response.ok:
             if response.result is None:
                 raise RemoteExecutionError("successful response requires result")
