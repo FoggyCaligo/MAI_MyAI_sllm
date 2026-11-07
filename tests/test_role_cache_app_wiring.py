@@ -15,7 +15,7 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_experimental_main_and_verifier_use_single_llamacpp_model(tmp_path, monkeypatch):
+def test_portable_main_and_verifier_use_single_llamacpp_model(tmp_path, monkeypatch):
     monkeypatch.setenv("MAI_EXPERIMENTAL_SLOT_CACHE", "true")
     monkeypatch.setenv("MAI_SLOT_CACHE_DIR", str(tmp_path / "slot-cache"))
     (tmp_path / "slot-cache").mkdir()
@@ -74,53 +74,22 @@ def test_experimental_main_and_verifier_use_single_llamacpp_model(tmp_path, monk
         runtime.close()
 
 
-def test_experimental_mode_uses_browser_model_even_with_legacy_verifier(tmp_path, monkeypatch):
-    monkeypatch.setenv("MAI_EXPERIMENTAL_SLOT_CACHE", "true")
-    monkeypatch.setenv("MAI_SLOT_CACHE_DIR", str(tmp_path))
+def test_browser_cannot_override_fixed_single_model(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter",
                         lambda **kwargs: SimpleNamespace(close=lambda: None))
-    selected = []
-
-    class FakeRoleCacheRun:
-        def __init__(self, *, adapter, cache_directory):
-            selected.append(adapter.config.model)
-            self.main_adapter = SimpleNamespace(config=adapter.config)
-            self.verifier_adapter = SimpleNamespace(config=adapter.config)
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    async def fake_agent(self, content, **kwargs):
-        assert self.loop.adapter.config.model == "browser-model"
-        assert self.loop.final_verifier.reviewer_adapter.config.model == "browser-model"
-        return SimpleNamespace(content="Accepted", model_rounds=1, tool_executions=())
-
-    async def fake_postprocess(**kwargs):
-        pass
-
-    monkeypatch.setattr(runtime_module, "RoleCacheRun", FakeRoleCacheRun)
-    monkeypatch.setattr(runtime_module.AgentRuntime, "run_user_message", fake_agent)
+    monkeypatch.setenv("MAI_SLOT_CACHE_DIR", str(tmp_path / "cache"))
     runtime = runtime_module.MAIRuntime(
-        model="one-model", verifier_model="different-model", llm_backend="llamacpp",
+        model="one-model", verifier_model="old-model", llm_backend="llamacpp",
         ollama_host="http://127.0.0.1:11434", llamacpp_host="http://127.0.0.1:8080",
         memory_db_path=tmp_path / "memory.db",
         sentence_breaker_db_path=tmp_path / "segmenter.db",
         upload_root=tmp_path / "uploads", cwd=tmp_path,
     )
-    monkeypatch.setattr(runtime, "_postprocess_memory", fake_postprocess)
-
-    async def scenario():
-        principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
-        result = await runtime.run_user_message("Hi.", principal=principal, model="browser-model")
-        await asyncio.gather(*tuple(runtime._background_tasks))
-        assert result.model == "browser-model"
-
     try:
-        run(scenario())
-        assert selected == ["browser-model"]
+        principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
+        with pytest.raises(ValueError, match="model selection is unavailable"):
+            run(runtime.run_user_message("Hi.", principal=principal, model="other-model"))
+        assert runtime.verifier_model is None
     finally:
         runtime.close()
 
@@ -129,7 +98,7 @@ def test_experiment_cannot_use_ollama_backend(tmp_path, monkeypatch):
     monkeypatch.setenv("MAI_EXPERIMENTAL_SLOT_CACHE", "true")
     monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter",
                         lambda **kwargs: SimpleNamespace(close=lambda: None))
-    with pytest.raises(ValueError, match="LLM_BACKEND=llamacpp"):
+    with pytest.raises(ValueError, match="requires llama.cpp"):
         runtime_module.MAIRuntime(
             model="one-model", llm_backend="ollama", ollama_host="http://127.0.0.1:11434",
             memory_db_path=tmp_path / "memory.db",
