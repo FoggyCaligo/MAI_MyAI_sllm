@@ -89,6 +89,7 @@ class AgentRuntime:
         content: str,
         *,
         prior_messages: Sequence[Mapping[str, Any]] = (),
+        images: Sequence[bytes] = (),
         think: ThinkSetting | None = None,
         options: Mapping[str, Any] | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
@@ -101,7 +102,10 @@ class AgentRuntime:
 
         messages: list[Message] = [dict(message) for message in prior_messages]
         messages.append({"role": "system", "content": USER_VISIBLE_RESULT_CONTRACT})
-        messages.append({"role": "user", "content": content})
+        user_message: Message = {"role": "user", "content": content}
+        if images:
+            user_message["images"] = list(images)
+        messages.append(user_message)
         return await self.run(
             messages,
             think=think,
