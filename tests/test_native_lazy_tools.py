@@ -64,11 +64,11 @@ def test_activate_then_call_native_tool():
         turn(content="done"),
     ])
     result = run(adapter, registry)
-    assert [execution.name for execution in result.tool_executions] == ["tool_manual", "echo"]
+    assert [execution.name for execution in result.tool_executions] == ["tool_manual", "execute_code", "echo"]
     assert all(execution.ok for execution in result.tool_executions)
     assert names(adapter.requests[0]) == ["tool_manual"]
-    assert names(adapter.requests[1]) == ["tool_manual", "echo"]
-    assert names(adapter.requests[2]) == ["tool_manual", "echo"]
+    assert names(adapter.requests[1]) == ["tool_manual", "execute_code", "echo"]
+    assert names(adapter.requests[2]) == ["tool_manual", "execute_code", "echo"]
 
 
 def test_unactivated_tool_call_fails_without_handler():
