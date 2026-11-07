@@ -259,7 +259,7 @@ class MAIRuntime:
         verifier_adapter = None
         role_cache_run = None
         if self.verifier_enabled:
-            selected_gguf = Path(os.environ.get("MODEL_GGUF_PATH", "portable/portable-models/gguf/active.gguf")).expanduser().resolve()
+            selected_gguf = Path(os.environ.get("MAI_ACTIVE_GGUF_PATH") or os.environ.get("MODEL_GGUF_PATH", "portable/portable-models/gguf/active.gguf")).expanduser().resolve()
             model_identity = str(selected_gguf)
             if selected_gguf.is_file():
                 stat = selected_gguf.stat()
