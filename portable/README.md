@@ -228,7 +228,7 @@ Verifier 기본 태그는 `LiquidAI/lfm2.5-2.6b:q4_k_m`이며, 일반 Ollama에�
 
 ## Optional llama.cpp router (dev; Ollama remains the default)
 
-This is **opt-in** and does not replace `portable/start-portable.ps1` or change MAI's agent, prompts, verifier stages, and Ollama behavior. Unlike `dev2` slot checkpointing, **no KV save/restore, model-role swapping, or forced single loaded model** is introduced. llama.cpp may hold independent main and verifier GGUF models simultaneously, subject to available RAM/VRAM. The router is one public API server (`127.0.0.1:8080`) and may spawn separate per-model child processes internally.
+This is **opt-in** and does not replace `portable/start-portable.ps1` or change MAI's agent, prompts, verifier stages, and Ollama behavior. No KV save/restore is introduced. The llama.cpp router permits **only one loaded model at a time**: main remains loaded during tool rounds until the provisional answer, then verifier takes over; main reloads for corrections with full saved conversation/tool history and latest rejected provisional answer plus verifier feedback. The router is one public API server (`127.0.0.1:8080`) and may spawn separate per-model child processes internally.
 
 1. Create the Windows pinned sources manifest **once** (do not overwrite an existing manifest automatically):
    ```powershell
@@ -251,18 +251,18 @@ This is **opt-in** and does not replace `portable/start-portable.ps1` or change 
    ```
    Set the GGUF paths **only in project-root `settings.yaml`** (no model-path command-line switches):
    ```yaml
-   LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma-3-12b-it-Q4_K_M.gguf"
+   LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
    LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/verifier.gguf"
-   # LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-model-f16.gguf"
+   # LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
    LLAMACPP_MAIN_VISION: false
    # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
    # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
    ```
-   These are example filenames, not downloaded files. Replace both required paths with existing GGUFs. Main projector and separate vision-model settings are optional. When the main model supports integrated vision without a separate projector, set `LLAMACPP_MAIN_VISION: true`; this merely enables MAI image forwarding, not model compatibility. To permit three resident models, pass `-ModelsMax 3` (the argument controls capacity, **not** a file path). Settings paths are resolved from the MAI project root, not the shell's working directory; the resolver uses the same strict YAML parser as MAI. The launcher generates an untracked `mai-models.generated.ini` in `portable/portable-runtimes/llamacpp/`. It sets **MAIN_MODEL=mai-main**, **VERIFIER_MODEL=mai-verifier**, optionally **VISION_MODEL=mai-vision** and connects all through `LLAMACPP_HOST=http://127.0.0.1:8080`. The main image input uses standard OpenAI `image_url` payloads when `LLAMACPP_MAIN_MMPROJ_PATH` is set or `LLAMACPP_MAIN_VISION: true` is configured.
+   These are example filenames, not downloaded files. Replace both required paths with existing GGUFs. Main projector and separate vision-model settings are optional. When the main model supports integrated vision without a separate projector, set `LLAMACPP_MAIN_VISION: true`; this merely enables MAI image forwarding, not model compatibility. The router enforces only one resident model; no `-ModelsMax 2` or `-ModelsMax 3` mode is supported. Settings paths are resolved from the MAI project root, not the shell's working directory; the resolver uses the same strict YAML parser as MAI. The launcher generates an untracked `mai-models.generated.ini` in `portable/portable-runtimes/llamacpp/`. It sets **MAIN_MODEL=mai-main**, **VERIFIER_MODEL=mai-verifier**, optionally **VISION_MODEL=mai-vision** and connects all through `LLAMACPP_HOST=http://127.0.0.1:8080`. The main image input uses standard OpenAI `image_url` payloads when `LLAMACPP_MAIN_MMPROJ_PATH` is set or `LLAMACPP_MAIN_VISION: true` is configured.
    
    Projector presence is a **configuration assertion**, not proof the selected model supports images; end-to-end image inference must be checked. The verified GGUF magic only confirms the file container format. A router response from `/v1/models` confirms registration, not inference readiness. For main/verifier tool/JSON contracts, conduct an actual end-to-end smoke test.
    
-   `--models-max 2` means **up to two model instances**; it does not guarantee both stay in GPU memory and may result in memory pressure. Start with shorter contexts (`-ContextSize 8192`) on a 16GB GPU. Roles are separate models, but **verifier behavior and prompts are unchanged**.
+   `--models-max 1` limits llama.cpp to a single loaded model. Main context KV may be reused within its uninterrupted tool rounds, but loading the verifier evicts the main model and its KV; corrections reconstruct context from MAI message/tool history, not from old KV. Larger contexts (default 16384) increase GPU memory usage. Roles are separate models, but **verifier behavior and prompts are unchanged**.
    
    **Important:** `dev`'s native Ubuntu 24.04 Portable preparation script currently provisions the **Ollama** Linux binary. This new llama.cpp router launcher is **Windows-only until Linux llama.cpp binary provisioning and a native Linux launcher are added and tested**. Do not run a Windows llama-server binary on Linux.
 
@@ -278,7 +278,7 @@ Then verify original Ollama Portable startup is unchanged and llama.cpp mode per
 
 ## Ubuntu 24.04: optional llama.cpp router Portable (dev)
 
-The existing `prepare-portable-linux.sh` and `start-portable-linux.sh` continue to support **Ollama**. This is an **additional** backend, not a replacement. MAI's agent, verifier prompts, memory, tools and Ollama model files are unchanged. Main and verifier are separate GGUFs behind one llama.cpp router; simultaneous residency is allowed, not guaranteed.
+The existing `prepare-portable-linux.sh` and `start-portable-linux.sh` continue to support **Ollama**. This is an **additional** backend, not a replacement. MAI's agent, verifier prompts, memory, tools and Ollama model files are unchanged. Main and verifier are separate GGUFs behind one llama.cpp router; only one is resident at a time.
 
 1. While online, create the publisher-digest-pinned manifest with llama.cpp:
    ```bash
@@ -295,7 +295,7 @@ The existing `prepare-portable-linux.sh` and `start-portable-linux.sh` continue 
    ```bash
    bash portable/start-portable-llamacpp-linux.sh
    ```
-   An optional argument `3` allows up to three simultaneously loaded models if a separate Vision GGUF is configured. Default is `2`. The script creates a private per-run router INI in the Linux host cache, validates GGUF headers and exposes the same `mai-main`, `mai-verifier`, optional `mai-vision` aliases as the Windows launcher. It does not reuse an occupied port or silently fall back to Ollama.
+   Only `1` resident model is supported, including when a separate Vision GGUF is configured. The script creates a private per-run router INI in the Linux host cache, validates GGUF headers and exposes the same `mai-main`, `mai-verifier`, optional `mai-vision` aliases as the Windows launcher. It does not reuse an occupied port or silently fall back to Ollama.
 
 **Host portability boundary:** Linux native Python, llama.cpp binaries and Python dependencies are cached under `~/.cache/mai-portable/<path-id>` (or `XDG_CACHE_HOME`). Moving the SSD to an **unprepared** Linux computer still requires the initial provisioning step, executable host tools, writable data filesystem, Vulkan drivers and adequate GPU/RAM; this is not yet guaranteed plug-and-run on arbitrary Linux hardware. Linux remote-agent bootstrap is still Windows PowerShell-only; a Linux MAI host can use local tools, but attaching a **Linux remote target** requires a separate remote worker implementation. Playwright Chromium and audio/microphone capabilities have native host dependencies.
 
