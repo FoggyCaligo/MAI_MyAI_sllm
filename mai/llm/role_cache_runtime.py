@@ -1,0 +1,111 @@
+"""Opt-in single-model llama.cpp KV role switching for one isolated MAI run.
+
+Not used by Ollama or the normal split-model execution path.
+"""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+import uuid
+
+import httpx
+
+from .llamacpp import LlamaCppAdapter
+from .slot_cache import CacheRole, CacheRoleSwitcher, LlamaCppSlotCacheManager, SlotCacheError
+
+
+_LOG = logging.getLogger("uvicorn.error")
+
+
+class _RoleAdapter:
+    def __init__(self, adapter: LlamaCppAdapter, switcher: CacheRoleSwitcher, role: CacheRole):
+        self.config = adapter.config
+        self._adapter = adapter
+        self._switcher = switcher
+        self._role = role
+
+    async def chat(self, request):
+        await self._switcher.switch(self._role)
+        return await self._adapter.chat(request)
+
+
+class _VerifierRoleAdapter:
+    def __init__(self, adapter: LlamaCppAdapter, switcher: CacheRoleSwitcher):
+        self.config = adapter.config
+        self._adapter = adapter
+        self._switcher = switcher
+
+    async def chat(self, request):
+        schema = request.response_format
+        title = schema.get("title") if isinstance(schema, dict) else None
+        if title == "_NumericReviewPayload":
+            role = CacheRole.NUMERIC
+        elif title in {"_FactualReviewPayload", "_QualityReviewPayload"}:
+            role = CacheRole.FINAL
+        else:
+            raise SlotCacheError("unknown structured verifier stage in role-cache mode")
+        await self._switcher.switch(role)
+        return await self._adapter.chat(request)
+
+
+class RoleCacheRun:
+    """One runtime-serialized run using a single dedicated llama.cpp slot.
+
+    Caller must ensure the only client of the dedicated --parallel 1 server
+    and await pending MAI memory-extraction tasks before entry.
+    """
+
+    def __init__(self, *, adapter: LlamaCppAdapter, cache_directory: Path):
+        if adapter.slot_id != 0:
+            raise ValueError("role cache requires an adapter pinned to slot 0")
+        self.adapter = adapter
+        self.cache_directory = cache_directory.expanduser().resolve()
+        if not self.cache_directory.is_dir():
+            raise SlotCacheError("MAI_SLOT_CACHE_DIR does not exist")
+        self.manager = LlamaCppSlotCacheManager(
+            base_url=adapter.config.host, slot_id=0, run_id=uuid.uuid4().hex
+        )
+        self.switcher = CacheRoleSwitcher(self.manager)
+        self.main_adapter = _RoleAdapter(adapter, self.switcher, CacheRole.MAIN)
+        self.verifier_adapter = _VerifierRoleAdapter(adapter, self.switcher)
+
+    async def __aenter__(self):
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                slots_response = await client.get(self.adapter.config.host.rstrip("/") + "/slots")
+                slots_response.raise_for_status()
+                slots = slots_response.json()
+                if (not isinstance(slots, list) or len(slots) != 1
+                        or not isinstance(slots[0], dict) or slots[0].get("id") != 0
+                        or slots[0].get("is_processing") is not False):
+                    raise SlotCacheError("cache experiment requires exactly one idle llama.cpp slot 0")
+                models_response = await client.get(self.adapter.config.host.rstrip("/") + "/v1/models")
+                models_response.raise_for_status()
+                models = models_response.json()
+                entries = models.get("data") if isinstance(models, dict) else None
+                if (not isinstance(entries, list) or len(entries) != 1 or
+                        entries[0].get("id") != self.adapter.config.model):
+                    raise SlotCacheError("dedicated llama.cpp model alias mismatch")
+            except (httpx.HTTPError, ValueError) as exc:
+                raise SlotCacheError("cannot confirm exclusive llama.cpp slot/model") from exc
+        # Before touching the slot, ensure the configured save path is writable.
+        probe = self.cache_directory / ("mai-" + self.manager.run_id + "-probe")
+        try:
+            probe.write_bytes(b"")
+            probe.unlink()
+        except OSError as exc:
+            raise SlotCacheError("slot cache checkpoint directory is not writable") from exc
+        _LOG.info("MAI llama.cpp role cache run started model=%s slot=0", self.adapter.config.model)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        # The server must have been started with --slot-save-path equal to
+        # cache_directory; portable start sets both in one place.
+        for role in CacheRole:
+            path = self.cache_directory / f"mai-{self.manager.run_id}-{role.value}.bin"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                _LOG.exception("MAI failed to delete role KV checkpoint for %s", role.value)
+        _LOG.info("MAI llama.cpp role cache run finished")
+        return False
