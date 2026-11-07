@@ -16,14 +16,26 @@ if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) {
 }
 
 if (-not $GgufPath) {
-    $GgufPath = & $python -c 'import pathlib,yaml; p=pathlib.Path("settings.yaml"); d=yaml.safe_load(p.read_text(encoding="utf-8-sig")); print(d["MODEL_GGUF_PATH"])'
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($GgufPath)) { throw 'Invalid settings.yaml MODEL_GGUF_PATH' }
+    $GgufPath = & $python (Join-Path $root "portable/resolve_model_path.py") (Join-Path $root "settings.yaml")
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($GgufPath)) { throw "Cannot read settings.yaml MODEL_GGUF_PATH; see error above." }
     $GgufPath = $GgufPath.Trim()
 }
 if (-not [IO.Path]::IsPathRooted($GgufPath)) { $GgufPath = Join-Path $root $GgufPath }
+if (-not (Test-Path -LiteralPath $GgufPath -PathType Leaf)) {
+    throw "GGUF model not found: $GgufPath. Copy a real GGUF file to portable/portable-models/gguf/active.gguf, or pass -GgufPath with its actual location. The previous D:\\models\\my-model.gguf was an example only."
+}
 $modelFile = (Resolve-Path -LiteralPath $GgufPath -ErrorAction Stop).Path
 if (-not [IO.Path]::GetExtension($modelFile).Equals('.gguf', [StringComparison]::OrdinalIgnoreCase)) {
     throw "Single portable model must be a .gguf file: $modelFile"
+}
+$ggufStream = [System.IO.File]::OpenRead($modelFile)
+try {
+    $magic = New-Object byte[] 4
+    if ($ggufStream.Read($magic, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($magic) -cne 'GGUF') {
+        throw "Model file is not a GGUF: $modelFile"
+    }
+} finally {
+    $ggufStream.Dispose()
 }
 $modelAlias = "mai-model"
 

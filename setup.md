@@ -27,21 +27,35 @@ MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
 
 이 값은 **실제로 실행할 GGUF 파일의 경로**다. 상대경로는 MAI 프로젝트 루트 기준이며, 절대경로도 가능하다. 내부 모델 별칭은 `mai-model`로 고정된다. Portable 실행 시 `-GgufPath`로 일시적인 다른 경로를 지정할 수도 있다. 한 번에 모델 한 개만 올린다.
 
+## GGUF 경로 오류와 Ollama sha256 Blob
+
+문서의 `D:\\models\\my-model.gguf`(또는 `실제모델.gguf`)는 **설명용 가상 경로**이며 파일을 제공한다는 의미가 아니다. `-ModelFile`에는 직접 내려받거나 준비한 **실제 GGUF 파일의 경로**를 지정한다. 이미 `portable/portable-models/gguf/active.gguf`에 사용할 GGUF가 있으면 `-ModelFile` 없이 설치해도 된다.
+
+현재 기본 경로가 이미 존재하면 외부 파일을 다시 지정할 필요가 없다. `-ModelFile`은 새로운 GGUF 원본을 설정 경로로 복사할 때만 사용한다.
+
+Ollama의 `sha256-...` 파일은 Blob 저장소 항목이므로 **확장자가 없다는 이유만으로 GGUF가 아니라고 단정할 수 없으며**, 반대로 모두 GGUF인 것도 아니다. `ollama show 모델명 --modelfile`로 `FROM`이 가리키는 파일을 확인하고 처음 4바이트가 `GGUF`인지 검사한 뒤, 해당 모델 데이터 파일만 정확히 선택하여 복사해야 한다. 템플릿이나 부가 설정은 GGUF 파일에 포함되지 않을 수 있다.
+
+`start-portable.ps1`은 YAML 경로를 별도 `portable/resolve_model_path.py`에서 읽는다. 경로가 없으면 모델 파일 위치를 분명히 알려주는 오류를 출력한다. 이미 설치한 Python/uv/llama.cpp를 모델 경로 오류만으로 새로 다운로드할 필요는 없다.
+
 ## Windows Portable 설치
+
+모델 경로는 `settings.yaml`의 `MODEL_GGUF_PATH` 하나를 기준으로 한다. 기본값은 `portable/portable-models/gguf/active.gguf`이며, 실제 GGUF가 해당 경로에 존재하면 `-ModelFile`을 지정하지 않는다. 예시 경로는 실제 모델을 제공하지 않는다.
 
 ```powershell
 python portable/resolve_portable_sources.py
-powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile "D:\\models\\실제모델.gguf"
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
 powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
 ```
 
-매니페스트에는 공식 릴리스의 특정 Python·uv·llama.cpp Vulkan
-바이너리와 제공자가 선언한 SHA-256이 포함된다.
-내부 Runtime 디렉터리는 모델 파일과 분리되므로
-새 llama.cpp 릴리스로 교체해도 GGUF와 DB는 유지된다.
-기존 엔진은 `-PreserveAndReinstallExisting`로 백업 후 교체할 수 있다.
+설치 중 모델이 없다면 런타임 다운로드 전에 중단한다. 이미 Ollama의 모델 본체 SHA blob을 GGUF로 확인했다면 `active.gguf`로 **복사**한 후 실행할 수 있다. 새 원본 GGUF 파일을 복사하고 싶을 때만 다음처럼 `-ModelFile`을 선택적으로 사용한다.
 
-서버는 `http://127.0.0.1:8000`에서 접근한다. 위의 모델 경로는 **실제 보유한 GGUF 파일로 교체**해야 한다. `sha256-...` 파일은 Ollama 저장소의 Blob일 수 있으므로, GGUF 헤더가 있는 모델 데이터인지 먼저 확인한 뒤 복사해야 한다. 단일 GGUF 파일이 아닌 모델 구성은 별도로 확인한다.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json -ModelFile 'C:\path\to\model.gguf'
+```
+
+이 옵션은 원본 파일을 `MODEL_GGUF_PATH`로 복사하며 기존 목적지 파일은 임의로 덮어쓰지 않는다. 별도 이름이나 위치를 쓰려면 먼저 `settings.yaml`을 변경한다. 설치 초기 경로 해석에는 **PyYAML이 설치된 Python**이 필요하며, Portable Python이 이미 존재한다면 우선 사용한다.
+
+매니페스트에는 공식 릴리스의 특정 Python·uv·llama.cpp Vulkan 바이너리와 제공자가 선언한 SHA-256이 포함된다. 엔진과 GGUF는 분리돼 있으므로 엔진을 교체해도 모델과 DB는 유지된다. 서버는 `http://127.0.0.1:8000`에서 접근한다. 실제 모델 로드, Vulkan GPU 추론은 별도 검증해야 한다.
 
 ## 원격 웹 호스팅: Tailscale(기본) / Cloudflare
 
