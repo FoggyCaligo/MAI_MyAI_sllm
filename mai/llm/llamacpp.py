@@ -9,13 +9,16 @@ from typing import Any
 import httpx
 
 from .models import ChatRequest, ModelConfig, ModelTurn, NativeToolCall
+from .llamacpp_router import SingleResidentRouter, RouterModelTransitionError
 from .ollama import OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
 
 
 class LlamaCppAdapter:
-    def __init__(self, config: ModelConfig, *, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(self, config: ModelConfig, *, client: httpx.AsyncClient | None = None,
+                 router: SingleResidentRouter | None = None) -> None:
         self.config = config
         self._client = client
+        self._router = router
 
     async def chat(self, request: ChatRequest) -> ModelTurn:
         if request.options:
@@ -51,13 +54,22 @@ class LlamaCppAdapter:
         try:
             if self._client is None:
                 async with httpx.AsyncClient() as client:
-                    result = await send(client)
+                    result = (await self._router.execute(self.config.model, client, send)
+                              if self._router is not None else await send(client))
             else:
-                result = await send(self._client)
+                result = (await self._router.execute(self.config.model, self._client, send)
+                          if self._router is not None else await send(self._client))
         except httpx.TimeoutException as exc:
             raise OllamaChatTimeoutError("llama.cpp chat request timed out") from exc
+        except httpx.HTTPStatusError as exc:
+            raise OllamaRequestError(
+                f"llama.cpp chat HTTP {exc.response.status_code} "
+                f"model={self.config.model}: {exc.response.text[:1000]}"
+            ) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise OllamaRequestError("llama.cpp chat request failed") from exc
+            raise OllamaRequestError(
+                f"llama.cpp chat request failed model={self.config.model}: {type(exc).__name__}: {exc}"
+            ) from exc
         choices = result.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise OllamaProtocolError("llama.cpp response missing choices")

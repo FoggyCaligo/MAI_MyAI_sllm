@@ -56,4 +56,5 @@ def test_llamacpp_main_image_opt_in_and_ollama_default_preserved(tmp_path, monke
     monkeypatch.delenv("LLAMACPP_MAIN_VISION")
     prompt, images = asyncio.run(prepare_main_image_input(**params))
     assert not images
-    assert "image_analyze" in prompt
+    assert "cannot inspect these images" in prompt
+    assert "Activate image_analyze" not in prompt

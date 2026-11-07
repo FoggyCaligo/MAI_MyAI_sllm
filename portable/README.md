@@ -312,3 +312,26 @@ Regression tests (run in the Portable Python environment):
 ```powershell
 ./portable/portable-runtimes/python/python.exe -m pytest -q tests/test_optional_ollama_dependency.py tests/test_llamacpp_adapter.py tests/test_ollama_adapter.py tests/test_final_grounding_verifier.py
 ```
+
+
+### llama.cpp 모델 전환 확인 (Main ↔ Verifier)
+
+`--models-max 1` 제한에 더하여 MAI의 llama.cpp 어댑터는 **다른 GGUF를 호출하기 직전** `GET /models`로 현재 상태를 확인하고, 기존 활성 모델에 `POST /models/unload`를 요청한 뒤 `GET /models`에서 해당 모델의 상태가 명확히 `unloaded`가 될 때까지 기다린다. 언로드 확인 제한은 기본 30초, 새 모델 로드 확인 제한은 기본 180초다. 언로드 요청 실패·응답 형식 오류·완료 확인 실패 시 **다음 모델을 호출하지 않고 오류를 반환**한다. 같은 모델을 연속 호출할 때는 언로드하지 않으며, 따라서 메인 모델의 도구 턴 중 KV 재사용 기회가 유지된다.
+
+이 동작은 메인, Verifier, 기억 추출, 선택형 Vision 도구가 동일하게 사용한다. Verifier 이후 메인을 호출하는 경우에도 역방향 확인을 수행한다. **GPU 메모리 사용량이나 드라이버의 메모리 반환 상태를 별도 측정하지 않는다.** 상태 `unloaded` 확인은 라우터가 보고하는 언로드 완료이며, 시스템 전체의 VRAM 상태를 보증하지 않는다. 다른 프로세스의 GPU 사용량도 통제하지 않는다.
+
+테스트: `python -m pytest -q tests/test_llamacpp_confirmed_unload.py tests/test_llamacpp_adapter.py tests/test_rejected_draft_failure_display.py`. 실제 Windows/Linux llama.cpp 빌드에서 `/models` 상태 전환을 확인하기 전까지는 실기기 검증 완료로 취급하지 않는다.
+
+
+### 이미지 입력 및 Main KV 유지 (llama.cpp Portable)
+
+llama.cpp 모드는 **메인 모델에만 이미지 바이트를 직접 전달**한다. `LLAMACPP_MAIN_VISION=true`(모델과 mmproj가 실제로 지원되는 경우)에만 멀티모달 이미지 메시지를 보낸다. 별도의 `image_analyze` 도구는 llama.cpp 모드에서 **등록하지 않는다**. 이로써 이미지 분석을 위해 메인 모델이 중간에 Verifier/전용 Vision 모델로 교체되는 상황을 방지한다.
+
+이미지 첨부가 있지만 `LLAMACPP_MAIN_VISION=false`라면 서버 오류나 다른 모델로의 우회 대신, **메인 모델에 이미지 바이트가 전달되지 않았음을 알리고** 사용자에게 현재 모델에서는 이미지를 해석할 수 없다고 설명하도록 요청한다. 이미지를 보지 않았는데 본 것처럼 내용을 추측해서는 안 된다. 단, 이 동작은 모델에 대한 메시지 지시이지 실제 출력의 절대적인 보장은 아니다. 모델이 비전 지원을 주장하더라도 실제 GGUF·mmproj·llama.cpp의 호환성은 실기기 테스트로 확인해야 한다.
+
+실행 순서: **Main 반복 도구 턴 → 임시답변 → Main 언로드 상태 확인 → Verifier 적재 및 검증 → REJECT 시 Verifier 언로드 상태 확인 → Main 재적재 → 기존 문맥 + 최신 임시답변(미검증 초안) + 거절 피드백으로 다음 턴**. 본문·도구 결과는 MAI 로그/대화 기록으로 다시 제공하며, 모델 언로드 후의 KV는 재사용하지 않는다. ACCEPT 시에도 검증이 완료되기 전에는 최종답변을 공개하지 않는다.
+
+Ollama 백엔드의 기존 `image_analyze` 별도 모델 경로는 변경하지 않는다.
+
+
+**Verifier HTTP 500 진단:** `/models/load` 실패 시 HTTP 코드·응답 본문(최대 800자), `/v1/chat/completions` 실패 시 HTTP 코드·모델 별칭·응답 본문(최대 1,000자)을 포함한 오류를 반환한다. 컨텍스트/VRAM/모델 GGUF 버전/라우터 서버 자체의 실패와 단순 JSON 파싱 오류를 혼동하지 않는다. 실기기 검증 전까지는 자동 재시도나 실패 응답 대체를 하지 않는다.
