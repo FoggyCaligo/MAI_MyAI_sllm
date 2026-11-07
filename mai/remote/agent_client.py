@@ -6,6 +6,7 @@ worker instance retains browser sessions until disconnect. No fallback to host.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from typing import Any
@@ -61,6 +62,14 @@ async def run_agent(*, server: str, session: str, key: str,
                     value = await active_worker.execute_native(
                         args.get("name"), args.get("arguments"),
                     )
+                    # Serialization is part of the tool result contract. If it
+                    # fails, report a failed call instead of disconnecting here.
+                    try:
+                        json.dumps({"value": value}, ensure_ascii=False, allow_nan=False)
+                    except (TypeError, ValueError) as exc:
+                        raise RemoteAgentProtocolError(
+                            "remote tool result is not JSON serializable"
+                        ) from exc
                     outcome.update({"ok": True, "result": {"value": value}})
                 except asyncio.CancelledError:
                     raise
