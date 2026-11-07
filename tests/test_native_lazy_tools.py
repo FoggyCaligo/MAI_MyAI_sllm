@@ -149,3 +149,21 @@ def test_unknown_manual_returns_registry_names_without_partial_activation():
     assert payload["available_tools"] == ["echo"]
     assert names(adapter.requests[1]) == ["tool_manual"]
     assert "echo" not in names(adapter.requests[1])
+
+
+def test_codeact_can_be_disabled_by_runtime_policy():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo content", input_model=EchoInput, handler=lambda text: text)
+    adapter = Adapter([
+        turn(calls=[NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]})]),
+        turn(content="done"),
+    ])
+
+    result = asyncio.run(
+        AgentRuntime(adapter, registry, codeact_enabled=False).run_user_message("run task")
+    )
+
+    assert result.content == "done"
+    assert names(adapter.requests[0]) == ["tool_manual"]
+    assert names(adapter.requests[1]) == ["tool_manual", "echo"]
+    assert "execute_code" not in names(adapter.requests[1])
