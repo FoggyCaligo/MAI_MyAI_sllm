@@ -52,3 +52,24 @@ def test_remote_agent_scripts_are_packaged():
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert '"static/*.ps1"' in pyproject
     assert '"static/*.sh"' in pyproject
+
+
+def test_worker_bootstraps_require_completed_install_marker():
+    windows = Path("mai/app/static/remote-agent.ps1").read_text(encoding="utf-8")
+    linux = Path("mai/app/static/remote-agent-linux.sh").read_text(encoding="utf-8")
+    assert "'.installed-ok'" in windows
+    assert "New-Item -ItemType File -Path $installReady" in windows
+    assert 'INSTALL_READY="$TARGET/.installed-ok"' in linux
+    assert 'touch "$INSTALL_READY"' in linux
+
+
+def test_worker_source_archive_and_native_client_do_not_require_codeact():
+    import inspect
+
+    from mai.remote import agent_client
+    from mai.remote.python_worker import build_registry
+
+    source = inspect.getsource(agent_client.run_agent)
+    assert '"native.invoke"' in source
+    assert "execute_code" not in source
+    assert not build_registry().has("execute_code")
