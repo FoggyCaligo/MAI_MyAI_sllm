@@ -259,7 +259,10 @@ class MAIRuntime:
         register_calculator_tools(registry)
         register_external_information_tools(registry)
         register_browser_tools(registry, browser_manager)
-        if self.vision_model is not None:
+        # A separate vision inference can evict main mid-tool-turn and lose KV.
+        # llama.cpp images are handled by the main model only.
+        # Preserve Ollama image_analyze fallback unchanged.
+        if self.llm_backend == "ollama" and self.vision_model is not None:
             register_image_tools(
                 registry, model=self.vision_model,
                 host=(self.ollama_host if self.llm_backend == "ollama" else self.llamacpp_host),
