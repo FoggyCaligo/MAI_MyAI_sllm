@@ -271,7 +271,9 @@ class MAIRuntime:
                 "\\n[/Visual inspection]"
             )
         adapter = self._adapter_for(selected_model)
-        verifier_adapter = None
+        # In router mode the model is reloaded between requests; role-cache
+        # checkpoints are not portable across child server lifetimes.
+        verifier_adapter = adapter if self.router_mode and self.verifier_enabled else None
         role_cache_run = None
         if self.verifier_enabled and not self.router_mode:
             selected_gguf = Path(os.environ.get("MAI_ACTIVE_GGUF_PATH") or os.environ.get("MODEL_GGUF_PATH", "portable/portable-models/gguf/active.gguf")).expanduser().resolve()
