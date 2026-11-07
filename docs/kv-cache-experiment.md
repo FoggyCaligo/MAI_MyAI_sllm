@@ -27,8 +27,7 @@ KV 저장과 복원은 GPT 추론 상태의 일부를 재사용하는 최적화�
 독립된 JSON 구조화 호출**을 수행하며 별도 모델을 적재하지 않는다.
 메모리 사실 추출도 같은 llama.cpp 서버로 실행한다.
 
-`settings.yaml`에는 `MAIN_MODEL` alias 하나만 둔다. 모델의 실제 GGUF는
-`portable/portable-models/gguf/active.gguf` 또는 실행기의 `-GgufPath`로 지정한다.
+`settings.yaml`의 `MODEL_GGUF_PATH`에서 실행할 GGUF 파일 경로 하나를 지정한다. llama.cpp 내부 alias는 `mai-model`로 고정된다. 시작기의 `-GgufPath`로 해당 실행에 한해 경로를 덮어쓸 수 있다.
 브라우저에서 모델을 변경할 수 없고 다른 GGUF로 바꾸려면 서버를 재시작한다.
 32K와 같은 임의의 컨텍스트 하한·상한을 별도로 두지 않는다.
 
