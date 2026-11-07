@@ -47,13 +47,13 @@ python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1
   exit 1
 }
 
-BASE="\${XDG_DATA_HOME:-$HOME/.local/share}/mai/remote-worker"
-TMPDIR_BASE="\${TMPDIR:-/tmp}"
+BASE="${XDG_DATA_HOME:-$HOME/.local/share}/mai/remote-worker"
+TMPDIR_BASE="${TMPDIR:-/tmp}"
 ZIP_PATH=$(mktemp "$TMPDIR_BASE/mai-remote-XXXXXX.zip")
 HEADER_PATH=$(mktemp "$TMPDIR_BASE/mai-remote-headers-XXXXXX")
 trap 'rm -f "$ZIP_PATH" "$HEADER_PATH"' EXIT INT TERM
 
-BOOTSTRAP_URL="\${SERVER%/}/remote/agent/$SESSION/bootstrap"
+BOOTSTRAP_URL="${SERVER%/}/remote/agent/$SESSION/bootstrap"
 curl --fail --silent --show-error \
   -H "X-MAI-Agent-Secret: $KEY" \
   -D "$HEADER_PATH" \
