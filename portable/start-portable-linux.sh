@@ -65,12 +65,12 @@ trap cleanup EXIT
 if [[ "$router_mode" == true ]]; then
   preset="$MAI_SLOT_CACHE_DIR/router-models-$$.ini"
   {
-    printf '[mai-model]\\nmodel = %s\\nparallel = 1\\n' "$gguf"
+    printf '[mai-model]\nmodel = %s\nparallel = 1\n' "$gguf"
     if [[ -n "$vision" ]]; then
-      printf '\\n[mai-vision]\\nmodel = %s\\nparallel = 1\\n' "$vision"
-      if [[ -n "$projector" ]]; then printf 'mmproj = %s\\n' "$projector"; fi
+      printf '\n[mai-vision]\nmodel = %s\nparallel = 1\n' "$vision"
+      if [[ -n "$projector" ]]; then printf 'mmproj = %s\n' "$projector"; fi
     fi
-    if [[ -n "$verifier" ]]; then printf '\\n[mai-verifier]\\nmodel = %s\\nparallel = 1\\n' "$verifier"; fi
+    if [[ -n "$verifier" ]]; then printf '\n[mai-verifier]\nmodel = %s\nparallel = 1\n' "$verifier"; fi
   } > "$preset"
   chmod 600 "$preset"
   "$llama" --models-preset "$preset" --models-max 1 --host 127.0.0.1 --port 8080 --jinja &
