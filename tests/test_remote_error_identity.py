@@ -4,7 +4,7 @@ import asyncio
 import pytest
 
 from mai.remote.session import (
-    AgentResponse, RemoteSessionManager, RemoteToolInvocationError,
+    AgentResponse, RemoteOperation, RemoteSessionManager, RemoteToolInvocationError,
 )
 
 
@@ -16,7 +16,7 @@ def test_remote_error_type_and_message_survive_transport():
         execution = asyncio.create_task(
             manager.execute(
                 "owner", session.session_id,
-                __import__("mai.remote.session", fromlist=["RemoteOperation"]).RemoteOperation(
+                RemoteOperation(
                     operation="native.invoke",
                     arguments={"name": "file_read", "arguments": {"path": "missing"}},
                 ),
