@@ -16,7 +16,6 @@ from urllib.request import Request, urlopen
 SOURCES = {
     "python": ("astral-sh", "python-build-standalone", r"cpython-3\.11\.[0-9]+\+[^/]+-x86_64-pc-windows-msvc-install_only\.tar\.gz"),
     "uv": ("astral-sh", "uv", r"uv-x86_64-pc-windows-msvc\.zip"),
-    "ollama": ("ollama", "ollama", r"ollama-windows-amd64\.zip"),
     "llamacpp": ("ggml-org", "llama.cpp", r"llama-.*-bin-win-vulkan-x64\.zip"),
 }
 
