@@ -7,7 +7,7 @@ from mai.app.settings import load_settings
 def test_configuration_template_separates_secrets_and_defaults() -> None:
     env = Path(".env.example").read_text(encoding="utf-8")
     settings = load_settings(Path("settings.yaml"), environ={})
-    assert settings["MAIN_MODEL"] == "ornith-1.5:9b"
+    assert settings["MAIN_MODEL"] == "mai-model"
     assert "VERIFIER_MODEL" not in settings
     assert settings["MAI_ANSWER_QUALITY_REVIEW"] == "false"
     assert settings["SESSION_HISTORY_MESSAGES"] == "10"
