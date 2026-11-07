@@ -301,7 +301,6 @@ class MAIRuntime:
             ),
             final_verifier=FinalGroundingVerifier(
                 reviewer_adapter=verifier_adapter,
-                verified_prior_conversation=prior_messages,
             ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
