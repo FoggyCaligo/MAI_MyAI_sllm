@@ -61,6 +61,7 @@ async def _execute_chat(
             principal=principal,
             prior_messages=prior,
             model=selected_model,
+            **({"attachments": attachments} if attachments else {}),
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
             on_verification_rejection=on_verification_rejection,
