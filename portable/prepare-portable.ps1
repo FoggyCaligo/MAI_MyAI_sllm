@@ -11,6 +11,10 @@ Set-StrictMode -Version Latest
 $manifestPath = (Resolve-Path -LiteralPath $Manifest).Path
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+# Reject a missing example model immediately, before downloading runtimes/dependencies.
+if ($ModelFile -and -not (Test-Path -LiteralPath $ModelFile -PathType Leaf)) {
+    throw "-ModelFile not found: $ModelFile. Provide an existing .gguf path; D:\\models\\my-model.gguf is documentation placeholder, not a bundled model."
+}
 
 function Get-Required([object]$obj, [string]$property) {
     $value = $obj.PSObject.Properties[$property]
@@ -129,6 +133,15 @@ if ($InstallChromium) {
 if ($ModelFile) {
     $sourceFile = (Resolve-Path -LiteralPath $ModelFile -ErrorAction Stop).Path
     if ([IO.Path]::GetExtension($sourceFile) -ine '.gguf') { throw '-ModelFile must point to a GGUF file.' }
+    $ggufStream = [System.IO.File]::OpenRead($sourceFile)
+    try {
+        $magic = New-Object byte[] 4
+        if ($ggufStream.Read($magic, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($magic) -cne 'GGUF') {
+            throw "-ModelFile is not GGUF content: $sourceFile"
+        }
+    } finally {
+        $ggufStream.Dispose()
+    }
     $targetDir = Join-Path $root 'portable/portable-models/gguf'
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
     $targetFile = Join-Path $targetDir 'active.gguf'
@@ -150,4 +163,4 @@ if ($ModelFile) {
     }
 }
 Write-Host "Portable installation prepared under $root"
-Write-Host 'Verify portable/portable-models/gguf/active.gguf and run portable/start-portable.ps1.'
+Write-Host 'Verify portable/portable-models/gguf/active.gguf and run portable/start-portable.ps1. If no model was copied, supply a real GGUF file or use -GgufPath.'
