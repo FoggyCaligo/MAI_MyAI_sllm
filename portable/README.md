@@ -312,3 +312,12 @@ Regression tests (run in the Portable Python environment):
 ```powershell
 ./portable/portable-runtimes/python/python.exe -m pytest -q tests/test_optional_ollama_dependency.py tests/test_llamacpp_adapter.py tests/test_ollama_adapter.py tests/test_final_grounding_verifier.py
 ```
+
+
+### llama.cpp 모델 전환 확인 (Main ↔ Verifier)
+
+`--models-max 1` 제한에 더하여 MAI의 llama.cpp 어댑터는 **다른 GGUF를 호출하기 직전** `GET /models`로 현재 상태를 확인하고, 기존 활성 모델에 `POST /models/unload`를 요청한 뒤 `GET /models`에서 해당 모델의 상태가 명확히 `unloaded`가 될 때까지 기다린다. 기본 확인 제한은 30초다. 언로드 요청 실패·응답 형식 오류·완료 확인 실패 시 **다음 모델을 호출하지 않고 오류를 반환**한다. 같은 모델을 연속 호출할 때는 언로드하지 않으며, 따라서 메인 모델의 도구 턴 중 KV 재사용 기회가 유지된다.
+
+이 동작은 메인, Verifier, 기억 추출, 선택형 Vision 도구가 동일하게 사용한다. Verifier 이후 메인을 호출하는 경우에도 역방향 확인을 수행한다. **GPU 메모리 사용량이나 드라이버의 메모리 반환 상태를 별도 측정하지 않는다.** 상태 `unloaded` 확인은 라우터가 보고하는 언로드 완료이며, 시스템 전체의 VRAM 상태를 보증하지 않는다. 다른 프로세스의 GPU 사용량도 통제하지 않는다.
+
+테스트: `python -m pytest -q tests/test_llamacpp_confirmed_unload.py tests/test_llamacpp_adapter.py tests/test_rejected_draft_failure_display.py`. 실제 Windows/Linux llama.cpp 빌드에서 `/models` 상태 전환을 확인하기 전까지는 실기기 검증 완료로 취급하지 않는다.
