@@ -22,6 +22,19 @@ class RemoteExecutionError(RuntimeError):
     pass
 
 
+class RemoteToolInvocationError(RemoteExecutionError):
+    """Actual exception returned by the authenticated remote worker."""
+
+    def __init__(self, remote_error_type: str, remote_message: str) -> None:
+        if not remote_error_type:
+            raise ValueError("remote tool error_type must be non-empty")
+        if remote_message is None:
+            raise ValueError("remote tool error message must be present")
+        self.remote_error_type = remote_error_type
+        self.remote_message = remote_message
+        super().__init__(f"{remote_error_type}: {remote_message}")
+
+
 class RemoteOperation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     operation: str
@@ -189,7 +202,14 @@ class RemoteSessionManager:
             future.set_result(response.result)
         else:
             _LOG.warning("MAI remote result session=%s request=%s ok=false error_type=%s", session_id, response.request_id, response.error_type)
-            future.set_exception(RemoteExecutionError(f"{response.error_type}: {response.error}"))
+            if not response.error_type or response.error is None:
+                future.set_exception(RemoteExecutionError(
+                    "remote failed tool response missing error_type or error"
+                ))
+            else:
+                future.set_exception(
+                    RemoteToolInvocationError(response.error_type, response.error)
+                )
 
 
 remote_sessions = RemoteSessionManager()

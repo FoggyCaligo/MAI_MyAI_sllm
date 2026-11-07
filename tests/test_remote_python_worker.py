@@ -14,6 +14,12 @@ def test_remote_python_worker_reuses_local_native_schema():
     assert registry.has("document_edit")
     assert registry.has("code_search")
     assert registry.has("code_symbols")
+    assert registry.has("current_time")
+    assert registry.has("calculator")
+    assert registry.has("web_search")
+    assert registry.has("web_fetch")
+    assert registry.has("browser_open")
+    assert registry.has("browser_click")
 
 
 def test_remote_python_worker_executes_existing_file_read(tmp_path):

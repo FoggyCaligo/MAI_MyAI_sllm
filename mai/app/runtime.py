@@ -41,7 +41,7 @@ from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..remote.routing import register_routed_pc_tools
+from ..remote.routing import register_routed_pc_tools, register_routed_service_tools, register_routed_image_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -78,7 +78,7 @@ Answer the current request fully; do not assume the user knows prior answers or 
 
 Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all native schemas: activate required tools by exact name and use their native schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: memory for user context, local tools for local resources, and information tools for external facts.
 
-MAI's owner-authorized remote connection lets you use the same routed PC tools on another connected computer. When the task targets that remote computer, set is_remote=true on every applicable call, including discovery, reads, edits, terminal commands, and verification. false or omission executes on the MAI host PC, even when the user is chatting from another device; tool_manual activation does not select the execution target. Use is_remote only on tools whose activated schema declares it. Establish paths, working directories, and shell syntax from the target PC's observations; host runtime context does not describe the remote PC. The runtime resolves the account's active remote session; do not supply a session identifier. A missing or disconnected remote session is an error: report it instead of substituting host execution.
+MAI's owner-authorized remote connection lets native tools execute on another connected Windows or Linux computer. First activate required tools with tool_manual and follow their next-round native schemas; there is no CodeAct or execute_code tool. For every applicable native call, choose is_remote=true when the user's request targets the connected remote worker and is_remote=false (or omit) when it targets the MAI host. The model selects that target from the user's intent and observed context, not substring rules. Tool activation does not select the target. For remote discovery, reads, edits, terminal commands, browser actions, external information and verification, keep the requested execution target consistent. Remote paths and shell syntax belong to the worker's operating system (Linux uses /bin/sh; Windows uses CMD by default). Host memory_search, tool_result_read and file_download_link remain host-only and never acquire is_remote. The runtime resolves the account's active remote session; never supply its ID as a tool argument. If the remote session is unavailable or a tool is unsupported on that worker, report the failure; never substitute local execution.
 
 Use persistent-memory retrieval for missing user context. Activate the appropriate tool and read its schema before choosing arguments. Bounded or empty results are not exhaustive proof of absence.
 
@@ -255,20 +255,30 @@ class MAIRuntime:
     ) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
-        register_time_tools(registry)
-        register_calculator_tools(registry)
-        register_external_information_tools(registry)
-        register_browser_tools(registry, browser_manager)
-        # A separate vision inference can evict main mid-tool-turn and lose KV.
-        # llama.cpp images are handled by the main model only.
-        # Preserve Ollama image_analyze fallback unchanged.
-        if self.llm_backend == "ollama" and self.vision_model is not None:
-            register_image_tools(
-                registry, model=self.vision_model,
-                host=(self.ollama_host if self.llm_backend == "ollama" else self.llamacpp_host),
-                cwd=self.cwd, backend=self.llm_backend,
-                router=self._llamacpp_router,
+        if principal.role is AccessRole.OWNER:
+            register_routed_service_tools(
+                registry, owner_id=principal.db_id, browser_manager=browser_manager,
             )
+        else:
+            register_time_tools(registry)
+            register_calculator_tools(registry)
+            register_external_information_tools(registry)
+            register_browser_tools(registry, browser_manager)
+        # Main llama.cpp handles its own images; separate image_analyze is
+        # available only with an explicitly configured Ollama vision model.
+        if self.llm_backend == "ollama" and self.vision_model is not None:
+            if principal.role is AccessRole.OWNER:
+                register_routed_image_tools(
+                    registry, owner_id=principal.db_id, model=self.vision_model,
+                    host=self.ollama_host, cwd=self.cwd, backend=self.llm_backend,
+                    router=self._llamacpp_router,
+                )
+            else:
+                register_image_tools(
+                    registry, model=self.vision_model, host=self.ollama_host,
+                    cwd=self.cwd, backend=self.llm_backend,
+                    router=self._llamacpp_router,
+                )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
