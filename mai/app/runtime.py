@@ -140,6 +140,9 @@ class MAIRuntime:
             raise ValueError("LLM_BACKEND must be ollama or llamacpp")
         self.llm_backend = llm_backend
         self.llamacpp_host = llamacpp_host
+        # Optional independent llama.cpp servers. Ollama behavior is unchanged.
+        self.llamacpp_verifier_host = os.environ.get("LLAMACPP_VERIFIER_HOST", "").strip() or llamacpp_host
+        self.llamacpp_vision_host = os.environ.get("LLAMACPP_VISION_HOST", "").strip() or llamacpp_host
         self.ollama_host = ollama_host
         self.model = model
         self.verifier_model = verifier_model.strip() if verifier_model is not None else None
@@ -176,7 +179,11 @@ class MAIRuntime:
         if adapter is None:
             adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True, options={"num_predict": ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)}))
                        if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True)))
+                       LlamaCppAdapter(ModelConfig(
+                            model=clean_model,
+                            host=(self.llamacpp_verifier_host if clean_model == self.verifier_model
+                                  else self.llamacpp_vision_host if clean_model == self.vision_model
+                                  else self.llamacpp_host), think=True)))
             self._adapters[clean_model] = adapter
         return adapter
 
@@ -238,7 +245,12 @@ class MAIRuntime:
         register_external_information_tools(registry)
         register_browser_tools(registry, browser_manager)
         if self.vision_model is not None:
-            register_image_tools(registry, model=self.vision_model, host=self.ollama_host, cwd=self.cwd)
+            register_image_tools(
+                registry, model=self.vision_model,
+                host=(self.ollama_host if self.llm_backend == "ollama" else
+                      self.llamacpp_vision_host if self.vision_model != self.model else self.llamacpp_host),
+                cwd=self.cwd, backend=self.llm_backend,
+            )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
