@@ -36,6 +36,20 @@ def optional_models(settings: Path, root: Path) -> dict[str, str]:
         result[key] = str(path)
     if result["VISION_MMPROJ_PATH"] and not result["VISION_GGUF_PATH"]:
         raise ValueError("VISION_MMPROJ_PATH requires VISION_GGUF_PATH")
+    raw_enabled = os.environ.get(
+        "MAI_VERIFIER_ENABLED",
+        dot_env.get("MAI_VERIFIER_ENABLED", config.get("MAI_VERIFIER_ENABLED", True)),
+    )
+    if isinstance(raw_enabled, bool):
+        enabled = raw_enabled
+    elif str(raw_enabled).strip().lower() in {"true", "1", "yes", "on"}:
+        enabled = True
+    elif str(raw_enabled).strip().lower() in {"false", "0", "no", "off"}:
+        enabled = False
+    else:
+        raise ValueError("MAI_VERIFIER_ENABLED must be boolean")
+    if not enabled:
+        result["VERIFIER_GGUF_PATH"] = ""
     return result
 
 
