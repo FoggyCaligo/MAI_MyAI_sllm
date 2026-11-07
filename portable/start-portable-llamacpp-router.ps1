@@ -3,7 +3,7 @@
 param(
     [ValidateRange(1,1)][int]$ModelsMax = 1,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
-    [ValidateRange(512,262144)][int]$ContextSize = 16384
+    [ValidateRange(512,262144)][int]$ContextSize = 131072
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
