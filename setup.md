@@ -40,13 +40,13 @@ cp .env.example .env
 
 `.env`에서 `OWNER_USERS`의 `user_id`, `user_pw`를 반드시 개인 값으로 수정하고, `db_id`는 이미 데이터를 사용 중이라면 유지함. `TRIAL_USERS`는 사용하지 않을 때 `[]`로 지정하고, `TAILSCALE_FUNNEL=false`로 시작할 것. 실제 비밀번호를 저장소·로그·공개 게시글에 노출하지 말 것.
 
-**Verifier 변경 시 확인:** 기존 `.env` 또는 프로세스 환경변수에 `VERIFIER_MODEL=granite4:3b-h`가 있으면 YAML 기본값을 바꿔도 그대로 적용됨. `LiquidAI/lfm2.5-2.6b:q4_k_m`를 사용하려면 해당 값을 수정하거나 기존 덮어쓰기를 삭제하고 모델을 설치할 것.
+**Verifier 변경 시 확인:** 기존 `.env` 또는 프로세스 환경변수에 `VERIFIER_MODEL=granite4:3b-h`가 있으면 YAML 기본값을 바꿔도 그대로 적용됨. `qwen3:4b-instruct-2507-q4_K_M`를 사용하려면 해당 값을 수정하거나 기존 덮어쓰기를 삭제하고 모델을 설치할 것.
 
 **설정 우선순위:** 기존 환경변수와 `.env`의 동일 이름 값이 `settings.yaml` 기본값보다 우선함. 기존 `.env`의 `MAIN_MODEL` 또는 타임아웃 값을 YAML에서 변경해도 적용되지 않으면 `.env`에 동일 키가 있는지 확인할 것. `.env`를 덮어쓰지 않고 이관하려면 해당 키만 직접 삭제함. `settings.yaml`의 중복/알 수 없는 키와 부적절한 값 형식은 명시적 오류로 처리됨.
 
 ### 1.3 settings.yaml 설정 구분
 
-**A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VERIFIER_MODEL`은 검증 전용 모델이며 기본값은 `LiquidAI/lfm2.5-2.6b:q4_k_m`다. 해당 키를 생략하면 기존처럼 본 모델로 검증한다. `VISION_MODEL`은 이미지 인식에만 필요한 선택 설정이며, 전체 텍스트 MAI 실행의 필수 요건은 아님.
+**A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VERIFIER_MODEL`은 검증 전용 모델이며 기본값은 `qwen3:4b-instruct-2507-q4_K_M`다. 해당 키를 생략하면 기존처럼 본 모델로 검증한다. `VISION_MODEL`은 별도 이미지 인식 도구용 선택 설정이다. Ollama의 메인 모델에 `vision` capability가 있을 때 업로드 이미지 첨부는 메인 모델에 직접 전달되며, 그 외에는 기존 `VISION_MODEL`의 `image_analyze` 도구를 활용한다. 전체 텍스트 MAI 실행에는 이미지 모델이 필수는 아니다.
 
 **Verifier 품질 검토:** 기본 `MAI_ANSWER_QUALITY_REVIEW=false`는 사실 검증 통과 후 요청 부합도·정보 충족도를 별도 검토함. 추가 모델 호출로 응답이 느려질 수 있음. 기존 `.env`·환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 그 값이 우선하므로 변경 후 확인할 것.
 
