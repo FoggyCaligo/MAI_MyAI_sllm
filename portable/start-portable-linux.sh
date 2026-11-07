@@ -40,10 +40,19 @@ export CHAT_DB_PATH="$root/data/chat.sqlite3"
 export LOG_DB_PATH="$root/data/log.sqlite3"
 export SENTENCE_BREAKER_DB_PATH="$root/data/sentence_breaker.sqlite3"
 export LD_LIBRARY_PATH="$(dirname "$llama"):${LD_LIBRARY_PATH:-}"
+# An optional projector is required by some multimodal GGUF models.
+mmproj="${2:-${MAI_MMPROJ_PATH:-}}"
+mmproj_args=()
+if [[ -n "$mmproj" ]]; then
+  [[ "$mmproj" = /* ]] || mmproj="$root/$mmproj"
+  [[ -f "$mmproj" && "$mmproj" == *.gguf ]] || { echo "Multimodal projector GGUF missing: $mmproj" >&2; exit 1; }
+  [[ "$(head -c 4 -- "$mmproj")" == "GGUF" ]] || { echo "Multimodal projector is not a GGUF: $mmproj" >&2; exit 1; }
+  mmproj_args=(--mmproj "$mmproj")
+fi
 llama_pid=""
 cleanup() { if [[ -n "$llama_pid" ]]; then kill "$llama_pid" 2>/dev/null || true; wait "$llama_pid" 2>/dev/null || true; fi; }
 trap cleanup EXIT
-"$llama" -m "$gguf" --alias "$alias_name" --host 127.0.0.1 --port 8080 --jinja --parallel 1 --slot-save-path "$MAI_SLOT_CACHE_DIR" &
+"$llama" -m "$gguf" "${mmproj_args[@]}" --alias "$alias_name" --host 127.0.0.1 --port 8080 --jinja --parallel 1 --slot-save-path "$MAI_SLOT_CACHE_DIR" &
 llama_pid=$!
 ready=0
 for attempt in {1..100}; do
