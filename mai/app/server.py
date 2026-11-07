@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 import secrets
 import io
 import hashlib
@@ -155,6 +156,16 @@ def _append_session_message(
     )
 
 
+async def _remote_idle_reaper() -> None:
+    """Enforce ten-hour no-work expiry even while all browsers are closed."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await remote_sessions.expire_inactive()
+        except Exception:
+            logger.exception("MAI remote session idle cleanup failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _runtime, _access_policy, _chat_session_store, _tailscale, _voice_service, _login_rate_limiter
@@ -204,9 +215,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             print(status_text, flush=True)
     else:
         print("MAI Tailscale Funnel: disabled (set TAILSCALE_FUNNEL=true to enable)", flush=True)
+    idle_reaper = asyncio.create_task(_remote_idle_reaper())
     try:
         yield
     finally:
+        idle_reaper.cancel()
+        try:
+            await idle_reaper
+        except asyncio.CancelledError:
+            pass
         _auth_sessions.clear()
         if _tailscale is not None:
             _tailscale.stop()
