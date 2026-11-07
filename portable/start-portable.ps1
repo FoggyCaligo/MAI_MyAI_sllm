@@ -85,18 +85,18 @@ if ($routerMode) {
     $normalize = { param([string]$path) ($path -replace '\\', '/') }
     $mainIni = & $normalize $modelFile
     $visionIni = & $normalize $visionPath
-    $ini = @("[mai-model]", "model = $mainIni", "parallel = 1")
+    $ini = @("[mai-model]", "model = $mainIni")
     if ($visionMode) {
-        $ini += @("", "[mai-vision]", "model = $(& $normalize $visionPath)", "parallel = 1")
+        $ini += @("", "[mai-vision]", "model = $(& $normalize $visionPath)")
         if ($projectorPath) { $ini += "mmproj = $(& $normalize $projectorPath)" }
     }
     if ($verifierMode) {
-        $ini += @("", "[mai-verifier]", "model = $(& $normalize $verifierPath)", "parallel = 1")
+        $ini += @("", "[mai-verifier]", "model = $(& $normalize $verifierPath)")
     }
     [System.IO.File]::WriteAllLines($presetPath, [string[]]$ini, (New-Object System.Text.UTF8Encoding($false)))
     $serverArgs = @('--models-preset', ('"' + $presetPath + '"'),
                     '--models-max', '1', '--host', '127.0.0.1',
-                    '--port', '8080', '--jinja')
+                    '--port', '8080', '--jinja', '--parallel', '1')
 } else {
     $serverArgs = @('-m', $quotedModelPath, '--alias', $quotedModelAlias,
                     '--host', '127.0.0.1', '--port', '8080', '--jinja',
