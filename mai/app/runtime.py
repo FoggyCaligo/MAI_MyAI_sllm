@@ -41,7 +41,7 @@ from ..tools.external import register_external_information_tools
 from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..remote.routing import register_routed_pc_tools
+from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -267,10 +267,15 @@ class MAIRuntime:
     ) -> ToolRegistry:
         registry = ToolRegistry()
         register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
-        register_time_tools(registry)
-        register_calculator_tools(registry)
-        register_external_information_tools(registry)
-        register_browser_tools(registry, browser_manager)
+        if principal.role is AccessRole.OWNER:
+            register_routed_service_tools(
+                registry, owner_id=principal.db_id, browser_manager=browser_manager,
+            )
+        else:
+            register_time_tools(registry)
+            register_calculator_tools(registry)
+            register_external_information_tools(registry)
+            register_browser_tools(registry, browser_manager)
         # A separate vision inference can evict main mid-tool-turn and lose KV.
         # llama.cpp images are handled by the main model only.
         # Preserve Ollama image_analyze fallback unchanged.
