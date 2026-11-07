@@ -4,7 +4,9 @@ Windows/Linux 호스트 OS 인터페이스 구조와 이식성 제한은 [OS 경
 
 외장 SSD에 소스·설정·DB·모델을 두고 Windows x64에서 실행한다. Ubuntu 24.04 x86-64는 실험적 지원이며 실행 환경을 호스트 캐시에 별도로 준비한다. 일반 설치·계정·음성·Tailscale 설정은 [설치 안내](../setup.md)를 따른다.
 
-원격 웹 공개 제공자 선택은 [Remote Hosting 어댑터 안내](../docs/remote-hosting.md)를 참조한다.\n\n## 배치와 준비 조건
+원격 웹 공개 제공자 선택은 [한국어 원격 호스팅 설정](../docs/remote-hosting.md)을 참조한다.
+
+## 배치와 준비 조건
 
 다음 명령은 모두 **프로젝트 루트**에서 실행한다. SSD는 NTFS를 사용하며 포맷 전 별도 디스크에 백업한다. 포맷은 데이터를 삭제한다. 호스트 GPU 드라이버·시스템 라이브러리·Tailscale 인증은 SSD만으로 제공되지 않는다.
 
@@ -101,6 +103,24 @@ if ($LASTEXITCODE -ne 0) { throw 'Verifier 모델 복사 실패' }
 
 기본 `MAI_ANSWER_QUALITY_REVIEW=false`에서는 선택적 품질 검토 호출이 실행되지 않는다. 숫자검증과 사실검증은 독립적으로 실행되며 같은 Verifier 모델을 사용한다. 기존 `.env` 또는 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 새 기본값보다 우선한다.
 
+## 원격 웹 호스팅과 원격 PC 작업
+
+Portable 실행 스크립트는 MAI 서버 자체를 시작한다. 웹의 외부 공개 방법은 **호스트 OS에 설치된 커넥터**가 담당하며 Portable에 Tailscale이나 cloudflared 로그인 상태까지 자동 포함되지 않는다.
+
+```yaml
+# settings.yaml (기본값)
+REMOTE_HOSTING_PROVIDER: tailscale  # tailscale | cloudflare | none
+```
+
+- **Tailscale(기본):** Windows/Linux 호스트에 Tailscale을 설치하고 로그인한 뒤 Funnel을 허용한다. `tailscale funnel status`로 공개 상태를 확인한다. 설치·로그인하지 않은 PC에서는 커넥터 시작이 실패할 수 있으나 로컬 MAI는 계속 실행한다.
+- **Cloudflare:** 호스트에 `cloudflared`를 설치하고 PATH에 등록한다. Cloudflare Dashboard에서 관리형 Named Tunnel과 공개 호스트명 → `http://127.0.0.1:8000` 경로를 만들고, Git 제외 `.env`에 `CLOUDFLARE_TUNNEL_TOKEN=실제토큰`을 입력한다.
+- **none:** 이번 MAI 프로세스에서 원격 호스팅 커넥터를 새로 실행하지 않는다.
+- **기존 설정 정리:** 구형 `TAILSCALE_FUNNEL`은 더 이상 사용하지 않는다. 이전 `.env` 파일에서 제거할 수 있다. `REMOTE_HOSTING_PROVIDER`가 `.env`에 있으면 YAML보다 우선한다.
+- **제공자 전환:** 기존 Tailscale Funnel은 백그라운드에서 유지될 수 있으므로 `tailscale funnel status` 확인 후 불필요한 공개 규칙을 직접 해제한다. `none`으로 전환해도 이전에 다른 프로세스가 열어 둔 공개 경로까지 자동으로 닫지는 않는다.
+- **원격 PC 관리:** MAI 웹 호스팅과 별도의 `mai/remote/` 기능이다. `dev` 원격 PC 세션은 연결 시도 10분, 연결 확인 3분 및 **실제 원격 작업 없이 10시간 경과하면 자동 만료** 규칙을 갖는다. 이 제한은 웹 터널을 끄지 않는다.
+
+Tailscale/Cloudflare 최초 설정과 전환 방법은 [원격 호스팅 가이드](../docs/remote-hosting.md)를 확인한다. MAI 웹 로그인에 강한 비밀번호를 설정하고, `TRIAL_USERS`의 권한을 점검한 뒤 외부 접속을 테스트한다.
+
 ## Windows 실행
 
 ```powershell
@@ -172,7 +192,7 @@ bash ./portable/start-portable-linux.sh
 
 Linux 원본 아카이브는 SSD의 `portable/portable-downloads/linux/`, 실행 환경은 호스트의 `~/.cache/mai-portable/<프로젝트 경로 식별자>/` 아래에 둔다. NTFS에 Linux 가상환경을 설치하지 않는다. 모델·DB·설정은 SSD의 공통 파일을 쓴다. 프로젝트 경로 변경이나 캐시 삭제 후에는 다시 준비해야 할 수 있다.
 
-최초 패키지 설치는 인터넷이 추가로 필요할 수 있다. 시스템 라이브러리·GPU 드라이버는 자동 설치하지 않는다. 실제 Ubuntu 종단간 실행과 새 PC의 완전 오프라인 최초 실행은 아직 보장되지 않는다. Tailscale도 호스트별 설치·인증이 필요하다.
+최초 패키지 설치는 인터넷이 추가로 필요할 수 있다. 시스템 라이브러리·GPU 드라이버는 자동 설치하지 않는다. Ubuntu에서는 `bash portable/prepare-portable-linux.sh --install-vulkan`으로 Mesa Vulkan 패키지를 명시적으로 설치할 수 있으며, `python3 portable/check-linux-gpu.py --require`로 하드웨어 Vulkan 장치를 확인한다. 실제 모델 GPU 추론은 별도 검증이 필요하다. 실제 Ubuntu 종단간 실행과 새 PC의 완전 오프라인 최초 실행은 아직 보장되지 않는다. Tailscale도 호스트별 설치·인증이 필요하다.
 
 ## 백업과 복원
 
