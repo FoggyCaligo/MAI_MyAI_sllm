@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..llm.llamacpp import LlamaCppAdapter
+from ..llm.llamacpp_router import SingleResidentRouter
 from ..llm.models import ModelConfig, ChatRequest
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,6 +38,7 @@ class ImageAnalyzer:
         cwd: str | Path | None = None,
         max_bytes: int = 20 * 1024 * 1024,
         backend: str = "ollama",
+        router: SingleResidentRouter | None = None,
     ) -> None:
         clean_model = model.strip()
         if not clean_model:
@@ -53,7 +55,7 @@ class ImageAnalyzer:
         else:
             self.client = None
         self.llama_adapter = (
-            LlamaCppAdapter(ModelConfig(model=model, host=host, think=False))
+            LlamaCppAdapter(ModelConfig(model=model, host=host, think=False), router=router)
             if backend == "llamacpp" else None
         )
 
@@ -106,8 +108,9 @@ def register_image_tools(
     cwd: str | Path | None = None,
     timeout_seconds: float | None = 120,
     backend: str = "ollama",
+    router: SingleResidentRouter | None = None,
 ) -> None:
-    analyzer = ImageAnalyzer(model=model, host=host, cwd=cwd, backend=backend)
+    analyzer = ImageAnalyzer(model=model, host=host, cwd=cwd, backend=backend, router=router)
     registry.add(
         name="image_analyze",
         description=(
