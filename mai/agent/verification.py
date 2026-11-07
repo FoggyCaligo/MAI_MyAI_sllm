@@ -44,13 +44,19 @@ _LIST_ORDINAL_RE = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _LOG = logging.getLogger("uvicorn.error")
 
 _NUMERIC_REVIEW_SYSTEM = """
-Additional numeric/date equivalence subtask: these instructions govern numeric_verdict and numeric_reason only. Continue the independent factual review in the same response; neither verdict replaces the other. No tools, answer rewriting, or added requirements.
-A deterministic checker found candidate values whose exact normalized tokens were absent from user/tool evidence. For the numeric verdict, judge only those flagged values, not quality, alignment, completeness, or other factual claims.
+You are a judgment-only numeric and date equivalence reviewer. You cannot call tools, choose tools, rewrite the answer, or add requirements.
 
-Return "supported" only if every flagged value is established by evidence despite formatting, aliases, or equivalent phrasing (comma grouping, Korean dates matching ISO dates, matching month/day aliases, or equivalent range endpoints).
-Return "unsupported" if any value is absent, contradicted, broader than evidence, or depends on unsupported assumptions; return "uncertain" if equivalence cannot be confidently decided.
-Preserve units and measurement types: characters, bytes, file size and tokens differ. Missing measurements do not prove alternative values.
-For derived counts, distinguish rows from distinct keys, cite source records and the aggregation rule in the reason, and never invent a counter-total from incomplete evidence.
+A deterministic checker flagged numeric/date values from a candidate final answer because the exact normalized tokens were not found in the supplied user or tool evidence.
+
+Decide whether every flagged numeric/date value is nevertheless semantically established by the supplied evidence.
+
+Return "supported" only when all flagged values are the same factual values as the evidence despite formatting differences, aliases, or equivalent phrasing. Examples include comma grouping differences, Korean date phrasing for an explicit ISO-like date, a month/day alias for a full date with the same month/day, and equivalent range endpoints.
+
+Return "unsupported" when any flagged value is absent, contradicted, materially broader than the evidence, or only inferable from unsupported assumptions.
+
+Return "uncertain" when the evidence may support the value but you cannot confidently establish equivalence.
+
+Judge only numeric/date grounding for the flagged values. Do not decide overall answer quality, task alignment, optional completeness, or non-numeric factual claims.
 """.strip()
 
 _FACTUAL_REVIEW_SYSTEM = """
@@ -59,6 +65,12 @@ rewrite the answer, assess answer completeness or demand optional details.
 Use the original current user request, conversation context and observed tool evidence.
 Return claim-level grounding, action-outcome evidence and blocking factual reasons.
 Do not judge coverage or task alignment. Reject unsupported factual expansion.
+
+Current-candidate review boundary:
+- Verify factual claims that actually appear in candidate_final for this turn. Treat candidate_final as the only answer under review; do not grade prior answers or unrelated background information as if they were claims in this answer.
+- Conversation history helps interpret the current user request and disambiguate candidate claims, but is not a substitute candidate. Only explicitly verified prior conversation may serve as historical evidence under the evidence rules below.
+- Do not invent, infer, or paraphrase a supposed candidate claim unless the candidate actually asserts it. Before declaring a defect, locate the corresponding assertion in candidate_final.
+- Distinguish a direct contradiction from insufficient evidence: contradiction requires observed conflicting evidence; missing or incomplete evidence alone is not a demonstrated falsehood. Classify each defect accordingly.
 
 Claim-level evidence grounding:
 - For each material factual claim, use verdict "supported", "unsupported", or "uncertain".
@@ -162,10 +174,13 @@ class _QualityReviewPayload(BaseModel):
     retry_summary: str = Field(min_length=1, max_length=800)
 
 
-class _FactualNumericReviewPayload(_FactualReviewPayload):
-    """One factual verdict also resolves every flagged numeric/date value."""
+class _NumericReviewPayload(BaseModel):
+    """Strict provider-structured numeric equivalence response."""
+
+    model_config = ConfigDict(extra="forbid")
+
     numeric_verdict: Literal["supported", "unsupported", "uncertain"]
-    numeric_reason: str = Field(max_length=240)
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +325,22 @@ class FinalGroundingVerifier:
             candidate=candidate, messages=messages, tool_results=tool_results,
         ) if allow_numeric_review else ()
         numeric_issue = self._numeric_issue_from_facts(numeric_facts) if numeric_facts else None
+        numeric_verdict: str | None = None
+        numeric_reason = ""
+        if numeric_facts and self.reviewer_adapter is not None:
+            numeric_review = await self._review_numeric_grounding(
+                candidate=candidate, messages=messages, tool_results=tool_results,
+                unsupported_facts=numeric_facts, on_audit_event=on_audit_event,
+            )
+            numeric_verdict = numeric_review.numeric_verdict
+            numeric_reason = numeric_review.reason.strip()
+            if numeric_verdict == "supported":
+                numeric_issue = None
+            else:
+                numeric_issue = VerificationIssue(
+                    code="numeric_grounding_failed",
+                    message=f"{numeric_issue.message} Semantic numeric review: {numeric_reason}",
+                )
         if allow_evidence_review is None:
             allow_evidence_review = allow_semantic_review
         issues: list[VerificationIssue] = []
@@ -335,20 +366,12 @@ class FinalGroundingVerifier:
 
         review = await self._review_final(
             candidate=candidate, messages=messages, tool_results=tool_results,
-            flagged_numeric_facts=numeric_facts,
             run_quality_review=(self.quality_review_enabled and allow_evidence_review
                                 and allow_semantic_review and allow_coverage_review),
             on_audit_event=on_audit_event,
         )
         if numeric_issue is not None:
-            if review.numeric_verdict == "supported":
-                numeric_issue = None
-            else:
-                numeric_issue = VerificationIssue(
-                    code=numeric_issue.code,
-                    message=f"{numeric_issue.message} Semantic numeric review: {review.numeric_reason}",
-                )
-                issues.append(numeric_issue)
+            issues.append(numeric_issue)
         if allow_evidence_review:
             unsupported_claims = tuple(claim for claim in review.claims if claim.verdict == "unsupported")
             scope_claims = tuple(claim for claim in unsupported_claims if claim.defect == "scope_expansion")
@@ -413,8 +436,8 @@ class FinalGroundingVerifier:
                 + review.retry_summary
             ) if issues else "",
             review_details={
-                "numeric_verdict": review.numeric_verdict,
-                "numeric_reason": review.numeric_reason,
+                "numeric_verdict": numeric_verdict,
+                "numeric_reason": numeric_reason,
                 "flagged_numeric_or_date_values": list(numeric_facts),
                 "evidence_verdict": review.evidence_verdict,
                 "alignment_verdict": review.alignment_verdict,
@@ -477,24 +500,40 @@ class FinalGroundingVerifier:
             ),
         )
 
+    async def _review_numeric_grounding(
+        self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
+        tool_results: Sequence[ToolVerificationResult],
+        unsupported_facts: Sequence[str],
+        on_audit_event: VerificationAuditObserver | None = None,
+    ) -> _NumericReviewPayload:
+        """Run the historical independent numeric/date equivalence reviewer."""
+        payload = _review_payload(
+            candidate=candidate, messages=messages, tool_results=tool_results,
+            verified_prior_conversation=self.verified_prior_conversation,
+        )
+        payload["flagged_numeric_or_date_values"] = list(unsupported_facts)
+        request = ChatRequest(
+            messages=(
+                {"role": "system", "content": _NUMERIC_REVIEW_SYSTEM},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ),
+            tools=(), think=False, response_format=_NumericReviewPayload.model_json_schema(),
+        )
+        return await self._request_structured_review(
+            request, _NumericReviewPayload, label="numeric", on_audit_event=on_audit_event,
+        )
+
     async def _review_final(
         self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
-        flagged_numeric_facts: Sequence[str] = (),
         on_audit_event: VerificationAuditObserver | None = None,
     ) -> FinalReview:
         payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results,
                                   verified_prior_conversation=self.verified_prior_conversation)
-        system = _FACTUAL_REVIEW_SYSTEM
         payload_model = _FactualReviewPayload
-        if flagged_numeric_facts:
-            system += "\n\nIn this SAME review, also apply these numeric-equivalence rules:\n" + _NUMERIC_REVIEW_SYSTEM
-            system += "\nReturn numeric_verdict and numeric_reason in addition to the factual verdict."
-            payload["flagged_numeric_or_date_values"] = list(flagged_numeric_facts)
-            payload_model = _FactualNumericReviewPayload
         fact_request = ChatRequest(
             messages=(
-                {"role": "system", "content": system},
+                {"role": "system", "content": _FACTUAL_REVIEW_SYSTEM},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ),
             tools=(), think=False, response_format=payload_model.model_json_schema(),
@@ -502,8 +541,6 @@ class FinalGroundingVerifier:
         facts = await self._request_structured_review(
             fact_request, payload_model, label="factual", on_audit_event=on_audit_event,
         )
-        numeric_verdict = facts.numeric_verdict if flagged_numeric_facts else None
-        numeric_reason = facts.numeric_reason if flagged_numeric_facts else ""
         claims = tuple(ClaimReview(
             claim=item.claim.strip(), verdict=item.verdict,
             defect=item.defect, reason=item.reason.strip(),
@@ -517,7 +554,7 @@ class FinalGroundingVerifier:
         ))
         # Quality is a separate, optional gate. Never run it on a rejected factual
         # candidate; the next agent turn must re-run factual verification.
-        factual_pass = (not flagged_numeric_facts or numeric_verdict == "supported") and evidence_verdict == "supported" and facts.action_verdict in (
+        factual_pass = evidence_verdict == "supported" and facts.action_verdict in (
             "not_applicable", "verified"
         )
         if not (run_quality_review and factual_pass):
@@ -527,7 +564,6 @@ class FinalGroundingVerifier:
                 reasons=factual_reasons, claims=claims,
                 action_verdict=facts.action_verdict,
                 retry_summary=facts.retry_summary,
-                numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
             )
 
         quality_input = {
@@ -566,7 +602,6 @@ class FinalGroundingVerifier:
             )),
             claims=claims, action_verdict=facts.action_verdict,
             retry_summary=quality.retry_summary,
-            numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
         )
 
     async def _request_structured_review(
