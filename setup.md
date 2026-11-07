@@ -87,6 +87,38 @@ MAI_ANSWER_QUALITY_REVIEW: false    # 별도 품질/요청 충족 검토 (기존
 
 **KV 캐시 범위:** `RoleCacheRun` 체크포인트 파일명에 GGUF 경로·크기·수정 시각으로 생성한 모델 식별 네임스페이스를 추가했다. 메인/숫자/최종 검증 역할은 각자 별도 체크포인트이며 모델이 다르면 서로 재사용하지 않는다. **이는 모델 교체 인프라의 첫 단계일 뿐**, 현재 `dev2`는 하나의 llama.cpp 모델만 적재하며 LFM 등 별도 Verifier 모델을 VRAM에서 교대로 불러오는 기능은 구현하지 않았다. 파일명 격리만으로 교차 모델 캐시 복원이 안전해지는 것이 아니다.
 
+## GGUF 모델 교대 적재와 이미지 인식 (실험 기능)
+
+llama.cpp 라우터가 `--models-max 1`로 **메인·Verifier·비전 모델 중 한 개만** 적재한다. 새 요청의 모델이 다르면 기존 모델을 내리고 해당 모델을 올린다. 모델별 KV 체크포인트는 서로 공유하지 않으며, 라우터 모드에서는 기존 단일 서버 전용 `RoleCacheRun`을 사용하지 않는다. 메인 상태는 대화·도구 문맥으로 재구성된다. 모델 교체 시 재적재 시간은 발생할 수 있다.
+
+```yaml
+MODEL_GGUF_PATH: "portable/portable-models/gguf/active.gguf"
+MAI_VERIFIER_ENABLED: true
+MAI_VERIFIER_BLOCKING_MODE: critical
+# 다음 설정은 필요한 모델을 실제 복사한 뒤 주석을 해제한다.
+# VERIFIER_GGUF_PATH: "portable/portable-models/gguf/lfm2.5-2.6b.gguf"
+# VISION_GGUF_PATH: "portable/portable-models/gguf/gemma3-12b.gguf"
+# VISION_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-gemma3.gguf"
+```
+
+- `VISION_GGUF_PATH`: 이미지 모델의 **본체 GGUF**. 설정하면 이미지 첨부 시 먼저 해당 모델에 이미지와 질문을 전달해 관찰 결과를 얻고, 메인 모델이 그 결과를 사용해 답한다. 원본 이미지는 현재 메인 모델에게 직접 전달하지 않는다.
+- `VISION_MMPROJ_PATH`: 해당 이미지 모델에 적합한 **별도 멀티모달 projector GGUF**가 필요한 경우 설정. Ollama의 SHA blob에서 헤더와 메타데이터를 확인해 복사한다. 모델과 projector를 무작정 합치거나 다른 모델용 projector를 사용하지 않는다.
+- `VERIFIER_GGUF_PATH`: LFM 같은 경량 Verifier 모델의 GGUF 파일(선택). 설정한 경우 최종 숫자·사실 검증에서 별도 모델을 사용하며 기존 `critical`/ `strict` 정책과 `MAI_VERIFIER_ENABLED`을 유지한다.
+- `MAI_VERIFIER_ENABLED: false`: 검증 모델을 **사용하지 않음**. 다른 이미지 모델을 설정했다면 비전 전환만 작동한다.
+- PNG/JPEG/WebP 이미지는 계정별 업로드 영역에서만 읽고 1장당 최대 20MiB를 처리한다. GIF는 현재 이미지 인식에 지원하지 않는다. 분석 실패를 근거 없이 텍스트 추론 성공으로 처리하지 않고 오류를 알린다.
+- `.env` 또는 환경변수가 YAML보다 우선하며, 모델 파일의 확장자·GGUF 헤더·실제 존재 여부를 Portable 시작 전에 확인한다.
+- Windows/Ubuntu Portable 런처는 llama.cpp의 **router** 기능을 사용하므로 해당 옵션을 지원하는 Vulkan 빌드가 필요하다. 버전에 따라 모델·projector 호환성이 다르며 **실기기 로드·이미지 추론·정확한 모델 언로드는 아직 검증하지 않았다.**
+- 최초 로컬 테스트는 Verifier를 `false`로 두고 단일 이미지에서 메인 ↔ 비전 전환을 점검한 뒤, 경량 Verifier 모델을 추가하는 순서를 추천한다.
+
+검증 명령:
+
+```powershell
+python -m pytest -q tests/test_dev2_vision_router.py tests/test_dev2_verifier_policy.py
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps1
+```
+
+**경고:** 라우터는 모델 1개만 상주하도록 제한하지만, 파일 로드 과정에서 GPU 여유 메모리가 충분한지는 실제 VRAM 측정이 필요하다. 모델을 언로드한 뒤 동일 KV를 다른 모델에 적용하지 않는다.
+
 ## 실행 제약
 
 - `REMOTE_HOSTING_PROVIDER` 기본값: `tailscale` (`none`/`cloudflare`도 가능)
