@@ -1,129 +1,19 @@
 #requires -version 5.1
+# dev2 is portable-only; delegate to the single-model provisioning script.
 [CmdletBinding()]
 param(
-    [string]$InstallPath = (Join-Path $env:USERPROFILE 'Documents\Git\MAI_MyAI_sllm')
+    [Parameter(Mandatory=$true)][string]$Manifest,
+    [string]$ModelFile,
+    [switch]$InstallChromium,
+    [switch]$PreserveAndReinstallExisting
 )
 $ErrorActionPreference = 'Stop'
-Set-StrictMode -Version Latest
-
-function Run-Command {
-    param([string]$Executable, [Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
-    & $Executable @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Executable exited with code $LASTEXITCODE"
-    }
-}
-
-function Refresh-Path {
-    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-        [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path
-}
-
-function Ensure-Command {
-    param([string]$Name, [string]$WingetId)
-    if (Get-Command $Name -ErrorAction SilentlyContinue) { return }
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "winget is unavailable. Install App Installer from Microsoft Store and retry."
-    }
-    Write-Host "Installing $WingetId..."
-    Run-Command 'winget' @('install', '--id', $WingetId, '--exact', '--accept-source-agreements', '--accept-package-agreements')
-    Refresh-Path
-    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        throw "$WingetId was installed but $Name is not yet available. Open a new PowerShell and rerun this script."
-    }
-}
-
-function Read-RequiredValue {
-    param([string]$Prompt)
-    $value = Read-Host $Prompt
-    if ([string]::IsNullOrWhiteSpace($value)) { throw "$Prompt cannot be empty" }
-    return $value
-}
-
-if ($env:OS -ne 'Windows_NT') {
-    throw 'This installer supports Windows only.'
-}
-Write-Host 'MAI first-run setup - existing .env and databases will be preserved.'
-Ensure-Command 'git' 'Git.Git'
-Ensure-Command 'python' 'Python.Python.3.12'
-Ensure-Command 'ollama' 'Ollama.Ollama'
-
-$parent = Split-Path -Parent $InstallPath
-New-Item -ItemType Directory -Force -Path $parent | Out-Null
-if (-not (Test-Path -LiteralPath $InstallPath)) {
-    Run-Command 'git' @('clone', '--branch', 'dev', 'https://github.com/FoggyCaligo/MAI_MyAI_sllm.git', $InstallPath)
-}
-elseif (-not (Test-Path -LiteralPath (Join-Path $InstallPath '.git'))) {
-    throw "Install path exists but is not a Git repository: $InstallPath"
-}
-
-Push-Location $InstallPath
-try {
-    $venvPython = Join-Path $InstallPath '.venv\Scripts\python.exe'
-    if (-not (Test-Path $venvPython)) {
-        Run-Command 'python' @('-m', 'venv', '.venv')
-    }
-    Run-Command $venvPython @('-m', 'pip', 'install', '--upgrade', 'pip')
-    Run-Command $venvPython @('-m', 'pip', 'install', '-e', '.')
-    Run-Command $venvPython @('-m', 'playwright', 'install', 'chromium')
-    Run-Command $venvPython @('-c', 'import speakeronnx, vadonnx, faster_whisper, numpy; from speakeronnx import SpeakerEmbedder; from vadonnx import load_vad; print("Voice dependencies OK")')
-
-    $envPath = Join-Path $InstallPath '.env'
-    if (-not (Test-Path -LiteralPath $envPath)) {
-        $source = Get-Content '.env.example' -Raw -Encoding UTF8
-        # PyYAML is installed by pip install -e . above.
-        # Read model defaults from the same settings.yaml as MAI runtime.
-        $modelDefaultsJson = & $venvPython -c "import json, pathlib; from mai.app.settings import load_settings; s = load_settings(pathlib.Path('settings.yaml'), environ={}); print(json.dumps({'main': s['MAIN_MODEL'], 'vision': s['VISION_MODEL'], 'verifier': s.get('VERIFIER_MODEL')}))"
-        if ($LASTEXITCODE -ne 0) { throw 'Could not read settings.yaml model defaults' }
-        $modelDefaults = $modelDefaultsJson | ConvertFrom-Json
-        $defaultModel = [string]$modelDefaults.main
-        $visionModel = [string]$modelDefaults.vision
-        $verifierModel = [string]$modelDefaults.verifier
-        $model = Read-Host "Main Ollama model [$defaultModel] (press Enter for default)"
-        if ([string]::IsNullOrWhiteSpace($model)) { $model = $defaultModel }
-        Run-Command 'ollama' @('pull', $model)
-        Run-Command 'ollama' @('pull', $visionModel)
-        if ($verifierModel -and $verifierModel -ne $model -and $verifierModel -ne $visionModel) {
-            Run-Command 'ollama' @('pull', $verifierModel)
-        }
-        $userId = Read-RequiredValue 'Owner login ID'
-        $secure = Read-Host 'Owner password' -AsSecureString
-        $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-        try {
-            $password = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
-            if ([string]::IsNullOrEmpty($password)) { throw 'Owner password cannot be empty' }
-            $ownerJson = ConvertTo-Json -Compress -InputObject @(@{
-                user_id = $userId
-                user_pw = $password
-                db_id = 'local-user'
-            })
-        }
-        finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
-        }
-        $lines = @(
-            $source -split "\r?\n" | ForEach-Object {
-                if ($_ -match '^OWNER_USERS=') { 'OWNER_USERS=' + $ownerJson }
-                elseif ($_ -match '^TRIAL_USERS=') { 'TRIAL_USERS=[]' }
-                elseif ($_ -match '^TAILSCALE_FUNNEL=') { 'TAILSCALE_FUNNEL=false' }
-                else { $_ }
-            }
-        )
-        $lines += 'MAIN_MODEL=' + $model
-        [System.IO.File]::WriteAllText($envPath, ($lines -join [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host 'Created .env: local-only, Trial disabled, Funnel disabled, vision enabled.'
-    }
-    else {
-        Write-Host 'Existing .env preserved; no login, model, or Funnel settings changed.'
-    }
-
-    Write-Host ''
-    Write-Host "Installation complete: $InstallPath"
-    Write-Host "To start (in a non-administrator terminal):"
-    Write-Host "  cd '$InstallPath'"
-    Write-Host '  .\.venv\Scripts\python.exe run_server.py'
-    Write-Host 'Tailscale/Funnel is intentionally NOT enabled by this installer.'
-}
-finally {
-    Pop-Location
-}
+$root = Split-Path -Parent $PSScriptRoot
+$installer = Join-Path $root 'portable/prepare-portable.ps1'
+if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Missing portable installer: $installer" }
+$args = @('-Manifest', $Manifest)
+if ($ModelFile) { $args += @('-ModelFile', $ModelFile) }
+if ($InstallChromium) { $args += '-InstallChromium' }
+if ($PreserveAndReinstallExisting) { $args += '-PreserveAndReinstallExisting' }
+& $installer @args
+if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Portable installation failed with code $LASTEXITCODE" }
