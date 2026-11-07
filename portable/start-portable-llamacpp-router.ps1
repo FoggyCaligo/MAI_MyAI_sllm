@@ -1,12 +1,6 @@
 # Optional single-router llama.cpp Portable launcher for MAI dev.
 # All roles use one API endpoint. Ollama launch scripts and MAI prompts are unchanged.
 param(
-    [Parameter(Mandatory=$true)][string]$MainGgufPath,
-    [Parameter(Mandatory=$true)][string]$VerifierGgufPath,
-    [string]$MainMmprojPath,
-    [switch]$MainVision,
-    [string]$VisionGgufPath,
-    [string]$VisionMmprojPath,
     [ValidateRange(1,3)][int]$ModelsMax = 2,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
     [ValidateRange(512,262144)][int]$ContextSize = 8192
@@ -20,7 +14,17 @@ $server = Join-Path $root 'portable/portable-runtimes/llamacpp/llama-server.exe'
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Portable Python missing: $python" }
 if (-not (Test-Path -LiteralPath $server -PathType Leaf)) { throw "llama-server missing: $server" }
 if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) { throw 'Missing .env' }
-if ($VisionMmprojPath -and -not $VisionGgufPath) { throw '-VisionMmprojPath requires -VisionGgufPath' }
+# Paths and main vision mode are configured exclusively in settings.yaml.
+$resolvedJson = & $python (Join-Path $root 'portable/resolve_llamacpp_settings.py')
+if ($LASTEXITCODE -ne 0) { throw 'Could not load llama.cpp GGUF paths from settings.yaml' }
+$config = $resolvedJson | ConvertFrom-Json
+$MainGgufPath = [string]$config.LLAMACPP_MAIN_GGUF_PATH
+$VerifierGgufPath = [string]$config.LLAMACPP_VERIFIER_GGUF_PATH
+$MainMmprojPath = [string]$config.LLAMACPP_MAIN_MMPROJ_PATH
+$MainVision = [bool]$config.LLAMACPP_MAIN_VISION
+$VisionGgufPath = [string]$config.LLAMACPP_VISION_GGUF_PATH
+$VisionMmprojPath = [string]$config.LLAMACPP_VISION_MMPROJ_PATH
+if ($VisionMmprojPath -and -not $VisionGgufPath) { throw 'LLAMACPP_VISION_MMPROJ_PATH requires LLAMACPP_VISION_GGUF_PATH' }
 if ($VisionGgufPath -and $ModelsMax -lt 3) {
     Write-Warning 'Three model aliases configured, but ModelsMax allows only two resident models.'
 }
