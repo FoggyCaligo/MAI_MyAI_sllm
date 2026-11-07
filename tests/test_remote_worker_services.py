@@ -51,25 +51,28 @@ def test_remote_service_without_connection_fails_and_does_not_run_locally():
     asyncio.run(exercise())
 
 
-def test_worker_keeps_browser_state_across_native_calls():
+def test_worker_keeps_browser_state_across_native_calls(monkeypatch):
+    events = []
+
+    async def fake_open(self, url):
+        events.append(("open", url))
+        return {"session_id": "session-one"}
+
+    async def fake_snapshot(self, session_id):
+        events.append(("snapshot", session_id))
+        return {"session_id": session_id, "title": "alive"}
+
+    async def fake_close_all(self):
+        events.append(("close", None))
+
+    # ToolRegistry stores bound handlers when the worker is constructed;
+    # patch the class *before* registration, not the instance afterwards.
+    monkeypatch.setattr(BrowserSessionManager, "open", fake_open)
+    monkeypatch.setattr(BrowserSessionManager, "snapshot", fake_snapshot)
+    monkeypatch.setattr(BrowserSessionManager, "close_all", fake_close_all)
+
     async def exercise():
         worker = RemoteWorker()
-        events = []
-
-        async def fake_open(url):
-            events.append(("open", url))
-            return {"session_id": "session-one"}
-
-        async def fake_snapshot(session_id):
-            events.append(("snapshot", session_id))
-            return {"session_id": session_id, "title": "alive"}
-
-        async def fake_close_all():
-            events.append(("close", None))
-
-        worker.browser_manager.open = fake_open
-        worker.browser_manager.snapshot = fake_snapshot
-        worker.browser_manager.close_all = fake_close_all
         first = await worker.execute_native(
             "browser_open", {"url": "https://example.org"}
         )
