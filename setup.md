@@ -38,7 +38,7 @@ Git Bash:
 cp .env.example .env
 ```
 
-`.env`에서 `OWNER_USERS`의 `user_id`, `user_pw`를 반드시 개인 값으로 수정하고, `db_id`는 이미 데이터를 사용 중이라면 유지함. `TRIAL_USERS`는 사용하지 않을 때 `[]`로 지정하고, `TAILSCALE_FUNNEL=false`로 시작할 것. 실제 비밀번호를 저장소·로그·공개 게시글에 노출하지 말 것.
+`.env`에서 `OWNER_USERS`의 `user_id`, `user_pw`를 반드시 개인 값으로 수정하고, `db_id`는 이미 데이터를 사용 중이라면 유지함. `TRIAL_USERS`는 사용하지 않을 때 `[]`로 지정할 것. 원격 공개 제공자 선택은 `settings.yaml`의 `REMOTE_HOSTING_PROVIDER`로 관리하며 기본값은 `tailscale`임. Tailscale이 설치·로그인·승인되어 있지 않다면 공개는 시작되지 않고 로컬 서버는 계속 실행됨. 실제 비밀번호를 저장소·로그·공개 게시글에 노출하지 말 것.
 
 **Verifier 변경 시 확인:** 기존 `.env` 또는 프로세스 환경변수에 `VERIFIER_MODEL=granite4:3b-h`가 있으면 YAML 기본값을 바꿔도 그대로 적용됨. `LiquidAI/lfm2.5-2.6b:q4_k_m`를 사용하려면 해당 값을 수정하거나 기존 덮어쓰기를 삭제하고 모델을 설치할 것.
 
@@ -109,18 +109,31 @@ python run_server.py
 
 ## 3. 고급 설정 (선택)
 
-### 3.1 외부 접속 — Tailscale
+### 3.1 외부 접속 — Tailscale(기본) / Cloudflare 선택
 
-Tailscale은 **일반 설치와 Portable 설치 중 하나가 정상 실행된 다음** 설정함.
+**원격 호스팅은 MAI 핵심 실행과 분리되어 있음.** `mai/hosting/`에서 제공자별 실행을 처리하며, 메인 모델·Verifier·기억·원격 PC 작업은 별개로 유지됨.
 
-1. [Tailscale 공식 설치](https://tailscale.com/download/windows) 후 계정에 로그인하고 장치를 등록함.
-2. 먼저 외부 인터넷 공개 없이 자신의 Tailnet 내부에서만 접속할지 결정함. 외부 인터넷으로 공개하려면 Tailscale Funnel을 별도 승인·구성해야 함.
-3. `.env`에서 `TAILSCALE_FUNNEL=true`로 변경하려면 공개 주소에 MAI 로그인 페이지가 노출될 수 있다는 점을 먼저 확인할 것. 로그인 계정에 강력한 비밀번호 설정.
-4. MAI 서버를 재시작해 출력된 주소 및 Tailscale 상태를 확인. 접속 실패 시 Funnel의 승인·정책·포트·장치 로그인 상태를 점검하고, 불필요할 때는 `TAILSCALE_FUNNEL=false`로 되돌림.
+`settings.yaml`의 기본값은 다음과 같음.
 
-Funnel 시작이 `TailscaleFunnelError`로 실패하면 예외를 로그에 남기고 로컬 서버는 계속 제공함. 로컬 `/health`의 `tailscale_funnel`은 `false`이며 외부 연결 성공을 뜻하지 않음.
+```yaml
+REMOTE_HOSTING_PROVIDER: tailscale    # tailscale | cloudflare | none
+```
 
-Tailscale 자체의 로그인과 승인 없이 설정값만 바꿔도 연결된다고 가정하면 안 됨. 외부 공개는 개인 PC 및 파일 도구에 대한 공격 표면을 넓힘.
+| 값 | 준비 조건 및 동작 |
+|---|---|
+| `tailscale` (기본) | 호스트에 Tailscale 설치·로그인·Funnel 허용 후 공개 URL 생성 |
+| `cloudflare` | 호스트에 cloudflared 설치, Cloudflare Dashboard의 Named Tunnel·공개 호스트명 설정, `.env`의 `CLOUDFLARE_TUNNEL_TOKEN` 필요 |
+| `none` | MAI 프로세스가 새로운 공개 터널을 실행하지 않음 |
+
+Tailscale은 [공식 설치 안내](https://tailscale.com/download/windows)에서 설치하고 로그인한 뒤 Funnel 사용을 승인한다. `tailscale funnel status`로 상태를 확인한다. Cloudflare는 대시보드에서 관리형 터널과 `http://127.0.0.1:8000`을 대상으로 하는 공개 호스트명을 구성한 후 토큰을 `.env`에 추가한다. 비밀 토큰을 `settings.yaml`이나 Git에 올리지 않는다.
+
+기존 `.env`에 `TAILSCALE_FUNNEL` 설정이 남아 있다면 구형 옵션이므로 제거할 수 있다. `REMOTE_HOSTING_PROVIDER`가 `.env`나 프로세스 환경변수에 있으면 YAML보다 우선하므로 전환 때 먼저 확인한다. Tailscale Funnel은 `--bg`로 유지되기 때문에 제공자를 바꿔도 **이미 등록된 Funnel이 자동 해제되지 않을 수 있음**. 다른 제공자로 전환한 후 `tailscale funnel status`에서 기존 공개 설정을 확인하고 필요한 경우 해당 규칙을 직접 해제해야 함.
+
+호스팅 시작에 실패해도 로컬 MAI 서버는 계속 실행된다. `/health`의 `remote_hosting_provider`는 해당 제공자 실행이 시작됐음을 표시하며 실제 외부 HTTPS 연결의 성공 여부를 보장하지 않음. 다른 네트워크에서 MAI 로그인까지 확인할 것.
+
+오너의 **원격 PC 작업 연결은 호스팅과 별도**이며, `dev`에서는 원격 작업 없이 10시간 경과 시 세션이 해제됨(초기 연결 10분, 에이전트 연결 확인 3분은 유지). 이 제한은 Tailscale/Cloudflare 공개 웹 터널을 끄는 기능이 아님.
+
+설치·인증·제공자 전환·보안·진단의 상세 사항은 [한국어 원격 호스팅 설정](docs/remote-hosting.md)을 참고한다. 공개 웹 로그인은 터미널·파일 접근 권한이 있는 MAI에 대한 공격 표면을 넓히므로 오너 암호와 계정 권한을 반드시 점검한다.
 
 ### 3.2 음성 기능
 
