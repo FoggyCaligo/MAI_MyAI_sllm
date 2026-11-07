@@ -29,7 +29,7 @@ def test_ollama_chat_timeout_fails_visibly() -> None:
 
 
 def test_model_config_reads_request_timeout_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OLLAMA_REQUEST_TIMEOUT_SECONDS", "240")
+    monkeypatch.setenv("MAI_MODEL_REQUEST_TIMEOUT_SECONDS", "240")
 
     config = ModelConfig(model="test")
 
@@ -41,7 +41,7 @@ def test_model_config_rejects_non_positive_request_timeout() -> None:
         ModelConfig(model="test", request_timeout_seconds=0)
 
 
-def test_default_timeout_is_three_hundred_seconds(monkeypatch) -> None:
-    monkeypatch.delenv("OLLAMA_REQUEST_TIMEOUT_SECONDS", raising=False)
+def test_default_timeout_is_five_hundred_seconds(monkeypatch) -> None:
+    monkeypatch.delenv("MAI_MODEL_REQUEST_TIMEOUT_SECONDS", raising=False)
 
-    assert ModelConfig(model="test").request_timeout_seconds == 300.0
+    assert ModelConfig(model="test").request_timeout_seconds == 500.0
