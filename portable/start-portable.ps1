@@ -37,23 +37,15 @@ try {
 } finally {
     $ggufStream.Dispose()
 }
-$visionConfigured = & $python -c 'import sys,yaml; cfg=yaml.safe_load(open(sys.argv[1],encoding="utf-8-sig")) or {}; print(str(cfg.get("VISION_GGUF_PATH") or "")); print(str(cfg.get("VISION_MMPROJ_PATH") or ""))' (Join-Path $root 'settings.yaml')
-if ($LASTEXITCODE -ne 0) { throw 'Cannot read vision configuration from settings.yaml' }
-$visionPath = [string]$visionConfigured[0]
-$projectorPath = [string]$visionConfigured[1]
+$modelsJson = & $python (Join-Path $PSScriptRoot 'resolve_runtime_models.py') (Join-Path $root 'settings.yaml') $root
+if ($LASTEXITCODE -ne 0 -or -not $modelsJson) { throw 'Failed to resolve optional vision/verifier GGUF models' }
+$configuredModels = $modelsJson | ConvertFrom-Json
+$visionPath = [string]$configuredModels.VISION_GGUF_PATH
+$projectorPath = [string]$configuredModels.VISION_MMPROJ_PATH
+$verifierPath = [string]$configuredModels.VERIFIER_GGUF_PATH
 $visionMode = -not [string]::IsNullOrWhiteSpace($visionPath)
-if ($projectorPath -and -not $visionMode) { throw 'VISION_MMPROJ_PATH requires VISION_GGUF_PATH' }
-if ($visionMode) {
-    if (-not [IO.Path]::IsPathRooted($visionPath)) { $visionPath = Join-Path $root $visionPath }
-    if (-not (Test-Path -LiteralPath $visionPath -PathType Leaf)) { throw "Vision GGUF does not exist: $visionPath" }
-    $visionPath = (Resolve-Path -LiteralPath $visionPath).Path
-    if (-not $visionPath.EndsWith('.gguf', [StringComparison]::OrdinalIgnoreCase)) { throw 'Vision model must be .gguf' }
-    if ($projectorPath) {
-        if (-not [IO.Path]::IsPathRooted($projectorPath)) { $projectorPath = Join-Path $root $projectorPath }
-        if (-not (Test-Path -LiteralPath $projectorPath -PathType Leaf)) { throw "Vision projector does not exist: $projectorPath" }
-        $projectorPath = (Resolve-Path -LiteralPath $projectorPath).Path
-    }
-}
+$verifierMode = -not [string]::IsNullOrWhiteSpace($verifierPath)
+$routerMode = $visionMode -or $verifierMode
 $modelAlias = "mai-model"
 
 $env:PYTHONNOUSERSITE = '1'
@@ -66,7 +58,8 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data/sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
 $env:MAIN_MODEL = $modelAlias
-$env:MAI_ROUTER_MODE = if ($visionMode) { 'true' } else { 'false' }
+$env:MAI_ROUTER_MODE = if ($routerMode) { 'true' } else { 'false' }
+$env:MAI_VERIFIER_MODEL = if ($verifierMode) { 'mai-verifier' } else { '' }
 $env:MAI_VISION_MODEL = if ($visionMode) { 'mai-vision' } else { '' }
 # Exact launched GGUF identity for model-scoped cache filenames (honors -GgufPath).
 $env:MAI_ACTIVE_GGUF_PATH = $modelFile
@@ -86,15 +79,20 @@ $quotedModelPath = '"' + $modelFile + '"'
 $quotedCachePath = '"' + $env:MAI_SLOT_CACHE_DIR + '"'
 $quotedModelAlias = '"' + $modelAlias + '"'
 $presetPath = Join-Path $env:MAI_SLOT_CACHE_DIR 'router-models.ini'
-if ($visionMode) {
+if ($routerMode) {
     # Router enforces at most one model resident. Model KV is rebuilt from
     # conversation after a swap; slot checkpoint restore is disabled.
     $normalize = { param([string]$path) ($path -replace '\\', '/') }
     $mainIni = & $normalize $modelFile
     $visionIni = & $normalize $visionPath
-    $ini = @("[mai-model]", "model = $mainIni", "parallel = 1", "",
-              "[mai-vision]", "model = $visionIni", "parallel = 1")
-    if ($projectorPath) { $ini += "mmproj = $(& $normalize $projectorPath)" }
+    $ini = @("[mai-model]", "model = $mainIni", "parallel = 1")
+    if ($visionMode) {
+        $ini += @("", "[mai-vision]", "model = $(& $normalize $visionPath)", "parallel = 1")
+        if ($projectorPath) { $ini += "mmproj = $(& $normalize $projectorPath)" }
+    }
+    if ($verifierMode) {
+        $ini += @("", "[mai-verifier]", "model = $(& $normalize $verifierPath)", "parallel = 1")
+    }
     $ini | Set-Content -LiteralPath $presetPath -Encoding UTF8
     $serverArgs = @('--models-preset', ('"' + $presetPath + '"'),
                     '--models-max', '1', '--host', '127.0.0.1',
@@ -111,7 +109,7 @@ try {
         if ($llamaProcess.HasExited) { throw "llama.cpp exited with code $($llamaProcess.ExitCode)" }
         try {
             $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
-            if ($visionMode -or ($response.data.Count -eq 1 -and $response.data[0].id -eq $modelAlias)) {
+            if ($routerMode -or ($response.data.Count -eq 1 -and $response.data[0].id -eq $modelAlias)) {
                 $ready = $true
                 break
             }
@@ -123,5 +121,5 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
 } finally {
     if (-not $llamaProcess.HasExited) { Stop-Process -Id $llamaProcess.Id }
-    if ($visionMode) { Remove-Item -LiteralPath $presetPath -Force -ErrorAction SilentlyContinue }
+    if ($routerMode) { Remove-Item -LiteralPath $presetPath -Force -ErrorAction SilentlyContinue }
 }
