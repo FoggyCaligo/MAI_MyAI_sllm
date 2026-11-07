@@ -1,89 +1,56 @@
-"""dev2 routes reviewer to browser-selected main model even with legacy override."""
-import asyncio
-import json
+"""Portable dev2 uses one llama.cpp model across main, numeric, final and memory."""
+from __future__ import annotations
+
 from types import SimpleNamespace
 
 import pytest
 
 from mai.app import runtime as runtime_module
-from mai.agent import AgentRunFailure
-from tests.reviewer_fixtures import reviewer_payload
-from mai.app.access import AccessPrincipal, AccessRole
-from mai.llm.models import ModelTurn
+from mai.llm.llamacpp import LlamaCppAdapter
 
 
-@pytest.mark.parametrize("verifier_model,selected_model,reviewer_fails", [
-    (None, None, False), ("granite4:3b-h", None, False),
-    (None, "ui-selected-model", False), ("granite4:3b-h", "ui-selected-model", False),
-    ("granite4:3b-h", None, True),
-])
-def test_production_uses_configured_reviewer_without_changing_main_or_extraction(
-    tmp_path, monkeypatch, verifier_model, selected_model, reviewer_fails,
-):
-    monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "false")
-    monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter", lambda **kwargs: SimpleNamespace(close=lambda: None))
-    requests = []
-
-    async def chat(adapter, request):
-        requests.append((adapter.config.model, request))
-        if request.response_format is None:
-            content = "알겠습니다."
-        else:
-            assert request.tools == () and request.think is False
-            if reviewer_fails:
-                raise RuntimeError("configured reviewer is unavailable")
-            content = json.dumps(reviewer_payload({"evidence_verdict": "supported", "action_verdict": "not_applicable",
-                                  "reasons": [], "claims": [], "retry_summary": "No correction needed."}, request))
-        return ModelTurn(content=content, thinking="", tool_calls=(),
-                         assistant_message={"role": "assistant", "content": content})
-
-    async def postprocess(**kwargs):
-        pass
-
-    monkeypatch.setattr(runtime_module.OllamaAdapter, "chat", chat)
-    runtime = runtime_module.MAIRuntime(
-        model="ornith-1.5:9b", verifier_model=verifier_model, ollama_host="http://127.0.0.1:11434",
-        memory_db_path=tmp_path / "memory.db", sentence_breaker_db_path=tmp_path / "segmenter.db",
+def build(tmp_path, monkeypatch, **overrides):
+    monkeypatch.setenv("MAI_SLOT_CACHE_DIR", str(tmp_path / "kv"))
+    monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter",
+                        lambda **kwargs: SimpleNamespace(close=lambda: None))
+    values = dict(
+        model="single-model", llm_backend="llamacpp",
+        ollama_host="http://localhost:11434",
+        llamacpp_host="http://localhost:8080",
+        memory_db_path=tmp_path / "memory.db",
+        sentence_breaker_db_path=tmp_path / "segmenter.db",
         upload_root=tmp_path / "uploads", cwd=tmp_path,
     )
-    monkeypatch.setattr(runtime, "_postprocess_memory", postprocess)
-    principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
+    values.update(overrides)
+    return runtime_module.MAIRuntime(**values)
 
-    async def check():
-        main = selected_model or "ornith-1.5:9b"
-        audit_events = []
-        record = lambda round_number, event, details: audit_events.append((round_number, event, details))
-        if reviewer_fails:
-            with pytest.raises(AgentRunFailure, match="configured reviewer is unavailable"):
-                await runtime.run_user_message(
-                    "안녕", principal=principal, model=selected_model,
-                    on_verification_audit=record,
-                )
-        else:
-            result = await runtime.run_user_message(
-                    "안녕", principal=principal, model=selected_model,
-                    on_verification_audit=record,
-                )
-            await asyncio.gather(*runtime._background_tasks)
-            assert result.model == main
-        assert [name for name, request in requests] == [main, main]
-        assert audit_events
-        assert all(entry[0] == 1 for entry in audit_events)
-        assert all(entry[2]["verifier_model"] == main for entry in audit_events)
-        assert [entry[1] for entry in audit_events] == (
-            ["request", "error"] if reviewer_fails
-            else ["request", "raw_response", "validated_response", "decision"]
-        )
-        assert set(runtime._fact_extractors) == {main}
 
+def test_main_and_memory_extractor_bind_to_one_model(tmp_path, monkeypatch):
+    runtime = build(tmp_path, monkeypatch, verifier_model="legacy-different-model", vision_model="legacy-vision")
     try:
-        asyncio.run(check())
+        main = runtime._adapter_for("single-model")
+        assert isinstance(main, LlamaCppAdapter)
+        assert main.config.model == runtime.model
+        assert runtime.verifier_model is None
+        assert runtime.vision_model is None
+        assert runtime._adapter_for("single-model") is main
+        assert runtime._fact_extractor_for("single-model") is runtime._fact_extractor_for("single-model")
+        assert tuple(runtime._adapters) == ("single-model",)
     finally:
         runtime.close()
 
 
-def test_explicitly_empty_verifier_model_fails_before_initializing_resources(tmp_path):
-    with pytest.raises(ValueError, match="verifier_model must be non-empty"):
-        runtime_module.MAIRuntime(model="main", verifier_model=" ", ollama_host="http://localhost:11434",
-            memory_db_path=tmp_path / "memory.db", sentence_breaker_db_path=tmp_path / "segmenter.db")
-    assert not (tmp_path / "memory.db").exists()
+def test_legacy_other_model_cannot_be_loaded(tmp_path, monkeypatch):
+    runtime = build(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(ValueError, match="single configured"):
+            runtime._adapter_for("other")
+        with pytest.raises(ValueError, match="single configured"):
+            runtime._fact_extractor_for("other")
+    finally:
+        runtime.close()
+
+
+def test_ollama_backend_is_not_allowed(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="requires llama.cpp"):
+        build(tmp_path, monkeypatch, llm_backend="ollama")
