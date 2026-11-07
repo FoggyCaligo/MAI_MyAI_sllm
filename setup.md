@@ -48,7 +48,7 @@ cp .env.example .env
 
 **A. 정상 실행을 위한 연결 설정:** `LLM_BACKEND`(기본 Ollama), `OLLAMA_HOST`/ `LLAMACPP_HOST`(선택한 백엔드에 해당하는 주소), `MAIN_MODEL`(사용할 수 있는 모델). 각각 기본값이 들어 있지만 실제 사용 가능한 런타임 및 모델과 맞아야 함. `VERIFIER_MODEL`은 선택적 검증 모델 지정이며 dev2 기본값은 생략되어 메인과 동일하다. 해당 키를 생략하면 기존처럼 본 모델로 검증한다. `VISION_MODEL`은 별도 이미지 인식 도구용 선택 설정이다. Ollama의 메인 모델에 `vision` capability가 있을 때 업로드 이미지 첨부는 메인 모델에 직접 전달되며, 그 외에는 기존 `VISION_MODEL`의 `image_analyze` 도구를 활용한다. 전체 텍스트 MAI 실행에는 이미지 모델이 필수는 아니다.
 
-**Verifier 품질 검토:** 기본 `MAI_ANSWER_QUALITY_REVIEW=false`는 사실 검증 통과 후 요청 부합도·정보 충족도를 별도 검토함. 추가 모델 호출로 응답이 느려질 수 있음. 기존 `.env`·환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 그 값이 우선하므로 변경 후 확인할 것.
+**Verifier 품질 검토:** 기본 `MAI_ANSWER_QUALITY_REVIEW=false`에서는 별도 품질 검토를 실행하지 않음. 명시적으로 `true`로 설정한 경우에만 숫자·사실 검증 이후 품질 검토를 추가 실행함. dev2 슬롯 실험은 같은 모델의 최종검증 역할 캐시를 재사용함.
 
 **B. 동작·성능 조정 설정:** `OLLAMA_REQUEST_TIMEOUT_SECONDS`, `OLLAMA_AGENT_MAX_OUTPUT_TOKENS`, `AGENT_MAX_IDENTICAL_CALLS`, `AGENT_MAX_IDENTICAL_FAILURES`, `AGENT_MAX_NO_PROGRESS_ROUNDS`, `MAX_INLINE_TOOL_RESULT_CHARS`, `SESSION_HISTORY_MESSAGES`, `MAI_ANSWER_QUALITY_REVIEW`, `VOICE_*` 중 음성 동작 파라미터. 값을 잘못 지정하면 오류가 날 수 있으므로 '임의 값이어도 무조건 실행됨'이라는 의미가 아님. 기본값을 유지하면 수동 입력은 필요하지 않음.
 
