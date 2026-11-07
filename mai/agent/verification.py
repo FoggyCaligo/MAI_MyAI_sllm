@@ -291,6 +291,9 @@ class FinalGroundingVerifier:
             raise ValueError("reviewer_timeout_seconds must be positive")
         self.reviewer_adapter = reviewer_adapter
         self.reviewer_timeout_seconds = reviewer_timeout_seconds
+        self.verifier_num_ctx = int(os.environ.get("VERIFIER_NUM_CTX", "32768"))
+        if self.verifier_num_ctx <= 0:
+            raise ValueError("VERIFIER_NUM_CTX must be positive")
         if quality_review_enabled is None:
             raw = os.environ.get("MAI_ANSWER_QUALITY_REVIEW", "false").lower()
             if raw not in {"true", "false"}:
@@ -597,6 +600,11 @@ class FinalGroundingVerifier:
         label: str,
         on_audit_event: VerificationAuditObserver | None = None,
     ) -> BaseModel:
+        # Limit Ollama verifier cache reservation independently from main model.
+        # A configured large context window is capacity, not evidence that the
+        # current review needs every token. Do not silently trim evidence here.
+        if isinstance(self.reviewer_adapter, OllamaAdapter):
+            request = replace(request, options={**(request.options or {}), "num_ctx": self.verifier_num_ctx})
         # Infrastructure and malformed-output retries do not re-roll a valid
         # supported/unsupported reviewer verdict.
         retry_request = request
