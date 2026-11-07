@@ -153,6 +153,7 @@ class ToolExecution:
     source_content_fingerprint: str | None = None
     compact_history_content: str | None = None
     source_content: str | None = None
+    children: tuple["ToolExecution", ...] = ()
 
     @property
     def audit_content(self) -> str:
@@ -387,7 +388,8 @@ class AgentLoop:
                             # Never pull tool results from prior conversation history.
                             tool_results=tuple(
                                 (execution.name, execution.ok, execution.error_type, execution.content)
-                                for execution in executions
+                                for parent in executions
+                                for execution in (parent.children if parent.children else (parent,))
                             ),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
@@ -618,7 +620,7 @@ class AgentLoop:
             payload = {
                 "ok": False, "error_type": type(exc).__name__, "message": str(exc),
                 "required_activation": (
-                    {"name": "tool_manual", "arguments": {"tools": []}}
+                    {"name": "tool_manual", "constraint": "activate at least one registered tool"}
                     if call.name == "execute_code"
                     else {"name": "tool_manual", "arguments": {"tools": [call.name]}}
                 ),
@@ -635,6 +637,7 @@ class AgentLoop:
                 source_content_fingerprint=content_fingerprint(source_content),
                 compact_history_content=compact_content, source_content=source_content,
             )
+        nested_executions: tuple[ToolExecution, ...] = ()
         try:
             if call.name == "tool_manual":
                 try:
@@ -678,7 +681,30 @@ class AgentLoop:
                     self.registry,
                     activated_tool_names=tuple(activated_tool_names),
                 )
-                value = (await executor.execute(request)).as_dict()
+                codeact_result = await executor.execute(request)
+                child_items: list[ToolExecution] = []
+                for item in codeact_result.calls:
+                    child_source = _serialize_tool_content(
+                        item.result if item.ok else {
+                            "ok": False,
+                            "error_type": item.error_type,
+                            "message": item.message,
+                        }
+                    )
+                    child_model, child_compact = self._model_contents(child_source)
+                    child_items.append(ToolExecution(
+                        name=item.name,
+                        arguments=dict(item.arguments),
+                        ok=item.ok,
+                        content=child_model,
+                        error_type=item.error_type,
+                        handler_started=item.handler_started,
+                        source_content_fingerprint=content_fingerprint(child_source),
+                        compact_history_content=child_compact,
+                        source_content=child_source,
+                    ))
+                nested_executions = tuple(child_items)
+                value = codeact_result.as_dict()
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
@@ -711,6 +737,7 @@ class AgentLoop:
             handler_started=True,
             source_content_fingerprint=content_fingerprint(source_content),
             compact_history_content=compact_content, source_content=source_content,
+            children=nested_executions,
         )
 
     def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:
