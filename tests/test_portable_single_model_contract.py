@@ -55,4 +55,5 @@ def test_no_runtime_ollama_dependency():
     assert '"ollama>=' not in pyproject
     runtime = (ROOT / "mai/app/runtime.py").read_text(encoding="utf-8")
     assert "OllamaAdapter" not in runtime
-    assert "register_image_tools" not in runtime
+    assert "register_image_tools" in runtime  # active GGUF is reused, not another backend
+    assert "OllamaAdapter" not in (ROOT / "mai/tools/images.py").read_text(encoding="utf-8")
