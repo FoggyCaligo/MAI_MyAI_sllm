@@ -197,3 +197,16 @@ def test_ollama_empty_thinking_is_not_logged(caplog) -> None:
         run(adapter.chat(ChatRequest(messages=[{"role": "user", "content": "hello"}])))
 
     assert not any("MAI Ollama thinking" in record.message for record in caplog.records)
+
+
+def test_adapter_passes_inline_images_without_logging_binary_content(caplog) -> None:
+    image_bytes = b"image-secret-payload"
+    client = FakeClient({"message": {"role": "assistant", "content": "Image read."}})
+    adapter = OllamaAdapter(ModelConfig(model="vision:9b"), client=client)
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        result = run(adapter.chat(ChatRequest(messages=[
+            {"role": "user", "content": "Describe this image.", "images": [image_bytes]},
+        ])))
+    assert result.content == "Image read."
+    assert client.calls[0]["messages"][0]["images"] == [image_bytes]
+    assert "image-secret-payload" not in caplog.text
