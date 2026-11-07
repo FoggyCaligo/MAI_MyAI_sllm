@@ -60,7 +60,7 @@ curl --fail --silent --show-error \
   -o "$ZIP_PATH" \
   "$BOOTSTRAP_URL"
 
-DIGEST=$(awk 'BEGIN{IGNORECASE=1} /^X-MAI-Bundle-SHA256:/ {gsub("\\r","",$2); print $2}' "$HEADER_PATH" | tail -n 1)
+DIGEST=$(awk 'tolower($1)=="x-mai-bundle-sha256:" {gsub("\\r","",$2); print $2}' "$HEADER_PATH" | tail -n 1)
 if [ -z "$DIGEST" ]; then
   echo "MAI bootstrap response is missing X-MAI-Bundle-SHA256" >&2
   exit 1
