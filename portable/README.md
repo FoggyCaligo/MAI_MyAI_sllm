@@ -121,6 +121,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps
 ./portable/portable-runtimes/ollama/ollama.exe list
 ```
 
+## Linux Vulkan GPU (AMD / Intel / NVIDIA)
+
+Ubuntu 24.04 x64 host GPU drivers are **host OS dependencies**, not files
+to copy to an NTFS portable SSD. For AMD RX 6800 XT, the standard Linux
+`amdgpu` kernel driver plus Mesa RADV user-space Vulkan driver is a
+supported route. Check the Linux host:
+
+```bash
+python3 portable/check-linux-gpu.py --require
+```
+
+To explicitly install Mesa Vulkan runtime packages on an **AMD/Intel**
+Ubuntu host (requires sudo, internet and confirmation of package changes):
+
+```bash
+bash portable/prepare-portable-linux.sh --install-vulkan
+```
+
+NVIDIA hosts require the matching NVIDIA kernel/user-space Vulkan driver
+(e.g. via Ubuntu's `ubuntu-drivers` mechanism), not the Mesa RADV driver.
+The provisioning command does not attempt an unsolicited NVIDIA driver
+installation. After installing/upgrading GPU drivers, reboot when required.
+If `vulkaninfo` finds only software rendering (llvmpipe/lavapipe), the
+GPU preflight fails instead of silently allowing a CPU Vulkan device.
+
+**Important**: This verifies a real Vulkan-capable GPU is detected;
+it does not prove MAI's inference engine actually offloads layers to it.
+On the Ollama-backed dev branch, actual AMD GPU acceleration depends
+on the bundled Ollama GPU backend and its host prerequisites.
+On dev2 llama.cpp Vulkan needs a separate actual model load and inference test.
+Check runtime logs / utilization after starting MAI.
+
 ## Ubuntu 24.04 x86-64 실행 — 실험적
 
 Windows의 MAI와 Ollama를 종료하고 SSD를 안전하게 분리한 뒤 연결한다. NTFS는 읽기·쓰기로 마운트하며 두 OS가 같은 SQLite를 동시에 쓰지 않는다. `python3`, `curl`, `tar`, `zstd`, `git`, `sha256sum`, `flock`와 호스트 시스템 라이브러리가 필요하다.
