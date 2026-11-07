@@ -48,8 +48,12 @@ function Initialize-MaiRemotePython {
             Expand-Archive -LiteralPath $zipPath -DestinationPath $target -Force
             & $pythonCommand @pythonArgs -m venv (Join-Path $target '.venv')
             if ($LASTEXITCODE -ne 0) { throw 'Remote Python venv creation failed' }
-            & $venvPython -m pip install --disable-pip-version-check --no-input -e $target
+            & $venvPython -m pip install --disable-pip-version-check --no-input -e $target --no-deps
+            if ($LASTEXITCODE -ne 0) { throw 'Remote worker editable install failed' }
+            & $venvPython -m pip install --disable-pip-version-check --no-input -r (Join-Path $target 'remote-requirements.txt')
             if ($LASTEXITCODE -ne 0) { throw 'Remote worker dependency installation failed' }
+            & $venvPython -m playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Remote Chromium installation failed' }
         }
         $env:MAI_REMOTE_PYTHON = $venvPython
         $env:PYTHONPATH = $target
