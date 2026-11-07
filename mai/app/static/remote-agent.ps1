@@ -24,7 +24,9 @@ function Initialize-MaiRemotePython {
         }
         $target = Join-Path $base $digest
         $venvPython = Join-Path $target '.venv\\Scripts\\python.exe'
-        if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+        $installReady = Join-Path $target '.installed-ok'
+        # A partial venv is not a complete install; retry until the marker exists.
+        if (-not (Test-Path -LiteralPath $installReady -PathType Leaf)) {
             if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
                 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
                     throw 'Python 3.11+ is missing, and winget is unavailable to install it automatically'
@@ -54,6 +56,7 @@ function Initialize-MaiRemotePython {
             if ($LASTEXITCODE -ne 0) { throw 'Remote worker dependency installation failed' }
             & $venvPython -m playwright install chromium
             if ($LASTEXITCODE -ne 0) { throw 'Remote Chromium installation failed' }
+            New-Item -ItemType File -Path $installReady -Force | Out-Null
         }
         $env:MAI_REMOTE_PYTHON = $venvPython
         $env:PYTHONPATH = $target
