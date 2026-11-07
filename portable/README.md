@@ -4,7 +4,7 @@ dev2는 **하나의 GGUF 파일 + 하나의 llama.cpp 서버**로 실행한다.
 Ollama 서비스, 두 번째 Verifier 모델, 별도 Vision 모델, 브라우저 모델 선택기는 사용하지 않는다.
 한 모델이 main / numeric / final 검증을 순서대로 처리하고 역할별 KV 상태를 디스크에 저장/복원한다.
 
-## 파일 구조
+원격 웹 공개 제공자 선택은 [Remote Hosting 어댑터 안내](../docs/remote-hosting.md)를 참조한다.\n\n## 파일 구조
 
 ```text
 MAI/
