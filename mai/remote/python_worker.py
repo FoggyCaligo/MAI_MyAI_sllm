@@ -41,7 +41,7 @@ class RemoteWorker:
     async def execute_native(self, name: str, arguments: dict[str, Any]) -> Any:
         if not isinstance(name, str) or not isinstance(arguments, dict):
             raise TypeError("native.invoke requires exact tool name and object arguments")
-        return await self.registry.invoke_native(name, arguments)
+        return await self.registry.get(name).invoke(arguments)
 
     async def close(self) -> None:
         await self.browser_manager.close_all()
