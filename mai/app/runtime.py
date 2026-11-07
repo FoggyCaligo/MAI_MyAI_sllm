@@ -131,11 +131,11 @@ class MAIRuntime:
         self.llamacpp_host = llamacpp_host
         self.model = model
         # The running process only ever has one model; no verifier/vision model.
-        self.verifier_model = None
+        self.verifier_model = os.environ.get("MAI_VERIFIER_MODEL", "").strip() or None
         self.vision_model = os.environ.get("MAI_VISION_MODEL", "").strip() or None
         self.router_mode = os.environ.get("MAI_ROUTER_MODE", "false").strip().lower() == "true"
-        if self.vision_model and not self.router_mode:
-            raise ValueError("configured vision model requires llama.cpp router mode")
+        if (self.vision_model or self.verifier_model) and not self.router_mode:
+            raise ValueError("separate vision/verifier models require llama.cpp router mode")
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
         self.upload_root.mkdir(parents=True, exist_ok=True)
@@ -273,7 +273,12 @@ class MAIRuntime:
         adapter = self._adapter_for(selected_model)
         # In router mode the model is reloaded between requests; role-cache
         # checkpoints are not portable across child server lifetimes.
-        verifier_adapter = adapter if self.router_mode and self.verifier_enabled else None
+        verifier_adapter = (
+            LlamaCppAdapter(ModelConfig(
+                model=self.verifier_model or self.model,
+                host=self.llamacpp_host, think=False,
+            )) if self.router_mode and self.verifier_enabled else None
+        )
         role_cache_run = None
         if self.verifier_enabled and not self.router_mode:
             selected_gguf = Path(os.environ.get("MAI_ACTIVE_GGUF_PATH") or os.environ.get("MODEL_GGUF_PATH", "portable/portable-models/gguf/active.gguf")).expanduser().resolve()
