@@ -260,6 +260,7 @@ class AgentLoop:
             raise ValueError("MAI_MAX_INCOMPLETE_TURN_CONTINUATIONS must be positive")
         incomplete_continuations = 0
         incomplete_parts: list[str] = []
+        incomplete_context_indices: list[int] = []
 
         try:
             while True:
@@ -341,6 +342,7 @@ class AgentLoop:
                     if on_model_turn is not None:
                         on_model_turn(round_number, turn)
                     history.append(dict(turn.assistant_message))
+                    incomplete_context_indices.append(len(history) - 1)
                     incomplete_parts.append(turn.content)
                     history.append({
                         "role": "system",
@@ -354,6 +356,7 @@ class AgentLoop:
                             "complete native tool call."
                         ),
                     })
+                    incomplete_context_indices.append(len(history) - 1)
                     _LOG.warning("MAI incomplete model round=%d continuation=%d/%d",
                                  round_number, incomplete_continuations, max_incomplete_continuations)
                     round_number += 1
@@ -413,7 +416,10 @@ class AgentLoop:
                         pending_verification_candidate = turn.content
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
-                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
+                            messages=[message for index, message in enumerate(history)
+                                      if index not in rejected_final_indices
+                                      and index not in rejection_feedback_indices
+                                      and index not in incomplete_context_indices],
                             # executions starts empty for this run and contains only tool calls
                             # after the current user input, across any correction rounds.
                             # Never pull tool results from prior conversation history.
@@ -517,7 +523,7 @@ class AgentLoop:
                             round_number += 1
                             continue
                     _LOG.info("MAI final accepted round=%d", round_number)
-                    for history_index in reversed(rejected_final_indices):
+                    for history_index in sorted(set(rejected_final_indices + incomplete_context_indices), reverse=True):
                         del history[history_index]
                     return AgentRunResult(
                         content=turn.content,
