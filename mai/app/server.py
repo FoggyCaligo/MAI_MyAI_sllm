@@ -186,7 +186,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
 
     _runtime = MAIRuntime(
-        model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
+        model=os.environ.get("MAIN_MODEL", ""),
         llm_backend=os.environ.get("LLM_BACKEND", "llamacpp"),
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
@@ -320,7 +320,7 @@ async def health() -> dict[str, object]:
     return {
         "status": "ok",
         "model": runtime.model,
-        "vision_model": runtime.vision_model,
+        "main_vision_enabled": os.environ.get("LLAMACPP_MAIN_VISION", "false").lower() == "true",
         "tailscale_funnel": _hosting is not None and _hosting_provider == "tailscale",
         "remote_hosting_provider": _hosting_provider if _hosting is not None else "none",
     }
