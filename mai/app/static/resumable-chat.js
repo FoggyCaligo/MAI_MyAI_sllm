@@ -212,11 +212,11 @@
       host.appendChild(empty);
     } else {
       normalized.forEach(message => {
-        if (message?.role === 'user') addMessage('user', String(message.content || ''), Array.isArray(message?.metadata?.attachments) ? message.metadata.attachments : []);
+        if (message?.role === 'user') addMessage('user', String(message.content || ''), Array.isArray(message?.metadata?.attachments) ? message.metadata.attachments : [],message?.created_at);
         if (message?.role === 'assistant') {
           const metadata = message?.metadata;
           const isError = metadata?.kind === 'error';
-          const rendered = addMessage('mai', isError ? '' : String(message.content || ''));
+          const rendered = addMessage('mai', isError ? '' : String(message.content || ''), [], message?.created_at);
           if (isError) {
             rendered.bubble.classList.add('error');
             const prefix = metadata.error_type ? `${metadata.error_type}: ` : '';
@@ -439,6 +439,7 @@
       if (response.ok) {
         if (pending) {
           pending.bubble.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(data.answer) : String(data.answer || '');
+          if (typeof setMessageTime === 'function') setMessageTime(pending);
           if (typeof renderToolLog === 'function') renderToolLog(pending.wrap, data.tools || [], data.model_rounds || 0, data.model || 'unknown');
         } else if (typeof addMessage === 'function') {
           addMessage('mai', data.answer || '');

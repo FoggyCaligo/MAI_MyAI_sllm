@@ -28,6 +28,7 @@ class LlamaCppAdapter:
             "messages": _openai_messages(request.messages),
             "tools": [dict(tool) for tool in request.tools],
             "stream": False,
+            "cache_prompt": True,  # in-memory KV prefix reuse; no cache files.
         }
         if self.config.max_output_tokens is not None:
             payload["max_tokens"] = self.config.max_output_tokens
