@@ -132,3 +132,27 @@ def test_preload_does_not_produce_chat_or_KV_state():
     source = inspect.getsource(SingleResidentRouter.prepare)
     assert "_ensure_model_locked" in source
     assert "request(" not in source
+
+
+def test_background_preload_restores_ui_selected_model_not_yaml_default():
+    events = []
+
+    class FakeRouter:
+        async def prepare(self, model, client):
+            events.append(model)
+
+    runtime = object.__new__(MAIRuntime)
+    runtime.model = "default-ornith"
+    runtime.selected_model = "chosen-gguf"
+    runtime.llm_backend = "llamacpp"
+    runtime._llamacpp_router = FakeRouter()
+    runtime._llamacpp_execution_lock = asyncio.Lock()
+
+    async def exercise():
+        async def complete_memory():
+            return None
+        memory = asyncio.create_task(complete_memory())
+        await runtime._preload_main_after_memory(memory)
+
+    asyncio.run(exercise())
+    assert events == ["chosen-gguf"]
