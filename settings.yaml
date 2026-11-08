@@ -17,8 +17,8 @@ LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-B
 # 메인 Ornith 1.5에 이미지를 직접 전달 (실제 추론은 호스트의 llama.cpp에서 검증 필요).
 LLAMACPP_MAIN_VISION: true
 # llama.cpp router와 자식 모델에 적용. 모델 버전을 교체해도 유지되는 런타임 설정.
-# 이전 assistant의 thinking을 후속 모델 턴에서도 유지 (새 요청에 reasoning_content 전달).
-LLAMACPP_REASONING_PRESERVE: true
+# 과거 추론의 보존만 끔. 현재 요청의 thinking 자체는 비활성화하지 않음.
+LLAMACPP_REASONING_PRESERVE: false
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
 # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
@@ -36,8 +36,6 @@ MAI_DEBUG_MODEL_INPUT: false
 AGENT_MAX_IDENTICAL_CALLS: 3
 AGENT_MAX_IDENTICAL_FAILURES: 2
 AGENT_MAX_NO_PROGRESS_ROUNDS: 2
-# 연속 출력 한도 소진 시, 미완성 Think/답변을 다음 Main 모델 턴에 전달해 이어갈 최대 횟수.
-MAI_MAX_INCOMPLETE_TURN_CONTINUATIONS: 4
 TOOL_TIMEOUT_SECONDS: 60
 TERMINAL_TIMEOUT_SECONDS: 120
 MAX_INLINE_TOOL_RESULT_CHARS: 8000

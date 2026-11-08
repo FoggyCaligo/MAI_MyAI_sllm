@@ -74,7 +74,12 @@ class LlamaCppAdapter:
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise OllamaProtocolError("llama.cpp response missing choices")
         finish_reason = choices[0].get("finish_reason")
-        incomplete = finish_reason == "length"
+        if finish_reason == "length":
+            raise OllamaProtocolError(
+                f"llama.cpp output limit reached (finish_reason={finish_reason!r}, "
+                f"max_tokens={self.config.max_output_tokens}); "
+                "incomplete response or tool calls rejected"
+            )
         msg = choices[0].get("message")
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
             raise OllamaProtocolError("llama.cpp response missing assistant message")
@@ -84,10 +89,6 @@ class LlamaCppAdapter:
             raise OllamaProtocolError("llama.cpp content and reasoning must be strings")
         # A successful HTTP response can still be an unusable generation.
         # Never treat empty structured-review content as valid JSON.
-        if request.response_format is not None and incomplete:
-            raise OllamaProtocolError(
-                "llama.cpp structured review hit output limit; partial JSON cannot be validated"
-            )
         if request.response_format is not None and not content.strip():
             choice = choices[0]
             finish = choice.get("finish_reason")
@@ -98,17 +99,6 @@ class LlamaCppAdapter:
                 f"(finish_reason={finish!r}, reasoning_chars={reason_chars}, "
                 f"usage={usage!r}); check context size, output budget, "
                 "and model chat-template/reasoning compatibility"
-            )
-        # A cut-off tool call cannot be executed or reconstructed safely.
-        # Leave it as an explicit protocol failure instead of guessing args.
-        if incomplete and msg.get("tool_calls"):
-            raise OllamaProtocolError(
-                "llama.cpp output limit interrupted tool call generation; "
-                "partial tool calls cannot be safely resumed or executed"
-            )
-        if incomplete and not (content or thinking):
-            raise OllamaProtocolError(
-                "llama.cpp output limit reached without resumable content or reasoning"
             )
         raw_calls = msg.get("tool_calls") or []
         if not isinstance(raw_calls, list):
@@ -137,8 +127,7 @@ class LlamaCppAdapter:
                 {"type": "function", "function": {"name": c.name, "arguments": c.arguments}}
                 for c in calls
             ]
-        return ModelTurn(content=content, thinking=thinking, tool_calls=tuple(calls),
-                         assistant_message=assistant, incomplete=incomplete)
+        return ModelTurn(content=content, thinking=thinking, tool_calls=tuple(calls), assistant_message=assistant)
 
 
 def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
@@ -204,13 +193,7 @@ def _openai_messages(messages: Any) -> list[dict[str, Any]]:
             out.append(message)
             continue
         normalized = _openai_message(message)
-        previous_thinking = normalized.pop("thinking", None)
-        if previous_thinking is not None:
-            if not isinstance(previous_thinking, str):
-                raise OllamaProtocolError("previous assistant thinking must be a string")
-            if normalized.get("role") != "assistant":
-                raise OllamaProtocolError("thinking history must belong to assistant messages")
-            normalized["reasoning_content"] = previous_thinking
+        normalized.pop("thinking", None)
         if normalized.get("tool_calls"):
             for index, tool_call in enumerate(normalized["tool_calls"]):
                 call_id = f"call_{turn_index}_{index}"

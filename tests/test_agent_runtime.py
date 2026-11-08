@@ -354,31 +354,3 @@ def test_tool_manual_returns_status_only_and_guidance_is_separate_system_context
                for m in request.messages if m.get("role") == "tool")
     assert any(m.get("role") == "assistant" and m.get("thinking") == "THINKING_ON_ACTIVATION"
                for m in request.messages)
-
-
-def test_incomplete_turn_continues_with_prior_thinking_and_combines_final_answer():
-    from dataclasses import replace
-    first = replace(assistant_turn(content="First ", thinking="Reasoning A"), incomplete=True)
-    second = assistant_turn(content="second.", thinking="Reasoning B")
-    adapter = FakeAdapter([first, second])
-    progress = []
-    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message(
-        "Write a sentence", on_model_turn=lambda n, turn: progress.append((n, turn.incomplete))
-    ))
-    assert result.content == "First second."
-    assert result.model_rounds == 2
-    assert progress == [(1, True), (2, False)]
-    assert {"role": "assistant", "content": "First ", "thinking": "Reasoning A"} in adapter.requests[1].messages
-    assert any(message.get("role") == "system" and "generation budget" in message.get("content", "")
-               for message in adapter.requests[1].messages)
-
-
-def test_incomplete_turn_continuations_are_bounded_and_fail_explicitly(monkeypatch):
-    from dataclasses import replace
-    monkeypatch.setenv("MAI_MAX_INCOMPLETE_TURN_CONTINUATIONS", "1")
-    first = replace(assistant_turn(thinking="Thinking A"), incomplete=True)
-    second = replace(assistant_turn(thinking="Thinking B"), incomplete=True)
-    adapter = FakeAdapter([first, second])
-    with pytest.raises(AgentRunFailure, match="repeatedly exhausted"):
-        run(AgentRuntime(adapter, ToolRegistry()).run_user_message("question"))
-    assert len(adapter.requests) == 2

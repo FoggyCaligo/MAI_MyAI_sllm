@@ -25,12 +25,12 @@ LLAMACPP_MAIN_VISION: true
 `settings.yaml`에 다음 비밀정보가 아닌 설정을 보관한다.
 
 ```yaml
-LLAMACPP_REASONING_PRESERVE: true
+LLAMACPP_REASONING_PRESERVE: false
 ```
 
-- `false`를 설정하면 Windows와 Linux Portable 실행기가 `--no-reasoning-preserve`로 라우터를 시작하고, 자식 모델이 상속하는 `LLAMA_ARG_REASONING_PRESERVE=false`도 설정한다. 현재 기본값인 `true`일 때는 이전 assistant의 Think가 후속 llama.cpp 모델 턴에 포함되도록 보존 옵션을 켠다. 옵션은 모델 파일이나 llama.cpp 바이너리를 수정하지 않고, 실행 시 전달한다.
+- `false`: Windows와 Linux Portable 실행기가 `--no-reasoning-preserve`로 라우터를 시작하고, 자식 모델이 상속하는 `LLAMA_ARG_REASONING_PRESERVE=false`도 설정한다. `true`일 때는 해당하는 활성 옵션을 쓴다. 옵션은 모델 파일이나 llama.cpp 바이너리를 수정하지 않고, 실행 시 전달한다.
 - llama.cpp OpenAI 호환 요청에서는 **`reasoning_effort` 필드를 보내지 않는다**. 빈 문자열이 아니라 필드 자체를 생략하므로 채팅 템플릿의 기본 effort를 사용한다.
-- MAI의 llama.cpp 어댑터는 이전 assistant의 `thinking`을 다음 요청의 `reasoning_content`로 변환하여 전달한다. 단, 모델/템플릿이 이 필드를 실제로 재사용하는지는 통합 테스트가 필요하다. 또한 `think=False`인 Verifier/기억 추출에서 이전의 `reasoning_effort=none` 강제값이 제거되므로 모델 기본 reasoning이 작동할 수 있다. 실제 동작은 모델/템플릿으로 검증해야 한다.
+- reasoning preserve를 비활성화해도 **현재 턴의 Think 생성은 별도로 유지될 수 있다**. 또한 `think=False`인 Verifier/기억 추출에서 이전의 `reasoning_effort=none` 강제값이 제거되므로 모델 기본 reasoning이 작동할 수 있다. 실제 동작은 모델/템플릿으로 검증해야 한다.
 - 설정은 Portable 런처에만 적용되므로 바이너리 버전을 올려도 YAML 설정이 유지된다. 새 llama.cpp 버전에서 지원하지 않는 플래그라면 시작 실패를 그대로 보고하며 옵션을 무시하거나 암묵적으로 이전 설정으로 되돌리지 않는다.
 - Ollama Modelfile의 `TEMPLATE {{ .Prompt }}`만으로는 Ollama의 샘플링 기본값이나 내부 템플릿 reasoning 옵션을 확정할 수 없다.
 
@@ -38,7 +38,7 @@ LLAMACPP_REASONING_PRESERVE: true
 
 `settings.yaml`의 기존 `OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768` 설정은 **Ollama 메인 모델의 `num_predict`** 뿐 아니라 **llama.cpp 메인 모델의 `max_tokens`** 에도 적용된다. 새 llama.cpp 바이너리로 교체해도 MAI 요청에서 값을 읽어 전달한다. 실행 환경의 `.env`와 환경변수가 지정한 값이 YAML보다 우선한다.
 
-`max_tokens`는 **한 모델 요청에서 생성할 수 있는 전체 출력 토큰 상한**이며, 현재 Think 생성량을 별도로 제한하는 설정이 아니다. `finish_reason="length"`로 종료되면 MAI Main Agent는 해당 턴의 출력과 Think를 문맥에 보존하고 **다음 Main 턴**을 실행한다. 중간 결과는 최종 답변으로 인정하지 않고 완료된 응답에 이어 붙여 검증한다. `MAI_MAX_INCOMPLETE_TURN_CONTINUATIONS`를 초과하면 명확히 실패한다. 미완성 네이티브 툴 호출이나 구조화 JSON 검증 응답은 안전하게 이어 붙일 수 없으므로 실패를 명시한다. Verifier는 llama.cpp에서 Main과 동일한 어댑터를 공유하므로 이 제한도 동일하게 적용되고, 기억 추출 전용 어댑터는 이 설정의 적용 대상이 아니다.
+`max_tokens`는 **한 모델 요청에서 생성할 수 있는 전체 출력 토큰 상한**이며, 현재 Think 생성량을 별도로 제한하는 설정이 아니다. `finish_reason="length"`로 종료되면 비록 부분 응답이 있어도 MAI는 완료된 최종 답변이나 정상적인 툴 호출로 인정하지 않고 프로토콜 오류로 보고한다. Verifier는 llama.cpp에서 Main과 동일한 어댑터를 공유하므로 이 제한도 동일하게 적용되고, 기억 추출 전용 어댑터는 이 설정의 적용 대상이 아니다.
 
 ## Windows / Linux 실행
 
