@@ -44,3 +44,14 @@ def test_verifier_model_setting_has_independent_environment_precedence(tmp_path)
     env = {"VERIFIER_MODEL": "explicit-reviewer"}
     load_settings(path, environ=env)
     assert env == {"MAIN_MODEL": "main", "VERIFIER_MODEL": "explicit-reviewer"}
+
+
+def test_verifier_setting_defaults_and_precedence(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text("MAI_VERIFIER_ENABLED: false\n", encoding="utf-8")
+    env: dict[str, str] = {}
+    assert load_settings(path, environ=env)["MAI_VERIFIER_ENABLED"] == "false"
+    assert env["MAI_VERIFIER_ENABLED"] == "false"
+    explicit = {"MAI_VERIFIER_ENABLED": "true"}
+    load_settings(path, environ=explicit)
+    assert explicit["MAI_VERIFIER_ENABLED"] == "true"
