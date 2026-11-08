@@ -5,6 +5,9 @@ Never changes Python, uv, GGUF models, user databases, or application settings.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import time
+from urllib.error import HTTPError, URLError
 import json
 import os
 from pathlib import Path
@@ -90,14 +93,41 @@ def validate_installed(runtime: Path, old: dict, platform: str, exe: str) -> boo
 
 
 def download(url: str, dest: Path, sha256: str) -> None:
-    import hashlib
-    h = hashlib.sha256()
-    with urlopen(Request(url, headers={"User-Agent": "MAI-llamacpp-update"}), timeout=90) as response, dest.open("wb") as out:
-        while data := response.read(1024 * 1024):
-            out.write(data)
-            h.update(data)
-    if h.hexdigest().lower() != sha256.lower():
-        raise RuntimeError("Downloaded llama.cpp SHA-256 does not match publisher digest")
+    """Retry transient GitHub/CDN failures without accepting unverified bytes."""
+    retry_codes = {408, 429, 500, 502, 503, 504}
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        digest = hashlib.sha256()
+        partial = dest.with_name(dest.name + ".part")
+        partial.unlink(missing_ok=True)
+        try:
+            print(f"Downloading llama.cpp (attempt {attempt}/{max_attempts})", flush=True)
+            request = Request(url, headers={
+                "User-Agent": "MAI-llamacpp-update",
+                "Accept": "application/octet-stream",
+            })
+            with urlopen(request, timeout=120) as response, partial.open("wb") as out:
+                while chunk := response.read(1024 * 1024):
+                    out.write(chunk)
+                    digest.update(chunk)
+            if digest.hexdigest().lower() != sha256.lower():
+                raise RuntimeError("Downloaded llama.cpp SHA-256 does not match publisher digest")
+            os.replace(partial, dest)
+            return
+        except (HTTPError, URLError, TimeoutError, ConnectionError, OSError) as exc:
+            partial.unlink(missing_ok=True)
+            if isinstance(exc, HTTPError) and exc.code not in retry_codes:
+                raise RuntimeError(f"Download rejected with HTTP {exc.code}; not retrying") from exc
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    f"llama.cpp download failed after {max_attempts} attempts: {exc}. "
+                    "The installed runtime and manifest are unchanged."
+                ) from exc
+            delay = min(2 ** attempt, 16)
+            print(f"Temporary download error: {exc}; retrying in {delay}s", file=sys.stderr, flush=True)
+            time.sleep(delay)
+        finally:
+            partial.unlink(missing_ok=True)
 
 
 def unpack(archive: Path, dest: Path) -> None:
