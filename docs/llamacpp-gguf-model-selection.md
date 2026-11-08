@@ -1,7 +1,6 @@
 # llama.cpp Portable — GGUF 폴더 탐색 및 모델 선택 실험
 
-이 문서는 `experiment/llamacpp-auto-gguf-ui-switch-20261108` 브랜치용이다.
-Ollama 모델 검색·설정이나 Main/Verifier의 검증 계약은 변경하지 않는다.
+이 문서는 현재 `dev`에 포함된 llama.cpp GGUF 카탈로그 및 모델 전환 기능을 설명한다. Ollama 모델 검색·설정과 Main/Verifier 검증 계약은 별도로 유지한다.
 
 ## 모델 목록과 기본값
 
