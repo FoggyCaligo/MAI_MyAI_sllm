@@ -25,7 +25,7 @@ def test_llamacpp_tool_call_and_thinking_round_trip():
     result = asyncio.run(run())
     assert result.thinking == "memory needed"
     assert result.tool_calls[0].arguments == {"keyword": "취미"}
-    assert captured[0]["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in captured[0]
 
 
 def test_outgoing_tool_calls_serialized_to_openai_format():
@@ -83,3 +83,26 @@ def test_empty_structured_verifier_response_is_protocol_error_with_diagnostics()
             ))
     with pytest.raises(OllamaProtocolError, match="finish_reason='length'"):
         asyncio.run(run())
+
+
+def test_llamacpp_omits_reasoning_effort_for_all_think_requests():
+    captured = []
+
+    def responder(request):
+        import json
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {
+            "role": "assistant", "content": "ok", "reasoning_content": ""}}]})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            for think in (True, False, None):
+                adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test", think=True), client=client)
+                result = await adapter.chat(ChatRequest(
+                    messages=[{"role": "user", "content": "test"}], think=think,
+                ))
+                assert result.content == "ok"
+
+    asyncio.run(run())
+    assert len(captured) == 3
+    assert all("reasoning_effort" not in request for request in captured)
