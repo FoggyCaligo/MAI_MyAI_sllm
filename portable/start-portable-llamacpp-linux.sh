@@ -33,6 +33,10 @@ trap cleanup EXIT
 catalog_json="$("$python" "$root/portable/llamacpp_model_catalog.py" --root "$root" --ini "$ini")"
 default_model="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["default"])')"
 main_vision="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; c=json.load(sys.stdin); print("true" if c["main_vision"] or c["projector"] else "false")')"
+reasoning_preserve="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print("true" if json.load(sys.stdin)["reasoning_preserve"] else "false")')"
+export LLAMA_ARG_REASONING_PRESERVE="$reasoning_preserve"
+reasoning_preserve_flag="--no-reasoning-preserve"
+if [[ "$reasoning_preserve" == true ]]; then reasoning_preserve_flag="--reasoning-preserve"; fi
 export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model" VERIFIER_MODEL="$default_model"
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
 if [[ "$main_vision" == true ]]; then export VISION_MODEL="$default_model"; else export VISION_MODEL=""; fi
@@ -45,7 +49,7 @@ export LOG_DB_PATH="$root/data/log.sqlite3"
 export SENTENCE_BREAKER_DB_PATH="$root/data/sentence_breaker.sqlite3"
 export LD_LIBRARY_PATH="$cache/llamacpp/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 command -v setsid >/dev/null || { echo "Missing setsid" >&2; exit 1; }
-setsid "$llama" --models-preset "$ini" --models-max "$models_max" --host 127.0.0.1 --port 8080 --jinja &
+setsid "$llama" --models-preset "$ini" --models-max "$models_max" --host 127.0.0.1 --port 8080 --jinja "$reasoning_preserve_flag" &
 router_pid=$!
 ready=0
 for attempt in {1..120}; do

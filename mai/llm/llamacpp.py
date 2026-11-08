@@ -38,8 +38,6 @@ class LlamaCppAdapter:
                 payload["response_format"] = {"type": "json_object"}
             else:
                 raise ValueError("Unsupported llama.cpp response format")
-        think = self.config.think if request.think is None else request.think
-        payload["reasoning_effort"] = "medium" if think is True else "none" if think is False else think
         async def send(client: httpx.AsyncClient) -> dict[str, Any]:
             response = await client.post(
                 self.config.host.rstrip("/") + "/v1/chat/completions",

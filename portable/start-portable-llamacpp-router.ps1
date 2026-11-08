@@ -24,6 +24,10 @@ $defaultModel = [string]$catalog.default
 if (-not $defaultModel) { throw 'GGUF catalog has no default model' }
 $MainVision = [bool]$catalog.main_vision
 $mainProjector = [string]$catalog.projector
+# The launcher injects this option into both the router and spawned model
+# processes. Keep the policy in settings.yaml, not in the downloaded binary.
+$preserveReasoning = [bool]$catalog.reasoning_preserve
+$env:LLAMA_ARG_REASONING_PRESERVE = if ($preserveReasoning) { 'true' } else { 'false' }
 if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
     throw 'Port 8080 occupied; refusing to connect to another router.'
 }
@@ -45,6 +49,7 @@ $env:VISION_MODEL = if ($mainProjector -or $MainVision) { $defaultModel } else {
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
                '--host', '127.0.0.1', '--port', '8080', '--jinja')
+if ($preserveReasoning) { $arguments += '--reasoning-preserve' } else { $arguments += '--no-reasoning-preserve' }
 $process = $null
 try {
     $process = Start-Process -FilePath $server -ArgumentList $arguments -WorkingDirectory $iniDir -PassThru -NoNewWindow

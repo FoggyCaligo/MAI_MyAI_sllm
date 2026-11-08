@@ -16,6 +16,9 @@ LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.ggu
 LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
 # 메인 Ornith 1.5에 이미지를 직접 전달 (실제 추론은 호스트의 llama.cpp에서 검증 필요).
 LLAMACPP_MAIN_VISION: true
+# llama.cpp router와 자식 모델에 적용. 모델 버전을 교체해도 유지되는 런타임 설정.
+# 과거 추론의 보존만 끔. 현재 요청의 thinking 자체는 비활성화하지 않음.
+LLAMACPP_REASONING_PRESERVE: false
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
 # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"

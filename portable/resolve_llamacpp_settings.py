@@ -20,6 +20,7 @@ KEYS = (
     "LLAMACPP_VERIFIER_GGUF_PATH",
     "LLAMACPP_MAIN_MMPROJ_PATH",
     "LLAMACPP_MAIN_VISION",
+    "LLAMACPP_REASONING_PRESERVE",
     "LLAMACPP_VISION_GGUF_PATH",
     "LLAMACPP_VISION_MMPROJ_PATH",
 )
@@ -36,6 +37,10 @@ def read_config(path: Path) -> dict[str, str | bool | None]:
         raise ValueError("LLAMACPP_MAIN_VISION must be true or false")
     result: dict[str, str | bool | None] = {key: data.get(key) for key in KEYS}
     result["LLAMACPP_MAIN_VISION"] = raw_vision == "true"
+    raw_preserve = data.get("LLAMACPP_REASONING_PRESERVE", "false").lower()
+    if raw_preserve not in {"true", "false"}:
+        raise ValueError("LLAMACPP_REASONING_PRESERVE must be true or false")
+    result["LLAMACPP_REASONING_PRESERVE"] = raw_preserve == "true"
     return result
 
 if __name__ == "__main__":

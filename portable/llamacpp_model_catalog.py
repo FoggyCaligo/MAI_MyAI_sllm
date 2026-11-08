@@ -75,6 +75,7 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
         "default": default, "models": entries,
         "projector": str(projector) if projector else None,
         "main_vision": bool(config.get("LLAMACPP_MAIN_VISION")),
+        "reasoning_preserve": config.get("LLAMACPP_REASONING_PRESERVE", False),
     }
 
 
