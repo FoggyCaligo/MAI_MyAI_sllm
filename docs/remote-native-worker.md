@@ -1,79 +1,43 @@
-# Native tool-based Windows/Linux remote worker
+# Windows·Linux 원격 Native 워커
 
-This implementation restores the remote-worker scope previously developed in
-PR #473, **without** CodeAct or `execute_code`.
+이 문서는 현재 `dev`의 원격 PC 작업 경로를 설명한다. 별도 CodeAct 평가기나 `execute_code` 도구를 사용하는 방식이 아니다. 웹 UI를 인터넷에 공개하는 기능과 원격 PC에서 도구를 실행하는 기능은 별도다.
 
-## Execution contract
+## 실행 계약
 
-1. MAI exposes only `tool_manual` in the first model round.
-2. Activating a native tool exposes its original Pydantic input contract,
-   extended with `is_remote: bool = false` only for Owner tools that are
-   supported by the remote worker.
-3. The model chooses `is_remote` per native tool call from the user's
-   requested execution target, not text matching or path heuristics.
-4. `false` or omission executes on the MAI host; `true` executes
-   `native.invoke` on that Owner's authenticated remote worker. A missing,
-   expired, disconnected, or unsupported worker fails explicitly. Never
-   fall back to local execution.
-5. Model-facing results are the native tool's real result, not the transport
-   envelope. Remote error type and message are retained.
+1. 모델의 최초 차례에는 `tool_manual`만 노출된다. 활성화한 도구의 실제 Pydantic 인수 계약이 다음 차례부터 제공된다.
+2. Owner의 원격 지원 native 도구에는 `is_remote: bool = false`가 추가된다. 모델은 사용자 요청의 실행 대상을 기준으로 이를 선택하며, 경로·명령 문자열 패턴으로 원격 여부를 추측하지 않는다.
+3. 생략 또는 `false`는 MAI 호스트에서 실행한다. `true`는 해당 Owner가 인증·연결한 원격 워커의 `native.invoke` 경로에서 실행한다.
+4. 대상 워커가 없거나 연결이 끊겼거나 미지원 도구인 경우 명시적으로 실패하며, 로컬 실행으로 되돌리지 않는다. 원격 실패 유형과 메시지도 보존한다.
+5. 결과는 전송용 envelope가 아니라 원래 도구의 결과를 모델에 보여준다.
 
-For example, after activating `file_read`, call that **native function**
-with its validated arguments:
+예를 들어 `file_read`를 활성화한 뒤에는 다음 인수를 사용할 수 있다.
 
 ```json
-{"path": "/home/owner/notes.txt", "is_remote": true}
+{"path":"/home/owner/notes.txt","is_remote":true}
 ```
 
-There is **no Python CodeAct evaluator**.
+## 구현 및 도구 지원 범위
 
-## Worker coverage
+서버 측 등록과 라우팅은 `mai/app/runtime.py`, `mai/remote/routing.py`, `mai/remote/target.py`에 있다. 워커는 `mai/remote/python_worker.py`에서 공통 Native 도구 등록을 재사용한다.
 
-The persistent worker registers the same native implementations for filesystem,
-code editing/search, CSV, structured document editing, terminal, calculator,
-current time, public web search/fetch, market lookup, and browser operations.
-Its Chromium session manager remains alive across multiple native calls in one
-remote connection.
+원격 지원 범위는 파일·코드 작업, CSV 집계, 구조화 문서 편집, 터미널, 계산, 시각 조회, 웹 검색·조회, 한국 주식 시장 조회 및 브라우저 작업이다. 워커의 브라우저 세션 관리자는 동일 원격 연결에서 재사용된다.
 
-`image_analyze` may be routed when the MAI host has a configured Ollama vision
-model; the worker must also have `MAI_REMOTE_VISION_MODEL` and optionally
-`MAI_REMOTE_OLLAMA_HOST`. The worker's own vision model performs inference
-on paths resolved on the worker itself.
+`memory_search`, `tool_result_read`, `file_download_link`는 MAI 서버의 저장소·권한·토큰 상태에 종속되므로 원격 도구가 아니다. `image_analyze`의 원격 사용에는 호스트 측 지원 조건과 워커의 `MAI_REMOTE_VISION_MODEL` 설정이 필요하다. 워커가 별도로 `MAI_REMOTE_OLLAMA_HOST`를 사용하는 구성이 가능하다.
 
-`memory_search`, `tool_result_read`, and `file_download_link` remain
-on the MAI server and do not gain an `is_remote` argument. The remote
-worker does not receive the server's long-term memory, per-turn result
-store, or download-link token state. Trial accounts keep their original
-native-only and local permission limitations.
+Windows `terminal_run`은 CMD를 기본으로, Linux는 `/bin/sh`를 기본으로 한다. 지원하지 않는 셸 조합은 문법을 암묵적으로 변경하지 않고 오류로 반환한다. 체험 계정은 기존 읽기·파일 범위 제한을 유지한다.
 
-On Linux, `terminal_run` defaults to `/bin/sh`; on Windows, it defaults
-to CMD. Unsupported shell combinations fail rather than silently translating
-commands.
+## 연결과 설치
 
-## Installation and authentication
+Owner의 원격 연결 UI에서 인증된 세션을 생성하고 대상 운영체제의 시작 명령을 선택한다. Windows는 `mai/app/static/remote-agent.ps1`, Linux는 `mai/app/static/remote-agent-linux.sh`의 흐름을 사용한다. 대상 컴퓨터는 HTTPS로 MAI에 접속해 작업을 폴링하고 결과를 반환한다.
 
-From the Owner remote connection panel, create an authorized session and
-select the **Windows PowerShell** or **Linux shell** command. Run that command
-on the machine to be controlled. The target connects outward to the MAI host
-over HTTPS, polls for native tool requests, and returns authenticated results.
+Linux에는 Python 3.11 이상, `curl`, `unzip`, `sha256sum`, 작동하는 `python3 -m venv` 및 필요한 Chromium 시스템 라이브러리가 있어야 한다. 두 워커는 서버가 제공하는 인증된 소스 아카이브를 받아 SHA-256을 확인한다. `remote-requirements.txt`는 워커용 의존성을 정의하며 MAI 서버의 추론·음성·메모리 환경 전체를 설치하지 않는다.
 
-The Linux script requires Python 3.11+, `curl`, `unzip`, `sha256sum`, a
-working `python3 -m venv`, and the system libraries needed by Playwright
-Chromium. Both platforms download an authenticated, server-built source
-archive and verify its SHA-256 digest before installing the worker.
-`remote-requirements.txt` intentionally excludes MAI host inference,
-speech, and memory dependencies.
+아카이브 해시 단위 캐시와 설치 완료 마커를 사용한다. 워커 정상 종료는 세션 권한을 폐기하고 브라우저 리소스를 정리한다. 시작 명령의 인증값은 비밀정보이므로 공유하지 않는다.
 
-Installations are cached by archive digest, and a dedicated completion marker
-avoids treating a partially constructed virtualenv as successfully installed.
-Closing the worker revokes its remote session and cleans browser sessions.
-The session credentials are sensitive; do not share the launch command.
+## 유효기간·검증·한계
 
-## Known limitations and validation
+초기 연결 기한은 600초, 연결 상태 확인은 마지막 폴링 기준 180초다. 별도의 10시간 실제 작업 유휴 기한은 작업 발행 또는 인증된 작업 결과에 따라 갱신되며 **단순 heartbeat로 연장되지 않는다**.
 
-- No end-to-end Windows/Linux machine test has yet been run for this PR.
-- Linux distribution-specific Chromium system libraries may need installing.
-- Remote temporary-file cleanup is not yet integrated with MAI host's
-  final-answer temporary artifact lifecycle.
-- Existing tool definitions and their structural schemas are reused; failures
-  must not be converted into success-shaped fallback responses.
+Windows·Linux 실기기에서 원격 워커의 종단간 정상 작동을 모두 검증했다는 기록은 없다. Linux의 Chromium 라이브러리, 네트워크·인증, 브라우저 파일 권한과 실제 도구 실행은 대상 환경에서 확인해야 한다. 원격 임시 파일은 호스트의 최종 답변 임시 산출물 정리 생명주기와 자동 연동되지 않는다.
+
+관련 검증 코드는 `tests/test_remote_python_worker.py`, `tests/test_remote_worker_bootstrap.py`, `tests/test_remote_unified_routing.py`, `tests/test_remote_idle_timeout.py`를 참고한다. 테스트 통과만으로 실제 운영체제·네트워크 환경 검증을 대체하지 않는다.
