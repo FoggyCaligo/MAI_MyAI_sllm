@@ -204,12 +204,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python cannot start' }
 # Use an independently installed uv command for provisioning only; MAI runtime
 # does not depend on uv at startup. Do not silently use global Python for MAI.
 $uv = Join-Path $runtimes 'uv\uv.exe'
-& $uv pip install --python $python "$root"
+& $uv pip install --python $python "$root[dev]"
 if ($LASTEXITCODE -ne 0) { throw 'MAI dependency installation failed' }
-& $python -c 'import fastapi, uvicorn, playwright, mai'
+& $python -c 'import fastapi, uvicorn, playwright, mai, pytest'
 if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
-& $uv pip install --python $python --group dev
-if ($LASTEXITCODE -ne 0) { throw 'MAI dev dependency installation failed' }
 
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $runtimes 'playwright-browsers'
     & $python -m playwright install chromium
