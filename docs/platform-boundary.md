@@ -19,7 +19,7 @@ Agent / Verifier / Memory
 
 ## Portable 바이너리
 
-Windows x64는 `portable/start-portable.ps1`와 Windows용 런타임을 사용한다. Linux x86-64는 `portable/start-portable-linux.sh` 또는 `portable/start-portable-llamacpp-linux.sh` 및 별도로 준비한 Linux 네이티브 런타임·호스트 캐시를 사용한다. Linux 준비는 `portable/prepare-portable-linux.sh`를 따른다.
+Windows Git Bash와 Ubuntu 24.04 x86-64는 모두 `./mai.sh setup`, `./mai.sh check`, `./mai.sh start`로 진입한다. Windows는 `mai.ps1` 내부 설치 함수와 `portable/start-portable-llamacpp-router.ps1`, Linux는 `mai.sh`의 호스트 캐시 설치 함수와 `portable/start-portable-llamacpp-linux.sh`를 사용한다. OS별 Python·uv·llama.cpp 바이너리는 서로 호환되지 않는다.
 
 GGUF 가중치·설정 파일·SQLite 데이터는 두 환경에서 공유할 수 있지만 Windows `.exe`와 GPU 드라이버는 Linux에서 그대로 실행할 수 없다. NTFS에 Linux 가상환경을 설치하는 방식도 지원하지 않는다. SQLite를 복사·이관할 때는 MAI를 종료하거나 SQLite 온라인 백업 기능으로 일관성을 확보한다.
 
