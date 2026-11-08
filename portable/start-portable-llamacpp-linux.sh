@@ -35,7 +35,7 @@ default_model="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; pr
 main_vision="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; c=json.load(sys.stdin); print("true" if c["main_vision"] or c["projector"] else "false")')"
 export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model" VERIFIER_MODEL="$default_model"
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
-export VISION_MODEL="$default_model"
+if [[ "$main_vision" == true ]]; then export VISION_MODEL="$default_model"; else export VISION_MODEL=""; fi
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
 export MAI_CWD="$root" MAI_UPLOAD_ROOT="$root/mai_uploads"
