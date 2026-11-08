@@ -159,9 +159,9 @@ def installed_build(runtime: Path, exe: str) -> int | None:
         )
         return None
     output = (proc.stdout + b"\n" + proc.stderr).decode("utf-8", errors="replace")
-    for expression in (r"(?im)^\\s*version:\\s*b?(\\d+)\\b",
-                       r"(?im)^\\s*build(?: number)?:\\s*b?(\\d+)\\b",
-                       r"(?im)\\bllama\\.cpp\\s+(?:version\\s+)?b(\\d+)\\b"):
+    for expression in (r"(?im)^\s*version:\s*b?(\d+)\b",
+                       r"(?im)^\s*build(?: number)?:\s*b?(\d+)\b",
+                       r"(?im)\bllama\.cpp\s+(?:version\s+)?b(\d+)\b"):
         match = re.search(expression, output)
         if match:
             return int(match.group(1))
@@ -171,7 +171,7 @@ def installed_build(runtime: Path, exe: str) -> int | None:
 
 def release_build(release: dict) -> int | None:
     tag = release.get("tag_name")
-    match = re.fullmatch(r"b(\\d+)", tag) if isinstance(tag, str) else None
+    match = re.fullmatch(r"b(\d+)", tag) if isinstance(tag, str) else None
     return int(match.group(1)) if match else None
 
 
