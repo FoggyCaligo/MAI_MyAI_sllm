@@ -1,6 +1,6 @@
 # MAI 원격 웹 호스팅 설정 (Windows / Linux)
 
-이 문서는 **MAI 웹 UI를 외부 인터넷으로 공개하는 기능**만 다룬다. Agent, Memory, Verifier, 모델 서버, 다른 PC에 명령을 실행하는 `mai/remote/`와는 별개의 계층이다.
+이 문서는 **MAI 웹 UI를 외부 인터넷으로 공개하는 기능**만 다룬다. Owner의 Windows·Linux 원격 작업은 [원격 Native 워커](remote-native-worker.md)를 참고한다. Agent, Memory, Verifier, 모델 서버, 다른 PC에 명령을 실행하는 `mai/remote/`와는 별개의 계층이다.
 
 ## 선택기와 기본 동작
 
