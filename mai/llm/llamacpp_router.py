@@ -123,27 +123,37 @@ class SingleResidentRouter:
                 )
             await asyncio.sleep(min(self.poll_interval_seconds, max(0, deadline - time.monotonic())))
 
+    async def _ensure_model_locked(self, model: str, client: httpx.AsyncClient) -> None:
+        """Select one resident model with explicit unload/load confirmation.
+
+        The caller must hold _lock. No inference is required for readiness.
+        """
+        statuses = await self._models(client)
+        if model not in statuses:
+            raise RouterModelTransitionError(f"Target model not registered in router: {model}")
+        for name, status in statuses.items():
+            if status not in _ACTIVE_STATUSES and status != "unloaded":
+                raise RouterModelTransitionError(
+                    f"Router reported unsupported model state: {name}={status}"
+                )
+        for name, status in statuses.items():
+            if name != model and status in _ACTIVE_STATUSES:
+                await self._confirm_unload(client, name)
+        confirmed = await self._models(client)
+        if any(name != model and state != "unloaded" for name, state in confirmed.items()):
+            raise RouterModelTransitionError("Other model is not confirmed unloaded")
+        if confirmed.get(model) != "loaded":
+            await self._confirm_load(client, model)
+
+    async def prepare(self, model: str, client: httpx.AsyncClient) -> None:
+        """Preload the main model without sending a chat or creating KV state."""
+        async with self._lock:
+            await self._ensure_model_locked(model, client)
+
     async def execute(self, model: str, client: httpx.AsyncClient,
                       request: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
         async with self._lock:
-            statuses = await self._models(client)
-            if model not in statuses:
-                raise RouterModelTransitionError(f"Target model not registered in router: {model}")
-            # Refuse an ambiguous state rather than misidentify an active child.
-            for name, status in statuses.items():
-                if status not in _ACTIVE_STATUSES and status != "unloaded":
-                    raise RouterModelTransitionError(
-                        f"Router reported unsupported model state: {name}={status}"
-                    )
-            # Do not unload the target: this preserves main's KV between tool turns.
-            for name, status in statuses.items():
-                if name != model and status in _ACTIVE_STATUSES:
-                    await self._confirm_unload(client, name)
-            confirmed = await self._models(client)
-            if any(name != model and state != "unloaded" for name, state in confirmed.items()):
-                raise RouterModelTransitionError("Other model is not confirmed unloaded")
-            if confirmed.get(model) != "loaded":
-                await self._confirm_load(client, model)
-            # Keep the router lock across the whole inference, so another MAI
-            # adapter cannot evict the current model while it is generating.
+            await self._ensure_model_locked(model, client)
+            # Hold the router lock through inference; preloading cannot evict
+            # a model currently processing another chat request.
             return await request(client)
