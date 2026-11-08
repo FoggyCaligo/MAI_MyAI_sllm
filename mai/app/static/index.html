@@ -500,7 +500,7 @@
     }
     wrap.appendChild(details);
   }
-  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
+  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');document.getElementById('verify-toggle').checked=data.verifier_default_enabled;$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
   let modelBackend='ollama', loadedModel='', switchingModel=false;
   async function loadModels(){
     const res=await fetch('/models',{headers:authHeaders()});
