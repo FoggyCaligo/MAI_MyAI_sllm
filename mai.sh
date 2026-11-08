@@ -61,7 +61,9 @@ fi
 python3 "$root/portable/check-linux-gpu.py" --require
 
 manifest="$root/portable/portable-sources-linux.json"
-[[ -f "$manifest" ]] || { echo "Missing $manifest; create with portable/resolve_portable_sources_linux.py" >&2; exit 1; }
+if [[ ! -f "$manifest" ]]; then
+  python3 "$root/portable/resolve_portable_sources_linux.py"
+fi
 export MAI_LINUX_ROOT="$root"
 export MAI_LINUX_MANIFEST="$manifest"
 export MAI_LINUX_WITH_LLAMACPP="$with_llamacpp"
