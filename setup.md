@@ -69,10 +69,9 @@ ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpr
 루트의 `mai/`는 Python 패키지 디렉터리이므로 `./mai` 실행 파일은 없다. Ollama 전용 시작기와 별도 prepare 스크립트는 현재 코드에서 제거됐다. 모델·GPU·Verifier·도구 연동은 실행 후 별도로 확인한다.
 
 ## 4. llama.cpp 업데이트 방법
-- 다음 명령어 Git Bash에서 실행
-```bash
-./mai.sh update
-```
+- Git Bash에서 `./mai.sh update`를 실행한다.
+- HTTP 504가 반복된다면 [llama.cpp 공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 오류 로그에 표시된 정확한 파일명으로 ZIP을 직접 다운로드하고, `portable/portable-downloads/` 폴더에 보관한 후 같은 명령을 재실행한다.
+- MAI는 로컬 ZIP도 게시자 SHA-256과 대조하며, 불일치하면 사용하지 않는다.
 
 ## 5. 고급설정
 ### 1. 설정파일
