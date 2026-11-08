@@ -1,6 +1,6 @@
-# llama.cpp Portable — GGUF 폴더 탐색 및 모델 선택 실험
+# llama.cpp GGUF 모델 탐색·선택
 
-이 문서는 현재 `dev`의 llama.cpp 전용 GGUF 카탈로그와 모델 전환 기능을 설명한다. 별도의 Ollama 백엔드 및 모델 선택 계약은 지원하지 않는다.
+**현재 백엔드:** llama.cpp 전용. 모델 추가·기본 경로 변경: [설치 안내](../setup.md).
 
 ## 모델 목록과 기본값
 
@@ -19,9 +19,9 @@ LLAMACPP_MAIN_VISION: true
 * 파일명은 UI 표시 이름이고, 내부 라우터 ID는 **정규화된 GGUF 경로의 SHA-256 기반 ID**다. 따라서 사용자가 임의의 임시 ID를 입력해 로드할 수 없다.
 * 모델 파일 목록은 **프로세스 시작 시 생성된 고정 스냅샷**이다. 파일 추가·삭제 또는 `settings.yaml` 변경을 반영하려면 MAI Portable 서버를 재시작한다. 실행 중 목록과 등록된 라우터가 달라지면 명시적으로 오류를 반환한다.
 
-## llama.cpp reasoning 관련 버전 독립 설정
+## Reasoning 설정
 
-`settings.yaml`에 다음 비밀정보가 아닌 설정을 보관한다.
+`settings.yaml`:
 
 ```yaml
 LLAMACPP_REASONING_PRESERVE: false
@@ -40,17 +40,21 @@ LLAMACPP_REASONING_PRESERVE: false
 
 ## Windows / Linux 실행
 
-Windows:
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\portable\start-portable-llamacpp-router.ps1
-```
+공통 실행 명령(Windows Git Bash / Ubuntu 24.04 Bash):
 
-Linux (기존 Ubuntu Portable 계약 필요):
 ```bash
-bash portable/start-portable-llamacpp-linux.sh
+./mai.sh check
+./mai.sh start
 ```
 
-두 스크립트 모두 발견된 GGUF에 대한 `--models-preset`을 만들어 라우터에 등록한다. `--models-max 1`을 유지하므로 llama.cpp 라우터는 한번에 모델 하나만 상주시킨다. 별개 프로세스의 VRAM 점유는 이 설정으로 제어하지 못한다.
+| OS | 내부 llama.cpp 실행기 |
+|---|---|
+| Windows | `portable/start-portable-llamacpp-router.ps1` |
+| Ubuntu 24.04 | `portable/start-portable-llamacpp-linux.sh` |
+
+두 실행기는 GGUF 목록으로 `--models-preset`을 생성하고 `--models-max 1`로 실행한다. **상주 모델 한 개**만 허용. 별개 프로세스의 VRAM 점유는 제어하지 않음.
+
+설치: `./mai.sh setup` · llama.cpp 바이너리 업데이트: `./mai.sh update`. 기타 OS별 명령: [설치 안내](../setup.md).
 
 ## UI 전환 계약
 
@@ -61,10 +65,17 @@ bash portable/start-portable-llamacpp-linux.sh
 5. 성공일 때만 UI에서 선택 상태를 확정한다. 오류가 나면 오류를 보이고 원래 선택을 되돌린다. **오류를 다른 모델 재시도나 묵시적 fallback으로 숨기지 않는다.**
 6. 이후 그 모델 ID로 생성·검증·기억 사실 추출을 수행한다. 서로 다른 추론 프롬프트를 사용하며 KV 캐시 공유는 보장하지 않는다.
 
-같은 GGUF를 선택한 상태에서는 재로드하지 않는다. Verifier 독립성은 동일 모델 검증으로 인해 감소할 수 있다. 다른 선택 모델의 비전 지원 여부는 파일명으로 판단하지 않으며, 기본 Ornith에 지정한 mmproj를 모든 모델에 자동 적용하지 않는다.
+**동일 GGUF를 계속 사용할 때는 강제 언로드·재로드하지 않는다.** Main과 Verifier는 같은 모델 가중치를 사용하되 프롬프트·검증 계약은 분리된다. 비전 지원 여부를 파일명으로 추측하지 않으며, 기본 Ornith용 mmproj를 다른 모델에 자동 적용하지 않는다.
 
 ## 검증
 
-`pytest -q tests/test_llamacpp_auto_catalog_and_switch.py tests/test_llamacpp_shared_model_alias.py tests/test_linux_llamacpp_portable.py tests/test_llamacpp_confirmed_unload.py`
+```bash
+python -m pytest -q tests/test_llamacpp_auto_catalog_and_switch.py tests/test_llamacpp_shared_model_alias.py tests/test_linux_llamacpp_portable.py tests/test_llamacpp_confirmed_unload.py
+```
 
-실제 Windows PowerShell, Linux 실행 및 VRAM/프로세스 실측 테스트는 별도로 수행해야 한다.
+| 검사 | 범위 |
+|---|---|
+| GGUF 카탈로그 | 직접 자식 파일, 기본 모델, projector 제외 |
+| 모델 전환 | 상태 확인, 언로드·로드 순서, 실패 처리 |
+| 동일 모델 사용 | Main → Verifier 호출 시 불필요한 재로드 방지 |
+| 실제 GPU 추론·VRAM | **실기기 확인 필요** |
