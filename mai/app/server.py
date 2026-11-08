@@ -257,7 +257,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     remote_session_id: str | None = None
     attachments: list[str] = Field(default_factory=list)
-    verify: bool = True  # Per-request comparison; default preserves existing behavior.
+    verify: bool = False  # Optional per-request verification; disabled by default.
 
 
 class ToolExecutionResponse(BaseModel):
