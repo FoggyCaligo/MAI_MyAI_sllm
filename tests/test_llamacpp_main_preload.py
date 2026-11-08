@@ -1,4 +1,4 @@
-"""Idle main-model preparation after accepted verifier and memory work."""
+"""One-resident llama.cpp model transactions without KV checkpointing."""
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -80,50 +80,6 @@ def test_prepare_fails_closed_when_verifier_unload_is_rejected():
     assert "/models/load" not in events
 
 
-def test_preload_waits_for_background_memory_and_uses_run_lock(monkeypatch):
-    events = []
-    release_memory = asyncio.Event()
-
-    class FakeRouter:
-        async def prepare(self, model, client):
-            events.append(("prepare", model))
-
-    runtime = object.__new__(MAIRuntime)
-    runtime.llm_backend = "llamacpp"
-    runtime.model = "mai-main"
-    runtime.selected_model = "mai-main"
-    runtime._llamacpp_router = FakeRouter()
-    runtime._llamacpp_execution_lock = asyncio.Lock()
-
-    @asynccontextmanager
-    async def model_scope():
-        async with runtime._llamacpp_execution_lock:
-            events.append(("lock", "acquired"))
-            yield
-
-    monkeypatch.setattr(runtime, "_llamacpp_model_scope", model_scope)
-
-    async def memory():
-        events.append(("memory", "started"))
-        await release_memory.wait()
-        events.append(("memory", "finished"))
-
-    async def exercise():
-        task = asyncio.create_task(memory())
-        preload = asyncio.create_task(runtime._preload_main_after_memory(task))
-        await asyncio.sleep(0)
-        assert ("prepare", "mai-main") not in events
-        release_memory.set()
-        await asyncio.gather(task, preload)
-
-    asyncio.run(exercise())
-    assert events == [
-        ("memory", "started"),
-        ("memory", "finished"),
-        ("lock", "acquired"),
-        ("prepare", "mai-main"),
-    ]
-
 
 def test_preload_does_not_produce_chat_or_KV_state():
     # prepare() only calls /models, /models/unload, /models/load.
@@ -134,25 +90,3 @@ def test_preload_does_not_produce_chat_or_KV_state():
     assert "request(" not in source
 
 
-def test_background_preload_restores_ui_selected_model_not_yaml_default():
-    events = []
-
-    class FakeRouter:
-        async def prepare(self, model, client):
-            events.append(model)
-
-    runtime = object.__new__(MAIRuntime)
-    runtime.model = "default-ornith"
-    runtime.selected_model = "chosen-gguf"
-    runtime.llm_backend = "llamacpp"
-    runtime._llamacpp_router = FakeRouter()
-    runtime._llamacpp_execution_lock = asyncio.Lock()
-
-    async def exercise():
-        async def complete_memory():
-            return None
-        memory = asyncio.create_task(complete_memory())
-        await runtime._preload_main_after_memory(memory)
-
-    asyncio.run(exercise())
-    assert events == ["chosen-gguf"]
