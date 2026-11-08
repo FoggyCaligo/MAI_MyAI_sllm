@@ -1,103 +1,139 @@
-# MAI 실행 구조와 개발 계약
+# MAI 실행 구조
 
-2026-11-08 `dev` 구현 기준으로 갱신. 기존 실행 계약과 전체 재구성 명세서의 공통 내용을 통합했다. 실행 코드가 현재 동작의 기준이며, 과거 작업 기록은 [인계 기록](history/MAI_CODEX_HANDOFF_2026-11-04.md)으로 분리한다.
+현재 `dev` 코드 기준. 사용자 설치·모델 다운로드: [setup.md](../setup.md). 이전 설명: [.old/architecture.md](.old/architecture.md).
 
-## 구성과 요청 흐름
+## 1. 전체 구조
 
 ```text
-인증된 계정 + 최근 대화
-  → 같은 사용자의 이전 기억 저장 완료 대기
-  → 요청별 에이전트·도구 등록소·작업 그래프·원문 저장소 생성
-  → 본 모델의 판단 ↔ 도구 실행
-  → 답변 초안 → 최종 근거 검증
-       반려: 본 모델이 추가 조사·수정
-       승인: 답변 전달·대화 저장
-  → 비동기 사실 추출·장기기억 기록
+브라우저 UI (로그인·대화·모델 선택)
+  ↓
+FastAPI (인증·작업 관리·감사 로그)
+  ↓
+MAIRuntime (모델·도구·기억·Verifier 조립)
+  ↓
+AgentRuntime / AgentLoop
+  ├─ llama.cpp Main ↔ 도구 호출
+  ├─ 검증: 수치 사전 검사 → 최종 사실 검증 → 선택적 품질 검토
+  │    └─ 반려 시 Main이 재조사·수정
+  └─ 승인 후 대화 저장·비동기 기억 추출
 ```
 
-| 위치 | 책임 |
+| 구성 | 주요 코드 | 역할 |
+|---|---|---|
+| 웹·계정·작업 | `mai/app/server.py`, `resumable_chat.py` | 인증, HTTP API, 채팅 작업·복구, 감사 |
+| 조립 | `mai/app/runtime.py` | 계정별 도구·모델·기억·검증기 선택 |
+| 에이전트 | `mai/agent/runtime.py`, `loop.py` | Main 요청, 도구 반복, 답변 초안·교정 |
+| 추론 | `mai/llm/llamacpp.py` | llama.cpp OpenAI 호환 API 요청 |
+| 모델 상주·전환 | `mai/llm/llamacpp_router.py` | 모델 상태 조회·언로드·로드 확인 |
+| 검증 | `mai/agent/verification.py` | 수치·사실·선택적 품질 검토 |
+| 기억 | `mai/memory/` | 추출, 그래프, SQLite FTS5 검색 |
+| 도구 | `mai/tools/`, `mai/agent/tool_results.py` | 로컬 작업 및 결과 원문·페이지네이션 |
+| 원격 PC | `mai/remote/` | 인증된 원격 Native 워커 호출 |
+| 실행·설치 | `mai.sh`, `mai.ps1`, `portable/` | OS별 설치·실행 및 GGUF 카탈로그 |
+
+## 2. 한 번의 사용자 요청
+
+| 순서 | 실행 |
 |---|---|
-| `run_server.py` | 프로젝트 루트의 설정·데이터를 사용하는 서버 진입점 |
-| `mai/app/server.py`, `resumable_chat.py` | 인증, API, 대화 작업, 진행 상황, 기록 |
-| `mai/app/runtime.py` | 모델·검증기·기억·권한별 도구 조립 |
-| `mai/agent/runtime.py`, `loop.py`, `guards.py` | 모델과 도구 반복 실행, 교정, 진행 감시 |
-| `mai/agent/tool_results.py`, `verification.py` | 도구 결과 페이지네이션, 답변 검증 |
-| `mai/tools/` | 파일·문서·코드·웹·계산·터미널 등의 실행 기능 |
-| `mai/memory/` | 사실 추출, 영구 그래프, 개념 색인, 검색 |
-| `mai/remote/` | 소유자가 연결한 원격 실행 대상 |
-| `portable/` | 휴대용 준비·실행·모델 복사·백업과 로컬 런타임 폴더 |
+| 1 | 계정 확인, 이전 동일 사용자 비동기 기억 저장 작업 대기 |
+| 2 | 최근 대화·선택 모델 확인, 요청별 도구 등록소·결과 저장소 생성 |
+| 3 | Main 모델 추론 → 필요할 때 도구 활성화·실행 → 임시답변 |
+| 4 | Verifier 검증 → 승인 또는 근거를 첨부한 반려 |
+| 5 | 반려 시 Main 재진입·재조사·수정. 교정 예산 소진·필수 계약 위반은 실패로 표시 |
+| 6 | 승인 답변 전달·대화 저장, 비동기 기억 추출·저장 |
 
-서버는 오래 유지하지만 브라우저 세션, 작업 그래프, 도구 활성화 집합과 도구 원문 저장소는 요청 단위다. 웹 작업은 브라우저 연결이 끊겨도 서버에서 계속될 수 있으나 서버 재시작 후 계산을 이어 가는 영속 큐는 아니다.
+**수명:** 도구 활성화 집합·도구 결과 저장소·작업 문맥은 요청 단위. 장기기억·대화·감사 DB는 지속 저장. 서버 재시작 후 실행 중 계산을 그대로 재개하는 영속 작업 큐는 아님.
 
-## 판단과 실행의 경계
+## 3. 모델과 Verifier
 
-사람·정체성·주제·관계·정정 의도나 도구 필요 여부를 문자열 포함 규칙으로 판정하지 않는다. 의미 판단은 모델이 하고, 런타임은 계정 권한·등록된 이름·입력 형식·실행 결과 같은 구조적 계약을 검사한다.
+| 항목 | 현재 동작 |
+|---|---|
+| 추론 백엔드 | **llama.cpp 전용**. Ollama 어댑터 없음 |
+| 모델 선택 | 시작 시 GGUF 파일 카탈로그 생성. Owner UI에서 선택 가능 |
+| 동시 상주 | llama.cpp 라우터 `--models-max 1` |
+| 역할별 모델 | **Main·Verifier·기억 추출 = 동일한 선택 GGUF** |
+| 추론 요청 | Main은 `think=True`; Verifier·기억 추출은 별도 요청·프롬프트 |
+| Main → Verifier | 동일 모델이 `loaded`이면 강제 언로드·재로드하지 않음 |
+| KV Cache | 역할 사이 KV 공유·복원 보장 없음 |
+| 다른 GGUF 선택 | 이전 모델 `unloaded` 확인 → 새 모델 `loaded` 확인 |
+| 모델 전환 실패 | 오류 보고. 다른 모델로 자동 대체하지 않음 |
 
-기본 요청 앞에 별도 계획 모델을 호출하지 않는다. 모델에는 도구 이름·분류 목록과 `tool_manual` 입력 규칙을 먼저 제공한다. 카탈로그는 별도의 호출 도구가 아니라 시스템 메시지의 목록이다. 초기 호출 가능 도구는 `tool_manual` 하나이며 개별 도구 인자·사용 예시는 전역 지시에 두지 않는다. 모델이 정확한 이름으로 활성화하면 해당 도구에 묶인 실행 안내를 별도 시스템 문맥으로 전달하고, 다음 차례부터 해당 도구의 전체 입력 규칙이 노출되어 요청 종료까지 유지된다. 원격 PC 작업의 실행 대상 선택 원칙(`is_remote=true` 지정 등)은 기본 시스템 지시에서 첫 차례부터 안내하며, 도구별 상세 문맥과 입력 스키마는 활성화 후 노출한다. 미활성 도구를 직접 호출하면 실행하지 않고 `ToolUnavailableInRoundError`와 필요한 `tool_manual` 호출을 반환한다. 이 오류는 도구 자체의 부재를 뜻하지 않는다. 특정 도구 사용을 사전 강제하는 별도 계획기나 설정 경로는 없다.
+Verifier 순서: **수치 대조 → 사실·작업 근거 검증 → (활성화된 경우) 품질 검토**. 배포 설정 `MAI_ANSWER_QUALITY_REVIEW: false`, `MAI_VERIFIER_BLOCKING_MODE: critical`. 숫자·사실 검사는 품질 검토를 끄더라도 수행.
 
-llama.cpp의 OpenAI 호환 API가 제공하는 구조화된 `tools`·`tool_calls`를 사용한다. 어댑터는 통신 형식을 변환하며, 임의 텍스트 JSON이나 `<think>` 문자열을 해석해 도구 호출을 복원하지 않는다. 자동 백엔드 전환도 없다.
+- 검증 입력: 현재 사용자 요청, 이전 대화의 노출 가능한 본문, 임시답변, 해당 요청의 성공한 도구 결과·실행 인수.
+- 제외: Main의 비공개 thinking, 이전 반려 초안의 일반 Assistant 증거화, 감사 DB의 자동 주입.
+- 반려: 가장 최근 초안과 피드백만 **시스템 교정 문맥**에 유지. 근거로 취급하지 않음.
+- 실패: 필수 구조화 응답·도구 계약 위반을 성공으로 바꾸지 않음. 미검증 초안은 진단으로만 구분.
 
-## 도구와 실패 처리
+세부 사항: [Verifier](verifier.md), [GGUF 모델 선택](llamacpp-gguf-model-selection.md).
 
-`ToolRegistry`는 이름·설명·Pydantic 입력 모델·처리 함수·제한 시간·분류를 등록한다. `tool_manual`은 외부 작업 없이 도구 활성화와 해당 도구의 실행 안내 전달만 수행하는 요청 내부 기능이다. 없는 이름, 잘못된 입력, 처리 예외와 시간 초과는 구조화된 실패다.
+## 4. 도구 호출과 실행 대상
 
-동일 실패와 진행 없는 반복을 제한하지만 동일한 성공 호출의 누적 횟수만으로 중단하지 않는다. `AGENT_MAX_IDENTICAL_CALLS`는 동일 실패 경고 시점이며 성공 호출 상한이 아니다. 전역 모델 차례 상한은 없다. 빈 최종 응답은 한 번 교정을 요청하고 다시 비면 오류다.
+| 항목 | 계약 |
+|---|---|
+| 도구 발견 | 시스템 카탈로그에 이름·분류 노출 |
+| 초기 실행 가능 도구 | `tool_manual` |
+| 도구 활성화 | 정확한 이름으로 활성화 → 다음 모델 차례부터 입력 스키마 노출 |
+| 도구 호출 | 구조화된 `tools` / `tool_calls`. 텍스트 추측·패턴 추출로 복원하지 않음 |
+| 인수 검증 | Pydantic 스키마·권한·활성화 상태 검사 |
+| 실패 처리 | 미활성·미지원·잘못된 입력·실행 실패·시간초과를 명시적으로 보고 |
+| 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
+| 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-반려된 초안은 후속 근거에서 제외한다. 일반 Assistant 이력에서는 모든 반려 초안을 제외하며, **가장 최근 반려 초안 하나와 그 교정 피드백만** 별도 시스템 교정 메시지로 제공한다. 검증 피드백도 새로운 사실이 아니며 본 모델이 원문을 확인해야 한다. 실패 후 보조 모델이 미검증 초안을 성공 답변으로 대신 내보내지 않는다. 치명적 검증 오류의 마지막 초안은 미검증 진단으로만 표시한다.
+**원격 Native 도구:** Owner가 `is_remote=true`로 호출하면 인증된 Windows/Linux 워커에서 실행. 생략하거나 `false`이면 MAI 호스트에서 실행. 원격 미연결·미지원 시 로컬로 자동 대체하지 않음.
 
-도구 출력이 사용자에게 자동으로 보인다고 가정하지 않는다. 최종 답변에는 요청 결과와 중요한 실패·한계를 직접 설명한다. [도구 결과 전달](TOOL_RESULT_PAGINATION.md), [답변 검증](verifier.md) 참조.
+**웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 
-## 계정·실행 대상·데이터
+참조: [도구 결과](TOOL_RESULT_PAGINATION.md), [원격 워커](remote-native-worker.md), [외부 웹 공개](remote-hosting.md).
 
-계정의 안정적인 `db_id`가 장기기억·대화·업로드 소유권의 기준이다. 로그인 `user_id`와 구별한다. 소유자는 MAI 운영체제 계정이 접근 가능한 파일·터미널 도구를 사용할 수 있다. 체험 계정은 허용된 읽기 도구와 자기 업로드 폴더 내 텍스트 쓰기만 사용하며 파일 삭제·이동·복사는 허용하지 않는다.
+## 5. 데이터·권한
 
-소유자 PC 도구의 `is_remote=false` 또는 생략은 MAI 호스트, `true`는 해당 계정의 활성 원격 세션에서 실행한다. 세션이 없으면 오류이며 로컬로 대신 실행하지 않는다. 서버의 공개 접속과 원격 PC 실행 연결은 서로 다른 기능이다.
-
-| 상태 | 기본 저장 위치·수명 |
+| 데이터 | 기본 경로 |
 |---|---|
 | 장기기억 | `data/memory.sqlite3` |
-| 문장 분해기 누적 상태 | `data/sentence_breaker.sqlite3` |
-| 대화 기록 | `data/chat.sqlite3` |
-| 감사 로그 | `data/log.sqlite3`, 모델에 자동 주입하지 않음 |
-| 업로드 | `mai_uploads/`, 계정별 격리 |
-| 도구 원문·브라우저·웹 작업 상태 | 요청 또는 서버 메모리, 서버 재시작 후 재개 불가 |
+| 분해기 누적 데이터 | `data/sentence_breaker.sqlite3` |
+| 대화 | `data/chat.sqlite3` |
+| 감사 | `data/log.sqlite3` |
+| 업로드 | `mai_uploads/` |
 
-감사 로그는 도구 원문과 모델 중간 기록·반려 초안을 포함할 수 있다. 개인 정보가 들어갈 수 있으며 Git에서 제외한다. 기존 대화 스키마 마이그레이션은 데이터 보존용이므로 정적 미참조만으로 제거하지 않는다.
+- **Owner:** 호스트 파일·터미널 및 승인된 원격 Native 도구 사용.
+- **체험 계정:** 허용된 읽기 기능과 자기 업로드 영역의 제한적 쓰기. Owner 모델 선택·원격 관리 불가.
+- **계정 식별:** 로그인 ID와 데이터 소유 식별자 `db_id` 분리.
+- **기억 저장:** 승인 후 사용자 진술 및 허용된 성공 도구 결과에서 사실 추출 → 사용자별 그래프·개념 색인. 별도 비동기 작업.
+- **기억 검색:** 필요할 때 `memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
+- **보안:** `.env`, 업로드, 개인 SQLite, 원격 인증 키는 Git에 올리지 않음.
 
-모델이 현재 요청의 분석용으로 새로 만드는 파일은 `file_write(lifecycle=temporary)`로 등록한다. 승인된 답변 반환 전 정리하며 기존 사용자 파일은 임시 대상으로 등록하지 않는다. 터미널이 만든 파일은 자동 등록되지 않는다.
+참조: [기억](memory.md), [로그인 제한](login-ip-lockout.md).
 
-## 기능별 계약
+## 6. 실행·설정·검증
 
-- 파일 읽기는 구조화 문서와 일반 텍스트를 하나의 `file_read`로 제공한다. 문서 해석 실패를 텍스트 읽기 성공으로 숨기지 않는다.
-- `document_edit`는 기존 문서의 지원되는 위치만 수정하며 위치 번호는 1부터 시작한다. 별도 `output_path`로 원본을 보존할 수 있다. 수정 범위는 [소개](../README.md)를 따른다.
-- 코드 구조는 Python AST와 언어별 tree-sitter로 분석한다. 미지원 언어·구문 오류는 실패다. `code_edit`는 정확한 문자열 치환을 사용한다.
-- `csv_aggregate`는 필터·그룹·개수·합계를 계산하며 원본 SHA-256과 행 번호를 제공한다.
-- `web_fetch`는 공개 HTTP(S) 주소만 허용하고 리다이렉트도 사설·루프백 주소인지 검사한다.
-- `market_data`는 한국 상장주식 현재 시세·평가 정보 조회이며 제공처 형식 변경은 오류로 드러낸다.
-- `current_time`은 호스트의 실제 지역·UTC 시각과 시간대를 제공한다. 중요한 산술은 계산기 도구를 사용한다.
-- `LLAMACPP_MAIN_VISION=true`이고 실제 GGUF·projector가 비전을 지원할 때 메인 모델에 이미지 바이트를 직접 전달한다. 텍스트 전용 모델에는 이미지 내용을 제공했다고 가장하지 않으며 별도 `image_analyze` 도구를 등록하지 않는다. 음성 기능의 플랫폼별 설정은 [설치](../setup.md)를 따른다.
+```bash
+./mai.sh setup
+./mai.sh check
+./mai.sh start
+```
 
-## 설정과 실행
+Windows Git Bash / Ubuntu 24.04 Bash 공통. Windows PowerShell은 `mai.ps1`, CMD는 `mai.cmd`. **llama.cpp 바이너리 업데이트**는 `./mai.sh update` 계약을 따름.
 
-설정 우선순위는 **기존 프로세스 환경변수 > `.env` > `settings.yaml`**이다. 검증기의 `num_ctx`는 MAI에서 별도로 제한하지 않는다. Portable 실행은 프로젝트 루트에서 `./mai.sh start`(Windows Git Bash 및 Linux Bash) 또는 `.\mai.ps1 start`(Windows PowerShell)다. 서버를 직접 실행할 경우 유효한 llama.cpp 라우터와 `MAIN_MODEL`이 먼저 설정되어야 한다. 다른 폴더에서 절대경로로 실행해도 이 진입점은 프로젝트 루트로 이동한다. API를 별도로 직접 구동하는 경우 상대경로는 해당 프로세스의 작업 폴더 기준이다.
+| 설정 | 기본값 |
+|---|---|
+| `LLM_BACKEND` | `llamacpp` |
+| `LLAMACPP_HOST` | `http://127.0.0.1:8080` |
+| `MODEL_MAX_OUTPUT_TOKENS` | `32768` |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | `500` |
+| `SESSION_HISTORY_MESSAGES` | `10` |
+| `MAX_INLINE_TOOL_RESULT_CHARS` | `8000` |
+| `MAI_ANSWER_QUALITY_REVIEW` | `false` |
+| `MAI_VERIFIER_BLOCKING_MODE` | `critical` |
 
-배포 기본값은 요청 제한 500초, 본 모델 출력 한도 32,768토큰, 도구 결과 입력 8,000자, 최근 대화 10개 메시지, 별도 답변 품질 검토 비활성화 및 `MAI_VERIFIER_BLOCKING_MODE: critical`이다. `critical`은 일부 검증 의심을 기록하더라도 중대한 이슈만 차단하며, `strict`는 모두 차단한다. Verifier의 증거 항목에는 성공 호출의 실행 순서와 `arguments`를 함께 전달한다. `MAIN_MODEL`은 llama.cpp 라우터가 검증된 GGUF 카탈로그에서 설정한 현재 모델 ID다. Main·수치 의미 검증·사실검증·기억 추출은 UI에서 선택한 **동일 GGUF**를 호출하지만 프롬프트와 응답 스키마는 구분한다. 별도 `VERIFIER_MODEL` 또는 Ollama 백엔드는 지원하지 않는다. 기억 추출은 `think=False`로 요청한다. 오류가 나면 다른 모델로 자동 재시도하지 않는다.
+설정 우선순위: **프로세스 환경변수 → `.env` → `settings.yaml`**. Python 패키지 의존성은 `pyproject.toml`; 모델 GGUF는 별도 준비.
 
-`MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 설정 로더가 허용하지만 해당 값의 실제 소비 여부는 각 호출 경로를 따져야 한다. 값을 바꿔 동작이 달라진다고 안내하지 않는다. 본 모델은 `think=True`이며 개별 도구 제한 시간은 등록 인자로 정한다.
-
-Tailscale Funnel 시작 실패는 로그와 `/health`에 표시하면서 로컬 서버는 유지한다. 웹 공개 기능과 Owner 원격 PC의 `native.invoke` 작업은 독립적이며, 원격 대상 워커는 Windows 및 Linux 시작 스크립트를 제공한다. 현재 Linux 실기기 검증은 문서상 확인되지 않았다. 폐기된 `TAILSCALE_SERVE` 설정은 다른 의미로 조용히 바꾸지 않는다.
-
-## 개발·검증과 남은 한계
-
-```powershell
-python -m pip install -e ".[dev]"
+```bash
 python -m pytest -q
 python scripts/audit_references.py
 python scripts/audit_codebase.py
 ```
 
-pytest는 각 테스트의 `LOG_DB_PATH`를 임시 DB로 지정한다. 기존 환경변수나 `.env`의 실제 감사 DB에 테스트 실행 기록을 추가하지 않으며, 실패 기록도 임시 DB에 남긴다. 감사 경로를 따로 검증하는 테스트는 자체 임시 경로로 재지정할 수 있다.
+정적 코드 분석은 **미사용 확정 또는 테스트 커버리지 측정이 아님**. 이전 정적 감사 원본: [.old/REFERENCE_AUDIT.md](.old/REFERENCE_AUDIT.md).
 
-정적 미참조와 직접 테스트 import 여부는 미사용 확정이나 커버리지 측정이 아니다. [정적 감사](REFERENCE_AUDIT.md)를 따른다.
-
-장기기억의 원문 연결·계정 격리·충돌 처리 한계는 [장기기억](memory.md), 검증 범위·비용의 절충은 [답변 검증](verifier.md)에 모았다. 품질 검토는 도구 원문 전체를 보지 않고, 화자 비교 임계값은 보안 인증 수준이 보장된 값이 아니다. 실제 모델 정확도·지연, 마이크·GPU·원격·Portable 실행은 해당 환경에서 별도 확인해야 한다.
+**검증 한계:** 코드에 구현된 기능과 실제 Windows/Linux GPU·네트워크·브라우저·원격 워커에서 정상 동작한 기능은 구분한다. 테스트 실패를 정상 상태로 간주하지 않는다.
