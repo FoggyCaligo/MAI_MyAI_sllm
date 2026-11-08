@@ -22,9 +22,13 @@ def test_model_facing_timestamp_does_not_modify_original() -> None:
     assert original["created_at"] == 1794142800.25
 
 
-def test_verification_defaults_on_and_can_be_disabled() -> None:
+def test_verification_default_comes_from_settings(monkeypatch) -> None:
+    monkeypatch.setenv("MAI_VERIFIER_ENABLED", "false")
+    assert ChatRequest(message="hi").verify is False
+    monkeypatch.setenv("MAI_VERIFIER_ENABLED", "true")
     assert ChatRequest(message="hi").verify is True
     assert ChatRequest(message="hi", verify=False).verify is False
+    assert ChatRequest(message="hi", verify=True).verify is True
 
 
 def test_llamacpp_requests_in_memory_prompt_cache() -> None:
@@ -51,5 +55,5 @@ def test_verifier_is_disabled_by_default_for_ui_and_api() -> None:
 
     html = Path("mai/app/static/index.html").read_text(encoding="utf-8")
     assert '<input type="checkbox" id="verify-toggle" />' in html
-    assert ChatRequest(message="테스트").verify is False
+    assert "document.getElementById(\'verify-toggle\').checked=data.verifier_default_enabled" in html
     assert ChatRequest(message="테스트", verify=True).verify is True
