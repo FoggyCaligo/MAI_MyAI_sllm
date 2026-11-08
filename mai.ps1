@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = $PSScriptRoot
+Set-Location -LiteralPath $root
 $portable = Join-Path $root 'portable'
 $runtime = Join-Path $portable 'portable-runtimes'
 $manifest = Join-Path $portable 'portable-sources.json'
@@ -49,11 +50,9 @@ switch ($Command) {
         Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py --include-llamacpp)'
         Require-File $installer 'Portable provisioning script'
         & $installer -Manifest $manifest
-        if ($LASTEXITCODE -ne 0) { throw "Portable setup failed (exit code $LASTEXITCODE)" }
     }
     'start' {
         Assert-PortableReady
         & $launcher
-        if ($LASTEXITCODE -ne 0) { throw "MAI Portable launcher exited with code $LASTEXITCODE" }
     }
 }
