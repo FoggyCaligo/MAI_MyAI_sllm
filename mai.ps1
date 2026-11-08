@@ -2,7 +2,8 @@
 param(
     [Parameter(Position=0)]
     [ValidateSet('start', 'setup', 'check')]
-    [string]$Command = 'start'
+    [string]$Command = 'start',
+    [switch]$PreserveAndReinstallExisting
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -96,7 +97,6 @@ function Invoke-MaiSetup {
     Initialize-MaiPinnedManifest
     Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py)'
     $manifestPath = (Resolve-Path -LiteralPath $manifest).Path
-    $PreserveAndReinstallExisting = $false
     $root = $PSScriptRoot
     $ErrorActionPreference = 'Stop'
 function Get-Required([object]$obj, [string]$property) {
