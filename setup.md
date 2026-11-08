@@ -34,7 +34,7 @@ MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 �
 **curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf**
 ornith-1.5:9b 이라는 로컬모델을 다운로드 받는다.
 **curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf**
-ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmproj를 다운받는다.
+ornith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmproj를 다운받는다.
 
 #### 3. 설치 스크립트가 하는 것
 - Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
@@ -48,7 +48,7 @@ ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpr
 1. 허깅페이스에서, llama.cpp이 지원하는 모델 중, 본인의 컴퓨터에서 가동 가능한 모델을 찾는다. 링크 : https://huggingface.co/models?apps=llama.cpp
 2. 모델을 찾았으면 클릭해서 상세 페이지로 이동, **Files** 탭으로 이동한다.
 3. Files 탭 내부의 검색창에서 ".gguf"를 검색한다.
-4. 나오는 파일들 중, 선택한 모델과 이름이 일치하는 파일 중 원하는 파일을 다운로드 한다. (**mmoproj**로 시작하는 .gguf 파일이 있다면 그것도 같이 다운로드 한다)
+4. 나오는 파일들 중, 선택한 모델과 이름이 일치하는 파일 중 원하는 파일을 다운로드 한다. (**mmproj**로 시작하는 .gguf 파일이 있다면 그것도 같이 다운로드 한다)
 5. 다운로드한 모델 파일을 MAI 프로젝트의 다음 폴더에 넣는다. ./portable/portable-models/gguf/
 6. Git Bash에서 프로젝트 폴더로 이동 후, " **./mai.sh check** " 를 복사/붙여넣기/엔터 입력하여 모델 인식 상태를 확인한다.
 
@@ -69,9 +69,16 @@ ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpr
 루트의 `mai/`는 Python 패키지 디렉터리이므로 `./mai` 실행 파일은 없다. Ollama 전용 시작기와 별도 prepare 스크립트는 현재 코드에서 제거됐다. 모델·GPU·Verifier·도구 연동은 실행 후 별도로 확인한다.
 
 ## 4. llama.cpp 업데이트 방법
-- Git Bash에서 `./mai.sh update`를 실행한다.
-- 업데이트는 로컬에 보관된 ZIP, curl GET, GitHub 공식 릴리스 자산 API, Python 직접 다운로드 순으로 자동 시도한다. 어떤 경로로 받더라도 공식 SHA-256이 일치해야 설치한다. 모든 자동 다운로드가 실패할 때만 [llama.cpp 공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 오류 로그에 표시된 정확한 파일명으로 ZIP을 직접 다운로드하고, `portable/portable-downloads/` 폴더에 보관한 후 같은 명령을 재실행한다.
-- MAI는 로컬 ZIP도 게시자 SHA-256과 대조하며, 불일치하면 사용하지 않는다.
+
+- 먼저 MAI 종료. Windows Git Bash / Linux Bash에서 실행:
+```bash
+./mai.sh update
+./mai.sh check
+./mai.sh start
+```
+- **업데이트 대상:** llama.cpp 실행 파일만. Python·uv·GGUF·개인 설정·DB는 변경하지 않음.
+- **자동 처리:** 최신 호환 공식 릴리스 조회 → 다운로드(로컬 압축파일 우선) → 게시자 SHA-256 검증 → 실행 확인 → 기존 런타임·매니페스트 백업 후 교체.
+- **다운로드 실패 시:** [llama.cpp 공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 오류 메시지에 나온 **정확한 파일명**의 압축파일을 받아 `portable/portable-downloads/`에 놓고 `./mai.sh update` 재실행. 해시 불일치 파일은 사용하지 않음.
 
 ## 5. 고급설정
 ### 1. 설정파일
