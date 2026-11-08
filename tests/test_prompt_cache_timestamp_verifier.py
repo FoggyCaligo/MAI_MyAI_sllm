@@ -27,6 +27,10 @@ def test_verification_default_comes_from_settings(monkeypatch) -> None:
     assert ChatRequest(message="hi").verify is False
     monkeypatch.setenv("MAI_VERIFIER_ENABLED", "true")
     assert ChatRequest(message="hi").verify is True
+    monkeypatch.setenv("MAI_VERIFIER_ENABLED", "invalid")
+    import pytest
+    with pytest.raises(ValueError, match="MAI_VERIFIER_ENABLED"):
+        ChatRequest(message="hi")
     assert ChatRequest(message="hi", verify=False).verify is False
     assert ChatRequest(message="hi", verify=True).verify is True
 
@@ -49,7 +53,7 @@ def test_llamacpp_requests_in_memory_prompt_cache() -> None:
     assert captured[0]["cache_prompt"] is True
 
 
-def test_verifier_is_disabled_by_default_for_ui_and_api() -> None:
+def test_verifier_ui_uses_server_configuration() -> None:
     from pathlib import Path
     from mai.app.server import ChatRequest
 
