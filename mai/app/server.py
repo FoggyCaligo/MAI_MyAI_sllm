@@ -830,7 +830,6 @@ def _remote_worker_bundle() -> tuple[bytes, str]:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(root / "pyproject.toml", "pyproject.toml")
-        archive.write(root / "remote-requirements.txt", "remote-requirements.txt")
         for source in sorted((root / "mai").rglob("*.py")):
             archive.write(source, source.relative_to(root).as_posix())
     data = buffer.getvalue()
