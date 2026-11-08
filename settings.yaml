@@ -1,17 +1,17 @@
 # MAI 공개 기본 설정. 비밀번호나 토큰을 저장하지 않는다.
 # 우선순위: 기존 환경변수 > .env > 이 파일.
 # 선택한 백엔드 주소와 모델은 실제 실행 가능한 값이어야 한다.
-# VISION_MODEL은 선택 사항이며 없으면 이미지 도구를 등록하지 않는다.
+# 비전은 설정된 메인 GGUF와 호환 가능한 projector를 통해 직접 입력한다.
 # 시간·출력·반복·문맥·음성 관련 항목은 기본값으로 사용할 수 있다.
 # 값이 로드되어도 실행에서 사용되지 않는 항목은 docs/architecture.md를 참고한다.
 # 음성 패키지·마이크·브라우저 권한과 GPU 환경은 별도 준비한다.
-LLM_BACKEND: ollama
-LLAMACPP_HOST: "http://127.0.0.1:8080"  # llama.cpp 선택 시 필요
+LLM_BACKEND: llamacpp
+LLAMACPP_HOST: "http://127.0.0.1:8080"
 # llama.cpp 전용: 폴더 내 GGUF를 시작 시 자동 탐색. MAIN_GGUF_PATH는 기본 선택값.
-# 경로는 프로젝트 루트 상대경로 또는 절대경로. Ollama 실행에는 적용되지 않음.
+# 경로는 프로젝트 루트 상대경로 또는 절대경로.
 LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"  # 실행 시작 시 모델 목록 자동 탐색
 LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
-# llama.cpp에서는 UI 선택 모델이 Main·Verifier·기억 추출에 공통 적용됨.
+# UI 선택 GGUF는 Main·Verifier·기억 추출에 공통 적용된다.
 # 비전 지원 메인 모델에서 별도 projector를 사용하는 경우 주석 해제:
 LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
 # 메인 Ornith 1.5에 이미지를 직접 전달 (실제 추론은 호스트의 llama.cpp에서 검증 필요).
@@ -22,15 +22,10 @@ LLAMACPP_REASONING_PRESERVE: false
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
 # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
-OLLAMA_HOST: "http://127.0.0.1:11434"  # Ollama 선택 시 필요
-MAIN_MODEL: "ornith-1.5:9b"  # 실제 사용 가능한 모델명
 
-VERIFIER_MODEL: "LiquidAI/lfm2.5-2.6b:q4_k_m"  # 수치검증 및 최종 사실검증 공통 모델 LiquidAI/lfm2.5-2.6b:q4_k_m / granite4:3b-h / qwen3:4b-instruct-2507
-VISION_MODEL : "lfm3-vl:2b"
 
-OLLAMA_REQUEST_TIMEOUT_SECONDS: 500
-OLLAMA_THINK: true
-OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768  # 본 모델 요청당 출력 한도, .env 값 우선
+MODEL_REQUEST_TIMEOUT_SECONDS: 500
+MODEL_MAX_OUTPUT_TOKENS: 32768
 MAI_DEBUG_MODEL_INPUT: false
 
 AGENT_MAX_IDENTICAL_CALLS: 3
