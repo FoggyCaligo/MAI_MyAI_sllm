@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import time
+from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 import json
 import os
@@ -21,7 +22,7 @@ from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 import zipfile
 
-from resolve_portable_sources import resolve_one, SOURCES
+from resolve_portable_sources import resolve_one, SOURCES, github_json
 
 
 def paths(root: Path) -> tuple[Path, Path, Path, str, str]:
@@ -130,6 +131,93 @@ def download(url: str, dest: Path, sha256: str) -> None:
             partial.unlink(missing_ok=True)
 
 
+
+def verified_digest(path: Path, expected: str) -> bool:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest().lower() == expected.lower()
+
+
+def download_with_curl(url: str, dest: Path, sha256: str) -> bool:
+    """Use curl's GET redirect handling rather than a HEAD probe."""
+    curl = shutil.which("curl.exe") if sys.platform == "win32" else None
+    curl = curl or shutil.which("curl")
+    if not curl:
+        print("curl not installed; skipping alternate downloader", flush=True)
+        return False
+    partial = dest.with_name(dest.name + ".curl.part")
+    partial.unlink(missing_ok=True)
+    try:
+        print("Trying curl GET download with browser-style headers", flush=True)
+        cmd = [
+            curl, "--fail", "--location", "--show-error", "--silent",
+            "--retry", "2", "--retry-delay", "2", "--retry-all-errors",
+            "--connect-timeout", "30", "--max-time", "600",
+            "--user-agent", "Mozilla/5.0 MAI-llamacpp-updater",
+            "--header", "Accept: application/octet-stream",
+            "--output", str(partial), url,
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, timeout=650, check=False)
+        if result.returncode != 0:
+            print(f"curl download unavailable: {result.stderr[-400:]}", file=sys.stderr)
+            return False
+        if not verified_digest(partial, sha256):
+            print("curl download hash mismatch; rejecting result", file=sys.stderr)
+            return False
+        os.replace(partial, dest)
+        return True
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"curl download failed: {exc}", file=sys.stderr)
+        return False
+    finally:
+        partial.unlink(missing_ok=True)
+
+
+def download_from_github_asset_api(url: str, dest: Path, sha256: str) -> bool:
+    """Use the official release asset API as a second transport path."""
+    parsed = urlparse(url)
+    fragments = parsed.path.strip("/").split("/")
+    if parsed.hostname != "github.com" or len(fragments) != 6 or fragments[:2] != ["ggml-org", "llama.cpp"] or fragments[2] != "releases" or fragments[3] != "download":
+        return False
+    tag, filename = fragments[4:]
+    try:
+        release = github_json(f"/repos/ggml-org/llama.cpp/releases/tags/{tag}")
+        assets = release.get("assets", []) if isinstance(release, dict) else []
+        matches = [a for a in assets if isinstance(a, dict) and a.get("name") == filename]
+        if len(matches) != 1 or not isinstance(matches[0].get("id"), int):
+            print("Could not identify matching official release asset", file=sys.stderr)
+            return False
+        asset_url = f"https://api.github.com/repos/ggml-org/llama.cpp/releases/assets/{matches[0]['id']}"
+        print("Trying official GitHub release asset API", flush=True)
+        headers = {
+            "User-Agent": "MAI-llamacpp-update",
+            "Accept": "application/octet-stream",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        token = os.environ.get("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        partial = dest.with_name(dest.name + ".api.part")
+        partial.unlink(missing_ok=True)
+        try:
+            with urlopen(Request(asset_url, headers=headers), timeout=120) as response, partial.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+            if not verified_digest(partial, sha256):
+                print("GitHub API returned nonmatching bytes (possibly JSON); rejecting", file=sys.stderr)
+                return False
+            os.replace(partial, dest)
+            return True
+        finally:
+            partial.unlink(missing_ok=True)
+    except (OSError, ValueError, TimeoutError, URLError) as exc:
+        print(f"GitHub asset API download failed: {exc}", file=sys.stderr)
+        return False
+
+
 def unpack(archive: Path, dest: Path) -> None:
     if archive.name.endswith(".zip"):
         with zipfile.ZipFile(archive) as z:
@@ -187,14 +275,18 @@ def main() -> int:
             print(f"Using publisher-verified local llama.cpp archive: {cached}")
             shutil.copy2(cached, archive)
         else:
-            try:
-                download(latest["url"], archive, latest["sha256"])
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    f"{exc} You can download {filename} from the official "
-                    f"llama.cpp release page and save it at {cached}, "
-                    "then rerun ./mai.sh update."
-                ) from exc
+            # Different clients/endpoints may be routed differently by GitHub CDN.
+            # Each successful transport must still pass the publisher digest.
+            if not download_with_curl(latest["url"], archive, latest["sha256"]):
+                if not download_from_github_asset_api(latest["url"], archive, latest["sha256"]):
+                    try:
+                        download(latest["url"], archive, latest["sha256"])
+                    except RuntimeError as exc:
+                        raise RuntimeError(
+                            f"{exc} All automatic download paths failed. "
+                            f"As a fallback, download {filename} from the official "
+                            f"llama.cpp release page into {cached} and rerun update."
+                        ) from exc
         extracted = temp / "extracted"
         extracted.mkdir()
         unpack(archive, extracted)
