@@ -28,3 +28,4 @@ def test_signed_python_setup_is_staged_and_explicit():
     assert "Install-MaiDependencies $staging" in script
     assert "if ($Mode -eq 'setup' -and $existingValid)" in script
     assert "Test-MaiServerRunning" in script
+    # PowerShell 5.1 strips nested quotes in native -c arguments; use --version.\n    assert "& $exe --version" in script\n    assert "print(\\".\\".join" not in script
