@@ -67,6 +67,7 @@ function Initialize-MaiOwnerEnv {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
     }
 }
+
 function Initialize-MaiPinnedManifest {
     if (Test-Path -LiteralPath $manifest -PathType Leaf) { return }
     $resolver = Join-Path $portable 'resolve_portable_sources.py'
@@ -93,12 +94,11 @@ function Initialize-MaiPinnedManifest {
     }
     if ($LASTEXITCODE -ne 0) { throw 'Portable manifest resolver failed' }
 }
+
 function Invoke-MaiSetup {
     Initialize-MaiPinnedManifest
-    Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py)'
+    Require-File $manifest 'Pinned Portable source manifest'
     $manifestPath = (Resolve-Path -LiteralPath $manifest).Path
-    $root = $PSScriptRoot
-    $ErrorActionPreference = 'Stop'
 function Get-Required([object]$obj, [string]$property) {
     $value = $obj.PSObject.Properties[$property]
     if ($null -eq $value -or [string]::IsNullOrWhiteSpace([string]$value.Value)) {
@@ -110,39 +110,11 @@ function Install-VerifiedArchive([object]$entry, [string]$destination, [string]$
     $url = Get-Required $entry 'url'
     $hash = Get-Required $entry 'sha256'
     if ($url -notmatch '^https://') { throw "Only HTTPS release URLs are allowed: $url" }
-    if ($hash -notmatch '^[0-9a-fA-F]{64}
-    'check' {
-        Assert-PortableReady
-        Write-Host 'MAI Portable checks passed (files and GGUF catalog; GPU/server startup not tested).'
-    }
-    'setup' {
-        Invoke-MaiSetup
-    }
-    'start' {
-        Assert-PortableReady
-        & $launcher
-    }
-}
-) { throw "Invalid SHA-256 for $destination" }
+    if ($hash -notmatch '^[0-9a-fA-F]{64}$') { throw "Invalid SHA-256 for $destination" }
     $cache = Join-Path $root 'portable/portable-downloads'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $archiveName = [IO.Path]::GetFileName(([uri]$url).AbsolutePath)
-    if ($archiveName -notmatch '\.(zip|tar\.gz)
-    'check' {
-        Assert-PortableReady
-        Write-Host 'MAI Portable checks passed (files and GGUF catalog; GPU/server startup not tested).'
-    }
-    'setup' {
-        Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py --include-llamacpp)'
-        Require-File $installer 'Portable provisioning script'
-        & $installer -Manifest $manifest
-    }
-    'start' {
-        Assert-PortableReady
-        & $launcher
-    }
-}
-) { throw "Unsupported archive type: $archiveName" }
+    if ($archiveName -notmatch '\.(zip|tar\.gz)$') { throw "Unsupported archive type: $archiveName" }
     $recordPath = Join-Path $destination '.mai-portable-source.json'
     if (Test-Path -LiteralPath $destination) {
         $binary = Join-Path $destination $expectedExecutable
