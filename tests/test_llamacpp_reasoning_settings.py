@@ -10,9 +10,9 @@ from portable.resolve_llamacpp_settings import read_config
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_default_policy_disables_reasoning_preserve_and_uses_no_effort_override():
+def test_default_policy_preserves_reasoning_for_continued_turns_and_uses_no_effort_override():
     cfg = read_config(ROOT / "settings.yaml")
-    assert cfg["LLAMACPP_REASONING_PRESERVE"] is False
+    assert cfg["LLAMACPP_REASONING_PRESERVE"] is True
     adapter = (ROOT / "mai/llm/llamacpp.py").read_text(encoding="utf-8")
     assert 'payload["reasoning_effort"]' not in adapter
 

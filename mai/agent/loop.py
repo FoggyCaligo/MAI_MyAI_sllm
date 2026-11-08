@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -252,6 +253,14 @@ class AgentLoop:
         hypothesis_reconsideration_pending = False
         rejected_evidence_snapshot: frozenset[tuple[str, str]] | None = None
         unchanged_evidence_rejections = 0
+        max_incomplete_continuations = int(os.environ.get(
+            "MAI_MAX_INCOMPLETE_TURN_CONTINUATIONS", "4"
+        ))
+        if max_incomplete_continuations <= 0:
+            raise ValueError("MAI_MAX_INCOMPLETE_TURN_CONTINUATIONS must be positive")
+        incomplete_continuations = 0
+        incomplete_parts: list[str] = []
+        incomplete_context_indices: list[int] = []
 
         try:
             while True:
@@ -319,6 +328,55 @@ class AgentLoop:
                     previous = history[history_index]
                     history[history_index] = {**previous, "content": compact_content}
                 pending_history_compactions.clear()
+                if turn.incomplete:
+                    # Incomplete outputs stay in history for continuation, but
+                    # are neither user-visible final answers nor executable calls.
+                    if turn.tool_calls:
+                        raise RuntimeError("incomplete model turn contains executable tool calls")
+                    if incomplete_continuations >= max_incomplete_continuations:
+                        raise RuntimeError(
+                            "model repeatedly exhausted its per-turn output budget "
+                            f"({incomplete_continuations} continuations); no complete answer available"
+                        )
+                    incomplete_continuations += 1
+                    if on_model_turn is not None:
+                        on_model_turn(round_number, turn)
+                    history.append(dict(turn.assistant_message))
+                    incomplete_context_indices.append(len(history) - 1)
+                    incomplete_parts.append(turn.content)
+                    history.append({
+                        "role": "system",
+                        "content": (
+                            "The preceding assistant message ended only because its generation "
+                            "budget was reached. Continue the SAME incomplete answer and reasoning "
+                            "from that point, rather than starting a new task. This is not an "
+                            "approved final answer. Do not claim a tool action occurred unless "
+                            "a complete native tool call has been emitted and executed. "
+                            "When ready, finish the current task with a complete answer or "
+                            "complete native tool call."
+                        ),
+                    })
+                    incomplete_context_indices.append(len(history) - 1)
+                    _LOG.warning("MAI incomplete model round=%d continuation=%d/%d",
+                                 round_number, incomplete_continuations, max_incomplete_continuations)
+                    round_number += 1
+                    continue
+
+                if incomplete_parts and not turn.tool_calls:
+                    # The final candidate is the concatenation of all incomplete
+                    # text fragments and the completing fragment. No partial
+                    # fragment was ever delivered as an accepted answer.
+                    combined_content = "".join(incomplete_parts) + turn.content
+                    turn = replace(
+                        turn, content=combined_content,
+                        assistant_message={**turn.assistant_message, "content": combined_content},
+                    )
+                    incomplete_parts.clear()
+                    incomplete_continuations = 0
+                elif turn.tool_calls:
+                    incomplete_parts.clear()
+                    incomplete_continuations = 0
+
                 if on_model_turn is not None:
                     on_model_turn(round_number, turn)
                 history.append(dict(turn.assistant_message))
@@ -358,7 +416,10 @@ class AgentLoop:
                         pending_verification_candidate = turn.content
                         verification = await self.final_verifier.verify(
                             candidate=turn.content,
-                            messages=[message for index, message in enumerate(history) if index not in rejected_final_indices and index not in rejection_feedback_indices],
+                            messages=[message for index, message in enumerate(history)
+                                      if index not in rejected_final_indices
+                                      and index not in rejection_feedback_indices
+                                      and index not in incomplete_context_indices],
                             # executions starts empty for this run and contains only tool calls
                             # after the current user input, across any correction rounds.
                             # Never pull tool results from prior conversation history.
@@ -462,7 +523,7 @@ class AgentLoop:
                             round_number += 1
                             continue
                     _LOG.info("MAI final accepted round=%d", round_number)
-                    for history_index in reversed(rejected_final_indices):
+                    for history_index in sorted(set(rejected_final_indices + incomplete_context_indices), reverse=True):
                         del history[history_index]
                     return AgentRunResult(
                         content=turn.content,
