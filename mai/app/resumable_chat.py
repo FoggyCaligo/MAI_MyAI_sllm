@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import hashlib
 from pathlib import Path
 
@@ -50,9 +51,11 @@ async def _execute_chat(
     attachments = (server._validated_image_attachments(
         request.attachments, principal, runtime.upload_root,
     ) if request.attachments else [])
+    user_created_at = time.time()
     server._append_session_message(
         principal, request.session_id, role="user", content=request.message,
         metadata={"attachments": attachments} if attachments else None,
+        created_at=user_created_at,
     )
     active_model = selected_model or runtime.model
     try:
@@ -61,6 +64,8 @@ async def _execute_chat(
             principal=principal,
             prior_messages=prior,
             model=selected_model,
+            user_created_at=user_created_at,
+            verify=request.verify,
             **({"attachments": attachments} if attachments else {}),
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
@@ -93,6 +98,7 @@ async def _execute_chat(
         role="assistant",
         content=result.answer,
         metadata={
+            "verified": request.verify,
             "model": response_payload["model"],
             "model_rounds": response_payload["model_rounds"],
             "tools": response_payload["tools"],
@@ -174,8 +180,9 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 on_verification_audit=publish_verification_audit,
             )
         if status_code == 200:
-            audit.append(job_id, "verifier_step", "Final answer accepted.",
-                         round_number=int(payload["model_rounds"]), status="ACCEPTED")
+            if request.verify:
+                audit.append(job_id, "verifier_step", "Final answer accepted.",
+                             round_number=int(payload["model_rounds"]), status="ACCEPTED")
             audit.finish(job_id, status="completed")
             chat_job_store.complete(job_id, payload)
         else:

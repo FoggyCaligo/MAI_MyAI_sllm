@@ -125,6 +125,7 @@ class ChatSessionStore:
         role: str,
         content: str,
         metadata: dict[str, object] | None = None,
+        created_at: float | None = None,
     ) -> int:
         if role not in {"user", "assistant"}:
             raise ValueError("chat role must be 'user' or 'assistant'")
@@ -141,7 +142,7 @@ class ChatSessionStore:
                 INSERT INTO {WEB_CHAT_TABLE}(db_id, session_id, role, content, created_at, metadata_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (db_id, session_id, role, content, time.time(), metadata_json),
+                (db_id, session_id, role, content, time.time() if created_at is None else created_at, metadata_json),
             )
             return int(cursor.lastrowid)
 
@@ -152,6 +153,7 @@ class ChatSessionStore:
         session_id: str,
         limit: int | None = None,
         include_metadata: bool = False,
+        include_timestamps: bool = False,
         exclude_errors: bool = False,
     ) -> list[dict[str, object]]:
         if limit is not None and limit < 0:
@@ -167,7 +169,7 @@ class ChatSessionStore:
             if limit is None:
                 rows = connection.execute(
                     f"""
-                    SELECT role, content, metadata_json
+                    SELECT role, content, created_at, metadata_json
                     FROM {WEB_CHAT_TABLE}
                     WHERE db_id = ? AND session_id = ?
                     {error_clause}
@@ -178,9 +180,9 @@ class ChatSessionStore:
             else:
                 rows = connection.execute(
                     f"""
-                    SELECT role, content, metadata_json
+                    SELECT role, content, created_at, metadata_json
                     FROM (
-                        SELECT id, role, content, metadata_json
+                        SELECT id, role, content, created_at, metadata_json
                         FROM {WEB_CHAT_TABLE}
                         WHERE db_id = ? AND session_id = ?
                         {error_clause}
@@ -197,6 +199,8 @@ class ChatSessionStore:
                 "role": str(row["role"]),
                 "content": str(row["content"]),
             }
+            if include_timestamps:
+                message["created_at"] = float(row["created_at"])
             if include_metadata and row["metadata_json"]:
                 metadata = json.loads(str(row["metadata_json"]))
                 if not isinstance(metadata, dict):

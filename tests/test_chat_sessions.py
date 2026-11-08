@@ -164,10 +164,11 @@ def test_detached_chat_uses_db_id_for_prior_and_completed_history(tmp_path, monk
 
     assert status == 200
     assert payload["answer"] == "나중에 복원할 답변"
-    assert runtime.prior_messages == [
-        {"role": "user", "content": "이전 질문"},
-        {"role": "assistant", "content": "이전 답변"},
+    assert [(m["role"], m["content"]) for m in runtime.prior_messages] == [
+        ("user", "이전 질문"),
+        ("assistant", "이전 답변"),
     ]
+    assert all(isinstance(m["created_at"], float) for m in runtime.prior_messages)
     assert store.messages(db_id="local-user", session_id="default") == [
         {"role": "user", "content": "이전 질문"},
         {"role": "assistant", "content": "이전 답변"},
@@ -222,3 +223,19 @@ def test_persisted_error_bubble_is_visible_but_excluded_from_model_context(tmp_p
     assert [message["content"] for message in context] == [
         "question one", "question two", "answer two",
     ]
+
+
+def test_message_timestamp_round_trip_is_opt_in_and_preserves_text(tmp_path) -> None:
+    store = ChatSessionStore(tmp_path / "chat.sqlite3")
+    store.append(db_id="user", session_id="s", role="user",
+                 content="원문", created_at=1794142800.25)
+    store.append(db_id="user", session_id="s", role="assistant",
+                 content="답변", created_at=1794142801.75)
+    raw = store.messages(db_id="user", session_id="s")
+    assert raw == [
+        {"role": "user", "content": "원문"},
+        {"role": "assistant", "content": "답변"},
+    ]
+    timed = store.messages(db_id="user", session_id="s", include_timestamps=True)
+    assert [m["created_at"] for m in timed] == [1794142800.25, 1794142801.75]
+    assert [m["content"] for m in timed] == ["원문", "답변"]

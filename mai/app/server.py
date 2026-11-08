@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import asyncio
 import secrets
+import time
 import io
 import hashlib
 import logging
@@ -137,6 +138,7 @@ def _session_history(principal: AccessPrincipal, session_id: str, *, limit: int 
         session_id=session_id,
         limit=limit,
         exclude_errors=True,
+        include_timestamps=True,
     )
 
 
@@ -147,6 +149,7 @@ def _append_session_message(
     role: str,
     content: str,
     metadata: dict[str, object] | None = None,
+    created_at: float | None = None,
 ) -> int:
     return _get_chat_session_store().append(
         db_id=principal.db_id,
@@ -154,6 +157,7 @@ def _append_session_message(
         role=role,
         content=content,
         metadata=metadata,
+        created_at=created_at,
     )
 
 
@@ -253,6 +257,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     remote_session_id: str | None = None
     attachments: list[str] = Field(default_factory=list)
+    verify: bool = True  # Per-request comparison; default preserves existing behavior.
 
 
 class ToolExecutionResponse(BaseModel):
@@ -605,6 +610,7 @@ async def get_session_history(
             session_id=session_id,
             limit=limit,
             include_metadata=True,
+            include_timestamps=True,
         ) if limit else [],
     }
 
@@ -693,8 +699,10 @@ async def chat(
     try:
         limit = _history_limit()
         prior = _session_history(principal, request.session_id, limit=limit) if limit else []
+        user_created_at = time.time()
         _append_session_message(principal, request.session_id, role="user", content=request.message,
-                                metadata={"attachments": attachments} if attachments else None)
+                                metadata={"attachments": attachments} if attachments else None,
+                                created_at=user_created_at)
         active_model = selected_model or runtime.model
         result = await runtime.run_user_message(
             request.message,
@@ -702,14 +710,18 @@ async def chat(
             prior_messages=prior,
             model=selected_model,
             remote_session_id=request.remote_session_id,
+            user_created_at=user_created_at,
+            verify=request.verify,
             **({"attachments": attachments} if attachments else {}),
             on_tool_execution=publish_tool,
             on_model_turn=publish_model_turn,
             on_verification_rejection=publish_verification_rejection,
         )
-        _append_session_message(principal, request.session_id, role="assistant", content=result.answer)
-        audit.append(run_id, "verifier_step", "Final answer accepted.",
-                     round_number=result.model_rounds, status="ACCEPTED")
+        _append_session_message(principal, request.session_id, role="assistant", content=result.answer,
+                                metadata={"verified": request.verify})
+        if request.verify:
+            audit.append(run_id, "verifier_step", "Final answer accepted.",
+                         round_number=result.model_rounds, status="ACCEPTED")
         audit.finish(run_id, status="completed")
     except AgentRunFailure as exc:
         audit.finish(run_id, status="failed", error_type=exc.error_type, error_message=exc.error_message)

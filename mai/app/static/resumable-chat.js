@@ -212,11 +212,11 @@
       host.appendChild(empty);
     } else {
       normalized.forEach(message => {
-        if (message?.role === 'user') addMessage('user', String(message.content || ''), Array.isArray(message?.metadata?.attachments) ? message.metadata.attachments : []);
+        if (message?.role === 'user') addMessage('user', String(message.content || ''), Array.isArray(message?.metadata?.attachments) ? message.metadata.attachments : [],message?.created_at);
         if (message?.role === 'assistant') {
           const metadata = message?.metadata;
           const isError = metadata?.kind === 'error';
-          const rendered = addMessage('mai', isError ? '' : String(message.content || ''));
+          const rendered = addMessage('mai', isError ? '' : String(message.content || ''), [], message?.created_at);
           if (isError) {
             rendered.bubble.classList.add('error');
             const prefix = metadata.error_type ? `${metadata.error_type}: ` : '';

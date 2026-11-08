@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+import time
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -92,6 +94,16 @@ When ready to respond, produce a provisional answer for verification before deli
 
 Preserve actual tool outcomes: never present failed, incomplete, or unverified operations as successful; report material failures and limitations to the user.
 """.strip()
+
+
+def _timestamped_message(message: Mapping[str, Any]) -> dict[str, Any]:
+    """Decorate only the model-facing copy, never the persisted message text."""
+    copied = dict(message)
+    stamp = copied.pop("created_at", None)
+    if copied.get("role") in {"user", "assistant"} and isinstance(stamp, (int, float)):
+        timestamp = datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat()
+        copied["content"] = f"[Message created at {timestamp}]\n{copied['content']}"
+    return copied
 
 
 @dataclass(slots=True)
@@ -290,6 +302,8 @@ class MAIRuntime:
         attachments: Sequence[str] = (),
         model: str | None = None,
         remote_session_id: str | None = None,
+        user_created_at: float | None = None,
+        verify: bool = True,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
@@ -330,16 +344,19 @@ class MAIRuntime:
                 max_identical_failures=max_identical_failures,
                 max_no_progress_rounds=int(os.environ.get("AGENT_MAX_NO_PROGRESS_ROUNDS", "2")),
             ),
-            final_verifier=FinalGroundingVerifier(
+            final_verifier=(FinalGroundingVerifier(
                 reviewer_adapter=verifier_adapter,
                 blocking_mode=os.environ.get("MAI_VERIFIER_BLOCKING_MODE", "strict"),
-            ),
+            ) if verify else None),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,
         )
 
         messages: list[Mapping[str, Any]] = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
-        messages.extend(prior_messages)
+        messages.extend(_timestamped_message(message) for message in prior_messages)
+        model_created_at = time.time() if user_created_at is None else user_created_at
+        model_prompt = _timestamped_message({"role": "user", "content": model_prompt,
+                                             "created_at": model_created_at})["content"]
         try:
             async with self._llamacpp_model_scope():
                 result = await agent.run_user_message(

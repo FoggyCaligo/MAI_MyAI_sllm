@@ -6,7 +6,6 @@ from typing import Any, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.llamacpp import LlamaCppAdapter
-from ..tools.time import current_time
 from ..tools.artifacts import temporary_artifact_scope
 from ..tools.registry import ToolRegistry
 from .guards import GuardConfig
@@ -62,11 +61,17 @@ class AgentRuntime:
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
-        runtime_context = {"tool_contexts": self.loop.registry.model_context(names=()), "authoritative_current_time": current_time()}
+        # The current user-message timestamp is carried by the user turn itself.
+        # Never place a changing wall-clock value before the conversation history:
+        # doing so invalidates the useful llama.cpp KV prefix on every request.
+        runtime_context = {"tool_contexts": self.loop.registry.model_context(names=())}
         effective_messages: list[Mapping[str, Any]] = [dict(message) for message in messages]
-        effective_messages.insert(0, {"role": "system", "content": EVIDENCE_REASONING_CONTRACT})
+        # Constant system instructions precede runtime context for KV prefix reuse.
+        stable_end = next((i for i, msg in enumerate(effective_messages)
+                           if msg.get("role") != "system"), len(effective_messages))
+        effective_messages.insert(stable_end, {"role": "system", "content": EVIDENCE_REASONING_CONTRACT})
         if runtime_context:
-            effective_messages.insert(0, {
+            effective_messages.insert(stable_end + 1, {
                 "role": "system",
                 "content": TOOL_RUNTIME_CONTEXT_CONTRACT + "\n" + json.dumps(runtime_context, ensure_ascii=False, separators=(",", ":")),
             })
@@ -100,7 +105,9 @@ class AgentRuntime:
             raise ValueError("user message content must be non-empty")
 
         messages: list[Message] = [dict(message) for message in prior_messages]
-        messages.append({"role": "system", "content": USER_VISIBLE_RESULT_CONTRACT})
+        system_end = next((i for i, msg in enumerate(messages)
+                           if msg.get("role") != "system"), len(messages))
+        messages.insert(system_end, {"role": "system", "content": USER_VISIBLE_RESULT_CONTRACT})
         user_message: Message = {"role": "user", "content": content}
         if images:
             user_message["images"] = list(images)
