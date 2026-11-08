@@ -28,13 +28,13 @@ from resolve_portable_sources import SOURCES, github_json, matching_assets
 
 
 def select_eligible_release(pattern: str):
-    """Select the latest release unless draft/prerelease is explicitly true."""
+    """Select the latest non-draft official release with a compatible, digest-pinned binary."""
     for page in range(1, 4):
         releases = github_json(f"/repos/ggml-org/llama.cpp/releases?per_page=100&page={page}")
         if not isinstance(releases, list):
             raise RuntimeError("Invalid GitHub release listing")
         for release in releases:
-            if not isinstance(release, dict) or release.get("draft") is True or release.get("prerelease") is True:
+            if not isinstance(release, dict) or release.get("draft") is True:
                 continue
             matches = matching_assets(release, pattern)
             if len(matches) > 1:
@@ -334,7 +334,7 @@ def main() -> int:
     selected = select_eligible_release(pattern)
     if selected is None:
         print(
-            f"No eligible non-draft/non-prerelease release with a compatible {platform} "
+            f"No eligible non-draft release with a compatible {platform} "
             "Vulkan binary and publisher SHA-256. Keeping installed llama.cpp."
         )
         return 0
