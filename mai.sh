@@ -32,6 +32,7 @@ case "$command" in
     ;;
   setup)
     mai_linux_setup() {
+cd -- "$root"
 # Provision Linux-native MAI into a host-local cache, leaving the NTFS SSD untouched.
 set -euo pipefail
 
@@ -139,12 +140,6 @@ install_archive() {
     mkdir -p "$staging/runtime"
     cp -a -- "$(dirname "$server")" "$staging/runtime/bin"
     chmod +x "$staging/runtime/bin/llama-server"
-  elif [[ "$name" == ollama ]]; then
-    [[ -f "$staging/bin/ollama" ]] || { echo "Missing bin/ollama in archive" >&2; exit 1; }
-    mv -- "$staging/bin" "$staging/runtime-bin"
-    mkdir -p "$staging/runtime"
-    mv -- "$staging/runtime-bin" "$staging/runtime/bin"
-    if [[ -d "$staging/lib" ]]; then mv -- "$staging/lib" "$staging/runtime/lib"; fi
   fi
   printf '%s' "$hash" > "$staging/runtime/.mai-source-sha256"
   mv -- "$staging/runtime" "$dest"
