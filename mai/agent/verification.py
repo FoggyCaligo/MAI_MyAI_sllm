@@ -339,6 +339,7 @@ class FinalGroundingVerifier:
         candidate: str,
         messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
+        tool_arguments: Sequence[Mapping[str, Any]] | None = None,
         allow_numeric_review: bool = True,
         allow_evidence_review: bool | None = None,
         allow_semantic_review: bool = True,
@@ -354,6 +355,7 @@ class FinalGroundingVerifier:
         if numeric_facts and self.reviewer_adapter is not None:
             numeric_review = await self._review_numeric_grounding(
                 candidate=candidate, messages=messages, tool_results=tool_results,
+                tool_arguments=tool_arguments,
                 unsupported_facts=numeric_facts, on_audit_event=on_audit_event,
             )
             numeric_verdict = numeric_review.numeric_verdict
@@ -390,6 +392,7 @@ class FinalGroundingVerifier:
 
         review = await self._review_final(
             candidate=candidate, messages=messages, tool_results=tool_results,
+            tool_arguments=tool_arguments,
             run_quality_review=(self.quality_review_enabled and numeric_issue is None
                                 and allow_evidence_review and allow_semantic_review
                                 and allow_coverage_review),
@@ -551,12 +554,14 @@ class FinalGroundingVerifier:
     async def _review_numeric_grounding(
         self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
         tool_results: Sequence[ToolVerificationResult],
+        tool_arguments: Sequence[Mapping[str, Any]] | None,
         unsupported_facts: Sequence[str],
         on_audit_event: VerificationAuditObserver | None = None,
     ) -> _NumericReviewPayload:
         """Run the historical independent numeric/date equivalence reviewer."""
         payload = _review_payload(
             candidate=candidate, messages=messages, tool_results=tool_results,
+            tool_arguments=tool_arguments,
         )
         payload["flagged_numeric_or_date_values"] = list(unsupported_facts)
         request = ChatRequest(
@@ -572,10 +577,15 @@ class FinalGroundingVerifier:
 
     async def _review_final(
         self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult], run_quality_review: bool,
+        tool_results: Sequence[ToolVerificationResult],
+        tool_arguments: Sequence[Mapping[str, Any]] | None,
+        run_quality_review: bool,
         on_audit_event: VerificationAuditObserver | None = None,
     ) -> FinalReview:
-        payload = _review_payload(candidate=candidate, messages=messages, tool_results=tool_results)
+        payload = _review_payload(
+            candidate=candidate, messages=messages, tool_results=tool_results,
+            tool_arguments=tool_arguments,
+        )
         payload_model = _FactualReviewPayload
         fact_request = ChatRequest(
             messages=(
@@ -780,7 +790,10 @@ def _review_payload(
     candidate: str,
     messages: Sequence[Mapping[str, Any]],
     tool_results: Sequence[ToolVerificationResult],
+    tool_arguments: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if tool_arguments is not None and len(tool_arguments) != len(tool_results):
+        raise ValueError("tool_arguments must match tool_results in execution order")
     user_messages = [
         str(message.get("content"))
         for message in messages
@@ -803,6 +816,7 @@ def _review_payload(
             "ok": ok,
             "error_type": error_type,
             "result": content,
+            **({"arguments": dict(tool_arguments[index])} if tool_arguments is not None else {}),
             **_tool_evidence_metadata(name=name, ok=ok),
         }
         for index, (name, ok, error_type, content) in _select_review_tool_results(tool_results)

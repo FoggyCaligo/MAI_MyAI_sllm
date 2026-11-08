@@ -354,3 +354,42 @@ def test_tool_manual_returns_status_only_and_guidance_is_separate_system_context
                for m in request.messages if m.get("role") == "tool")
     assert any(m.get("role") == "assistant" and m.get("thinking") == "THINKING_ON_ACTIVATION"
                for m in request.messages)
+
+
+def test_verifier_receives_tool_arguments_in_original_execution_order() -> None:
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo.", input_model=EchoInput, handler=lambda text: text)
+
+    class CapturingVerifier:
+        async def verify(self, **kwargs):
+            assert kwargs["tool_arguments"] == (
+                {"tools": ["echo"]},
+                {"text": "first"},
+                {"text": "second"},
+            )
+            assert [item[0] for item in kwargs["tool_results"]] == [
+                "tool_manual", "echo", "echo",
+            ]
+            from mai.agent.verification import _review_payload
+            payload = _review_payload(
+                candidate=kwargs["candidate"],
+                messages=kwargs["messages"],
+                tool_results=kwargs["tool_results"],
+                tool_arguments=kwargs["tool_arguments"],
+            )
+            evidence = payload["tool_results_in_execution_order"]
+            assert [item["arguments"] for item in evidence] == [
+                {"tools": ["echo"]}, {"text": "first"}, {"text": "second"},
+            ]
+            assert [item["index"] for item in evidence] == [0, 1, 2]
+            from mai.agent.verification import FinalVerificationResult
+            return FinalVerificationResult(ok=True)
+
+    adapter = FakeAdapter([
+        activate("echo"),
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "first"}),)),
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "second"}),)),
+        assistant_turn(content="done"),
+    ])
+    result = run(AgentRuntime(adapter, registry, final_verifier=CapturingVerifier()).run_user_message("Check echo"))
+    assert result.content == "done"

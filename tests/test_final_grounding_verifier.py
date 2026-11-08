@@ -1143,3 +1143,41 @@ def test_verifier_keeps_every_successful_tool_result_in_execution_order():
     ]
     assert len(selected) > 20
     assert all(result[1] for _, result in selected)
+
+
+def test_review_payload_arguments_follow_successful_tool_results_only():
+    from mai.agent.verification import _review_payload
+
+    results = (
+        ("web_search", True, None, "first result"),
+        ("web_fetch", False, "FetchError", "failure"),
+        ("web_search", True, None, "second result"),
+    )
+    arguments = (
+        {"query": "first"},
+        {"url": "failed-url"},
+        {"query": "second"},
+    )
+    payload = _review_payload(
+        candidate="summary",
+        messages=({"role": "user", "content": "Summarize"}, {"role": "assistant", "content": "summary"}),
+        tool_results=results,
+        tool_arguments=arguments,
+    )
+    evidence = payload["tool_results_in_execution_order"]
+    assert [item["index"] for item in evidence] == [0, 2]
+    assert [item["arguments"] for item in evidence] == [{"query": "first"}, {"query": "second"}]
+    assert [item["result"] for item in evidence] == ["first result", "second result"]
+
+
+def test_review_payload_rejects_misaligned_tool_arguments():
+    import pytest
+    from mai.agent.verification import _review_payload
+
+    with pytest.raises(ValueError, match="tool_arguments must match tool_results"):
+        _review_payload(
+            candidate="summary",
+            messages=({"role": "user", "content": "Summarize"},),
+            tool_results=(("web_search", True, None, "result"),),
+            tool_arguments=(),
+        )
