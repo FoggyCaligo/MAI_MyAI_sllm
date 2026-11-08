@@ -149,7 +149,7 @@
     <div class="brand"><div class="logo">MAI</div><div class="subtitle">local personal agent</div></div>
     <div class="header-right">
       <select id="model-select" title="생성 모델 선택"><option value="">모델 로딩 중…</option></select>
-      <label class="verify-switch" title="끄면 답변 검증을 생략합니다. 속도 비교용입니다."><input type="checkbox" id="verify-toggle" checked /> 검증</label>
+      <label class="verify-switch" title="끄면 답변 검증을 생략합니다. 속도 비교용입니다."><input type="checkbox" id="verify-toggle" /> 검증</label>
       <div class="identity" id="identity"></div><div class="identity" id="connection"></div>
       <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>
       <button id="logout-btn" type="button">로그아웃</button>
@@ -500,7 +500,7 @@
     }
     wrap.appendChild(details);
   }
-  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
+  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');document.getElementById('verify-toggle').checked=data.verifier_default_enabled;$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
   let modelBackend='ollama', loadedModel='', switchingModel=false;
   async function loadModels(){
     const res=await fetch('/models',{headers:authHeaders()});
