@@ -209,7 +209,9 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert len(reviewer.requests) == 4  # numeric + factual rejection, then factual + quality
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
-    assert rejected not in str(main.requests[1].messages)  # rejected drafts remain quarantined
+    correction_messages = [m for m in main.requests[1].messages if m.get("role") == "system" and "rejected_provisional_answer" in m.get("content", "")]
+    assert len(correction_messages) == 1
+    assert rejected in correction_messages[0]["content"]  # Draft is correction context, not independent evidence.
     assert all(message.get("content") != rejected for message in result.messages)
 
 
