@@ -118,16 +118,12 @@ class MAIRuntime:
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
-        vision_model: str | None = None,
-        verifier_model: str | None = None,
         upload_root: str | Path = "./mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must be non-empty")
-        if verifier_model is not None and not verifier_model.strip():
-            raise ValueError("verifier_model must be non-empty when configured")
         if max_inline_tool_result_chars is None:
             max_inline_tool_result_chars = int(os.environ.get("MAX_INLINE_TOOL_RESULT_CHARS", "10666"))
         if max_inline_tool_result_chars < 1024:
@@ -140,8 +136,6 @@ class MAIRuntime:
         self.llamacpp_host = llamacpp_host
         self.model = model
         self.selected_model = model
-        self.verifier_model = verifier_model.strip() if verifier_model is not None else None
-        self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
         self.upload_root.mkdir(parents=True, exist_ok=True)
