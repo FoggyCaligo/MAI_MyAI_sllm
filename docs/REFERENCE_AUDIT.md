@@ -41,7 +41,7 @@ python scripts/audit_references.py
 | `mai/memory/recall/service.py` | 기억 검색 및 노드 확장 | 유지 |
 | `mai/memory/index/sqlite_fts.py` | SQLite FTS5 개념 색인 | 유지 |
 | `mai/agent/tool_results.py` | 대형 도구 출력의 저장·페이지화 | 유지 |
-| `scripts/install_windows.ps1` | README 및 setup.md의 설치 명령 | 유지 |
+| `scripts/install_windows.ps1` | 과거 일반 설치기. 현재 `./mai.sh setup`으로 통합하고 삭제 | 삭제 완료 |
 
 ### 현재 삭제/병합 보류
 
