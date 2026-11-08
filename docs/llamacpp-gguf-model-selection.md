@@ -34,6 +34,12 @@ LLAMACPP_REASONING_PRESERVE: false
 - 설정은 Portable 런처에만 적용되므로 바이너리 버전을 올려도 YAML 설정이 유지된다. 새 llama.cpp 버전에서 지원하지 않는 플래그라면 시작 실패를 그대로 보고하며 옵션을 무시하거나 암묵적으로 이전 설정으로 되돌리지 않는다.
 - Ollama Modelfile의 `TEMPLATE {{ .Prompt }}`만으로는 Ollama의 샘플링 기본값이나 내부 템플릿 reasoning 옵션을 확정할 수 없다.
 
+## 응답 생성 상한
+
+`settings.yaml`의 기존 `OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768` 설정은 **Ollama 메인 모델의 `num_predict`** 뿐 아니라 **llama.cpp 메인 모델의 `max_tokens`** 에도 적용된다. 새 llama.cpp 바이너리로 교체해도 MAI 요청에서 값을 읽어 전달한다. 실행 환경의 `.env`와 환경변수가 지정한 값이 YAML보다 우선한다.
+
+`max_tokens`는 **한 모델 요청에서 생성할 수 있는 전체 출력 토큰 상한**이며, 현재 Think 생성량을 별도로 제한하는 설정이 아니다. `finish_reason="length"`로 종료되면 비록 부분 응답이 있어도 MAI는 완료된 최종 답변이나 정상적인 툴 호출로 인정하지 않고 프로토콜 오류로 보고한다. Verifier는 llama.cpp에서 Main과 동일한 어댑터를 공유하므로 이 제한도 동일하게 적용되고, 기억 추출 전용 어댑터는 이 설정의 적용 대상이 아니다.
+
 ## Windows / Linux 실행
 
 Windows:

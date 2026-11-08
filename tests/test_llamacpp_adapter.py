@@ -106,3 +106,48 @@ def test_llamacpp_omits_reasoning_effort_for_all_think_requests():
     asyncio.run(run())
     assert len(captured) == 3
     assert all("reasoning_effort" not in request for request in captured)
+
+
+def test_llamacpp_max_tokens_is_sent_as_openai_payload_field():
+    import json
+    captured = []
+    def responder(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": "stop",
+            "message": {"role": "assistant", "content": "ok"},
+        }]})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(
+                model="local", host="http://test", max_output_tokens=32768,
+            ), client=client)
+            return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
+    assert asyncio.run(run()).content == "ok"
+    assert captured[0]["max_tokens"] == 32768
+    assert "reasoning_effort" not in captured[0]
+
+
+def test_llamacpp_rejects_output_truncated_before_answer_or_tool_completion():
+    import json
+    def responder(request):
+        assert json.loads(request.content)["max_tokens"] == 32768
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": "length",
+            "message": {"role": "assistant", "content": "partial answer",
+                        "tool_calls": []},
+        }]})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(
+                model="local", host="http://test", max_output_tokens=32768,
+            ), client=client)
+            await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
+    with pytest.raises(OllamaProtocolError, match="output limit reached"):
+        asyncio.run(run())
+
+
+@pytest.mark.parametrize("invalid", [0, -1, True, 1.5, "32768"])
+def test_llamacpp_typed_output_token_limit_rejects_invalid_values(invalid):
+    with pytest.raises(ValueError, match="max_output_tokens"):
+        ModelConfig(model="local", max_output_tokens=invalid)
