@@ -15,6 +15,11 @@ case "$(uname -s)" in
 esac
 command="${1:-start}"
 if (( $# > 0 )); then shift; fi
+install_vulkan_option=0
+if [[ "$command" == setup && "${1:-}" == "--install-vulkan" ]]; then
+  install_vulkan_option=1
+  shift
+fi
 if (( $# > 0 )); then echo "Unexpected arguments for $command: $*" >&2; exit 2; fi
 case "$command" in
   start)
@@ -48,7 +53,7 @@ for utility in python3 curl tar sha256sum flock zstd git; do
   command -v "$utility" >/dev/null || { echo "Missing host prerequisite: $utility" >&2; exit 1; }
 done
 install_chromium=1
-install_vulkan=0
+install_vulkan=$install_vulkan_option
 with_llamacpp=1
 # GPU driver support is explicit, not an automatic privileged mutation.
 # AMD/Intel hosts can opt in to Ubuntu's Mesa Vulkan packages.
