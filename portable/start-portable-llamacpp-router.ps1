@@ -1,5 +1,5 @@
-# Optional single-router llama.cpp Portable launcher for MAI dev.
-# All roles use one API endpoint. Ollama launch scripts and MAI prompts are unchanged.
+# Portable llama.cpp router launcher for MAI.
+# One verified GGUF catalog and at most one resident model.
 param(
     [ValidateRange(1,1)][int]$ModelsMax = 1,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
@@ -42,10 +42,8 @@ $env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
 $env:LLM_BACKEND = 'llamacpp'
 $env:MAIN_MODEL = $defaultModel
-$env:VERIFIER_MODEL = $defaultModel
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
 $env:LLAMACPP_MAIN_VISION = if ($mainProjector -or $MainVision) { 'true' } else { 'false' }
-$env:VISION_MODEL = if ($mainProjector -or $MainVision) { $defaultModel } else { '' }
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
                '--host', '127.0.0.1', '--port', '8080', '--jinja')
@@ -64,7 +62,7 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw 'Router model aliases not registered within startup deadline' }
-    Write-Host 'MAI dev llama.cpp router ready on 127.0.0.1:8080; Ollama remains unchanged.'
+    Write-Host 'MAI llama.cpp router ready on 127.0.0.1:8080; '
     Write-Host 'MAI Portable single-resident mode: max one GGUF loaded by llama.cpp router.'
     & $python run_server.py
     if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
