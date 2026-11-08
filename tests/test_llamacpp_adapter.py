@@ -81,7 +81,7 @@ def test_empty_structured_verifier_response_is_protocol_error_with_diagnostics()
                 response_format={"type": "object", "properties": {"ok": {"type": "boolean"}},
                                  "required": ["ok"]},
             ))
-    with pytest.raises(OllamaProtocolError, match="finish_reason='length'"):
+    with pytest.raises(OllamaProtocolError, match="structured review hit output limit"):
         asyncio.run(run())
 
 
@@ -151,3 +151,47 @@ def test_llamacpp_rejects_output_truncated_before_answer_or_tool_completion():
 def test_llamacpp_typed_output_token_limit_rejects_invalid_values(invalid):
     with pytest.raises(ValueError, match="max_output_tokens"):
         ModelConfig(model="local", max_output_tokens=invalid)
+
+
+def test_llamacpp_length_returns_incomplete_message_with_reasoning():
+    def responder(request):
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": "length",
+            "message": {"role": "assistant", "content": "Beginning of",
+                        "reasoning_content": "Think fragment"},
+        }]})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
+            return await adapter.chat(ChatRequest(messages=[{"role": "user", "content": "question"}]))
+    turn = asyncio.run(run())
+    assert turn.incomplete
+    assert turn.content == "Beginning of"
+    assert turn.assistant_message["thinking"] == "Think fragment"
+
+
+def test_llamacpp_replays_reasoning_to_next_request():
+    converted = _openai_messages([
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "partial", "thinking": "previous thinking"},
+        {"role": "system", "content": "Continue"},
+    ])
+    assert converted[1]["reasoning_content"] == "previous thinking"
+    assert "thinking" not in converted[1]
+    assert converted[1]["content"] == "partial"
+
+
+def test_llamacpp_refuses_interrupted_tool_calls():
+    def responder(request):
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": "length",
+            "message": {"role": "assistant", "content": "",
+                        "tool_calls": [{"type": "function", "function": {
+                            "name": "search", "arguments": "{}"}}]},
+        }]})
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
+            await adapter.chat(ChatRequest(messages=[{"role":"user", "content":"question"}]))
+    with pytest.raises(OllamaProtocolError, match="partial tool calls"):
+        asyncio.run(run())
