@@ -303,8 +303,27 @@ def main() -> int:
             (staged / ".mai-source-sha256").write_text(latest["sha256"].lower(), encoding="utf-8")
             (staged / executable).chmod((staged / executable).stat().st_mode | 0o111)
         # Do not switch until the candidate can at least start and report its version.
-        subprocess.run([str(staged / executable), "--version"], cwd=staged, check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        version_result = subprocess.run(
+            [str(staged / executable), "--version"], cwd=staged, check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+        )
+        if version_result.returncode:
+            code = version_result.returncode & 0xFFFFFFFF
+            stdout = version_result.stdout.decode("utf-8", errors="replace")[-1000:]
+            stderr = version_result.stderr.decode("utf-8", errors="replace")[-1000:]
+            detail = (
+                f"New llama-server failed preflight: exit 0x{code:08X}. "
+                f"stdout={stdout!r}; stderr={stderr!r}. "
+                "Existing llama.cpp installation and manifest were not changed."
+            )
+            if platform == "windows" and code == 0xC0E90002:
+                detail += (
+                    " Windows code integrity policy blocked executable/DLL loading. "
+                    "Inspect Microsoft-Windows-CodeIntegrity/Operational events "
+                    "(especially 3077/3033) to identify the blocked module. "
+                    "Do not disable Windows security protections automatically."
+                )
+            raise RuntimeError(detail)
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         backup = runtime.with_name(runtime.name + ".backup-" + stamp)
