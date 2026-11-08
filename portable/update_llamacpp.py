@@ -174,7 +174,27 @@ def main() -> int:
         temp = Path(tmp)
         filename = latest["url"].rsplit("/", 1)[-1]
         archive = temp / filename
-        download(latest["url"], archive, latest["sha256"])
+        # Reuse a user-supplied official release archive, if available.
+        # Unlike network retries, this also works when GitHub's CDN returns 504.
+        cached = root / "portable/portable-downloads" / filename
+        if cached.is_file():
+            actual = hashlib.sha256(cached.read_bytes()).hexdigest()
+            if actual.lower() != latest["sha256"].lower():
+                raise RuntimeError(
+                    f"Cached release SHA-256 mismatch: {cached}. "
+                    "Remove the invalid archive and retry."
+                )
+            print(f"Using publisher-verified local llama.cpp archive: {cached}")
+            shutil.copy2(cached, archive)
+        else:
+            try:
+                download(latest["url"], archive, latest["sha256"])
+            except RuntimeError as exc:
+                raise RuntimeError(
+                    f"{exc} You can download {filename} from the official "
+                    f"llama.cpp release page and save it at {cached}, "
+                    "then rerun ./mai.sh update."
+                ) from exc
         extracted = temp / "extracted"
         extracted.mkdir()
         unpack(archive, extracted)
