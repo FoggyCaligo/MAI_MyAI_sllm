@@ -1,28 +1,26 @@
-# MAI 로컬 추론 백엔드와 장기 보존
+# MAI llama.cpp 추론 백엔드와 장기 보존
 
-현재 MAI의 기본 텍스트 추론 엔진은 Ollama임. 선택적으로 [llama.cpp 공식 저장소](https://github.com/ggml-org/llama.cpp)의 `llama-server`를 별도 프로세스로 실행해 사용할 수 있음. **두 실행 경로 간 자동 fallback은 없음.** 어느 쪽이든 실패는 오류로 드러남.
+현재 MAI의 유일한 추론 백엔드는 [llama.cpp](https://github.com/ggml-org/llama.cpp)의 OpenAI 호환 `llama-server`다. Ollama 실행 파일·SDK·어댑터는 사용하지 않는다. 별도 제공자로 실패를 자동 우회하지 않는다.
 
-## llama.cpp 실행 예시 (Windows)
+## 모델과 런타임
 
-1. [공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 사용 중인 GPU/OS에 맞는 `llama-server` 릴리스 자산을 다운로드함. AMD GPU 사용 시 Windows Vulkan 빌드가 후보이나, 드라이버와 빌드 호환성을 실기기에서 확인해야 함.
-2. **별도로 라이선스를 확인한 GGUF 모델 파일**을 로컬에 보관함. Ollama `blobs` 디렉터리에 있는 파일을 곧바로 독립 GGUF 모델이라고 가정하지 않음. 내보낼 수 있는 형태인지 검증하고 원본 배포처를 확인할 것.
-3. `llama-server.exe -m C:\models\model.gguf --alias local-model --host 127.0.0.1 --port 8080 --jinja` 실행. `--jinja`는 모델의 chat template 및 function calling 확인을 위한 옵션. 템플릿이 도구 호출을 지원하지 않으면 사용할 수 없음.
-4. MAI의 `settings.yaml` 또는 기기별 덮어쓰기용 `.env`에서 `LLM_BACKEND=llamacpp`, `LLAMACPP_HOST=http://127.0.0.1:8080`, `MAIN_MODEL=local-model`을 지정하고 `python run_server.py`로 실행함.
-5. THINK 출력, `tool_manual`, `memory_search`, 수치 검증, Verifier 재시도, 사실 추출이 정상 동작하는지 실제 모델로 검증할 것. OpenAI 호환 API라고 해도 모델의 도구 호출·추론 출력이 동등하다는 보장은 없음. llama.cpp 모드에서는 설정된 Main 모델로 첨부 이미지 바이트를 직접 전달하며, 별도 Ollama `image_analyze` 도구를 등록하지 않는다. 이미지 지원 여부는 모델·mmproj와 실제 추론 환경에서 검증해야 한다.
+- 공식 GGUF 배포처·모델 라이선스·필요한 mmproj/projector·SHA-256을 확인해 파일을 별도로 확보한다.
+- Windows Git Bash와 Ubuntu 24.04 Bash에서는 공통으로 `./mai.sh setup`, `./mai.sh check`, `./mai.sh start`를 사용한다. Windows PowerShell은 `.\mai.ps1`을 사용할 수 있다.
+- 설치 스크립트는 배포자의 SHA-256을 보유한 런타임 매니페스트를 사용하여 Python·uv·llama.cpp 네이티브 실행 파일을 가져온다. Python 패키지는 `pyproject.toml`을 따른다.
+- 설정된 GGUF 폴더의 직접 자식 모델을 시작 시 카탈로그로 등록하고 검증한다. Main·Verifier·기억 추출에 선택된 동일 GGUF를 사용한다. 이는 Verifier 프롬프트의 독립성은 유지하지만 모델 파라미터의 독립성을 제공하지 않는다.
+- 라우터는 `--models-max 1`로 작동하며, 모델 교체 시 이전 모델 언로드를 확인하고 다음 모델을 로드한다. 디스크 KV 저장·복원은 하지 않는다.
+- 모델과 projector가 지원할 때만 메인 모델에 첨부 이미지 바이트를 직접 전달한다. 별도의 이미지 분석 모델 도구는 없다.
 
-llama.cpp 설정을 제거하고 기존 설정(`LLM_BACKEND=ollama`)으로 되돌리면 기존 Ollama 실행 경로로 복귀함.
+## 런타임 갱신 및 백업
 
-## 재설치 가능성과 백업은 다름
+Git은 MAI 소스·설치 코드·문서만 복구한다. 모델 가중치·OS 전용 바이너리·개인 `.env`·`data/*.sqlite3`·감사 로그 및 업로드는 별도 보관해야 한다.
 
-Git 저장소에는 **MAI 소스코드·검증 스크립트·설치 방법**을 보관함. 대형 모델 가중치, 운영체제 전용 실행 파일, 개인 `.env`, 감사 로그(`log.sqlite3*`)는 Git에서 제외하며, 개인 DB(`memory.sqlite3`, `chat.sqlite3`, `sentence_breaker.sqlite3`)도 공개 저장소 공유나 이관 시 별도 백업·주의가 필요함. 모델과 실행 파일의 공개 URL은 나중에 폐쇄될 수 있으므로 **영구 다운로드 가능성은 보장할 수 없음.**
+1. MAI 서버와 llama.cpp 라우터를 종료한다.
+2. 개인 SQLite는 서비스 중지 후 일관된 스냅샷으로 백업하거나 SQLite 온라인 백업을 사용한다.
+3. 기존 런타임 파일·배포 URL·릴리스 버전·SHA-256 매니페스트를 보존한다.
+4. 새 릴리스의 배포자 SHA-256으로 검증된 실행 파일을 준비한다. 해시 불일치·기존 설치 영수증 불일치는 오류로 처리한다.
+5. Main 도구 호출, Verifier JSON, 기억 추출, 이미지 입력, 모델 전환을 실제로 시험한다.
 
-- 공식 배포처의 **특정 릴리스 버전과 자산명**, 라이선스, 원본 URL, SHA-256 해시를 백업 목록에 기록할 것.
-- 미리 구해둔 파일은 외장 SSD 또는 독립 저장소에 **오프라인 원본 사본**을 보관할 것. 백업 뒤 별도 환경에서 복원 검증할 것.
-- 다운로드 시 `python scripts/fetch_verified_artifact.py <URL> <SHA256> <DESTINATION>`를 사용하면 지정한 SHA-256과 다를 경우 오류로 중단됨. SHA-256은 신뢰 가능한 별도 경로에서 확보해야 함. URL이 장래에 사라지면 다운로드는 실패하며 다른 모델로 자동 대체되지 않음.
-- Ollama 현재 설치본의 `models` 전체 폴더(기본 경로 `%USERPROFILE%\.ollama\models`) 및 Ollama 설치 프로그램도 별도 백업할 것.
-- 개인 데이터베이스는 MAI 종료 후 **일관된 상태의 SQLite 백업**을 수행할 것. 실행 중 DB 파일만 복사하는 방식은 WAL 상태를 누락할 수 있음.
-- Python 의존성은 현재 일부 버전 범위 및 Git 브랜치(예: Sentence_Breaker@main)에 묶여 있음. 따라서 저장소만으로 미래에 완전한 동일 환경 복원은 아직 보장되지 않음. 추후 의존성 lock/배포 파일 아카이브가 필요함.
+Windows와 Linux는 GPU 드라이버·런타임 바이너리·실행 권한이 다르다. GGUF와 개인 SQLite를 공유할 수 있어도 동일 바이너리를 양쪽에서 사용할 수는 없다. 128K 컨텍스트 설정은 모델과 GPU의 실제 지원을 보장하지 않는다.
 
-## 호환성 범위
-
-현재 **텍스트 및 설정된 Main 비전 입력을 포함하는 llama.cpp 연결 경로**를 제공함. GGUF 카탈로그·라우터의 모델 언로드 확인·단일 모델 상주 및 128K 실행기 기본 문맥은 [GGUF 모델 선택](llamacpp-gguf-model-selection.md)과 [Portable 안내](../portable/README.md)를 참고함. Windows Portable은 `--include-llamacpp`로 생성한 매니페스트와 `portable/prepare-portable.ps1`로 llama.cpp 실행 파일을 준비할 수 있음. GGUF 가중치는 별도로 준비해야 하며 현재 Ollama 모델이 llama.cpp에서 즉시 실행된다고 보장하지 않음. 실제 모델별 회귀 테스트 결과를 보고 지원 범위를 확정할 것.
+자세한 구현 계약은 [GGUF 모델 선택](llamacpp-gguf-model-selection.md), [Portable 안내](../portable/README.md), [OS 경계](platform-boundary.md)를 참고한다.
