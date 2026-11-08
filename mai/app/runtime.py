@@ -17,8 +17,7 @@ from ..agent.loop import ModelTurnObserver, ToolExecution, ToolExecutionObserver
 from ..agent.runtime import AgentRuntime
 from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
-from ..llm.models import ModelConfig, ollama_generation_limit
-from ..llm.ollama import OllamaAdapter
+from ..llm.models import ModelConfig, model_generation_limit
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.llamacpp_router import SingleResidentRouter
 from ..memory.admission import (
@@ -27,7 +26,7 @@ from ..memory.admission import (
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import OllamaFactExtractor
+from ..memory.extraction.service import ModelFactExtractor
 from ..memory.graph.repository import MemoryGraphRepository
 from ..memory.index import SqliteFtsConceptIndex
 from ..memory.recall.service import RecallService
@@ -38,10 +37,9 @@ from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
-from ..tools.images import register_image_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..remote.routing import register_routed_pc_tools, register_routed_service_tools, register_routed_image_tools
+from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -116,8 +114,7 @@ class MAIRuntime:
         self,
         *,
         model: str,
-        ollama_host: str,
-        llm_backend: str = "ollama",
+        llm_backend: str = "llamacpp",
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
@@ -137,11 +134,10 @@ class MAIRuntime:
             raise ValueError("max_inline_tool_result_chars must be >= 1024")
         self.download_links = DownloadLinkStore()
         self.cwd = cwd
-        if llm_backend not in {"ollama", "llamacpp"}:
-            raise ValueError("LLM_BACKEND must be ollama or llamacpp")
+        if llm_backend != "llamacpp":
+            raise ValueError("LLM_BACKEND must be llamacpp")
         self.llm_backend = llm_backend
         self.llamacpp_host = llamacpp_host
-        self.ollama_host = ollama_host
         self.model = model
         self.selected_model = model
         self.verifier_model = verifier_model.strip() if verifier_model is not None else None
@@ -164,27 +160,17 @@ class MAIRuntime:
             self.recall,
             now=lambda: datetime.now(timezone.utc),
         )
-        self._adapters: dict[str, OllamaAdapter | LlamaCppAdapter] = {}
-        self._fact_extractors: dict[str, OllamaFactExtractor] = {}
-        # llama.cpp mode has no Ollama client, process or Python SDK dependency.
-        if self.llm_backend == "ollama":
-            from ollama import AsyncClient
-            self._ollama_client = AsyncClient(host=ollama_host)
-        else:
-            self._ollama_client = None
+        self._adapters: dict[str, LlamaCppAdapter] = {}
+        self._fact_extractors: dict[str, ModelFactExtractor] = {}
         self._llamacpp_execution_lock = asyncio.Lock()
-        self._llamacpp_router = (SingleResidentRouter(self.llamacpp_host)
-                                 if self.llm_backend == "llamacpp" else None)
+        self._llamacpp_router = SingleResidentRouter(self.llamacpp_host)
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 
     @asynccontextmanager
     async def _llamacpp_model_scope(self):
         """Prevent background memory inference and other MAI runs from evicting an active main model."""
-        if self.llm_backend == "llamacpp":
-            async with self._llamacpp_execution_lock:
-                yield
-        else:
+        async with self._llamacpp_execution_lock:
             yield
 
     async def _postprocess_memory_with_model_scope(self, **kwargs):
@@ -214,65 +200,50 @@ class MAIRuntime:
         except Exception:
             _LOG.exception("MAI selected model preload failed model=%s", self.selected_model)
 
-    def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
+    def _adapter_for(self, model: str) -> LlamaCppAdapter:
         clean_model = model.strip()
         if not clean_model:
             raise ValueError("model must be non-empty")
         adapter = self._adapters.get(clean_model)
         if adapter is None:
-            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True, options={"num_predict": ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)}))
-                       if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True, max_output_tokens=ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)), router=self._llamacpp_router))
+            adapter = LlamaCppAdapter(
+                ModelConfig(model=clean_model, host=self.llamacpp_host, think=True,
+                            max_output_tokens=model_generation_limit("MODEL_MAX_OUTPUT_TOKENS", 32768)),
+                router=self._llamacpp_router,
+            )
             self._adapters[clean_model] = adapter
         return adapter
 
-    def _fact_extractor_for(self, model: str) -> OllamaFactExtractor:
+    def _fact_extractor_for(self, model: str) -> ModelFactExtractor:
         clean_model = model.strip()
         if not clean_model:
             raise ValueError("model must be non-empty")
         extractor = self._fact_extractors.get(clean_model)
         if extractor is None:
-            adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=False, options={"num_predict": ollama_generation_limit("OLLAMA_MEMORY_MAX_OUTPUT_TOKENS", 2048)}))
-                       if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=False), router=self._llamacpp_router))
-            extractor = OllamaFactExtractor(adapter)
+            adapter = LlamaCppAdapter(
+                ModelConfig(model=clean_model, host=self.llamacpp_host, think=False),
+                router=self._llamacpp_router,
+            )
+            extractor = ModelFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
 
     async def list_models(self) -> tuple[str, ...]:
-        if self.llm_backend == "llamacpp":
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(self.llamacpp_host.rstrip("/") + "/v1/models")
-                response.raise_for_status()
-                body = response.json()
-            if not isinstance(body, dict) or not isinstance(body.get("data"), list):
-                raise RuntimeError("llama.cpp /v1/models response is invalid")
-            names = []
-            for entry in body["data"]:
-                if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
-                    raise RuntimeError("llama.cpp model entry is missing id")
-                names.append(entry["id"])
-            return tuple(names)
-        response = await self._ollama_client.list()
-        raw_models = getattr(response, "models", None)
-        if raw_models is None and isinstance(response, Mapping):
-            raw_models = response.get("models")
-        if raw_models is None:
-            raise RuntimeError("Ollama list response is missing models")
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(self.llamacpp_host.rstrip("/") + "/v1/models")
+            response.raise_for_status()
+            body = response.json()
+        if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+            raise RuntimeError("llama.cpp /v1/models response is invalid")
         names: list[str] = []
-        for item in raw_models:
-            name = getattr(item, "model", None)
-            if name is None and isinstance(item, Mapping):
-                name = item.get("model") or item.get("name")
-            if not isinstance(name, str) or not name.strip():
-                raise RuntimeError("Ollama model entry is missing a model name")
-            names.append(name.strip())
+        for entry in body["data"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                raise RuntimeError("llama.cpp model entry is missing id")
+            names.append(entry["id"])
         return tuple(names)
 
     def model_labels(self) -> dict[str, str]:
         """UI labels for exact configured GGUF identities, not inferred aliases."""
-        if self.llm_backend != "llamacpp":
-            return {}
         from portable.llamacpp_model_catalog import from_settings
         root = Path(__file__).resolve().parents[2]
         catalog = from_settings(root)
@@ -319,21 +290,6 @@ class MAIRuntime:
             register_calculator_tools(registry)
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
-        # Main llama.cpp handles its own images; separate image_analyze is
-        # available only with an explicitly configured Ollama vision model.
-        if self.llm_backend == "ollama" and self.vision_model is not None:
-            if principal.role is AccessRole.OWNER:
-                register_routed_image_tools(
-                    registry, owner_id=principal.db_id, model=self.vision_model,
-                    host=self.ollama_host, cwd=self.cwd, backend=self.llm_backend,
-                    router=self._llamacpp_router,
-                )
-            else:
-                register_image_tools(
-                    registry, model=self.vision_model, host=self.ollama_host,
-                    cwd=self.cwd, backend=self.llm_backend,
-                    router=self._llamacpp_router,
-                )
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
             registry.add(
@@ -379,14 +335,11 @@ class MAIRuntime:
             raise ValueError(f"Requested GGUF model is not registered: {selected_model}")
         model_prompt, inline_images = await prepare_main_image_input(
             prompt=prompt, attachments=attachments, principal=principal,
-            upload_root=self.upload_root, model=selected_model, backend=self.llm_backend,
-            ollama_client=self._ollama_client, separate_vision_model=self.vision_model,
+            upload_root=self.upload_root, model=selected_model,
         )
         adapter = self._adapter_for(selected_model)
-        # llama.cpp selection unifies Main, Verifier, and memory fact extraction.
-        # The independent verifier setting remains available in Ollama mode.
-        verifier_adapter = (adapter if self.llm_backend == "llamacpp" else
-                            self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter)
+        # The selected GGUF is shared by Main, Verifier, and memory extraction.
+        verifier_adapter = adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
@@ -489,7 +442,7 @@ class MAIRuntime:
         final_answer: str,
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
-        fact_extractor: OllamaFactExtractor,
+        fact_extractor: ModelFactExtractor,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
