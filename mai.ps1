@@ -1,7 +1,7 @@
 # One entry point for the Windows Portable runtime. No alternate providers or silent fallbacks.
 param(
     [Parameter(Position=0)]
-    [ValidateSet('start', 'setup', 'check')]
+    [ValidateSet('start', 'setup', 'check', 'update')]
     [string]$Command = 'start',
     [switch]$PreserveAndReinstallExisting
 )
@@ -216,6 +216,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
 }
 
 switch ($Command) {
+    'update' {
+        Require-File $python 'Portable Python'
+        & $python (Join-Path $portable 'update_llamacpp.py') --root $root
+        if ($LASTEXITCODE -ne 0) { throw "llama.cpp update failed with exit code $LASTEXITCODE" }
+    }
     'check' {
         Assert-PortableReady
         Write-Host 'MAI Portable checks passed (files and GGUF catalog; GPU/server startup not tested).'
