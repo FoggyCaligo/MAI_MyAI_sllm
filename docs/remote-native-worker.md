@@ -22,7 +22,7 @@
 
 원격 지원 범위는 파일·코드 작업, CSV 집계, 구조화 문서 편집, 터미널, 계산, 시각 조회, 웹 검색·조회, 한국 주식 시장 조회 및 브라우저 작업이다. 워커의 브라우저 세션 관리자는 동일 원격 연결에서 재사용된다.
 
-`memory_search`, `tool_result_read`, `file_download_link`는 MAI 서버의 저장소·권한·토큰 상태에 종속되므로 원격 도구가 아니다. `image_analyze`의 원격 사용에는 호스트 측 지원 조건과 워커의 `MAI_REMOTE_VISION_MODEL` 설정이 필요하다. 워커가 별도로 `MAI_REMOTE_OLLAMA_HOST`를 사용하는 구성이 가능하다.
+`memory_search`, `tool_result_read`, `file_download_link`는 MAI 서버의 저장소·권한·토큰 상태에 종속되어 원격화되지 않는다. Ollama 전용 원격 `image_analyze` 도구는 폐기됐다. 메인 모델 이미지 입력은 MAI 서버에 전달된 첨부에 대한 llama.cpp 직접 입력이다.
 
 Windows `terminal_run`은 CMD를 기본으로, Linux는 `/bin/sh`를 기본으로 한다. 지원하지 않는 셸 조합은 문법을 암묵적으로 변경하지 않고 오류로 반환한다. 체험 계정은 기존 읽기·파일 범위 제한을 유지한다.
 
@@ -30,7 +30,7 @@ Windows `terminal_run`은 CMD를 기본으로, Linux는 `/bin/sh`를 기본으�
 
 Owner의 원격 연결 UI에서 인증된 세션을 생성하고 대상 운영체제의 시작 명령을 선택한다. Windows는 `mai/app/static/remote-agent.ps1`, Linux는 `mai/app/static/remote-agent-linux.sh`의 흐름을 사용한다. 대상 컴퓨터는 HTTPS로 MAI에 접속해 작업을 폴링하고 결과를 반환한다.
 
-Linux에는 Python 3.11 이상, `curl`, `unzip`, `sha256sum`, 작동하는 `python3 -m venv` 및 필요한 Chromium 시스템 라이브러리가 있어야 한다. 두 워커는 서버가 제공하는 인증된 소스 아카이브를 받아 SHA-256을 확인한다. `remote-requirements.txt`는 워커용 의존성을 정의하며 MAI 서버의 추론·음성·메모리 환경 전체를 설치하지 않는다.
+Linux에는 Python 3.11 이상, `curl`, `unzip`, `sha256sum`, 작동하는 `python3 -m venv` 및 필요한 Chromium 시스템 라이브러리가 있어야 한다. 두 워커는 서버가 제공하는 인증된 소스 아카이브를 받아 SHA-256을 확인한다. 원격 워커는 `pyproject.toml`의 `[dependency-groups].remote`를 읽어 필요한 패키지만 설치하며, 본체 추론·음성·메모리 의존성 전체를 설치하지 않는다.
 
 아카이브 해시 단위 캐시와 설치 완료 마커를 사용한다. 워커 정상 종료는 세션 권한을 폐기하고 브라우저 리소스를 정리한다. 시작 명령의 인증값은 비밀정보이므로 공유하지 않는다.
 
