@@ -27,27 +27,27 @@ from resolve_portable_sources import SOURCES, github_json, matching_assets
 
 
 
-def select_stable_release(pattern: str):
-    """Require explicitly non-draft and non-prerelease releases with a verified asset."""
+def select_eligible_release(pattern: str):
+    """Select the latest release unless draft/prerelease is explicitly true."""
     for page in range(1, 4):
         releases = github_json(f"/repos/ggml-org/llama.cpp/releases?per_page=100&page={page}")
         if not isinstance(releases, list):
             raise RuntimeError("Invalid GitHub release listing")
         for release in releases:
-            if not isinstance(release, dict) or release.get("draft") is not False or release.get("prerelease") is not False:
+            if not isinstance(release, dict) or release.get("draft") is True or release.get("prerelease") is True:
                 continue
             matches = matching_assets(release, pattern)
             if len(matches) > 1:
-                raise RuntimeError(f"Ambiguous stable binaries in {release.get('tag_name')}")
+                raise RuntimeError(f"Ambiguous eligible release binaries in {release.get('tag_name')}")
             if len(matches) != 1:
                 continue
             asset = matches[0]
             digest, url = asset.get("digest"), asset.get("browser_download_url")
             if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
-                print(f"Stable {release.get('tag_name')} has no publisher SHA-256; skipping")
+                print(f"Release {release.get('tag_name')} has no publisher SHA-256; skipping")
                 continue
             if not isinstance(url, str) or not url.startswith("https://github.com/ggml-org/llama.cpp/releases/download/"):
-                print(f"Stable {release.get('tag_name')} has invalid URL; skipping")
+                print(f"Release {release.get('tag_name')} has invalid URL; skipping")
                 continue
             return release, {"url": url, "sha256": digest.partition(":")[2].lower()}
         if len(releases) < 100:
@@ -295,13 +295,13 @@ def main() -> int:
         raise RuntimeError("Pinned manifest lacks valid llama.cpp entry")
     receipt_matches = validate_installed(runtime, old, platform, executable)
     pattern = SOURCES["llamacpp"][2] if platform == "windows" else r"llama-.*-bin-ubuntu-vulkan-x64\.tar\.gz"
-    selected = select_stable_release(pattern)
+    selected = select_eligible_release(pattern)
     if selected is None:
-        print(f"No stable release with a compatible {platform} Vulkan binary and official SHA-256. Keeping installed llama.cpp.")
+        print(f"No non-draft/non-prerelease release with a compatible {platform} Vulkan binary and official SHA-256. Keeping installed llama.cpp.")
         return 0
-    stable, latest = selected
+    eligible, latest = selected
     if latest == old:
-        print(f"Stable release {stable.get('tag_name')} already pinned; no update required.")
+        print(f"Release {eligible.get('tag_name')} already pinned; no update required.")
         return 0
     if not receipt_matches:
         print("Installed llama.cpp receipt differs from manifest; cannot safely rule out a downgrade. Keeping existing runtime.")
@@ -312,14 +312,14 @@ def main() -> int:
         print(f"Could not verify current release age ({exc}); keeping existing runtime.")
         return 0
     current_date = release_date(current) if current else None
-    stable_date = release_date(stable)
-    if current_date is None or stable_date is None:
+    eligible_date = release_date(eligible)
+    if current_date is None or eligible_date is None:
         print("Could not establish release chronology; keeping existing runtime to avoid downgrade.")
         return 0
-    if stable_date <= current_date:
-        print(f"Newest compatible stable {stable.get('tag_name')} is not newer than the installed release; keeping existing runtime.")
+    if eligible_date <= current_date:
+        print(f"Newest eligible release {eligible.get('tag_name')} is not newer than the installed release; keeping existing runtime.")
         return 0
-    print(f"Selected newer stable release {stable.get('tag_name')}")
+    print(f"Selected newer eligible release {eligible.get('tag_name')}")
     print(f"Updating llama.cpp: {old['url']} -> {latest['url']}")
     runtime.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".mai-llamacpp-update-", dir=runtime.parent) as tmp:
