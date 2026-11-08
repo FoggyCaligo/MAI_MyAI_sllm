@@ -1,53 +1,51 @@
-# MAI — 개인 컴퓨터용 로컬 AI 비서
+# MAI — 로컬 llama.cpp 기반 개인 AI 비서
 
-MAI는 사용자의 컴퓨터에서 로컬 언어 모델로 실행되는 범용 AI 비서다. 대화하면서 기억을 검색하고, 웹·파일·문서·코드·터미널 도구로 작업한다. 기본 추론 백엔드는 Ollama이며 llama.cpp를 명시적으로 선택할 수 있다.
+MAI는 로컬 llama.cpp 추론 서버에 연결해 대화, 도구 실행, 장기기억 및 답변 검증을 수행하는 개인 AI 에이전트다. 현재 런타임은 **llama.cpp 전용**이며 Ollama 어댑터·서버·SDK·모델 매니페스트를 사용하지 않는다. 모델 파일은 GGUF로 관리한다.
 
-## 시작하기
+## 실행 및 설치
 
-- [일반 설치·계정·설정·문제 해결](setup.md)
-- [외장 SSD Portable 준비·실행·백업](portable/README.md)
-- [실행 구조와 개발 계약](docs/architecture.md)
+저장소 루트에서 Git Bash(Windows) 또는 Bash(Ubuntu 24.04 x86-64)를 사용한다.
 
-일반 설치를 마친 뒤 프로젝트 루트에서 실행한다.
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python run_server.py
+```bash
+./mai.sh setup
+./mai.sh check
+./mai.sh start
 ```
 
-브라우저에서 `http://127.0.0.1:8000`에 접속한다. 외부 접속은 별도 Tailscale Funnel 설정이 필요하다. 파일 수정·삭제와 터미널 명령은 실제 PC에 반영되므로 계정 권한과 작업 대상을 확인한다.
+Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 start`, CMD에서는 `mai.cmd`를 사용할 수 있다. 저장소 안의 `mai/`는 Python 패키지 디렉터리이므로 `./mai` 실행 파일은 존재하지 않는다.
 
-## 주요 기능
+`setup`은 공식 배포자 SHA-256으로 고정한 Python·uv·llama.cpp 런타임을 준비하고 `pyproject.toml`의 본체·개발 의존성을 설치한다. 첫 설치 시 Owner 로그인 정보를 요청해 `.env`를 만들며 기존 파일은 덮어쓰지 않는다. Linux 실행 파일과 Python 환경은 Linux 호스트 캐시에 설치된다. **GGUF 모델 파일과 일치하는 projector는 사용자가 별도로 확보해야 한다.**
 
-| 기능 | 지원 범위 |
+`check`는 필수 파일과 GGUF 카탈로그를 확인하지만 GPU 추론 성공을 보장하지 않는다. `start`는 llama.cpp의 단일 상주 모델 라우터를 실행한 뒤 MAI 웹 서버를 시작한다. 기본 웹 주소는 `http://127.0.0.1:8000`이다.
+
+## 핵심 구성
+
+| 구성 | 위치·역할 |
 |---|---|
-| 장기기억 | 사용자별 사실·개념 그래프를 SQLite에 저장하고 필요한 기억을 검색 |
-| 웹·시장 정보 | 검색, 페이지 본문 읽기, 브라우저 탐색, 한국 상장주식 시세·평가 정보 조회 |
-| 파일·코드 | 폴더 탐색, 텍스트 읽기·쓰기·복사·이동·삭제, 코드 검색·구조 분석·정확한 문자열 편집 |
-| 문서 | PDF·DOCX·XLSX·CSV·PPTX 읽기와 지원되는 위치의 기존 문서 수정 |
-| 터미널·원격 PC | 소유자 권한으로 명령 실행, 연결된 원격 PC에 같은 도구 사용 |
-| 이미지·음성 | 설정된 이미지 모델로 분석, 음성 인식·화자 비교, 브라우저 음성 합성 |
-| 웹 앱 | 로그인, 대화 기록, 진행 상황, 업로드, 파일 다운로드 링크 |
+| 메인·Verifier·기억 추론 | `mai/llm/llamacpp.py`, `llamacpp_router.py`; 선택한 GGUF 공통 사용 |
+| 에이전트 실행·도구 호출 | `mai/agent/` |
+| 사실·수치 검증 | `mai/agent/verification.py` |
+| 기억과 검색 | `mai/memory/`, SQLite와 FTS5 |
+| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `is_remote=true` 지정 |
+| 공개 웹 서버 | `mai/app/`; Tailscale Funnel/Cloudflare는 선택형 별도 기능 |
+| Portable 준비·검증 | `mai.sh`, `mai.ps1`, `portable/` |
 
-문서 편집은 DOCX 문단·표 셀, XLSX 셀, PPTX 도형 텍스트, CSV 기존 셀, PDF 페이지 회전·삭제를 지원한다. 새 문서 생성이나 PDF 본문 직접 수정은 `document_edit`의 지원 범위가 아니다. 코드 구조 분석은 Python과 JavaScript·TypeScript·TSX·C·C++·Java·Go·Rust·Ruby를 지원한다.
+일반 파일·코드·문서·웹·시장 정보·계산·터미널·브라우저 작업 및 지원 모델의 직접 이미지 입력을 사용할 수 있다. 원격 도구는 인증된 Windows/Linux 워커에서 실행하며 세션이 없으면 로컬로 대체하지 않는다.
 
-## 문서 안내
+## 문서
 
-| 내용 | 기준 문서 |
-|---|---|
-| 에이전트·권한·설정·개발 점검 | [실행 구조](docs/architecture.md) |
-| 기억 저장·검색·정정의 범위 | [장기기억](docs/memory.md) |
-| 도구 결과 크기 제한·페이지네이션 | [도구 결과 전달](docs/TOOL_RESULT_PAGINATION.md) |
-| 수치·사실·작업 결과 검증 | [답변 검증](docs/verifier.md) |
-| llama.cpp·모델 장기 보존 | [로컬 추론 백엔드](docs/llamacpp-portability.md) |
-| 원격 PC 연결 | [Windows/Linux 원격 연결](docs/remote-powershell-connection.md), [native 워커 계약](docs/remote-native-worker.md) |
-| 로그인 실패 제한 | [로그인 제한](docs/login-ip-lockout.md) |
-| 정적 코드 점검 | [참조 감사](docs/REFERENCE_AUDIT.md) |
-| 문장 분해기 알고리즘 | [문장 분해기](docs/sentence-breaker.md) |
-| 과거 작업·장애 기록 | [2026-11-04 인계 기록](docs/history/MAI_CODEX_HANDOFF_2026-11-04.md) |
+- [설치·설정·테스트](setup.md)
+- [Portable 구조·백업](portable/README.md)
+- [실행 구조](docs/architecture.md)
+- [답변 검증](docs/verifier.md)
+- [장기기억](docs/memory.md)
+- [도구 원문·페이지네이션](docs/TOOL_RESULT_PAGINATION.md)
+- [GGUF 선택과 라우터](docs/llamacpp-gguf-model-selection.md)
+- [원격 Native 워커](docs/remote-native-worker.md)
+- [운영체제 경계](docs/platform-boundary.md)
 
-## 라이선스
+## 권한과 라이선스
 
-최초 개발자: 신재용. 저작권 표기: `Copyright (C) 2026 신재용`.
+파일 변경과 터미널 명령은 실제 컴퓨터에 반영된다. Owner 접근 자격 증명과 원격 세션 키, 개인 DB·모델 파일은 공개 저장소에 올리지 않는다.
 
-저작권자가 라이선스할 권한을 가진 코드에는 **AGPL-3.0-only**가 적용된다. 수정·배포 및 네트워크 제공에 따른 소스 공개 의무 등은 [LICENSE](LICENSE)를 따른다. 제3자 코드의 권리와 라이선스는 각각의 고지를 따른다. [NOTICE](NOTICE) 참조.
+최초 개발자: 신재용. `Copyright (C) 2026 신재용`. 저작권자가 라이선스할 권한을 가진 코드는 **AGPL-3.0-only**를 따른다. [LICENSE](LICENSE), [NOTICE](NOTICE) 참조.
