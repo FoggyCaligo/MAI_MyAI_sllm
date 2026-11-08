@@ -1,7 +1,8 @@
 """Resolve Windows uv and llama.cpp assets into an immutable, SHA-256-pinned manifest.
 
 This command fetches publisher-declared digests from GitHub release asset metadata.
-Python is provisioned separately through the signed python.org install manager.\nIt does not treat a digest computed after download as independent authentication.
+Python is provisioned separately through the signed python.org install manager.
+It does not treat a digest computed after download as independent authentication.
 """
 from __future__ import annotations
 
@@ -14,7 +15,6 @@ from urllib.request import Request, urlopen
 
 
 SOURCES = {
-    "python": ("astral-sh", "python-build-standalone", r"cpython-3\.11\.[0-9]+\+[^/]+-x86_64-pc-windows-msvc-install_only\.tar\.gz"),
     "uv": ("astral-sh", "uv", r"uv-x86_64-pc-windows-msvc\.zip"),
     "llamacpp": ("ggml-org", "llama.cpp", r"llama-.*-bin-win-vulkan-x64\.zip"),
 }
