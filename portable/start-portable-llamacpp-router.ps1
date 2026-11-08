@@ -49,7 +49,7 @@ $env:VISION_MODEL = if ($mainProjector -or $MainVision) { $defaultModel } else {
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
                '--host', '127.0.0.1', '--port', '8080', '--jinja')
-$arguments += if ($preserveReasoning) { '--reasoning-preserve' } else { '--no-reasoning-preserve' }
+if ($preserveReasoning) { $arguments += '--reasoning-preserve' } else { $arguments += '--no-reasoning-preserve' }
 $process = $null
 try {
     $process = Start-Process -FilePath $server -ArgumentList $arguments -WorkingDirectory $iniDir -PassThru -NoNewWindow
