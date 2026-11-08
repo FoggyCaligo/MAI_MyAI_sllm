@@ -84,7 +84,11 @@ class LlamaCppAdapter:
             raise OllamaProtocolError("llama.cpp content and reasoning must be strings")
         # A successful HTTP response can still be an unusable generation.
         # Never treat empty structured-review content as valid JSON.
-        if request.response_format is not None and not content.strip() and not incomplete:
+        if request.response_format is not None and incomplete:
+            raise OllamaProtocolError(
+                "llama.cpp structured review hit output limit; partial JSON cannot be validated"
+            )
+        if request.response_format is not None and not content.strip():
             choice = choices[0]
             finish = choice.get("finish_reason")
             usage = result.get("usage")
