@@ -382,7 +382,8 @@ def test_verifier_receives_tool_arguments_in_original_execution_order() -> None:
                 {"tools": ["echo"]}, {"text": "first"}, {"text": "second"},
             ]
             assert [item["index"] for item in evidence] == [0, 1, 2]
-            return __import__("mai.agent.verification", fromlist=["FinalVerificationResult"]).FinalVerificationResult(ok=True)
+            from mai.agent.verification import FinalVerificationResult
+            return FinalVerificationResult(ok=True)
 
     adapter = FakeAdapter([
         activate("echo"),
