@@ -222,7 +222,7 @@ class MAIRuntime:
         if adapter is None:
             adapter = (OllamaAdapter(ModelConfig(model=clean_model, host=self.ollama_host, think=True, options={"num_predict": ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)}))
                        if self.llm_backend == "ollama" else
-                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True), router=self._llamacpp_router))
+                       LlamaCppAdapter(ModelConfig(model=clean_model, host=self.llamacpp_host, think=True, max_output_tokens=ollama_generation_limit("OLLAMA_AGENT_MAX_OUTPUT_TOKENS", 32768)), router=self._llamacpp_router))
             self._adapters[clean_model] = adapter
         return adapter
 
