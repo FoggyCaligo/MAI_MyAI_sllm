@@ -20,6 +20,20 @@ LLAMACPP_MAIN_VISION: true
 * 파일명은 UI 표시 이름이고, 내부 라우터 ID는 **정규화된 GGUF 경로의 SHA-256 기반 ID**다. 따라서 사용자가 임의의 임시 ID를 입력해 로드할 수 없다.
 * 모델 파일 목록은 **프로세스 시작 시 생성된 고정 스냅샷**이다. 파일 추가·삭제 또는 `settings.yaml` 변경을 반영하려면 MAI Portable 서버를 재시작한다. 실행 중 목록과 등록된 라우터가 달라지면 명시적으로 오류를 반환한다.
 
+## llama.cpp reasoning 관련 버전 독립 설정
+
+`settings.yaml`에 다음 비밀정보가 아닌 설정을 보관한다.
+
+```yaml
+LLAMACPP_REASONING_PRESERVE: false
+```
+
+- `false`: Windows와 Linux Portable 실행기가 `--no-reasoning-preserve`로 라우터를 시작하고, 자식 모델이 상속하는 `LLAMA_ARG_REASONING_PRESERVE=false`도 설정한다. `true`일 때는 해당하는 활성 옵션을 쓴다. 옵션은 모델 파일이나 llama.cpp 바이너리를 수정하지 않고, 실행 시 전달한다.
+- llama.cpp OpenAI 호환 요청에서는 **`reasoning_effort` 필드를 보내지 않는다**. 빈 문자열이 아니라 필드 자체를 생략하므로 채팅 템플릿의 기본 effort를 사용한다.
+- reasoning preserve를 비활성화해도 **현재 턴의 Think 생성은 별도로 유지될 수 있다**. 또한 `think=False`인 Verifier/기억 추출에서 이전의 `reasoning_effort=none` 강제값이 제거되므로 모델 기본 reasoning이 작동할 수 있다. 실제 동작은 모델/템플릿으로 검증해야 한다.
+- 설정은 Portable 런처에만 적용되므로 바이너리 버전을 올려도 YAML 설정이 유지된다. 새 llama.cpp 버전에서 지원하지 않는 플래그라면 시작 실패를 그대로 보고하며 옵션을 무시하거나 암묵적으로 이전 설정으로 되돌리지 않는다.
+- Ollama Modelfile의 `TEMPLATE {{ .Prompt }}`만으로는 Ollama의 샘플링 기본값이나 내부 템플릿 reasoning 옵션을 확정할 수 없다.
+
 ## Windows / Linux 실행
 
 Windows:
