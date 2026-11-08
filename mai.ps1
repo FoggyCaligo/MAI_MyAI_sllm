@@ -249,9 +249,7 @@ switch ($Command) {
         Write-Host 'MAI Portable checks passed (files and GGUF catalog; GPU/server startup not tested).'
     }
     'setup' {
-        Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py --include-llamacpp)'
-        Require-File $installer 'Portable provisioning script'
-        & $installer -Manifest $manifest
+        Invoke-MaiSetup
     }
     'start' {
         Assert-PortableReady
