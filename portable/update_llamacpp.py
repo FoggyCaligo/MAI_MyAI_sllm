@@ -177,7 +177,10 @@ def parse_llamacpp_build(output: str) -> int | None:
         for pattern in patterns
         for match in re.finditer(pattern, output)
     }
-    return next(iter(builds)) if len(builds) == 1 and next(iter(builds)) > 0 else None
+    if len(builds) != 1:
+        return None
+    build = builds.pop()
+    return build if build > 0 else None
 
 
 def release_build(release: dict) -> int | None:
