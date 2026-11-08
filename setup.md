@@ -110,22 +110,23 @@ python run_server.py
 
 ### 2-C. llama.cpp GGUF Portable — Windows와 Ubuntu 공통 설정
 
-**현재 권장 Portable 실행 경로:** MAI 소스·설정·GGUF·DB는 동일한 SSD에 놓고, **Windows는 Windows 실행 파일**, **Linux는 Linux 실행 파일**로 llama.cpp 라우터를 실행한다. 이 실행 방식은 **서버 하나(127.0.0.1:8080)에서 메인·Verifier GGUF를 각각 라우팅**한다. 라우터의 최대 상주 모델 수는 **1로 고정**한다. Main의 도구 호출·임시답변 생성까지 Main이 유지되고, Verifier 호출 시 Main을 내리고 LFM을 로드한다. 검증 후 재수정이 필요하면 Main을 다시 적재한다. 실제 KV 파일의 저장/복원은 사용하지 않고 대화·도구 로그와 직전 임시답변 및 피드백을 새 모델 요청에 포함한다. 기존 Agent·Verifier 프롬프트 및 검증 흐름은 유지한다.
+**llama.cpp Portable 실행 경로:** MAI 소스·설정·GGUF·DB는 SSD에 두고, **Windows와 Linux는 각각의 네이티브 실행 파일**을 사용한다. 라우터는 서버 하나(`127.0.0.1:8080`)에서 시작 시 탐색한 GGUF 카탈로그를 제공하며, 동시에 상주할 모델 수는 **1**이다. 현재 llama.cpp에서 선택한 GGUF는 Main·Verifier·기억 추출에 공통 적용한다. Main이 임시답변을 만들면 Verifier 호출 전에 필요한 모델 전환을 수행하며, 교정이 필요할 때 모델을 다시 적재하고 대화·도구 결과·최신 반려 초안과 피드백을 재구성한다. 외부 KV 저장/복원은 사용하지 않는다. 서로 다른 검증 프롬프트와 JSON 스키마는 유지한다.
 
 **모델 경로는 명령 인자 대신 프로젝트 루트의 `settings.yaml`에 둔다.** 현재 파일은 다음 구성을 가리킨다.
 
 ```yaml
+LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"
 LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
 LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
 LLAMACPP_MAIN_VISION: true
-LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf"
+LLAMACPP_REASONING_PRESERVE: false
 ```
 
 상대 경로는 프로젝트 루트 기준이다. 메인 모델·projector의 조합이 실제로 이미지 입력을 처리하는지는 llama.cpp 버전과 모델로 확인해야 한다. **파일 경로·GGUF 헤더 검사만으로 비전 추론 성공은 증명되지 않는다.**
 
 #### 2-C-1. Hugging Face에서 GGUF 내려받기 (실사용 예시)
 
-모델 저장소 및 파일명은 각 제작자의 Hugging Face 파일 목록과 대조한다. 아래는 **Ornith 1.5 9B Q4_K_M 메인 모델, BF16 mmproj, LFM2.5 Q4_K_M Verifier**를 현재 `settings.yaml` 경로에 다운로드하는 예시다.
+모델 저장소 및 파일명은 각 제작자의 Hugging Face 파일 목록과 대조한다. 아래는 **Ornith 1.5 9B Q4_K_M 메인 모델, BF16 mmproj 및 선택 가능한 LFM2.5 Q4_K_M GGUF**를 같은 모델 폴더에 받는 예시다. LFM GGUF가 있다고 자동으로 별도의 검증 모델로 배정되지는 않는다.
 
 1. Python 3.11 이상이 설치된 인터넷 연결 PC에서 Hugging Face CLI 준비:
 
@@ -142,7 +143,7 @@ hf download ornith-ai/Ornith-1.5-9B-GGUF mmproj-Ornith-1.5-9B-BF16.gguf --local-
 hf download LiquidAI/LFM2.5-2.6B-GGUF LFM2.5-2.6B-Q4_K_M.gguf --local-dir "./portable/portable-models/gguf"
 ```
 
-공식 파일 확인: [Ornith 1.5 GGUF](https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main), [LFM GGUF](https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/tree/main). 접근 승인이 필요한 저장소에서는 `hf auth login` 후 이용 약관·라이선스 조건에 따라 다운로드한다. **다운로드 명령은 모델 파일만 가져오며, llama.cpp 바이너리나 MAI Python 패키지를 설치하지 않는다.** 저장 경로·파일명은 `settings.yaml`과 정확히 일치해야 한다.
+공식 파일 확인: [Ornith 1.5 GGUF](https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main), [LFM GGUF](https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/tree/main). 접근 승인이 필요한 저장소에서는 `hf auth login` 후 이용 약관·라이선스 조건에 따라 다운로드한다. **다운로드 명령은 모델 파일만 가져오며, llama.cpp 바이너리나 MAI Python 패키지를 설치하지 않는다.** 기본 모델 경로와 projector는 `settings.yaml`과 일치해야 한다. 추가 GGUF는 지정 카탈로그 폴더에서 탐색되며, 목록은 MAI 재시작 시 갱신된다.
 
 3. 다운로드 확인:
 
@@ -229,7 +230,7 @@ bash portable/prepare-portable-linux.sh --with-llamacpp
 
 일부 셸은 `XDG_CACHE_HOME` 미설정 시 빈 문자열을 사용하며, 사용자는 호스트별 권한과 설치 디렉터리를 확인해야 한다. `llamacpp.before-update`가 있으면 백업 이름을 변경한다. Linux 매니페스트의 Python·uv·Ollama 릴리스 항목도 바뀌면 해당 캐시의 영수증 불일치로 설치가 중단될 수 있으므로 원본 항목을 유지한 채 `llamacpp` 항목만 갱신한다.
 
-**갱신 후 검사 (Windows/Linux 공통):** `/v1/models`에서 `mai-main`과 `mai-verifier`가 표시되는지, 실제 메인 응답·도구 호출·Ornith 이미지 입력·LFM Verifier JSON 구조화 검증이 성공하는지 확인한다. 모델 목록 등록만으로 추론 성공을 확정할 수 없다. 문제가 생기면 MAI 종료 후 이전 바이너리와 이전 매니페스트를 복원한다. llama.cpp 업데이트는 GGUF와 mmproj 형식을 새 버전이 지원하는지 확인하며 진행한다.
+**갱신 후 검사 (Windows/Linux 공통):** `/v1/models`에서 설정된 GGUF 카탈로그의 등록 모델이 표시되는지, 선택 모델의 메인 응답·도구 호출·(지원하는 경우) Ornith 이미지 입력·Verifier JSON 구조화 검증이 성공하는지 확인한다. 모델 목록 등록만으로 추론 성공을 확정할 수 없다. 문제가 생기면 MAI 종료 후 이전 바이너리와 이전 매니페스트를 복원한다. llama.cpp 업데이트는 GGUF와 mmproj 형식을 새 버전이 지원하는지 확인하며 진행한다.
 
 **현재 상태:** Windows 및 Linux 실행 스크립트가 별개인 이유는 OS 네이티브 바이너리·셸이 다르기 때문이다. llama.cpp를 공통 추론 백엔드로 통일하더라도 이 **OS별 런처 구분은 필요**하다. 사용자는 하나의 `setup.md`에서 통합 관리하고, 엔진과 GGUF 경로는 `settings.yaml` 및 Portable 매니페스트를 통해 관리할 수 있다.
 
