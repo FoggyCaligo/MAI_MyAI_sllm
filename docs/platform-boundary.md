@@ -1,5 +1,7 @@
 # dev OS 경계 — Windows / Linux
 
+> 이 문서는 구현된 OS 분리와 검증 경계를 설명한다. Linux 원격 워커는 현재 소스에 구현되어 있으나 운영체제별 실기기 검증은 별도이다.
+
 ## 목적
 
 MAI Agent, verifier, memory, tool contracts, GGUF/SQLite are host-neutral.
