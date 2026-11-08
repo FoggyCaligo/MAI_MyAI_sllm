@@ -159,14 +159,25 @@ def installed_build(runtime: Path, exe: str) -> int | None:
         )
         return None
     output = (proc.stdout + b"\n" + proc.stderr).decode("utf-8", errors="replace")
-    for expression in (r"(?im)^\s*version:\s*b?(\d+)\b",
-                       r"(?im)^\s*build(?: number)?:\s*b?(\d+)\b",
-                       r"(?im)\bllama\.cpp\s+(?:version\s+)?b(\d+)\b"):
-        match = re.search(expression, output)
-        if match:
-            return int(match.group(1))
-    print(f"Could not parse installed llama.cpp build from --version output: {output[:400]!r}", file=sys.stderr)
-    return None
+    build = parse_llamacpp_build(output)
+    if build is None:
+        print(f"Could not parse installed llama.cpp build from --version output: {output[:400]!r}", file=sys.stderr)
+    return build
+
+
+def parse_llamacpp_build(output: str) -> int | None:
+    """Parse a build identity, never a semantic version such as 0.9.0-dev."""
+    patterns = (
+        r"(?im)\bbuild(?: number)?\s*[:=]?\s*b?(\d+)\b",
+        r"(?im)^\s*version:\s*b(\d+)\s*$",
+        r"(?im)\bllama\.cpp\s+(?:version\s+)?b(\d+)\b",
+    )
+    builds = {
+        int(match.group(1))
+        for pattern in patterns
+        for match in re.finditer(pattern, output)
+    }
+    return next(iter(builds)) if len(builds) == 1 and next(iter(builds)) > 0 else None
 
 
 def release_build(release: dict) -> int | None:
