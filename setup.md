@@ -70,7 +70,7 @@ ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpr
 
 ## 4. llama.cpp 업데이트 방법
 - Git Bash에서 `./mai.sh update`를 실행한다.
-- HTTP 504가 반복된다면 [llama.cpp 공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 오류 로그에 표시된 정확한 파일명으로 ZIP을 직접 다운로드하고, `portable/portable-downloads/` 폴더에 보관한 후 같은 명령을 재실행한다.
+- 업데이트는 로컬에 보관된 ZIP, curl GET, GitHub 공식 릴리스 자산 API, Python 직접 다운로드 순으로 자동 시도한다. 어떤 경로로 받더라도 공식 SHA-256이 일치해야 설치한다. 모든 자동 다운로드가 실패할 때만 [llama.cpp 공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 오류 로그에 표시된 정확한 파일명으로 ZIP을 직접 다운로드하고, `portable/portable-downloads/` 폴더에 보관한 후 같은 명령을 재실행한다.
 - MAI는 로컬 ZIP도 게시자 SHA-256과 대조하며, 불일치하면 사용하지 않는다.
 
 ## 5. 고급설정
