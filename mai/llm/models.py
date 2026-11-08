@@ -71,7 +71,6 @@ class ModelTurn:
     thinking: str
     tool_calls: tuple[NativeToolCall, ...]
     assistant_message: Message
-    incomplete: bool = False
 
     @property
     def has_tool_calls(self) -> bool:
