@@ -46,8 +46,10 @@ $verifier = Resolve-Gguf $VerifierGgufPath 'Verifier'
 $mainProjector = Resolve-Gguf $MainMmprojPath 'Main mmproj'
 $vision = Resolve-Gguf $VisionGgufPath 'Vision'
 $visionProjector = Resolve-Gguf $VisionMmprojPath 'Vision mmproj'
-if ($main -eq $verifier) {
-    Write-Warning 'The Main and Verifier aliases refer to the same file: reviewer independence is not guaranteed.'
+$sharedMainVerifier = [string]::Equals($main, $verifier, [StringComparison]::OrdinalIgnoreCase)
+$verifierAlias = if ($sharedMainVerifier) { 'mai-main' } else { 'mai-verifier' }
+if ($sharedMainVerifier) {
+    Write-Warning 'Main and Verifier share one resident GGUF/model alias; reviewer independence is not guaranteed.'
 }
 # The llama.cpp router INI uses keys identical to CLI flags, without '--'.
 # The generated INI is stored outside Git; paths with spaces are supported as plain INI values.
@@ -62,8 +64,10 @@ $iniLines.Add('parallel = 1')
 $iniLines.Add('[mai-main]')
 $iniLines.Add("model = $main")
 if ($mainProjector) { $iniLines.Add("mmproj = $mainProjector") }
-$iniLines.Add('[mai-verifier]')
-$iniLines.Add("model = $verifier")
+if (-not $sharedMainVerifier) {
+    $iniLines.Add('[mai-verifier]')
+    $iniLines.Add("model = $verifier")
+}
 if ($vision) {
     $iniLines.Add('[mai-vision]')
     $iniLines.Add("model = $vision")
@@ -84,7 +88,7 @@ $env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
 $env:LLM_BACKEND = 'llamacpp'
 $env:MAIN_MODEL = 'mai-main'
-$env:VERIFIER_MODEL = 'mai-verifier'
+$env:VERIFIER_MODEL = $verifierAlias
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
 $env:LLAMACPP_MAIN_VISION = if ($mainProjector -or $MainVision) { 'true' } else { 'false' }
 $env:VISION_MODEL = if ($vision) { 'mai-vision' } elseif ($mainProjector -or $MainVision) { 'mai-main' } else { '' }
@@ -100,7 +104,7 @@ try {
         try {
             $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
             $ids = @($listing.data | ForEach-Object { $_.id })
-            if ($ids -contains 'mai-main' -and $ids -contains 'mai-verifier' -and
+            if ($ids -contains 'mai-main' -and $ids -contains $verifierAlias -and
                 (-not $vision -or $ids -contains 'mai-vision')) { $ready = $true; break }
         } catch { }
         Start-Sleep -Seconds 1
