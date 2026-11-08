@@ -25,4 +25,4 @@ Git 저장소에는 **MAI 소스코드·검증 스크립트·설치 방법**을 
 
 ## 호환성 범위
 
-현재 **텍스트 채팅 런타임의 llama.cpp 연결 경로**를 제공함. Windows Portable은 `--include-llamacpp`로 생성한 매니페스트와 `portable/prepare-portable.ps1`로 llama.cpp 실행 파일을 준비할 수 있음. GGUF 가중치는 별도로 준비해야 하며 현재 Ollama 모델이 llama.cpp에서 즉시 실행된다고 보장하지 않음. 실제 모델별 회귀 테스트 결과를 보고 지원 범위를 확정할 것.
+현재 **텍스트 및 설정된 Main 비전 입력을 포함하는 llama.cpp 연결 경로**를 제공함. GGUF 카탈로그·라우터의 모델 언로드 확인·단일 모델 상주 및 128K 실행기 기본 문맥은 [GGUF 모델 선택](llamacpp-gguf-model-selection.md)과 [Portable 안내](../portable/README.md)를 참고함. Windows Portable은 `--include-llamacpp`로 생성한 매니페스트와 `portable/prepare-portable.ps1`로 llama.cpp 실행 파일을 준비할 수 있음. GGUF 가중치는 별도로 준비해야 하며 현재 Ollama 모델이 llama.cpp에서 즉시 실행된다고 보장하지 않음. 실제 모델별 회귀 테스트 결과를 보고 지원 범위를 확정할 것.
