@@ -478,7 +478,7 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
     labels = runtime.model_labels() if runtime.llm_backend == "llamacpp" else {}
     if labels and set(visible) != set(labels):
         raise HTTPException(status_code=500, detail="GGUF catalog differs from running llama.cpp router; restart MAI")
-    return {"models": visible, "current": runtime.model, "locked": False, "labels": labels,
+    return {"models": visible, "current": runtime.selected_model, "locked": False, "labels": labels,
             "backend": runtime.llm_backend}
 
 
