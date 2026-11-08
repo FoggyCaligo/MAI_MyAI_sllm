@@ -187,13 +187,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
-        ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        llm_backend=os.environ.get("LLM_BACKEND", "ollama"),
+        llm_backend=os.environ.get("LLM_BACKEND", "llamacpp"),
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
-        vision_model=os.environ.get("VISION_MODEL") or None,
-        verifier_model=os.environ.get("VERIFIER_MODEL"),
         upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
@@ -476,7 +473,7 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
         runtime_model=runtime.model,
         installed_models=installed,
     )
-    labels = runtime.model_labels() if runtime.llm_backend == "llamacpp" else {}
+    labels = runtime.model_labels()
     if labels and set(visible) != set(labels):
         raise HTTPException(status_code=500, detail="GGUF catalog differs from running llama.cpp router; restart MAI")
     return {"models": visible, "current": runtime.selected_model, "locked": False, "labels": labels,
