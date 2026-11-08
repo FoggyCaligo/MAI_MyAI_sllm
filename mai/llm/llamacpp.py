@@ -76,7 +76,8 @@ class LlamaCppAdapter:
         finish_reason = choices[0].get("finish_reason")
         if finish_reason == "length":
             raise OllamaProtocolError(
-                f"llama.cpp output limit reached (max_tokens={self.config.max_output_tokens}); "
+                f"llama.cpp output limit reached (finish_reason={finish_reason!r}, "
+                f"max_tokens={self.config.max_output_tokens}); "
                 "incomplete response or tool calls rejected"
             )
         msg = choices[0].get("message")
