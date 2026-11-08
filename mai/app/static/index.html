@@ -488,7 +488,52 @@
     wrap.appendChild(details);
   }
   async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
-  async function loadModels(){const res=await fetch('/models',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'모델 목록 조회 실패');$model.innerHTML='';data.models.forEach(name=>{const option=document.createElement('option');option.value=name;option.textContent=name;option.selected=name===data.current;$model.appendChild(option);});if(!data.models.length)$model.innerHTML='<option value="">설치된 모델 없음</option>';}
+  let modelBackend='ollama', loadedModel='', switchingModel=false;
+  async function loadModels(){
+    const res=await fetch('/models',{headers:authHeaders()});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.detail||'모델 목록 조회 실패');
+    modelBackend=data.backend||'ollama';
+    $model.innerHTML='';
+    data.models.forEach(name=>{
+      const option=document.createElement('option');
+      option.value=name;
+      option.textContent=data.labels?.[name]||name;
+      option.selected=name===data.current;
+      $model.appendChild(option);
+    });
+    if(!data.models.length)$model.innerHTML='<option value="">설치된 모델 없음</option>';
+    loadedModel=$model.value;
+    $model.disabled=Boolean(data.locked);
+  }
+  $model.addEventListener('change',async()=>{
+    if(modelBackend!=='llamacpp'){loadedModel=$model.value;return;}
+    const requested=$model.value, previous=loadedModel;
+    if(activeChat){$model.value=previous;$uploadStatus.classList.add('failed');$uploadStatus.textContent='진행 중인 대화가 끝난 후 모델을 변경할 수 있습니다.';return;}
+    if(switchingModel||requested===previous)return;
+    switchingModel=true;
+    $model.disabled=true;
+    $uploadStatus.classList.remove('failed');
+    $uploadStatus.textContent='모델 전환 중: 기존 모델 언로드 → 선택 모델 로드';
+    try{
+      const res=await fetch('/models/select',{
+        method:'POST',headers:authHeaders({'Content-Type':'application/json'}),
+        body:JSON.stringify({model:requested}),
+      });
+      const data=await res.json();
+      if(!res.ok)throw new Error(data.detail||'llama.cpp 모델 전환 실패');
+      if(data.model!==requested||data.status!=='loaded')throw new Error('모델 전환 응답 계약 위반');
+      loadedModel=requested;
+      $uploadStatus.textContent='모델 전환 완료';
+    }catch(err){
+      $model.value=previous;
+      $uploadStatus.classList.add('failed');
+      $uploadStatus.textContent='모델 전환 실패: '+err.message;
+    }finally{
+      switchingModel=false;
+      $model.disabled=false;
+    }
+  });
   function showApp(){ $remoteBtn.hidden=state.role!=='owner'; $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='연결 실패';$connection.title=err.message;}); syncSendButton(); recoverRemoteSession().catch(err=>{$remoteError.textContent=err.message;}); $input.focus(); }
   function showLogin(message=''){remoteReset();$remoteBtn.hidden=true;$remotePanel.hidden=true;if(activeChat){activeChat.controller.abort();activeChat=null;}syncSendButton();state.token=null;state.userId=null;state.role=null;sessionStorage.removeItem('MAI:auth-token');$app.style.display='none';$loginScreen.style.display='grid';$loginError.textContent=message;$loginId.focus();}
   async function restoreSession(){if(!state.token){showLogin();return;}try{const res=await fetch('/me',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'세션 만료');state.userId=data.user_id;state.role=data.role;showApp();}catch(err){showLogin(err.message);}}
@@ -544,7 +589,7 @@
     return references;
   }
   $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`업로드 중: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||'업로드 실패');const reference=`업로드된 파일: ${data.path}`;if(file.type.startsWith('image/'))pendingUploadedImages.push(data.filename);$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`업로드 완료: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`업로드 오류: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
-  $form.addEventListener('submit',async event=>{event.preventDefault();let message=$input.value.trim();if(uploadingClipboardImages)return;if(!message && clipboardImages.length === 0){if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);syncSendButton();$input.focus();}return;}if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);}if (clipboardImages.length) {
+  $form.addEventListener('submit',async event=>{event.preventDefault();let message=$input.value.trim();if(uploadingClipboardImages||switchingModel)return;if(!message && clipboardImages.length === 0){if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);syncSendButton();$input.focus();}return;}if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);}if (clipboardImages.length) {
     uploadingClipboardImages = true;
     $uploadStatus.classList.remove('failed');
     try {
