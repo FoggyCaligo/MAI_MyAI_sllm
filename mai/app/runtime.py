@@ -143,6 +143,7 @@ class MAIRuntime:
         self.llamacpp_host = llamacpp_host
         self.ollama_host = ollama_host
         self.model = model
+        self.selected_model = model
         self.verifier_model = verifier_model.strip() if verifier_model is not None else None
         self.vision_model = vision_model.strip() if vision_model and vision_model.strip() else None
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
@@ -263,12 +264,17 @@ class MAIRuntime:
         """
         if self.llm_backend != "llamacpp" or self._llamacpp_router is None:
             raise RuntimeError("Explicit model preload requires llama.cpp router mode")
+        if model not in await self.list_models():
+            raise ValueError(f"Requested GGUF model is not registered: {model}")
+        # A previous turn's memory extractor must not evict the freshly selected
+        # model immediately after this endpoint acknowledges successful loading.
+        pending = tuple(self._background_tasks)
+        if pending:
+            await asyncio.gather(*(asyncio.shield(task) for task in pending))
         async with self._llamacpp_model_scope():
-            allowed = await self.list_models()
-            if model not in allowed:
-                raise ValueError(f"Requested GGUF model is not registered: {model}")
             async with httpx.AsyncClient(timeout=15.0) as client:
                 await self._llamacpp_router.prepare(model, client)
+            self.selected_model = model
         return model
 
     def _registry_for(
