@@ -1,4 +1,4 @@
-"""Regression checks for opt-in Linux llama.cpp Portable and native Linux tools."""
+"""Regression checks for unified Linux llama.cpp Portable and native Linux tools."""
 from __future__ import annotations
 import os
 from pathlib import Path
@@ -14,8 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="bash required for script syntax validation")
 @pytest.mark.parametrize("name", [
-    "prepare-portable-linux.sh",
-    "start-portable-linux.sh",
+    "../mai.sh",
     "start-portable-llamacpp-linux.sh",
 ])
 def test_linux_portable_bash_syntax(name: str):
@@ -24,9 +23,9 @@ def test_linux_portable_bash_syntax(name: str):
     assert result.returncode == 0, result.stderr
 
 
-def test_linux_manifest_includes_llamacpp_only_when_opted_in():
+def test_linux_manifest_includes_llamacpp_without_ollama():
     from portable.resolve_portable_sources_linux import SOURCES_LINUX
-    assert set(SOURCES_LINUX) == {"python", "uv", "ollama", "llamacpp"}
+    assert set(SOURCES_LINUX) == {"python", "uv", "llamacpp"}
     import re
     assert re.fullmatch(
         SOURCES_LINUX["llamacpp"][2],
@@ -34,15 +33,15 @@ def test_linux_manifest_includes_llamacpp_only_when_opted_in():
     )
 
 
-def test_separate_linux_llamacpp_launcher_keeps_ollama_script_untouched():
-    old = (ROOT / "portable" / "start-portable-linux.sh").read_text(encoding="utf-8")
-    new = (ROOT / "portable" / "start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
-    assert 'LLM_BACKEND="ollama"' in old
-    assert 'LLM_BACKEND=llamacpp' in new
-    assert '--models-preset "$ini"' in new
-    assert 'VERIFIER_MODEL="$default_model"' in new
-    assert 'llamacpp_model_catalog.py' in new
-    assert 'resolve_llamacpp_settings import read_config' in new
+def test_unified_linux_launcher_uses_llamacpp_and_pyproject_only():
+    entry = (ROOT / "mai.sh").read_text(encoding="utf-8")
+    launcher = (ROOT / "portable" / "start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
+    assert 'start-portable-llamacpp-linux.sh' in entry
+    assert 'UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root[dev]"' in entry
+    assert '--models-preset "$ini"' in launcher
+    assert 'llamacpp_model_catalog.py' in launcher
+    assert 'LLM_BACKEND=llamacpp' in launcher
+    assert 'VERIFIER_MODEL=' not in launcher
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux execution contract")
