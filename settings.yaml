@@ -10,7 +10,9 @@ LLAMACPP_HOST: "http://127.0.0.1:8080"  # llama.cpp 선택 시 필요
 # llama.cpp Portable 라우터 전용 모델 경로 (프로젝트 루트 기준 상대 경로 또는 절대 경로).
 # 기존 Ollama 실행에서는 사용하지 않음. 파일은 각 경로에 별도로 준비해야 함.
 LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
-LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf"
+# Experimental shared-resident mode: verifier points to the exact Main GGUF.
+# Set a distinct existing GGUF path to restore the separate reviewer model.
+LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
 # 비전 지원 메인 모델에서 별도 projector를 사용하는 경우 주석 해제:
 LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
 # 메인 Ornith 1.5에 이미지를 직접 전달 (실제 추론은 호스트의 llama.cpp에서 검증 필요).

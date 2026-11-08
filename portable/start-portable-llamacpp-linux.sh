@@ -61,18 +61,22 @@ if vision_projector and not vision: raise ValueError("Vision projector requires 
 lines = ["version = 1", "[*]", "ctx-size = 131072", "n-gpu-layers = 99", "parallel = 1",
          "[mai-main]", "model = " + str(main)]
 if projector: lines.append("mmproj = " + str(projector))
-lines += ["[mai-verifier]", "model = " + str(verifier)]
+shared_main_verifier = main == verifier
+if not shared_main_verifier:
+    lines += ["[mai-verifier]", "model = " + str(verifier)]
 if vision:
     lines += ["[mai-vision]", "model = " + str(vision)]
     if vision_projector: lines.append("mmproj = " + str(vision_projector))
 target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print("true" if projector or cfg["LLAMACPP_MAIN_VISION"] else "false")
 print("true" if vision else "false")
+print("mai-main" if shared_main_verifier else "mai-verifier")
 PY
 )"
 main_vision="$(printf '%s\n' "$flags" | sed -n 1p)"
 separate_vision="$(printf '%s\n' "$flags" | sed -n 2p)"
-export LLM_BACKEND=llamacpp MAIN_MODEL=mai-main VERIFIER_MODEL=mai-verifier
+verifier_alias="$(printf '%s\n' "$flags" | sed -n 3p)"
+export LLM_BACKEND=llamacpp MAIN_MODEL=mai-main VERIFIER_MODEL="$verifier_alias"
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
 if [[ "$separate_vision" == true ]]; then
   export VISION_MODEL=mai-vision
@@ -97,7 +101,7 @@ ready=0
 for attempt in {1..120}; do
   kill -0 "$router_pid" 2>/dev/null || { echo "llama.cpp router exited" >&2; exit 1; }
   if curl -fsS --max-time 2 http://127.0.0.1:8080/v1/models 2>/dev/null |
-     "$python" -c 'import json,sys; x=json.load(sys.stdin); ids={e["id"] for e in x["data"]}; assert {"mai-main","mai-verifier"}<=ids and (sys.argv[1]!="true" or "mai-vision" in ids)' "$separate_vision" 2>/dev/null; then
+     "$python" -c 'import json,sys; x=json.load(sys.stdin); ids={e["id"] for e in x["data"]}; assert {"mai-main",sys.argv[2]}<=ids and (sys.argv[1]!="true" or "mai-vision" in ids)' "$separate_vision" "$verifier_alias" 2>/dev/null; then
     ready=1; break
   fi
   sleep 1
