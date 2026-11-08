@@ -1,7 +1,6 @@
 """One llama.cpp router identity can serve Main, Verifier and memory extraction.
 
-The configured experiment shares a GGUF file and the launchers map both roles
-to mai-main. These tests guard both launcher contracts and real routing of
+The launchers map both roles to the chosen GGUF identity. These tests guard
 sequential requests through one already-loaded llama.cpp model.
 """
 from __future__ import annotations
@@ -21,26 +20,20 @@ from portable.resolve_llamacpp_settings import read_config
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_experimental_settings_use_same_ornith_gguf_for_both_roles():
+def test_settings_define_default_ornith_for_auto_catalog():
     config = read_config(ROOT / "settings.yaml")
-    assert config["LLAMACPP_MAIN_GGUF_PATH"] == config["LLAMACPP_VERIFIER_GGUF_PATH"]
     assert "Ornith-1.5-9B" in str(config["LLAMACPP_MAIN_GGUF_PATH"])
+    assert config["LLAMACPP_GGUF_DIRECTORY"] == "portable/portable-models/gguf"
 
 
-def test_windows_launcher_registers_one_identity_only_when_paths_are_equal():
-    script = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
-    assert '$sharedMainVerifier = [string]::Equals($main, $verifier, [StringComparison]::OrdinalIgnoreCase)' in script
-    assert "$verifierAlias = if ($sharedMainVerifier) { 'mai-main' } else { 'mai-verifier' }" in script
-    assert "if (-not $sharedMainVerifier) {" in script
-    assert "$env:VERIFIER_MODEL = $verifierAlias" in script
-
-
-def test_linux_launcher_registers_one_identity_only_when_paths_are_equal():
-    script = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
-    assert "shared_main_verifier = main == verifier" in script
-    assert "if not shared_main_verifier:" in script
-    assert 'print("mai-main" if shared_main_verifier else "mai-verifier")' in script
-    assert 'VERIFIER_MODEL="$verifier_alias"' in script
+def test_windows_and_linux_launchers_share_selected_default_alias():
+    windows = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
+    linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
+    assert "$env:MAIN_MODEL = $defaultModel" in windows
+    assert "$env:VERIFIER_MODEL = $defaultModel" in windows
+    assert 'MAIN_MODEL="$default_model" VERIFIER_MODEL="$default_model"' in linux
+    assert "llamacpp_model_catalog.py" in windows
+    assert "llamacpp_model_catalog.py" in linux
 
 
 def test_main_and_verifier_reuse_one_loaded_model_without_unload_or_reload():

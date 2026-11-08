@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from mai.app.settings import load_settings
 
 KEYS = (
+    "LLAMACPP_GGUF_DIRECTORY",
     "LLAMACPP_MAIN_GGUF_PATH",
     "LLAMACPP_VERIFIER_GGUF_PATH",
     "LLAMACPP_MAIN_MMPROJ_PATH",
@@ -27,7 +28,7 @@ def read_config(path: Path) -> dict[str, str | bool | None]:
     # YAML is the sole source of the model file paths, avoiding ambiguity
     # with stale .env model names (Ollama has its own model naming).
     data = load_settings(path, environ={})
-    missing = [key for key in KEYS[:2] if key not in data]
+    missing = [key for key in ("LLAMACPP_MAIN_GGUF_PATH",) if key not in data]
     if missing:
         raise ValueError("Missing llama.cpp GGUF setting(s): " + ", ".join(missing))
     raw_vision = data.get("LLAMACPP_MAIN_VISION", "false").lower()

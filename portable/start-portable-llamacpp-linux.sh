@@ -30,62 +30,12 @@ cleanup() {
   rm -f -- "$ini"
 }
 trap cleanup EXIT
-flags="$("$python" - "$root" "$ini" <<'PY'
-from pathlib import Path
-import sys
-from portable.resolve_llamacpp_settings import read_config
-root = Path(sys.argv[1])
-target = Path(sys.argv[2])
-cfg = read_config(root / "settings.yaml")
-def gguf(key, required=False):
-    raw = cfg.get(key)
-    if not raw:
-        if required: raise ValueError("Missing " + key)
-        return None
-    path = Path(raw).expanduser()
-    if not path.is_absolute(): path = root / path
-    path = path.resolve()
-    if not path.is_file() or path.suffix.lower() != ".gguf":
-        raise ValueError("Missing GGUF: " + key + ": " + str(path))
-    with path.open("rb") as stream:
-        if stream.read(4) != b"GGUF": raise ValueError("Invalid GGUF header: " + str(path))
-    if "\n" in str(path) or "\r" in str(path):
-        raise ValueError("Newlines in GGUF path not allowed")
-    return path
-main = gguf("LLAMACPP_MAIN_GGUF_PATH", True)
-verifier = gguf("LLAMACPP_VERIFIER_GGUF_PATH", True)
-projector = gguf("LLAMACPP_MAIN_MMPROJ_PATH")
-vision = gguf("LLAMACPP_VISION_GGUF_PATH")
-vision_projector = gguf("LLAMACPP_VISION_MMPROJ_PATH")
-if vision_projector and not vision: raise ValueError("Vision projector requires Vision GGUF")
-lines = ["version = 1", "[*]", "ctx-size = 131072", "n-gpu-layers = 99", "parallel = 1",
-         "[mai-main]", "model = " + str(main)]
-if projector: lines.append("mmproj = " + str(projector))
-shared_main_verifier = main == verifier
-if not shared_main_verifier:
-    lines += ["[mai-verifier]", "model = " + str(verifier)]
-if vision:
-    lines += ["[mai-vision]", "model = " + str(vision)]
-    if vision_projector: lines.append("mmproj = " + str(vision_projector))
-target.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print("true" if projector or cfg["LLAMACPP_MAIN_VISION"] else "false")
-print("true" if vision else "false")
-print("mai-main" if shared_main_verifier else "mai-verifier")
-PY
-)"
-main_vision="$(printf '%s\n' "$flags" | sed -n 1p)"
-separate_vision="$(printf '%s\n' "$flags" | sed -n 2p)"
-verifier_alias="$(printf '%s\n' "$flags" | sed -n 3p)"
-export LLM_BACKEND=llamacpp MAIN_MODEL=mai-main VERIFIER_MODEL="$verifier_alias"
+catalog_json="$("$python" "$root/portable/llamacpp_model_catalog.py" --root "$root" --ini "$ini")"
+default_model="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["default"])')"
+main_vision="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; c=json.load(sys.stdin); print("true" if c["main_vision"] or c["projector"] else "false")')"
+export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model" VERIFIER_MODEL="$default_model"
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
-if [[ "$separate_vision" == true ]]; then
-  export VISION_MODEL=mai-vision
-  # Separate vision model is loadable on demand, never simultaneously with main or verifier.
-elif [[ "$main_vision" == true ]]; then
-  export VISION_MODEL=mai-main
-else
-  export VISION_MODEL=""
-fi
+if [[ "$main_vision" == true ]]; then export VISION_MODEL="$default_model"; else export VISION_MODEL=""; fi
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
 export MAI_CWD="$root" MAI_UPLOAD_ROOT="$root/mai_uploads"
@@ -101,7 +51,7 @@ ready=0
 for attempt in {1..120}; do
   kill -0 "$router_pid" 2>/dev/null || { echo "llama.cpp router exited" >&2; exit 1; }
   if curl -fsS --max-time 2 http://127.0.0.1:8080/v1/models 2>/dev/null |
-     "$python" -c 'import json,sys; x=json.load(sys.stdin); ids={e["id"] for e in x["data"]}; assert {"mai-main",sys.argv[2]}<=ids and (sys.argv[1]!="true" or "mai-vision" in ids)' "$separate_vision" "$verifier_alias" 2>/dev/null; then
+     "$python" -c 'import json,sys; x=json.load(sys.stdin); ids={e["id"] for e in x["data"]}; assert {m["id"] for m in json.loads(sys.argv[1])["models"]} <= ids' "$catalog_json" 2>/dev/null; then
     ready=1; break
   fi
   sleep 1
