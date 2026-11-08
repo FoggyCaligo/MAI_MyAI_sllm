@@ -1,7 +1,7 @@
-"""Resolve official GitHub release assets into an immutable, SHA-256-pinned manifest.
+"""Resolve Windows uv and llama.cpp assets into an immutable, SHA-256-pinned manifest.
 
 This command fetches publisher-declared digests from GitHub release asset metadata.
-It does not treat a digest computed after download as independent authentication.
+Python is provisioned separately through the signed python.org install manager.\nIt does not treat a digest computed after download as independent authentication.
 """
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def main() -> None:
     if args.output.exists():
         raise FileExistsError(f"Refusing to overwrite pinned manifest: {args.output}")
     config: dict[str, object] = {"schema_version": 1}
-    selected = ("python", "uv", "llamacpp")
+    selected = ("uv", "llamacpp")
     for name in selected:
         config[name] = resolve_one(*SOURCES[name])
     args.output.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
