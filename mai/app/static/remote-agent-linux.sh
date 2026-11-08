@@ -80,8 +80,9 @@ if [ ! -f "$INSTALL_READY" ]; then
   mkdir -p "$TARGET"
   unzip -oq "$ZIP_PATH" -d "$TARGET"
   python3 -m venv "$TARGET/.venv"
+  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input --upgrade "pip>=25.1"
+  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input --group "$TARGET/pyproject.toml:remote"
   "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -e "$TARGET" --no-deps
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -r "$TARGET/remote-requirements.txt"
   "$VENV_PYTHON" -m playwright install chromium
   touch "$INSTALL_READY"
 fi
