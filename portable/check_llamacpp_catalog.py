@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from portable.llamacpp_model_catalog import from_settings
+from llamacpp_model_catalog import from_settings
 
 
 def main() -> None:
