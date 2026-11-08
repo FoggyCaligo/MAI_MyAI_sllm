@@ -28,13 +28,13 @@ from resolve_portable_sources import SOURCES, github_json, matching_assets
 
 
 def select_stable_release(pattern: str):
-    """Only choose non-draft, non-prerelease releases with verified platform assets."""
+    """Exclude explicitly flagged draft/prerelease builds; require a verified platform asset."""
     for page in range(1, 4):
         releases = github_json(f"/repos/ggml-org/llama.cpp/releases?per_page=100&page={page}")
         if not isinstance(releases, list):
             raise RuntimeError("Invalid GitHub release listing")
         for release in releases:
-            if not isinstance(release, dict) or release.get("draft") is not False or release.get("prerelease") is not False:
+            if not isinstance(release, dict) or release.get("draft") is True or release.get("prerelease") is True:
                 continue
             matches = matching_assets(release, pattern)
             if len(matches) > 1:
