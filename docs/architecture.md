@@ -35,7 +35,7 @@
 
 기본 요청 앞에 별도 계획 모델을 호출하지 않는다. 모델에는 도구 이름·분류 목록과 `tool_manual` 입력 규칙을 먼저 제공한다. 카탈로그는 별도의 호출 도구가 아니라 시스템 메시지의 목록이다. 초기 호출 가능 도구는 `tool_manual` 하나이며 개별 도구 인자·사용 예시는 전역 지시에 두지 않는다. 모델이 정확한 이름으로 활성화하면 해당 도구에 묶인 실행 안내를 별도 시스템 문맥으로 전달하고, 다음 차례부터 해당 도구의 전체 입력 규칙이 노출되어 요청 종료까지 유지된다. 원격 PC 작업의 실행 대상 선택 원칙(`is_remote=true` 지정 등)은 기본 시스템 지시에서 첫 차례부터 안내하며, 도구별 상세 문맥과 입력 스키마는 활성화 후 노출한다. 미활성 도구를 직접 호출하면 실행하지 않고 `ToolUnavailableInRoundError`와 필요한 `tool_manual` 호출을 반환한다. 이 오류는 도구 자체의 부재를 뜻하지 않는다. 특정 도구 사용을 사전 강제하는 별도 계획기나 설정 경로는 없다.
 
-Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool_calls`를 사용한다. 어댑터는 통신 형식을 변환하며, 임의 텍스트 JSON이나 `<think>` 문자열을 해석해 도구 호출을 복원하지 않는다. 자동 백엔드 전환도 없다.
+llama.cpp의 OpenAI 호환 API가 제공하는 구조화된 `tools`·`tool_calls`를 사용한다. 어댑터는 통신 형식을 변환하며, 임의 텍스트 JSON이나 `<think>` 문자열을 해석해 도구 호출을 복원하지 않는다. 자동 백엔드 전환도 없다.
 
 ## 도구와 실패 처리
 
@@ -75,16 +75,15 @@ Ollama 또는 명시적으로 선택한 llama.cpp의 구조화된 `tools`·`tool
 - `web_fetch`는 공개 HTTP(S) 주소만 허용하고 리다이렉트도 사설·루프백 주소인지 검사한다.
 - `market_data`는 한국 상장주식 현재 시세·평가 정보 조회이며 제공처 형식 변경은 오류로 드러낸다.
 - `current_time`은 호스트의 실제 지역·UTC 시각과 시간대를 제공한다. 중요한 산술은 계산기 도구를 사용한다.
-- Ollama 메인 모델에 `vision` capability가 있으면 사용자가 첨부한 이미지 원본을 직접 입력한다. 그 외 모델에서는 별도 `VISION_MODEL`의 `image_analyze` 도구를 이용한다. 이미지 파일은 업로드 권한과 용량을 검사하며, PDF/구조화 문서는 기존 읽기 도구를 유지한다.
-- `VISION_MODEL`이 없으면 이미지 도구를 등록하지 않는다. 음성 인식·화자 비교와 브라우저 음성 합성의 설정은 [설치](../setup.md)를 따른다.
+- `LLAMACPP_MAIN_VISION=true`이고 실제 GGUF·projector가 비전을 지원할 때 메인 모델에 이미지 바이트를 직접 전달한다. 텍스트 전용 모델에는 이미지 내용을 제공했다고 가장하지 않으며 별도 `image_analyze` 도구를 등록하지 않는다. 음성 기능의 플랫폼별 설정은 [설치](../setup.md)를 따른다.
 
 ## 설정과 실행
 
-설정 우선순위는 **기존 프로세스 환경변수 > `.env` > `settings.yaml`**이다. 검증기의 `num_ctx`는 MAI에서 별도로 제한하지 않는다. 일반 실행은 프로젝트 루트에서 `python run_server.py`다. 다른 폴더에서 절대경로로 실행해도 이 진입점은 프로젝트 루트로 이동한다. API를 별도로 직접 구동하는 경우 상대경로는 해당 프로세스의 작업 폴더 기준이다.
+설정 우선순위는 **기존 프로세스 환경변수 > `.env` > `settings.yaml`**이다. 검증기의 `num_ctx`는 MAI에서 별도로 제한하지 않는다. Portable 실행은 프로젝트 루트에서 `./mai.sh start`(Windows Git Bash 및 Linux Bash) 또는 `.\mai.ps1 start`(Windows PowerShell)다. 서버를 직접 실행할 경우 유효한 llama.cpp 라우터와 `MAIN_MODEL`이 먼저 설정되어야 한다. 다른 폴더에서 절대경로로 실행해도 이 진입점은 프로젝트 루트로 이동한다. API를 별도로 직접 구동하는 경우 상대경로는 해당 프로세스의 작업 폴더 기준이다.
 
-배포 기본값은 요청 제한 500초, 본 모델 출력 한도 32,768토큰, 도구 결과 입력 8,000자, 최근 대화 10개 메시지, 별도 답변 품질 검토 비활성화 및 `MAI_VERIFIER_BLOCKING_MODE: critical`이다. `critical`은 일부 검증 의심을 기록하더라도 중대한 이슈만 차단하며, `strict`는 모두 차단한다. Verifier의 증거 항목에는 성공 호출의 실행 순서와 `arguments`를 함께 전달한다. `MAIN_MODEL`은 본 모델이며 `VERIFIER_MODEL`은 최종 사실·수치 의미 검증과 선택적 품질 검토에 사용하는 모델이다. 기본값은 각각 `ornith-1.5:9b`, `LiquidAI/lfm2.5-2.6b:q4_k_m`다. LFM2.5-2.6B Q4_K_M은 숫자 및 최종 사실검증에 공통으로 사용하며, 검증 호출은 서로 독립적이다. Verifier 설정을 생략한 구성에서는 기존처럼 해당 요청의 선택 모델을 사용하며, 명시한 빈 값은 오류다. UI에서 본 모델을 바꿔도 명시한 Verifier 모델은 유지한다. 기억 추출은 본 모델을 `think=False`로 호출한다. 별도 Verifier의 실패를 본 모델로 재시도하지 않는다.
+배포 기본값은 요청 제한 500초, 본 모델 출력 한도 32,768토큰, 도구 결과 입력 8,000자, 최근 대화 10개 메시지, 별도 답변 품질 검토 비활성화 및 `MAI_VERIFIER_BLOCKING_MODE: critical`이다. `critical`은 일부 검증 의심을 기록하더라도 중대한 이슈만 차단하며, `strict`는 모두 차단한다. Verifier의 증거 항목에는 성공 호출의 실행 순서와 `arguments`를 함께 전달한다. `MAIN_MODEL`은 llama.cpp 라우터가 검증된 GGUF 카탈로그에서 설정한 현재 모델 ID다. Main·수치 의미 검증·사실검증·기억 추출은 UI에서 선택한 **동일 GGUF**를 호출하지만 프롬프트와 응답 스키마는 구분한다. 별도 `VERIFIER_MODEL` 또는 Ollama 백엔드는 지원하지 않는다. 기억 추출은 `think=False`로 요청한다. 오류가 나면 다른 모델로 자동 재시도하지 않는다.
 
-`OLLAMA_THINK`, `MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 설정 로더가 허용하지만 해당 값의 실제 소비 여부는 각 호출 경로를 따져야 한다. 값을 바꿔 동작이 달라진다고 안내하지 않는다. 본 모델은 `think=True`이며 개별 도구 제한 시간은 등록 인자로 정한다.
+`MAI_DEBUG_MODEL_INPUT`, `TOOL_TIMEOUT_SECONDS`, `TERMINAL_TIMEOUT_SECONDS`, `MEMORY_RECALL_INCLUDE_UTTERANCES`는 설정 로더가 허용하지만 해당 값의 실제 소비 여부는 각 호출 경로를 따져야 한다. 값을 바꿔 동작이 달라진다고 안내하지 않는다. 본 모델은 `think=True`이며 개별 도구 제한 시간은 등록 인자로 정한다.
 
 Tailscale Funnel 시작 실패는 로그와 `/health`에 표시하면서 로컬 서버는 유지한다. 웹 공개 기능과 Owner 원격 PC의 `native.invoke` 작업은 독립적이며, 원격 대상 워커는 Windows 및 Linux 시작 스크립트를 제공한다. 현재 Linux 실기기 검증은 문서상 확인되지 않았다. 폐기된 `TAILSCALE_SERVE` 설정은 다른 의미로 조용히 바꾸지 않는다.
 
