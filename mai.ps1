@@ -35,7 +35,7 @@ function Assert-PortableReady {
     # Validate the same GGUF model catalog as the real launcher, without writing
     # any model preset or switching the currently loaded resident model.
     $env:PYTHONNOUSERSITE = '1'
-    & $python -c 'from pathlib import Path; from portable.llamacpp_model_catalog import from_settings; import sys; catalog = from_settings(Path(sys.argv[1])); print("GGUF models:", len(catalog["models"])); print("Default GGUF:", next(model["label"] for model in catalog["models"] if model["id"] == catalog["default"]))' $root
+    & $python (Join-Path $portable 'check_llamacpp_catalog.py') --root $root
     if ($LASTEXITCODE -ne 0) {
         throw 'Portable GGUF catalog validation failed'
     }
