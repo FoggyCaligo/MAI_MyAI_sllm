@@ -8,6 +8,7 @@ MAI의 Portable 기본 실행은 llama.cpp 라우터를 사용한다. 기존 Oll
 |---|---|---|---|
 | 최초 설치 | `./mai.sh setup` | `.\mai.ps1 setup` | `mai.cmd setup` |
 | 환경 점검 | `./mai.sh check` | `.\mai.ps1 check` | `mai.cmd check` |
+| llama.cpp 업데이트 | `./mai.sh update` | `.\\mai.ps1 update` | `mai.cmd update` |
 | 서버 시작 | `./mai.sh start` | `.\mai.ps1 start` | `mai.cmd start` |
 
 `./mai`는 제공하지 않는다. 루트의 `mai/`는 Python 패키지 디렉터리다. `check`는 파일과 카탈로그 상태만 점검하며, GPU 추론·VRAM 안정성·브라우저 접근성은 검사하지 않는다.
@@ -44,6 +45,10 @@ Linux는 Ubuntu 24.04 x86-64 호스트에서 실행하며 네이티브 Python·u
 Python 패키지는 **`pyproject.toml`**의 기본·`dev` 의존성을 설치한다. 별도 요구사항 파일은 사용하지 않는다. Playwright Chromium을 별도로 다운로드한다. 기존 `.env`는 유지하고, 없을 때 Owner 자격 증명을 입력받아 생성한다.
 
 사용자 모델 파일은 자동 다운로드되지 않는다. `settings.yaml`에 선언된 GGUF 기본 파일과 대응 projector가 존재해야 한다. 모델 배포처의 라이선스·파일명·SHA-256을 별도 확인한다.
+
+## llama.cpp 업데이트
+
+MAI를 종료한 후 `./mai.sh update`로 공식 SHA-256 검증 및 신규 실행 파일 테스트를 거쳐 llama.cpp만 교체한다. 이전 런타임과 매니페스트는 백업해 두며, Python·uv·GGUF·SQLite는 변경하지 않는다. 업데이트 뒤에는 `./mai.sh check`와 `./mai.sh start`를 실행한다.
 
 ## 추론 및 모델 전환
 
