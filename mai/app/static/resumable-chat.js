@@ -439,6 +439,7 @@
       if (response.ok) {
         if (pending) {
           pending.bubble.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(data.answer) : String(data.answer || '');
+          if (typeof setMessageTime === 'function') setMessageTime(pending);
           if (typeof renderToolLog === 'function') renderToolLog(pending.wrap, data.tools || [], data.model_rounds || 0, data.model || 'unknown');
         } else if (typeof addMessage === 'function') {
           addMessage('mai', data.answer || '');
