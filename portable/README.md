@@ -6,6 +6,22 @@ Windows/Linux 호스트 OS 인터페이스 구조와 이식성 제한은 [OS 경
 
 원격 웹 공개 제공자 선택은 [한국어 원격 호스팅 설정](../docs/remote-hosting.md)을 참조한다.
 
+## 짧은 실행 명령 (Windows)
+
+아래 명령어는 모두 **프로젝트 루트**에서 실행한다. 기존 `portable/` 설치·실행 스크립트의 동작은 그대로 유지한다.
+
+| 작업 | Git Bash | CMD | PowerShell |
+|---|---|---|---|
+| llama.cpp MAI 실행 | `./mai.sh start` | `mai.cmd start` | `.\\mai.ps1 start` |
+| Portable 런타임 설치·준비 | `./mai.sh setup` | `mai.cmd setup` | `.\\mai.ps1 setup` |
+| 준비 상태 점검 | `./mai.sh check` | `mai.cmd check` | `.\\mai.ps1 check` |
+
+`setup`은 `portable/portable-sources.json`을 자동으로 찾아 설치 스크립트의 필수 `-Manifest` 인자로 전달한다. Manifest가 없으면 **오류를 출력하고 종료**한다. 최초 Manifest 생성은 기존과 같이 `python portable/resolve_portable_sources.py --include-llamacpp` 명령으로 수행하며, 공식 SHA-256 검증은 유지한다. `setup`은 아직 기존 Windows 설치 스크립트를 사용하므로 Ollama 런타임 설치 의존성도 유지된다.
+
+`check`는 Python 및 llama.cpp 실행 파일, `.env`, `settings.yaml`, 현재 모델 카탈로그를 검사하지만 실제 서버 실행이나 GPU 메모리 사용량을 검증하지 않는다. `start`는 `check` 후 llama.cpp 라우터를 시작한다. 설정은 계속 `settings.yaml`과 `.env`에서 읽는다. 모델이 없거나 설정이 잘못된 경우 대체 모델로 전환하지 않는다.
+
+루트의 `mai/`가 이미 Python 패키지 디렉터리라서 동명 `./mai` 파일을 만들 수 없다. Git Bash 실행 파일은 `./mai.sh`로 제공한다. Linux Portable은 기존 `portable/start-portable-llamacpp-linux.sh`를 그대로 이용하며 이 Windows 전용 래퍼는 실행하지 않는다.
+
 ## 배치와 준비 조건
 
 다음 명령은 모두 **프로젝트 루트**에서 실행한다. SSD는 NTFS를 사용하며 포맷 전 별도 디스크에 백업한다. 포맷은 데이터를 삭제한다. 호스트 GPU 드라이버·시스템 라이브러리·Tailscale 인증은 SSD만으로 제공되지 않는다.
