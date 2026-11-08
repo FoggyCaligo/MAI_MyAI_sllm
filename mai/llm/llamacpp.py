@@ -10,7 +10,7 @@ import httpx
 
 from .models import ChatRequest, ModelConfig, ModelTurn, NativeToolCall
 from .llamacpp_router import SingleResidentRouter, RouterModelTransitionError
-from .ollama import OllamaChatTimeoutError, OllamaProtocolError, OllamaRequestError
+from .errors import ModelChatTimeoutError, ModelProtocolError, ModelRequestError
 
 
 class LlamaCppAdapter:
@@ -22,7 +22,7 @@ class LlamaCppAdapter:
 
     async def chat(self, request: ChatRequest) -> ModelTurn:
         if request.options:
-            raise ValueError("llama.cpp does not support MAI's Ollama-specific options")
+            raise ValueError("llama.cpp does not support unrecognized generation options")
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": _openai_messages(request.messages),
@@ -49,7 +49,7 @@ class LlamaCppAdapter:
             response.raise_for_status()
             obj = response.json()
             if not isinstance(obj, dict):
-                raise OllamaProtocolError("llama.cpp response must be an object")
+                raise ModelProtocolError("llama.cpp response must be an object")
             return obj
         try:
             if self._client is None:
@@ -60,33 +60,33 @@ class LlamaCppAdapter:
                 result = (await self._router.execute(self.config.model, self._client, send)
                           if self._router is not None else await send(self._client))
         except httpx.TimeoutException as exc:
-            raise OllamaChatTimeoutError("llama.cpp chat request timed out") from exc
+            raise ModelChatTimeoutError("llama.cpp chat request timed out") from exc
         except httpx.HTTPStatusError as exc:
-            raise OllamaRequestError(
+            raise ModelRequestError(
                 f"llama.cpp chat HTTP {exc.response.status_code} "
                 f"model={self.config.model}: {exc.response.text[:1000]}"
             ) from exc
         except (httpx.HTTPError, ValueError) as exc:
-            raise OllamaRequestError(
+            raise ModelRequestError(
                 f"llama.cpp chat request failed model={self.config.model}: {type(exc).__name__}: {exc}"
             ) from exc
         choices = result.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise OllamaProtocolError("llama.cpp response missing choices")
+            raise ModelProtocolError("llama.cpp response missing choices")
         finish_reason = choices[0].get("finish_reason")
         if finish_reason == "length":
-            raise OllamaProtocolError(
+            raise ModelProtocolError(
                 f"llama.cpp output limit reached (finish_reason={finish_reason!r}, "
                 f"max_tokens={self.config.max_output_tokens}); "
                 "incomplete response or tool calls rejected"
             )
         msg = choices[0].get("message")
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
-            raise OllamaProtocolError("llama.cpp response missing assistant message")
+            raise ModelProtocolError("llama.cpp response missing assistant message")
         content = msg.get("content") or ""
         thinking = msg.get("reasoning_content") or ""
         if not isinstance(content, str) or not isinstance(thinking, str):
-            raise OllamaProtocolError("llama.cpp content and reasoning must be strings")
+            raise ModelProtocolError("llama.cpp content and reasoning must be strings")
         # A successful HTTP response can still be an unusable generation.
         # Never treat empty structured-review content as valid JSON.
         if request.response_format is not None and not content.strip():
@@ -94,7 +94,7 @@ class LlamaCppAdapter:
             finish = choice.get("finish_reason")
             usage = result.get("usage")
             reason_chars = len(thinking)
-            raise OllamaProtocolError(
+            raise ModelProtocolError(
                 "llama.cpp structured response contains no JSON content "
                 f"(finish_reason={finish!r}, reasoning_chars={reason_chars}, "
                 f"usage={usage!r}); check context size, output budget, "
@@ -102,22 +102,22 @@ class LlamaCppAdapter:
             )
         raw_calls = msg.get("tool_calls") or []
         if not isinstance(raw_calls, list):
-            raise OllamaProtocolError("llama.cpp tool_calls must be an array")
+            raise ModelProtocolError("llama.cpp tool_calls must be an array")
         calls: list[NativeToolCall] = []
         for raw in raw_calls:
             if not isinstance(raw, dict) or not isinstance(raw.get("function"), dict):
-                raise OllamaProtocolError("llama.cpp malformed tool call")
+                raise ModelProtocolError("llama.cpp malformed tool call")
             function = raw["function"]
             name, args = function.get("name"), function.get("arguments")
             if not isinstance(name, str) or not name.strip():
-                raise OllamaProtocolError("llama.cpp tool call missing function name")
+                raise ModelProtocolError("llama.cpp tool call missing function name")
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
                 except json.JSONDecodeError as exc:
-                    raise OllamaProtocolError("llama.cpp tool arguments are invalid JSON") from exc
+                    raise ModelProtocolError("llama.cpp tool arguments are invalid JSON") from exc
             if not isinstance(args, dict):
-                raise OllamaProtocolError("llama.cpp tool arguments must be an object")
+                raise ModelProtocolError("llama.cpp tool arguments must be an object")
             calls.append(NativeToolCall(name=name, arguments=args))
         assistant: dict[str, Any] = {"role": "assistant", "content": content}
         if thinking:
@@ -136,14 +136,14 @@ def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
     images = result.pop("images", None)
     if images:
         if result.get("role") != "user" or not isinstance(images, (list, tuple)):
-            raise OllamaProtocolError("llama.cpp image inputs must belong to a user turn")
+            raise ModelProtocolError("llama.cpp image inputs must belong to a user turn")
         content = result.get("content", "")
         if not isinstance(content, str):
-            raise OllamaProtocolError("multimodal user text must be a string")
+            raise ModelProtocolError("multimodal user text must be a string")
         parts = [{"type": "text", "text": content}]
         for image_bytes in images:
             if not isinstance(image_bytes, bytes) or not image_bytes:
-                raise OllamaProtocolError("image input must contain nonempty bytes")
+                raise ModelProtocolError("image input must contain nonempty bytes")
             # Detect supported input encoding by signature, without changing bytes.
             if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
                 mime = "image/png"
@@ -152,7 +152,7 @@ def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
             elif image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
                 mime = "image/webp"
             else:
-                raise OllamaProtocolError("llama.cpp inline image must be PNG, JPEG or WebP")
+                raise ModelProtocolError("llama.cpp inline image must be PNG, JPEG or WebP")
             parts.append({"type": "image_url", "image_url": {
                 "url": f"data:{mime};base64,{base64.b64encode(image_bytes).decode('ascii')}"
             }})
@@ -161,15 +161,15 @@ def _openai_message(message: Mapping[str, Any]) -> dict[str, Any]:
     if calls is None:
         return result
     if not isinstance(calls, list):
-        raise OllamaProtocolError("outgoing tool_calls must be a list")
+        raise ModelProtocolError("outgoing tool_calls must be a list")
     normalized = []
     for call in calls:
         if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
-            raise OllamaProtocolError("outgoing tool call is malformed")
+            raise ModelProtocolError("outgoing tool call is malformed")
         function = dict(call["function"])
         arguments = function.get("arguments")
         if not isinstance(arguments, dict):
-            raise OllamaProtocolError("outgoing tool-call arguments must be an object")
+            raise ModelProtocolError("outgoing tool-call arguments must be an object")
         function["arguments"] = json.dumps(arguments, ensure_ascii=False)
         normalized.append({"type": "function", "function": function})
     result["tool_calls"] = normalized
@@ -185,10 +185,10 @@ def _openai_messages(messages: Any) -> list[dict[str, Any]]:
         if message.get("role") == "tool":
             tool_name = message.pop("tool_name", None)
             if not pending:
-                raise OllamaProtocolError("tool result without preceding assistant tool call")
+                raise ModelProtocolError("tool result without preceding assistant tool call")
             expected_name, call_id = pending.pop(0)
             if tool_name != expected_name:
-                raise OllamaProtocolError("tool result name does not match preceding tool call")
+                raise ModelProtocolError("tool result name does not match preceding tool call")
             message["tool_call_id"] = call_id
             out.append(message)
             continue
@@ -201,5 +201,5 @@ def _openai_messages(messages: Any) -> list[dict[str, Any]]:
                 pending.append((tool_call["function"]["name"], call_id))
         out.append(normalized)
     if pending:
-        raise OllamaProtocolError("assistant tool calls are missing tool results")
+        raise ModelProtocolError("assistant tool calls are missing tool results")
     return out
