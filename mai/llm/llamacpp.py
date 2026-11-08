@@ -29,6 +29,8 @@ class LlamaCppAdapter:
             "tools": [dict(tool) for tool in request.tools],
             "stream": False,
         }
+        if self.config.max_output_tokens is not None:
+            payload["max_tokens"] = self.config.max_output_tokens
         if request.response_format is not None:
             if isinstance(request.response_format, Mapping):
                 payload["response_format"] = {"type": "json_schema", "json_schema": {
@@ -71,6 +73,12 @@ class LlamaCppAdapter:
         choices = result.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise OllamaProtocolError("llama.cpp response missing choices")
+        finish_reason = choices[0].get("finish_reason")
+        if finish_reason == "length":
+            raise OllamaProtocolError(
+                f"llama.cpp output limit reached (max_tokens={self.config.max_output_tokens}); "
+                "incomplete response or tool calls rejected"
+            )
         msg = choices[0].get("message")
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
             raise OllamaProtocolError("llama.cpp response missing assistant message")
