@@ -21,8 +21,8 @@ function Assert-SignedPython([string]$folder, [string]$expectedVersion) {
         $signature.SignerCertificate.Subject -notmatch 'Python Software Foundation') {
         throw "Python must have a valid Python Software Foundation Authenticode signature: $exe ($($signature.Status))"
     }
-    $actual = & $exe -c 'import sys; print(".".join(map(str,sys.version_info[:3])))'
-    if ($LASTEXITCODE -ne 0 -or @($actual).Count -ne 1 -or $actual -ne $expectedVersion) {
+    $actual = & $exe --version
+    if ($LASTEXITCODE -ne 0 -or @($actual).Count -ne 1 -or $actual -ne "Python $expectedVersion") {
         throw "Expected Python $expectedVersion; got $actual"
     }
 }
