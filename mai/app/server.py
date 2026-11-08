@@ -475,7 +475,37 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
         runtime_model=runtime.model,
         installed_models=installed,
     )
-    return {"models": visible, "current": runtime.model, "locked": False}
+    labels = runtime.model_labels() if runtime.llm_backend == "llamacpp" else {}
+    if labels and set(visible) != set(labels):
+        raise HTTPException(status_code=500, detail="GGUF catalog differs from running llama.cpp router; restart MAI")
+    return {"models": visible, "current": runtime.model, "locked": False, "labels": labels,
+            "backend": runtime.llm_backend}
+
+
+class ModelSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str
+
+
+@app.post("/models/select")
+async def select_model(
+    request: ModelSelectionRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, str]:
+    _, principal = _principal_from_authorization(authorization)
+    if principal.role is not AccessRole.OWNER:
+        raise HTTPException(status_code=403, detail="model switching is restricted to the owner")
+    runtime = _get_runtime()
+    if runtime.llm_backend != "llamacpp":
+        raise HTTPException(status_code=409, detail="explicit switching is available only for llama.cpp")
+    try:
+        model = await runtime.select_model(request.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("llama.cpp model selection failed model=%s", request.model)
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+    return {"model": model, "status": "loaded"}
 
 
 @app.get("/download/{token}")
