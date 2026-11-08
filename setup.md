@@ -1,6 +1,6 @@
 # MAI 설치 및 설정 가이드 (Windows / Ubuntu 24.04)
 
-MAI를 처음 설치하는 사용자를 위한 문서. **1장 공통 설정 → 2장 실행 환경 준비 → 3장 고급 설정 → 4장 점검·업데이트** 순서로 진행한다. Windows와 Ubuntu 24.04는 OS별 네이티브 런타임이 필요하다. Portable의 모델·설정·데이터는 외장 SSD에 유지하되 Linux 실행 바이너리와 Python 패키지는 Linux 호스트 캐시에 설치한다. 현재 dev는 llama.cpp와 Ollama 백엔드를 모두 포함하며, 아래에서는 GGUF를 사용하는 llama.cpp Portable 경로를 우선 설명한다.
+MAI를 처음 설치하는 사용자를 위한 문서. **1장 공통 설정 → 2장 실행 환경 준비 → 3장 고급 설정 → 4장 점검·업데이트** 순서로 진행한다. Windows와 Ubuntu 24.04는 OS별 네이티브 런타임이 필요하다. Portable의 모델·설정·데이터는 외장 SSD에 유지하되 Linux 실행 바이너리와 Python 패키지는 Linux 호스트 캐시에 설치한다. 현재 `dev`에는 llama.cpp와 Ollama 백엔드가 모두 있으며, 아래에서는 GGUF를 사용하는 llama.cpp Portable 경로를 우선 설명한다. 현재 기능과 OS별 제한은 [실행 구조](docs/architecture.md), [GGUF 선택](docs/llamacpp-gguf-model-selection.md), [원격 Native 워커](docs/remote-native-worker.md) 문서를 참고한다.
 
 > 중요: 설치와 사용 중 파일 변경·삭제 또는 터미널 실행이 가능하므로 데이터 백업 권장. 설치 스크립트는 다운로드한 실행 파일을 설치·실행하므로 내용을 먼저 확인할 것. 비밀번호 및 인증 토큰을 Git에 올리지 말 것.
 
@@ -271,6 +271,17 @@ Tailscale은 [공식 설치 안내](https://tailscale.com/download/windows)에�
 5. 음성 답변은 브라우저의 음성 합성에 의존하므로 기기·브라우저별 음성 품질과 지원 언어가 다를 수 있음.
 
 ## 4. 실행 문제 진단 및 업데이트
+
+### pytest 환경 확인
+
+Git Bash/Portable 환경에서는 `pytest` 명령이 `PATH`에 없을 수 있다. 이 경우 **테스트를 실행할 Python 자체를 명시**한다.
+
+```bash
+./portable/portable-runtimes/python/python.exe -m pytest -q
+```
+
+`No module named pytest`는 해당 Python의 개발 의존성 누락이며, `No module named ollama`는 이 프로젝트의 필수 의존성 누락이다. 설치된 일반 Python과 Portable Python의 패키지를 혼동하지 않는다. 프로젝트의 의존성 목록은 `pyproject.toml`을 따른다. **테스트 수집 오류·SyntaxError·누락된 패키지를 테스트 통과로 간주하지 않는다.**
+
 
 테스트를 실행하려면 일반 실행 의존성 외에 개발용 의존성(`pytest`, JSON 스키마 검증용 `jsonschema`)을 같은 Python 환경에 설치함.
 
