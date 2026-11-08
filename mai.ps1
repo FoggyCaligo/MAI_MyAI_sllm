@@ -67,7 +67,7 @@ function Initialize-MaiOwnerEnv {
     }
 }
 function Invoke-MaiSetup {
-    Require-File $manifest 'Pinned Portable source manifest (create it with the llama.cpp source resolver)'
+    Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py)'
     $manifestPath = (Resolve-Path -LiteralPath $manifest).Path
     $PreserveAndReinstallExisting = $false
     $root = $PSScriptRoot
