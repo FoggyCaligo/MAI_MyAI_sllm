@@ -41,7 +41,8 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 - [장기기억](docs/memory.md)
 - [도구 원문·페이지네이션](docs/TOOL_RESULT_PAGINATION.md)
 - [GGUF 선택과 라우터](docs/llamacpp-gguf-model-selection.md)
-- [원격 Native 워커](docs/remote-native-worker.md)
+- [원격 PC 연결 방법 (Windows / Linux)](docs/remote-tool-connection.md)
+- [원격 Native 워커 구현 계약](docs/remote-native-worker.md)
 - [운영체제 경계](docs/platform-boundary.md)
 
 ## 권한과 라이선스
