@@ -58,20 +58,35 @@ def ensure_not_running() -> None:
                 raise RuntimeError(f"Port {port} is active. Stop MAI/llama.cpp before updating.")
 
 
-def validate_installed(runtime: Path, old: dict, platform: str, exe: str) -> None:
+def validate_installed(runtime: Path, old: dict, platform: str, exe: str) -> bool:
+    """Check receipt consistency without discarding previous runtimes."""
     if not (runtime / exe).is_file():
         raise RuntimeError(f"Existing llama.cpp executable missing: {runtime / exe}")
     if platform == "windows":
         receipt = runtime / ".mai-portable-source.json"
-        if not receipt.is_file():
-            raise RuntimeError("Missing existing llama.cpp receipt; manual recovery required")
-        record = json.loads(receipt.read_text(encoding="utf-8-sig"))
-        if record.get("url") != old["url"] or record.get("sha256", "").lower() != old["sha256"].lower() or record.get("executable") != exe:
-            raise RuntimeError("Existing llama.cpp receipt differs from pinned manifest")
+        try:
+            record = json.loads(receipt.read_text(encoding="utf-8-sig"))
+            matches = (
+                record.get("url") == old["url"]
+                and record.get("sha256", "").lower() == old["sha256"].lower()
+                and record.get("executable") == exe
+            )
+        except (OSError, ValueError, AttributeError):
+            matches = False
     else:
         receipt = runtime / ".mai-source-sha256"
-        if not receipt.is_file() or receipt.read_text().strip().lower() != old["sha256"].lower():
-            raise RuntimeError("Existing llama.cpp receipt differs from pinned manifest")
+        try:
+            matches = receipt.read_text().strip().lower() == old["sha256"].lower()
+        except OSError:
+            matches = False
+    if not matches:
+        print(
+            "WARNING: llama.cpp receipt differs from pinned manifest. "
+            "Preserving the entire old runtime in a timestamped backup "
+            "before installing a publisher-verified release.",
+            file=sys.stderr,
+        )
+    return matches
 
 
 def download(url: str, dest: Path, sha256: str) -> None:
@@ -112,16 +127,18 @@ def main() -> int:
     old = config.get("llamacpp")
     if not isinstance(old, dict) or not old.get("url") or not old.get("sha256"):
         raise RuntimeError("Pinned manifest lacks valid llama.cpp entry")
-    validate_installed(runtime, old, platform, executable)
+    receipt_matches = validate_installed(runtime, old, platform, executable)
     source = SOURCES["llamacpp"] if platform == "windows" else (
         "ggml-org", "llama.cpp", r"llama-.*-bin-ubuntu-vulkan-x64\.tar\.gz"
     )
     latest = resolve_one(*source)
-    if latest == old:
+    if latest == old and receipt_matches:
         print("llama.cpp already matches the latest compatible published release.")
         return 0
 
     print(f"Updating llama.cpp: {old['url']} -> {latest['url']}")
+    if not receipt_matches:
+        print("Reinstalling despite stale or mismatched installation receipt.")
     runtime.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".mai-llamacpp-update-", dir=runtime.parent) as tmp:
         temp = Path(tmp)
