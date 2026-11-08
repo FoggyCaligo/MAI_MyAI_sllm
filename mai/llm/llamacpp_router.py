@@ -123,8 +123,11 @@ class SingleResidentRouter:
                 )
             await asyncio.sleep(min(self.poll_interval_seconds, max(0, deadline - time.monotonic())))
 
-    async def _ensure_resident_locked(self, model: str, client: httpx.AsyncClient) -> None:
-        """Only one router model may remain resident after switching."""
+    async def _ensure_model_locked(self, model: str, client: httpx.AsyncClient) -> None:
+        """Select one resident model with explicit unload/load confirmation.
+
+        The caller must hold _lock. No inference is required for readiness.
+        """
         statuses = await self._models(client)
         if model not in statuses:
             raise RouterModelTransitionError(f"Target model not registered in router: {model}")
@@ -143,13 +146,14 @@ class SingleResidentRouter:
             await self._confirm_load(client, model)
 
     async def prepare(self, model: str, client: httpx.AsyncClient) -> None:
-        """Explicit UI selection: unload old GGUF, then load target, no chat."""
+        """Preload the main model without sending a chat or creating KV state."""
         async with self._lock:
-            await self._ensure_resident_locked(model, client)
+            await self._ensure_model_locked(model, client)
 
     async def execute(self, model: str, client: httpx.AsyncClient,
                       request: Callable[[httpx.AsyncClient], Awaitable[T]]) -> T:
         async with self._lock:
-            await self._ensure_resident_locked(model, client)
-            # Hold the lock during inference, not only during switching.
+            await self._ensure_model_locked(model, client)
+            # Hold the router lock through inference; preloading cannot evict
+            # a model currently processing another chat request.
             return await request(client)

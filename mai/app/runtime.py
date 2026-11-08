@@ -191,6 +191,29 @@ class MAIRuntime:
         async with self._llamacpp_model_scope():
             await self._postprocess_memory(**kwargs)
 
+    async def _preload_main_after_memory(
+        self, memory_task: asyncio.Task[None],
+    ) -> None:
+        """Restore the latest confirmed UI choice after approved-answer memory work.
+
+        This best-effort preparation must not delay the approved answer.
+        A pending UI switch waits for this background task, preventing an
+        older memory run from evicting a newly selected model.
+        """
+        if self._llamacpp_router is None:
+            return
+        try:
+            await memory_task
+            async with self._llamacpp_model_scope():
+                target = self.selected_model
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    await self._llamacpp_router.prepare(target, client)
+            _LOG.info("MAI selected model preloaded model=%s", target)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOG.exception("MAI selected model preload failed model=%s", self.selected_model)
+
     def _adapter_for(self, model: str) -> OllamaAdapter | LlamaCppAdapter:
         clean_model = model.strip()
         if not clean_model:
@@ -439,6 +462,10 @@ class MAIRuntime:
         task.add_done_callback(
             lambda completed, user_id=principal.memory_user_id: self._forget_memory_task(user_id, completed)
         )
+        if self._llamacpp_router is not None and self.verifier_model is not None:
+            preload_task = asyncio.create_task(self._preload_main_after_memory(task))
+            self._background_tasks.add(preload_task)
+            preload_task.add_done_callback(self._background_tasks.discard)
 
         return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools)
 
