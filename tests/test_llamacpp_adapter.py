@@ -128,7 +128,7 @@ def test_llamacpp_max_tokens_is_sent_as_openai_payload_field():
     assert "reasoning_effort" not in captured[0]
 
 
-def test_llamacpp_rejects_output_truncated_before_answer_or_tool_completion():
+def test_llamacpp_marks_output_truncated_and_defers_to_next_model_turn():
     import json
     def responder(request):
         assert json.loads(request.content)["max_tokens"] == 32768
@@ -142,9 +142,10 @@ def test_llamacpp_rejects_output_truncated_before_answer_or_tool_completion():
             adapter = LlamaCppAdapter(ModelConfig(
                 model="local", host="http://test", max_output_tokens=32768,
             ), client=client)
-            await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
-    with pytest.raises(OllamaProtocolError, match="output limit reached"):
-        asyncio.run(run())
+            return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
+    turn = asyncio.run(run())
+    assert turn.incomplete
+    assert turn.content == "partial answer"
 
 
 @pytest.mark.parametrize("invalid", [0, -1, True, 1.5, "32768"])
