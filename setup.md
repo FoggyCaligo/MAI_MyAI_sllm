@@ -1,54 +1,62 @@
 # MAI 설치 및 사용 안내
 
-MAI는 **llama.cpp 전용** 로컬 AI 에이전트다. Windows Git Bash와 Ubuntu 24.04 x86-64에서는 `./mai.sh`로 실행한다. Python 패키지 의존성은 `pyproject.toml`에서 관리하며, GGUF 모델은 별도로 다운로드한다.
-
 ## 1. 초기 세팅
 
-Git과 인터넷 연결이 필요하다. Windows는 Git Bash·PowerShell, Linux는 Ubuntu 24.04 x86-64를 대상으로 한다. GPU 드라이버와 운영체제의 기본 도구는 설치 환경에 준비되어 있어야 한다.
+### 필요사항
+1. Git 
+2. 인터넷 연결
 
+### 대상
+1. Windows : Git Bash·PowerShell
+2. Linux : Ubuntu 24.04 x86-64 터미널
+
+### 방법
+0. Git, Git Bash 검색하여 설치
+
+#### 1. 아래 실행 명령어 묶음 복사 후, 터미널을 열어 붙여넣은 후 엔터를 누른다. 
 ```bash
 git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
 cd MAI_MyAI_sllm
 ./mai.sh setup
-```
-
-`setup`은 공식 릴리스 URL·배포자 SHA-256에 근거한 설치 매니페스트를 생성하거나 기존 것을 사용하여 Python 3.11, uv, llama.cpp를 준비한다. 이어 `pyproject.toml`의 기본·개발 의존성과 Playwright Chromium을 설치한다. `.env`가 없다면 Owner 로그인 ID·비밀번호를 받아 생성하고, 기존 `.env`는 덮어쓰지 않는다.
-
-Windows는 `portable/portable-runtimes/`, Linux는 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래에 네이티브 실행 환경을 준비한다. 일반 setup은 관리자 권한으로 GPU 드라이버를 변경하지 않는다. Ubuntu에서 AMD/Intel Mesa Vulkan 패키지 설치를 **명시적으로 요청**할 때만 아래 옵션을 사용한다.
-
-```bash
-./mai.sh setup --install-vulkan
-```
-
-Windows PowerShell에서는 `.\mai.ps1 setup`, CMD에서는 `mai.cmd setup`을 사용할 수 있다. 설치기에는 GGUF 모델 자동 다운로드 기능이 없으므로 다음 단계가 필요하다.
-
-## 2. 모델 다운받는 방법
-
-MAI는 `portable/portable-models/gguf/` 폴더의 직접 자식 GGUF를 시작 시 탐색한다. 기본 설정은 Ornith 1.5 9B Q4_K_M과 비전 projector를 가리킨다.
-
-모델 출처: https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main
-
-Windows Git Bash 또는 Linux Bash에서 프로젝트 루트 기준으로 다음을 실행한다.
-
-```bash
 mkdir -p portable/portable-models/gguf
 curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf
 curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf
 ```
+#### 2. 각 명령어 별 설명
+**git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git**
+MAI 프로젝트의 깃허브 레포를 클론(다운로드)한다.
+**cd MAI_MyAI_sllm**
+클론한 레포에 해당하는 폴더로 이동한다.
+**./mai.sh setup** 
+MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 묶은 설치스크립트를 실행한다.( 다운로드 하는 모든 목록은 3번에서 상세하게 설명한다.)
+**mkdir -p portable/portable-models/gguf**
+로컬llm모델을 설치할 폴더를 만든다.
+**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf**
+ornith-1.5:9b 이라는 로컬모델을 다운로드 받는다.
+**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf**
+ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmproj를 다운받는다.
 
-해당 파일명은 Ornith 개발사의 공개 GGUF 저장소와 현재 `settings.yaml`을 대조했다. 다운로드 실패 파일은 정상 모델로 취급하지 말고 원본 출처·크기·SHA-256을 별도로 확인한다. `./mai.sh check`는 GGUF 헤더와 경로를 확인하지만 전체 무결성이나 실제 추론 성공까지 보증하지 않는다.
+#### 3. 설치 스크립트가 하는 것
+- Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
+- 프로젝트 루트에 있는 `pyproject.toml`의 기본·개발 의존성, Playwright Chromium 다운로드
+- .env 없으면 아이디/비번 입력받아 생성
+- 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
+ 
+## 2. 모델 추가 다운받는 방법
+기본 다운로드 모델 출처: https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main
 
-다른 GGUF를 기본 모델로 선택하려면 `settings.yaml`의 `LLAMACPP_MAIN_GGUF_PATH`를 바꾼다. 텍스트 전용 모델이라면 `LLAMACPP_MAIN_MMPROJ_PATH`를 제거하거나 주석 처리하고 `LLAMACPP_MAIN_VISION: false`로 설정한다. 다른 모델에 Ornith projector를 임의로 연결하지 않는다.
-
-추가 GGUF를 같은 폴더에 두면 **서버를 재시작한 뒤** 모델 목록에 표시된다. Main·Verifier·기억 추출은 UI에서 선택한 동일 GGUF를 사용한다.
+1. 허깅페이스에서, llama.cpp이 지원하는 모델 중, 본인의 컴퓨터에서 가동 가능한 모델을 찾는다. 링크 : https://huggingface.co/models?apps=llama.cpp
+2. 모델을 찾았으면 클릭해서 상세 페이지로 이동, **Files** 탭으로 이동한다.
+3. Files 탭 내부의 검색창에서 ".gguf"를 검색한다.
+4. 나오는 파일들 중, 선택한 모델과 이름이 일치하는 파일 중 원하는 파일을 다운로드 한다. (**mmoproj**로 시작하는 .gguf 파일이 있다면 그것도 같이 다운로드 한다)
+5. 다운로드한 모델 파일을 MAI 프로젝트의 다음 폴더에 넣는다. ./portable/portable-models/gguf/
+6. Git Bash에서 프로젝트 폴더로 이동 후, " **./mai.sh check** " 를 복사/붙여넣기/엔터 입력하여 모델 인식 상태를 확인한다.
 
 ## 3. 실행시키는 방법
-
 ```bash
 ./mai.sh check
 ./mai.sh start
 ```
-
 `check`는 필수 실행 파일과 모델 카탈로그를 검사한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C`를 사용한다.
 
 | 환경 | 설치 | 실행 |
@@ -62,23 +70,16 @@ curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/
 
 ## 4. 업데이트하는 방법
 
-**먼저 MAI와 llama.cpp를 종료하고** `.env`, 개인 SQLite 데이터베이스(`data/`), 업로드, GGUF, 설치 매니페스트를 안전하게 백업한다. 소스 업데이트는 다음 순서다.
 
-```bash
-git status
-git switch dev
-git pull --ff-only origin dev
-./mai.sh setup
-./mai.sh check
-```
 
-`git status`에서 미반영 작업을 확인한다. 병합 충돌·변경 파일이 있으면 강제로 삭제하거나 리셋하지 말고 해결한다. `dev`에서 `main`으로 병합하는 과정은 자동으로 수행하지 않는다.
 
-소스 갱신, llama.cpp/Python 바이너리 교체, GGUF 교체는 별개다. 새 바이너리를 쓰려면 공식 배포자 SHA-256을 확인해 OS별 개인 매니페스트를 명시적으로 갱신한다. 설치 영수증과 파일이 불일치하면 setup은 오류를 드러내며 임의로 덮어쓰지 않는다. 모델 교체는 새 GGUF를 별도로 검증한 후 `settings.yaml` 기본 경로를 변경하고 재시작한다.
+
 
 ## 5. 고급설정
-
-비밀이 아닌 설정은 `settings.yaml`, 계정·토큰 및 개인 재정의는 `.env`에 둔다. 우선순위는 **프로세스 환경변수 → `.env` → `settings.yaml`**이다.
+### 1. 설정파일
+- `settings.yaml` : 모델 최적화용 옵션 설정
+- `.env` : 계정 아이디/비번 및 토큰 등의 개인정보.
+- 우선순위 :  **프로세스 환경변수 → `.env` → `settings.yaml`**
 
 | 설정 | 기능 |
 |---|---|
