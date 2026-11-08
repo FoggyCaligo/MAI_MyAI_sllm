@@ -1,4 +1,4 @@
-"""Production model selection keeps the reviewer independent of the main model."""
+"""Main, Verifier and memory extraction use the same selected llama.cpp GGUF."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -6,22 +6,20 @@ from types import SimpleNamespace
 import pytest
 
 from mai.app import runtime as runtime_module
-from mai.agent import AgentRunFailure
 from tests.reviewer_fixtures import reviewer_payload
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.llm.models import ModelTurn
 
 
-@pytest.mark.parametrize("verifier_model,selected_model,reviewer_fails", [
-    (None, None, False), ("granite4:3b-h", None, False),
-    (None, "ui-selected-model", False), ("granite4:3b-h", "ui-selected-model", False),
-    ("granite4:3b-h", None, True),
-])
-def test_production_uses_configured_reviewer_without_changing_main_or_extraction(
-    tmp_path, monkeypatch, verifier_model, selected_model, reviewer_fails,
+@pytest.mark.parametrize("selected_model", [None, "ui-selected-model"])
+def test_production_verifies_with_the_selected_main_model(
+    tmp_path, monkeypatch, selected_model,
 ):
     monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "false")
-    monkeypatch.setattr(runtime_module, "SentenceBreakerSegmenter", lambda **kwargs: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        runtime_module, "SentenceBreakerSegmenter",
+        lambda **kwargs: SimpleNamespace(close=lambda: None),
+    )
     requests = []
 
     async def chat(adapter, request):
@@ -30,51 +28,48 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
             content = "알겠습니다."
         else:
             assert request.tools == () and request.think is False
-            if reviewer_fails:
-                raise RuntimeError("configured reviewer is unavailable")
-            content = json.dumps(reviewer_payload({"evidence_verdict": "supported", "action_verdict": "not_applicable",
-                                  "reasons": [], "claims": [], "retry_summary": "No correction needed."}, request))
+            content = json.dumps(reviewer_payload({
+                "evidence_verdict": "supported",
+                "action_verdict": "not_applicable",
+                "reasons": [], "claims": [],
+                "retry_summary": "No correction needed.",
+            }, request))
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 
     async def postprocess(**kwargs):
         pass
 
-    monkeypatch.setattr(runtime_module.OllamaAdapter, "chat", chat)
+    async def list_models():
+        return ("default-model", "ui-selected-model")
+
+    monkeypatch.setattr(runtime_module.LlamaCppAdapter, "chat", chat)
     runtime = runtime_module.MAIRuntime(
-        model="ornith-1.5:9b", verifier_model=verifier_model, ollama_host="http://127.0.0.1:11434",
-        memory_db_path=tmp_path / "memory.db", sentence_breaker_db_path=tmp_path / "segmenter.db",
+        model="default-model",
+        memory_db_path=tmp_path / "memory.db",
+        sentence_breaker_db_path=tmp_path / "segmenter.db",
         upload_root=tmp_path / "uploads", cwd=tmp_path,
     )
+    monkeypatch.setattr(runtime, "list_models", list_models)
     monkeypatch.setattr(runtime, "_postprocess_memory", postprocess)
     principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
 
     async def check():
-        main = selected_model or "ornith-1.5:9b"
-        audit_events = []
-        record = lambda round_number, event, details: audit_events.append((round_number, event, details))
-        if reviewer_fails:
-            with pytest.raises(AgentRunFailure, match="configured reviewer is unavailable"):
-                await runtime.run_user_message(
-                    "안녕", principal=principal, model=selected_model,
-                    on_verification_audit=record,
-                )
-        else:
-            result = await runtime.run_user_message(
-                    "안녕", principal=principal, model=selected_model,
-                    on_verification_audit=record,
-                )
-            await asyncio.gather(*runtime._background_tasks)
-            assert result.model == main
-        assert [name for name, request in requests] == [main, verifier_model or main]
-        assert audit_events
-        assert all(entry[0] == 1 for entry in audit_events)
-        assert all(entry[2]["verifier_model"] == (verifier_model or main) for entry in audit_events)
-        assert [entry[1] for entry in audit_events] == (
-            ["request", "error"] if reviewer_fails
-            else ["request", "raw_response", "validated_response", "decision"]
+        chosen = selected_model or "default-model"
+        events = []
+        result = await runtime.run_user_message(
+            "안녕", principal=principal, model=selected_model,
+            on_verification_audit=lambda round_number, event, details:
+                events.append((round_number, event, details)),
         )
-        assert set(runtime._fact_extractors) == {main}
+        await asyncio.gather(*runtime._background_tasks)
+        assert result.model == chosen
+        assert [name for name, _request in requests] == [chosen, chosen]
+        assert all(event[2]["verifier_model"] == chosen for event in events)
+        assert [event[1] for event in events] == [
+            "request", "raw_response", "validated_response", "decision",
+        ]
+        assert set(runtime._fact_extractors) == {chosen}
 
     try:
         asyncio.run(check())
@@ -82,8 +77,11 @@ def test_production_uses_configured_reviewer_without_changing_main_or_extraction
         runtime.close()
 
 
-def test_explicitly_empty_verifier_model_fails_before_initializing_resources(tmp_path):
-    with pytest.raises(ValueError, match="verifier_model must be non-empty"):
-        runtime_module.MAIRuntime(model="main", verifier_model=" ", ollama_host="http://localhost:11434",
-            memory_db_path=tmp_path / "memory.db", sentence_breaker_db_path=tmp_path / "segmenter.db")
+def test_unsupported_inference_backend_rejected_before_initializing_resources(tmp_path):
+    with pytest.raises(ValueError, match="LLM_BACKEND must be llamacpp"):
+        runtime_module.MAIRuntime(
+            model="local", llm_backend="ollama",
+            memory_db_path=tmp_path / "memory.db",
+            sentence_breaker_db_path=tmp_path / "segmenter.db",
+        )
     assert not (tmp_path / "memory.db").exists()

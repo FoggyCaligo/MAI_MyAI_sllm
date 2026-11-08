@@ -1,6 +1,6 @@
 # llama.cpp Portable — GGUF 폴더 탐색 및 모델 선택 실험
 
-이 문서는 현재 `dev`에 포함된 llama.cpp GGUF 카탈로그 및 모델 전환 기능을 설명한다. Ollama 모델 검색·설정과 Main/Verifier 검증 계약은 별도로 유지한다.
+이 문서는 현재 `dev`의 llama.cpp 전용 GGUF 카탈로그와 모델 전환 기능을 설명한다. 별도의 Ollama 백엔드 및 모델 선택 계약은 지원하지 않는다.
 
 ## 모델 목록과 기본값
 
@@ -15,7 +15,7 @@ LLAMACPP_MAIN_VISION: true
 
 * `LLAMACPP_GGUF_DIRECTORY` 아래의 **직접 자식 `.gguf` 파일**을 실행 시 읽고, GGUF 매직 헤더를 확인한다. 디렉터리가 없거나 잘못된 파일이 있으면 시작을 실패로 처리한다.
 * 설정에 **명시된** `LLAMACPP_MAIN_MMPROJ_PATH` 및 `LLAMACPP_VISION_MMPROJ_PATH`는 모델 선택 목록에서 제외한다. **다른 projector 파일의 역할을 이름으로 추측하지 않는다.** 추가 projector를 폴더에 함께 보관할 경우 별도 설정에 경로를 명시하거나 일반 모델 폴더와 분리해야 한다.
-* `LLAMACPP_MAIN_GGUF_PATH`는 **기본 선택 모델**이며 탐색 폴더 안에 있어야 한다. `MAIN_MODEL` / `VERIFIER_MODEL`의 Ollama 태그는 llama.cpp 라우터 시작 시 생성된 모델 ID로 덮어쓴다.
+* `LLAMACPP_MAIN_GGUF_PATH`는 **기본 선택 모델**이며 탐색 폴더 안에 있어야 한다. 실행기가 등록된 GGUF의 내부 모델 ID를 `MAIN_MODEL` 환경변수에 지정한다. 선택한 같은 모델 ID를 Main·Verifier·기억 추출에 전달한다.
 * 파일명은 UI 표시 이름이고, 내부 라우터 ID는 **정규화된 GGUF 경로의 SHA-256 기반 ID**다. 따라서 사용자가 임의의 임시 ID를 입력해 로드할 수 없다.
 * 모델 파일 목록은 **프로세스 시작 시 생성된 고정 스냅샷**이다. 파일 추가·삭제 또는 `settings.yaml` 변경을 반영하려면 MAI Portable 서버를 재시작한다. 실행 중 목록과 등록된 라우터가 달라지면 명시적으로 오류를 반환한다.
 
@@ -31,11 +31,10 @@ LLAMACPP_REASONING_PRESERVE: false
 - llama.cpp OpenAI 호환 요청에서는 **`reasoning_effort` 필드를 보내지 않는다**. 빈 문자열이 아니라 필드 자체를 생략하므로 채팅 템플릿의 기본 effort를 사용한다.
 - reasoning preserve를 비활성화해도 **현재 턴의 Think 생성은 별도로 유지될 수 있다**. 또한 `think=False`인 Verifier/기억 추출에서 이전의 `reasoning_effort=none` 강제값이 제거되므로 모델 기본 reasoning이 작동할 수 있다. 실제 동작은 모델/템플릿으로 검증해야 한다.
 - 설정은 Portable 런처에만 적용되므로 바이너리 버전을 올려도 YAML 설정이 유지된다. 새 llama.cpp 버전에서 지원하지 않는 플래그라면 시작 실패를 그대로 보고하며 옵션을 무시하거나 암묵적으로 이전 설정으로 되돌리지 않는다.
-- Ollama Modelfile의 `TEMPLATE {{ .Prompt }}`만으로는 Ollama의 샘플링 기본값이나 내부 템플릿 reasoning 옵션을 확정할 수 없다.
 
 ## 응답 생성 상한
 
-`settings.yaml`의 기존 `OLLAMA_AGENT_MAX_OUTPUT_TOKENS: 32768` 설정은 **Ollama 메인 모델의 `num_predict`** 뿐 아니라 **llama.cpp 메인 모델의 `max_tokens`** 에도 적용된다. 새 llama.cpp 바이너리로 교체해도 MAI 요청에서 값을 읽어 전달한다. 실행 환경의 `.env`와 환경변수가 지정한 값이 YAML보다 우선한다.
+`settings.yaml`의 `MODEL_MAX_OUTPUT_TOKENS: 32768` 설정은 llama.cpp 채팅 요청의 `max_tokens`에 적용된다. 새 llama.cpp 바이너리로 교체해도 MAI 요청에서 값을 읽어 전달한다. 실행 환경의 `.env`와 환경변수가 지정한 값이 YAML보다 우선한다.
 
 `max_tokens`는 **한 모델 요청에서 생성할 수 있는 전체 출력 토큰 상한**이며, 현재 Think 생성량을 별도로 제한하는 설정이 아니다. `finish_reason="length"`로 종료되면 비록 부분 응답이 있어도 MAI는 완료된 최종 답변이나 정상적인 툴 호출로 인정하지 않고 프로토콜 오류로 보고한다. Verifier는 llama.cpp에서 Main과 동일한 어댑터를 공유하므로 이 제한도 동일하게 적용되고, 기억 추출 전용 어댑터는 이 설정의 적용 대상이 아니다.
 
@@ -51,7 +50,7 @@ Linux (기존 Ubuntu Portable 계약 필요):
 bash portable/start-portable-llamacpp-linux.sh
 ```
 
-두 스크립트 모두 발견된 GGUF에 대한 `--models-preset`을 만들어 라우터에 등록한다. `--models-max 1`을 유지하므로 llama.cpp 라우터는 한번에 모델 하나만 상주시킨다. 다른 프로세스(예: 따로 실행한 Ollama)의 VRAM 점유는 이 설정으로 제어하지 못한다.
+두 스크립트 모두 발견된 GGUF에 대한 `--models-preset`을 만들어 라우터에 등록한다. `--models-max 1`을 유지하므로 llama.cpp 라우터는 한번에 모델 하나만 상주시킨다. 별개 프로세스의 VRAM 점유는 이 설정으로 제어하지 못한다.
 
 ## UI 전환 계약
 

@@ -6,7 +6,7 @@ import os
 from typing import Any, Mapping, Sequence
 
 
-def ollama_generation_limit(name: str, default: int) -> int:
+def model_generation_limit(name: str, default: int) -> int:
     value = int(os.environ.get(name, str(default)))
     if value <= 0:
         raise ValueError('output token limit must be positive')
@@ -20,15 +20,15 @@ ThinkSetting = bool | str
 
 
 def _request_timeout_seconds_from_env() -> float:
-    return float(os.environ.get("OLLAMA_REQUEST_TIMEOUT_SECONDS", "300"))
+    return float(os.environ.get("MODEL_REQUEST_TIMEOUT_SECONDS", "300"))
 
 
 @dataclass(frozen=True, slots=True)
 class ModelConfig:
-    """Configuration for one Ollama-backed model adapter."""
+    """Configuration for one llama.cpp-backed model adapter."""
 
     model: str
-    host: str = "http://127.0.0.1:11434"
+    host: str = "http://127.0.0.1:8080"
     think: ThinkSetting = True
     options: Mapping[str, Any] = field(default_factory=dict)
     max_output_tokens: int | None = None
@@ -36,9 +36,9 @@ class ModelConfig:
 
     def __post_init__(self) -> None:
         if not self.model.strip():
-            raise ValueError("model must be a non-empty Ollama model name")
+            raise ValueError("model must be a non-empty model name")
         if not self.host.strip():
-            raise ValueError("host must be a non-empty Ollama host")
+            raise ValueError("host must be a non-empty inference host")
         if self.request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be positive")
         if self.max_output_tokens is not None and (type(self.max_output_tokens) is not int or self.max_output_tokens <= 0):
@@ -47,7 +47,7 @@ class ModelConfig:
 
 @dataclass(frozen=True, slots=True)
 class NativeToolCall:
-    """Normalized Ollama native function call."""
+    """Normalized native function call."""
 
     name: str
     arguments: JsonObject
@@ -62,7 +62,7 @@ class NativeToolCall:
 class ModelTurn:
     """One assistant turn returned by the model adapter.
 
-    `assistant_message` is deliberately retained in normalized Ollama message
+    `assistant_message` is deliberately retained in normalized model message
     form so the Agent Runtime can append it to the next native tool round
     without reconstructing tool calls from prose.
     """
@@ -79,7 +79,7 @@ class ModelTurn:
 
 @dataclass(frozen=True, slots=True)
 class ChatRequest:
-    """Provider-neutral input accepted by the Ollama adapter."""
+    """Provider-neutral input accepted by the model adapter."""
 
     messages: Sequence[Mapping[str, Any]]
     tools: Sequence[Mapping[str, Any]] = ()

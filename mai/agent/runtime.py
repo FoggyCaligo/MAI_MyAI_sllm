@@ -5,7 +5,6 @@ import json
 from typing import Any, Mapping, Sequence
 
 from ..llm.models import Message, ThinkSetting
-from ..llm.ollama import OllamaAdapter
 from ..llm.llamacpp import LlamaCppAdapter
 from ..tools.time import current_time
 from ..tools.artifacts import temporary_artifact_scope
@@ -36,7 +35,7 @@ Verifier feedback is a diagnosis to check, not a new fact. When a rejection disp
 class AgentRuntime:
     def __init__(
         self,
-        adapter: OllamaAdapter | LlamaCppAdapter,
+        adapter: LlamaCppAdapter,
         registry: ToolRegistry,
         *,
         guard_config: GuardConfig | None = None,

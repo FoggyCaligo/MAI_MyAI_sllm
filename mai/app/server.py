@@ -186,14 +186,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
 
     _runtime = MAIRuntime(
-        model=os.environ.get("MAIN_MODEL", "ornith-1.5:9b"),
-        ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
-        llm_backend=os.environ.get("LLM_BACKEND", "ollama"),
+        model=os.environ.get("MAIN_MODEL", ""),
+        llm_backend=os.environ.get("LLM_BACKEND", "llamacpp"),
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
-        vision_model=os.environ.get("VISION_MODEL") or None,
-        verifier_model=os.environ.get("VERIFIER_MODEL"),
         upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
@@ -323,7 +320,7 @@ async def health() -> dict[str, object]:
     return {
         "status": "ok",
         "model": runtime.model,
-        "vision_model": runtime.vision_model,
+        "main_vision_enabled": os.environ.get("LLAMACPP_MAIN_VISION", "false").lower() == "true",
         "tailscale_funnel": _hosting is not None and _hosting_provider == "tailscale",
         "remote_hosting_provider": _hosting_provider if _hosting is not None else "none",
     }
@@ -476,7 +473,7 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
         runtime_model=runtime.model,
         installed_models=installed,
     )
-    labels = runtime.model_labels() if runtime.llm_backend == "llamacpp" else {}
+    labels = runtime.model_labels()
     if labels and set(visible) != set(labels):
         raise HTTPException(status_code=500, detail="GGUF catalog differs from running llama.cpp router; restart MAI")
     return {"models": visible, "current": runtime.selected_model, "locked": False, "labels": labels,
@@ -830,7 +827,6 @@ def _remote_worker_bundle() -> tuple[bytes, str]:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(root / "pyproject.toml", "pyproject.toml")
-        archive.write(root / "remote-requirements.txt", "remote-requirements.txt")
         for source in sorted((root / "mai").rglob("*.py")):
             archive.write(source, source.relative_to(root).as_posix())
     data = buffer.getvalue()

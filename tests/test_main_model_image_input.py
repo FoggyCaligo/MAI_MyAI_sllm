@@ -1,9 +1,7 @@
-"""Native vision input and separate image-tool fallback remain independent."""
+"""llama.cpp-only attachment validation and direct image forwarding."""
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-
 import pytest
 
 from mai.app.access import AccessPrincipal, AccessRole
@@ -18,16 +16,6 @@ def run(coro):
     return asyncio.run(coro)
 
 
-class ShowClient:
-    def __init__(self, capabilities):
-        self.capabilities = capabilities
-        self.calls = []
-
-    async def show(self, model):
-        self.calls.append(model)
-        return {"capabilities": self.capabilities}
-
-
 def image_fixture(tmp_path):
     principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
     directory = principal_upload_directory(tmp_path, principal)
@@ -36,73 +24,44 @@ def image_fixture(tmp_path):
     return principal
 
 
-def prepare(tmp_path, principal, client, **overrides):
+def prepare(tmp_path, principal, **overrides):
     kwargs = dict(
         prompt="What is pictured?", attachments=("test.png",), principal=principal,
-        upload_root=tmp_path, model="vision:9b", backend="ollama",
-        ollama_client=client, separate_vision_model="fallback:2b",
+        upload_root=tmp_path, model="local-vision-gguf",
     )
     kwargs.update(overrides)
     return run(prepare_main_image_input(**kwargs))
 
 
-def test_vision_capability_sends_original_bytes(tmp_path):
-    principal = image_fixture(tmp_path)
-    client = ShowClient(["completion", "vision"])
-    prompt, images = prepare(tmp_path, principal, client)
-    assert prompt == "What is pictured?"
-    assert images == (b"test-raw-image",)
-    assert client.calls == ["vision:9b"]
-
-
-def test_text_only_model_keeps_separate_image_tool_route(tmp_path):
-    principal = image_fixture(tmp_path)
-    prompt, images = prepare(tmp_path, principal, ShowClient(["completion"]))
-    assert images == ()
-    assert "image_analyze" in prompt
-    assert "test.png" in prompt
-
-
 def test_llamacpp_text_only_main_explains_unavailable_image_without_tool_or_exception(tmp_path, monkeypatch):
     principal = image_fixture(tmp_path)
-    client = ShowClient(["vision"])
     monkeypatch.setenv("LLAMACPP_MAIN_VISION", "false")
-    prompt, images = prepare(tmp_path, principal, client, backend="llamacpp")
+    prompt, images = prepare(tmp_path, principal)
     assert images == ()
     assert "cannot inspect these images" in prompt
     assert "No image pixels were provided" in prompt
     assert "image_analyze is not available" in prompt
-    assert "Activate image_analyze" not in prompt
     assert "test.png" not in prompt
-    assert client.calls == []
 
 
 def test_llamacpp_image_capable_main_receives_pixels_directly(tmp_path, monkeypatch):
     principal = image_fixture(tmp_path)
     monkeypatch.setenv("LLAMACPP_MAIN_VISION", "true")
-    prompt, images = prepare(tmp_path, principal, None, backend="llamacpp")
+    prompt, images = prepare(tmp_path, principal)
     assert prompt == "What is pictured?"
     assert images == (b"test-raw-image",)
-
-
-def test_without_any_vision_backend_raises_instead_of_discarding_image(tmp_path):
-    principal = image_fixture(tmp_path)
-    with pytest.raises(RuntimeError, match="no separate VISION_MODEL"):
-        prepare(tmp_path, principal, ShowClient(["completion"]), separate_vision_model=None)
 
 
 def test_attachment_path_cannot_escape_account_directory(tmp_path):
     principal = image_fixture(tmp_path)
     with pytest.raises(ValueError, match="filename"):
-        prepare(tmp_path, principal, ShowClient(["vision"]), attachments=("../test.png",))
+        prepare(tmp_path, principal, attachments=("../test.png",))
 
 
-def test_without_attachments_does_not_query_model_capabilities(tmp_path):
+def test_without_attachments_does_not_require_model_capability_probe(tmp_path):
     principal = image_fixture(tmp_path)
-    client = ShowClient(["vision"])
-    prompt, images = prepare(tmp_path, principal, client, attachments=())
+    prompt, images = prepare(tmp_path, principal, attachments=())
     assert (prompt, images) == ("What is pictured?", ())
-    assert client.calls == []
 
 
 def test_agent_runtime_preserves_user_images_during_model_request():

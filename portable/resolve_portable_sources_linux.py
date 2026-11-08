@@ -17,7 +17,6 @@ SOURCES_LINUX = {
     "python": ("astral-sh", "python-build-standalone",
                r"cpython-3\.11\.[0-9]+\+[^/]+-x86_64-unknown-linux-gnu-install_only\.tar\.gz"),
     "uv": ("astral-sh", "uv", r"uv-x86_64-unknown-linux-gnu\.tar\.gz"),
-    "ollama": ("ollama", "ollama", r"ollama-linux-amd64\.tar\.zst"),
     "llamacpp": ("ggml-org", "llama.cpp", r"llama-.*-bin-ubuntu-vulkan-x64\.tar\.gz"),
 }
 
@@ -25,14 +24,11 @@ SOURCES_LINUX = {
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().with_name("portable-sources-linux.json"))
-    parser.add_argument("--include-llamacpp", action="store_true", help="pin optional Linux Vulkan llama.cpp binary")
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(f"Refusing to overwrite pinned manifest: {args.output}")
     config: dict[str, object] = {"schema_version": 1, "target": "ubuntu-24.04-amd64"}
     for name, source in SOURCES_LINUX.items():
-        if name == "llamacpp" and not args.include_llamacpp:
-            continue
         config[name] = resolve_one(*source)
     args.output.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     print(f"Linux portable sources saved: {args.output}")

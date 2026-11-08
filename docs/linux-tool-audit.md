@@ -10,15 +10,15 @@
 | CSV 집계 | `mai/tools/csv_aggregate.py`: Python 파일/집계 경로 | 미실행 |
 | 문서 편집 | `mai/tools/document_edit.py`: tempfile와 Path | 미실행 |
 | browser_* | `mai/tools/browser.py`: Playwright Chromium, Linux 브라우저 바이너리 및 시스템 라이브러리 필요 | 미실행 |
-| image_analyze / 첨부 이미지 | `mai/tools/images.py`, `mai/llm/llamacpp.py`: llama.cpp OpenAI 이미지 메시지 구성; GPU/projector/model 실측 필요 | 미실행 |
+| 메인 모델 직접 이미지 입력 | `mai/app/main_model_images.py`, `mai/llm/llamacpp.py`: GGUF/projector 설정에 따라 이미지 바이트 전달; 별도 image_analyze 도구 없음 | 미실행 |
 | 원격 is_remote=true | `mai/remote/routing.py`의 `native.invoke` 경로와 Windows PowerShell·Linux shell 워커 시작 스크립트가 구현됨 | Linux 원격 실기기 종단간 검증 **미확인** |
 | 음성 | `mai/app/voice.py`의 faster-whisper 및 설치 의존성, 오디오/마이크 환경 | 미실행 |
 | 원격 웹 공개 | Tailscale / Cloudflare **호스트별 설치·로그인** 필요 | 미실행 |
 
 ## 설치 전 차단 요인
 
-1. 기존 `portable/start-portable-linux.sh`는 Ollama용이다. llama.cpp는 `start-portable-llamacpp-linux.sh`를 실행해야 한다.
-2. Linux에서 처음 실행하는 PC에는 `prepare-portable-linux.sh --with-llamacpp`로 호스트 캐시를 구성해야 한다. SSD의 Windows 실행 파일은 Linux에서 동작하지 않는다.
+1. Linux에서 `./mai.sh setup`과 `./mai.sh start`를 사용한다. 기존 Linux Ollama 전용 런처는 제거했다.
+2. `./mai.sh setup`이 Linux 네이티브 Python·uv·llama.cpp의 해시 검증과 호스트 캐시 설치를 수행한다. Windows 바이너리는 Linux에서 동작하지 않는다.
 3. `settings.yaml`의 프로젝트 기준 GGUF 상대경로는 공통 사용 가능하지만, GPU Vulkan 드라이버와 `vulkaninfo`, `libvulkan`, Linux 네이티브 의존성, 실행 가능한 마운트와 SQLite 읽기/쓰기 권한은 대상 호스트별로 확인한다.
 4. Linux 원격 대상용 `mai/app/static/remote-agent-linux.sh`와 `mai/remote/python_worker.py`가 추가되어 있다. `is_remote=true`는 서버에 연결된 대상에서 `native.invoke`로 호출된다. 스크립트의 설치 의존성·인증 연결 및 실제 기능 동작은 별도 Linux 호스트에서 검증해야 한다. 단순히 코드가 있다는 이유로 실사용 성공을 보장하지 않는다.
 5. `terminal_run` 도구 설명에 Windows CMD/PowerShell 안내가 길게 포함되어 있지만, 런타임 컨텍스트는 POSIX `/bin/sh`를 지정한다. LLM이 Windows 문법을 잘못 선택하는 상황은 실제 테스트가 필요하다.
@@ -27,9 +27,9 @@
 
 ```bash
 python3 portable/check-linux-gpu.py --require
-bash -n portable/prepare-portable-linux.sh
+bash -n mai.sh
 bash -n portable/start-portable-llamacpp-linux.sh
-bash portable/prepare-portable-linux.sh --with-llamacpp
+./mai.sh setup
 bash portable/start-portable-llamacpp-linux.sh
 ```
 

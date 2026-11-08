@@ -4,7 +4,7 @@ import pytest
 
 from mai.llm.llamacpp import LlamaCppAdapter, _openai_message, _openai_messages
 from mai.llm.models import ChatRequest, ModelConfig
-from mai.llm.ollama import OllamaProtocolError
+from mai.llm.errors import ModelProtocolError
 
 
 def test_llamacpp_tool_call_and_thinking_round_trip():
@@ -42,7 +42,7 @@ def test_malformed_response_fails_visibly():
         )) as client:
             adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
             return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hi"}]))
-    with pytest.raises(OllamaProtocolError):
+    with pytest.raises(ModelProtocolError):
         asyncio.run(run())
 
 
@@ -81,7 +81,7 @@ def test_empty_structured_verifier_response_is_protocol_error_with_diagnostics()
                 response_format={"type": "object", "properties": {"ok": {"type": "boolean"}},
                                  "required": ["ok"]},
             ))
-    with pytest.raises(OllamaProtocolError, match="finish_reason='length'"):
+    with pytest.raises(ModelProtocolError, match="finish_reason='length'"):
         asyncio.run(run())
 
 
@@ -143,7 +143,7 @@ def test_llamacpp_rejects_output_truncated_before_answer_or_tool_completion():
                 model="local", host="http://test", max_output_tokens=32768,
             ), client=client)
             await adapter.chat(ChatRequest(messages=[{"role":"user","content":"hello"}]))
-    with pytest.raises(OllamaProtocolError, match="output limit reached"):
+    with pytest.raises(ModelProtocolError, match="output limit reached"):
         asyncio.run(run())
 
 

@@ -1,4 +1,4 @@
-"""Offline contract tests: optional llama.cpp does not alter Ollama image behavior."""
+"""Offline contract tests for llama.cpp main-model image forwarding."""
 from __future__ import annotations
 
 import asyncio
@@ -40,15 +40,14 @@ def test_llamacpp_router_request_has_requested_model_and_json_schema():
     assert captured[0]["response_format"]["type"] == "json_schema"
 
 
-def test_llamacpp_main_image_opt_in_and_ollama_default_preserved(tmp_path, monkeypatch):
+def test_llamacpp_main_image_opt_in(tmp_path, monkeypatch):
     principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
     upload = principal_upload_directory(tmp_path, principal)
     upload.mkdir(parents=True)
     raw = b"\x89PNG\r\n\x1a\nexample"
     (upload / "picture.png").write_bytes(raw)
     params = dict(prompt="describe", attachments=("picture.png",), principal=principal,
-                  upload_root=tmp_path, model="mai-main", backend="llamacpp",
-                  ollama_client=None, separate_vision_model="mai-main")
+                  upload_root=tmp_path, model="mai-main")
     monkeypatch.setenv("LLAMACPP_MAIN_VISION", "true")
     prompt, images = asyncio.run(prepare_main_image_input(**params))
     assert prompt == "describe"

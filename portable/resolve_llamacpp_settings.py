@@ -1,4 +1,4 @@
-"""Resolve optional llama.cpp Portable model paths from settings.yaml.
+"""Read validated llama.cpp-only GGUF catalog settings from settings.yaml.
 
 Read the same strictly validated YAML as the MAI process, but do not modify
 the parent process environment. JSON is consumed by the PowerShell launcher.
@@ -17,7 +17,6 @@ from mai.app.settings import load_settings
 KEYS = (
     "LLAMACPP_GGUF_DIRECTORY",
     "LLAMACPP_MAIN_GGUF_PATH",
-    "LLAMACPP_VERIFIER_GGUF_PATH",
     "LLAMACPP_MAIN_MMPROJ_PATH",
     "LLAMACPP_MAIN_VISION",
     "LLAMACPP_REASONING_PRESERVE",
@@ -26,8 +25,7 @@ KEYS = (
 )
 
 def read_config(path: Path) -> dict[str, str | bool | None]:
-    # YAML is the sole source of the model file paths, avoiding ambiguity
-    # with stale .env model names (Ollama has its own model naming).
+    # YAML is authoritative for the configured GGUF paths.
     data = load_settings(path, environ={})
     missing = [key for key in ("LLAMACPP_MAIN_GGUF_PATH",) if key not in data]
     if missing:
