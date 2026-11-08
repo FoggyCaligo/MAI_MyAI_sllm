@@ -245,6 +245,32 @@ class MAIRuntime:
             names.append(name.strip())
         return tuple(names)
 
+    def model_labels(self) -> dict[str, str]:
+        """UI labels for exact configured GGUF identities, not inferred aliases."""
+        if self.llm_backend != "llamacpp":
+            return {}
+        from portable.llamacpp_model_catalog import from_settings
+        root = Path(__file__).resolve().parents[2]
+        catalog = from_settings(root)
+        return {entry["id"]: entry["label"] for entry in catalog["models"]}
+
+    async def select_model(self, model: str) -> str:
+        """User-driven, confirmed one-resident model transition.
+
+        The global execution lock serializes against ongoing full agent turns
+        and background memory inference; the router lock protects each
+        individual model transaction.
+        """
+        if self.llm_backend != "llamacpp" or self._llamacpp_router is None:
+            raise RuntimeError("Explicit model preload requires llama.cpp router mode")
+        async with self._llamacpp_model_scope():
+            allowed = await self.list_models()
+            if model not in allowed:
+                raise ValueError(f"Requested GGUF model is not registered: {model}")
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                await self._llamacpp_router.prepare(model, client)
+        return model
+
     def _registry_for(
         self,
         principal: AccessPrincipal,
@@ -320,13 +346,18 @@ class MAIRuntime:
         previous_assistant_message = _previous_assistant_message(prior_messages)
 
         selected_model = self.model if model is None else model.strip()
+        if self.llm_backend == "llamacpp" and selected_model not in await self.list_models():
+            raise ValueError(f"Requested GGUF model is not registered: {selected_model}")
         model_prompt, inline_images = await prepare_main_image_input(
             prompt=prompt, attachments=attachments, principal=principal,
             upload_root=self.upload_root, model=selected_model, backend=self.llm_backend,
             ollama_client=self._ollama_client, separate_vision_model=self.vision_model,
         )
         adapter = self._adapter_for(selected_model)
-        verifier_adapter = self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter
+        # llama.cpp selection unifies Main, Verifier, and memory fact extraction.
+        # The independent verifier setting remains available in Ollama mode.
+        verifier_adapter = (adapter if self.llm_backend == "llamacpp" else
+                            self._adapter_for(self.verifier_model) if self.verifier_model is not None else adapter)
         fact_extractor = self._fact_extractor_for(selected_model)
 
         working = WorkingGraph()
