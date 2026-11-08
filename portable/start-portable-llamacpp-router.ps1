@@ -14,66 +14,16 @@ $server = Join-Path $root 'portable/portable-runtimes/llamacpp/llama-server.exe'
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Portable Python missing: $python" }
 if (-not (Test-Path -LiteralPath $server -PathType Leaf)) { throw "llama-server missing: $server" }
 if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) { throw 'Missing .env' }
-# Paths and main vision mode are configured exclusively in settings.yaml.
-$resolvedJson = & $python (Join-Path $root 'portable/resolve_llamacpp_settings.py')
-if ($LASTEXITCODE -ne 0) { throw 'Could not load llama.cpp GGUF paths from settings.yaml' }
-$config = $resolvedJson | ConvertFrom-Json
-$MainGgufPath = [string]$config.LLAMACPP_MAIN_GGUF_PATH
-$VerifierGgufPath = [string]$config.LLAMACPP_VERIFIER_GGUF_PATH
-$MainMmprojPath = [string]$config.LLAMACPP_MAIN_MMPROJ_PATH
-$MainVision = [bool]$config.LLAMACPP_MAIN_VISION
-$VisionGgufPath = [string]$config.LLAMACPP_VISION_GGUF_PATH
-$VisionMmprojPath = [string]$config.LLAMACPP_VISION_MMPROJ_PATH
-if ($VisionMmprojPath -and -not $VisionGgufPath) { throw 'LLAMACPP_VISION_MMPROJ_PATH requires LLAMACPP_VISION_GGUF_PATH' }
-# One resident model at a time. The router unloads idle main before loading verifier,
-# and unloads verifier before the next main correction round.
-function Resolve-Gguf([string]$raw, [string]$label) {
-    if (-not $raw) { return $null }
-    $candidate = if ([IO.Path]::IsPathRooted($raw)) { $raw } else { Join-Path $root $raw }
-    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "$label missing: $candidate" }
-    $resolved = (Resolve-Path -LiteralPath $candidate).Path
-    $stream = [IO.File]::OpenRead($resolved)
-    try {
-        $bytes = New-Object byte[] 4
-        if ($stream.Read($bytes, 0, 4) -ne 4 -or [Text.Encoding]::ASCII.GetString($bytes) -cne 'GGUF') {
-            throw "$label is not a GGUF: $resolved"
-        }
-    } finally { $stream.Dispose() }
-    return $resolved
-}
-$main = Resolve-Gguf $MainGgufPath 'Main'
-$verifier = Resolve-Gguf $VerifierGgufPath 'Verifier'
-$mainProjector = Resolve-Gguf $MainMmprojPath 'Main mmproj'
-$vision = Resolve-Gguf $VisionGgufPath 'Vision'
-$visionProjector = Resolve-Gguf $VisionMmprojPath 'Vision mmproj'
-$sharedMainVerifier = [string]::Equals($main, $verifier, [StringComparison]::OrdinalIgnoreCase)
-$verifierAlias = if ($sharedMainVerifier) { 'mai-main' } else { 'mai-verifier' }
-if ($sharedMainVerifier) {
-    Write-Warning 'Main and Verifier share one resident GGUF/model alias; reviewer independence is not guaranteed.'
-}
-# The llama.cpp router INI uses keys identical to CLI flags, without '--'.
-# The generated INI is stored outside Git; paths with spaces are supported as plain INI values.
+# The catalog is generated from verified GGUF files on every launcher start.
 $iniDir = Join-Path $root 'portable/portable-runtimes/llamacpp'
 $ini = Join-Path $iniDir 'mai-models.generated.ini'
-$iniLines = [System.Collections.Generic.List[string]]::new()
-$iniLines.Add('version = 1')
-$iniLines.Add('[*]')
-$iniLines.Add("ctx-size = $ContextSize")
-$iniLines.Add("n-gpu-layers = $GpuLayers")
-$iniLines.Add('parallel = 1')
-$iniLines.Add('[mai-main]')
-$iniLines.Add("model = $main")
-if ($mainProjector) { $iniLines.Add("mmproj = $mainProjector") }
-if (-not $sharedMainVerifier) {
-    $iniLines.Add('[mai-verifier]')
-    $iniLines.Add("model = $verifier")
-}
-if ($vision) {
-    $iniLines.Add('[mai-vision]')
-    $iniLines.Add("model = $vision")
-    if ($visionProjector) { $iniLines.Add("mmproj = $visionProjector") }
-}
-[IO.File]::WriteAllLines($ini, [string[]]$iniLines, [Text.UTF8Encoding]::new($false))
+$catalogJson = & $python (Join-Path $root 'portable/llamacpp_model_catalog.py') --root $root --ini $ini --context-size $ContextSize --gpu-layers $GpuLayers
+if ($LASTEXITCODE -ne 0) { throw 'Could not discover GGUF models and create router preset' }
+$catalog = $catalogJson | ConvertFrom-Json
+$defaultModel = [string]$catalog.default
+if (-not $defaultModel) { throw 'GGUF catalog has no default model' }
+$MainVision = [bool]$catalog.main_vision
+$mainProjector = [string]$catalog.projector
 if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
     throw 'Port 8080 occupied; refusing to connect to another router.'
 }
@@ -87,11 +37,11 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'data/sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'data/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'data/log.sqlite3'
 $env:LLM_BACKEND = 'llamacpp'
-$env:MAIN_MODEL = 'mai-main'
-$env:VERIFIER_MODEL = $verifierAlias
+$env:MAIN_MODEL = $defaultModel
+$env:VERIFIER_MODEL = $defaultModel
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
 $env:LLAMACPP_MAIN_VISION = if ($mainProjector -or $MainVision) { 'true' } else { 'false' }
-$env:VISION_MODEL = if ($vision) { 'mai-vision' } elseif ($mainProjector -or $MainVision) { 'mai-main' } else { '' }
+$env:VISION_MODEL = if ($mainProjector -or $MainVision) { $defaultModel } else { '' }
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
                '--host', '127.0.0.1', '--port', '8080', '--jinja')
@@ -104,8 +54,7 @@ try {
         try {
             $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
             $ids = @($listing.data | ForEach-Object { $_.id })
-            if ($ids -contains 'mai-main' -and $ids -contains $verifierAlias -and
-                (-not $vision -or $ids -contains 'mai-vision')) { $ready = $true; break }
+            if ($ids -contains $defaultModel -and @($catalog.models | Where-Object { $ids -notcontains $_.id }).Count -eq 0) { $ready = $true; break }
         } catch { }
         Start-Sleep -Seconds 1
     }
