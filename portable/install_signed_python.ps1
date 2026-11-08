@@ -46,7 +46,7 @@ function Install-MaiDependencies([string]$folder) {
     $exe = Join-Path $folder 'python.exe'
     $env:UV_LINK_MODE = 'copy'
     $env:PYTHONNOUSERSITE = '1'
-    & $uv pip install --python $exe "$Root[dev]"
+    & $uv pip install --python $exe --reinstall-package mai-myai-sllm "$Root[dev]"
     if ($LASTEXITCODE -ne 0) { throw 'Installing MAI dependencies failed; existing runtime not replaced' }
     & $exe -c 'import fastapi, uvicorn, playwright, mai, pytest'
     if ($LASTEXITCODE -ne 0) { throw 'MAI dependency import preflight failed; existing runtime not replaced' }
