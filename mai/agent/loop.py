@@ -366,6 +366,7 @@ class AgentLoop:
                                 (execution.name, execution.ok, execution.error_type, execution.content)
                                 for execution in executions
                             ),
+                            tool_arguments=tuple(execution.arguments for execution in executions),
                             on_audit_event=(
                                 (lambda event, details: on_verification_audit(round_number, event, details))
                                 if on_verification_audit is not None else None
