@@ -30,8 +30,9 @@ def test_windows_and_linux_launchers_share_selected_default_alias():
     windows = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
     linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
     assert "$env:MAIN_MODEL = $defaultModel" in windows
-    assert "$env:VERIFIER_MODEL = $defaultModel" in windows
-    assert 'MAIN_MODEL="$default_model" VERIFIER_MODEL="$default_model"' in linux
+    assert "$env:VERIFIER_MODEL =" not in windows
+    assert 'MAIN_MODEL="$default_model"' in linux
+    assert 'VERIFIER_MODEL=' not in linux
     assert "llamacpp_model_catalog.py" in windows
     assert "llamacpp_model_catalog.py" in linux
 
