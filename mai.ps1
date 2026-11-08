@@ -66,7 +66,34 @@ function Initialize-MaiOwnerEnv {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
     }
 }
+function Initialize-MaiPinnedManifest {
+    if (Test-Path -LiteralPath $manifest -PathType Leaf) { return }
+    $resolver = Join-Path $portable 'resolve_portable_sources.py'
+    Require-File $resolver 'Pinned release resolver'
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $pythonCommand) {
+        $pyCommand = Get-Command py -ErrorAction SilentlyContinue
+        if ($null -ne $pyCommand) {
+            & $pyCommand.Source -3 $resolver
+            if ($LASTEXITCODE -ne 0) { throw 'Portable manifest resolver failed' }
+            return
+        }
+        $winget = Get-Command winget -ErrorAction SilentlyContinue
+        if ($null -eq $winget) {
+            throw 'First setup needs Python to generate pinned runtime manifest; neither Python nor winget is available'
+        }
+        & $winget.Source install --id Python.Python.3.12 --exact --accept-source-agreements --accept-package-agreements
+        if ($LASTEXITCODE -ne 0) { throw 'System Python bootstrap failed' }
+        $candidate = Join-Path $env:LOCALAPPDATA 'Programs/Python/Python312/python.exe'
+        Require-File $candidate 'Installed Python 3.12'
+        & $candidate $resolver
+    } else {
+        & $pythonCommand.Source $resolver
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'Portable manifest resolver failed' }
+}
 function Invoke-MaiSetup {
+    Initialize-MaiPinnedManifest
     Require-File $manifest 'Pinned Portable source manifest (generate with: python portable/resolve_portable_sources.py)'
     $manifestPath = (Resolve-Path -LiteralPath $manifest).Path
     $PreserveAndReinstallExisting = $false
