@@ -12,7 +12,7 @@ from typing import Protocol, Sequence
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ...llm.models import ChatRequest
-from ...llm.ollama import OllamaAdapter
+from ...llm.llamacpp import LlamaCppAdapter
 
 
 _FACT_EXTRACTION_SYSTEM = """
@@ -62,10 +62,10 @@ class FactExtractor(Protocol):
         ...
 
 
-class OllamaFactExtractor:
-    """Small judgment-only post-response extractor using an Ollama adapter."""
+class ModelFactExtractor:
+    """Small judgment-only post-response extractor using an llama.cpp adapter."""
 
-    def __init__(self, adapter: OllamaAdapter, *, timeout_seconds: float | None = None) -> None:
+    def __init__(self, adapter: LlamaCppAdapter, *, timeout_seconds: float | None = None) -> None:
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.adapter = adapter
