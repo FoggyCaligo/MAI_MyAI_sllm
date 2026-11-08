@@ -31,6 +31,7 @@ class ModelConfig:
     host: str = "http://127.0.0.1:11434"
     think: ThinkSetting = True
     options: Mapping[str, Any] = field(default_factory=dict)
+    max_output_tokens: int | None = None
     request_timeout_seconds: float = field(default_factory=_request_timeout_seconds_from_env)
 
     def __post_init__(self) -> None:
@@ -40,6 +41,8 @@ class ModelConfig:
             raise ValueError("host must be a non-empty Ollama host")
         if self.request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds must be positive")
+        if self.max_output_tokens is not None and (type(self.max_output_tokens) is not int or self.max_output_tokens <= 0):
+            raise ValueError("max_output_tokens must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
