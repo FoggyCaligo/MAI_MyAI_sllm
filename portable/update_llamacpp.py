@@ -134,11 +134,45 @@ def validate_installed(runtime: Path, old: dict, platform: str, exe: str) -> boo
     if not matches:
         print(
             "WARNING: llama.cpp receipt differs from pinned manifest. "
-            "Preserving the entire old runtime in a timestamped backup "
-            "before installing a publisher-verified release.",
+            "The installed executable will be checked directly; the existing runtime "
+            "will be preserved in a backup before any successful replacement.",
             file=sys.stderr,
         )
     return matches
+
+
+def installed_build(runtime: Path, exe: str) -> int | None:
+    """Read the running binary's llama.cpp build number, not its installation receipt."""
+    try:
+        proc = subprocess.run(
+            [str(runtime / exe), "--version"], cwd=runtime,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"Could not execute installed llama-server --version: {exc}", file=sys.stderr)
+        return None
+    if proc.returncode:
+        print(
+            f"Installed llama-server --version returned 0x{proc.returncode & 0xFFFFFFFF:08X}; "
+            "unable to verify installed build number.",
+            file=sys.stderr,
+        )
+        return None
+    output = (proc.stdout + b"\n" + proc.stderr).decode("utf-8", errors="replace")
+    for expression in (r"(?im)^\\s*version:\\s*b?(\\d+)\\b",
+                       r"(?im)^\\s*build(?: number)?:\\s*b?(\\d+)\\b",
+                       r"(?im)\\bllama\\.cpp\\s+(?:version\\s+)?b(\\d+)\\b"):
+        match = re.search(expression, output)
+        if match:
+            return int(match.group(1))
+    print(f"Could not parse installed llama.cpp build from --version output: {output[:400]!r}", file=sys.stderr)
+    return None
+
+
+def release_build(release: dict) -> int | None:
+    tag = release.get("tag_name")
+    match = re.fullmatch(r"b(\\d+)", tag) if isinstance(tag, str) else None
+    return int(match.group(1)) if match else None
 
 
 def download(url: str, dest: Path, sha256: str) -> None:
@@ -294,33 +328,31 @@ def main() -> int:
     if not isinstance(old, dict) or not old.get("url") or not old.get("sha256"):
         raise RuntimeError("Pinned manifest lacks valid llama.cpp entry")
     receipt_matches = validate_installed(runtime, old, platform, executable)
-    pattern = SOURCES["llamacpp"][2] if platform == "windows" else r"llama-.*-bin-ubuntu-vulkan-x64\.tar\.gz"
+    if not receipt_matches:
+        print("Installed receipt differs from the pinned manifest; checking the executable itself instead.")
+    pattern = SOURCES["llamacpp"][2] if platform == "windows" else r"llama-.*-bin-ubuntu-vulkan-x64\\.tar\\.gz"
     selected = select_eligible_release(pattern)
     if selected is None:
-        print(f"No non-draft/non-prerelease release with a compatible {platform} Vulkan binary and official SHA-256. Keeping installed llama.cpp.")
+        print(
+            f"No eligible non-draft/non-prerelease release with a compatible {platform} "
+            "Vulkan binary and publisher SHA-256. Keeping installed llama.cpp."
+        )
         return 0
     eligible, latest = selected
-    if latest == old:
-        print(f"Release {eligible.get('tag_name')} already pinned; no update required.")
+    new_build = release_build(eligible)
+    current_build = installed_build(runtime, executable)
+    if current_build is None or new_build is None:
+        print(
+            "Could not verify both the installed and selected llama.cpp build numbers. "
+            "Keeping installed runtime to avoid an unverified downgrade."
+        )
         return 0
-    if not receipt_matches:
-        print("Installed llama.cpp receipt differs from manifest; cannot safely rule out a downgrade. Keeping existing runtime.")
+    print(f"Installed llama.cpp build: b{current_build}; eligible release: b{new_build}")
+    if new_build <= current_build:
+        print("Selected release is not newer than the installed llama.cpp build; no update required.")
         return 0
-    try:
-        current = pinned_release(old["url"])
-    except (HTTPError, URLError, OSError, ValueError) as exc:
-        print(f"Could not verify current release age ({exc}); keeping existing runtime.")
-        return 0
-    current_date = release_date(current) if current else None
-    eligible_date = release_date(eligible)
-    if current_date is None or eligible_date is None:
-        print("Could not establish release chronology; keeping existing runtime to avoid downgrade.")
-        return 0
-    if eligible_date <= current_date:
-        print(f"Newest eligible release {eligible.get('tag_name')} is not newer than the installed release; keeping existing runtime.")
-        return 0
-    print(f"Selected newer eligible release {eligible.get('tag_name')}")
-    print(f"Updating llama.cpp: {old['url']} -> {latest['url']}")
+    print(f"Updating llama.cpp: b{current_build} -> b{new_build}")
+    print(f"Release asset: {latest['url']}")
     runtime.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".mai-llamacpp-update-", dir=runtime.parent) as tmp:
         temp = Path(tmp)
