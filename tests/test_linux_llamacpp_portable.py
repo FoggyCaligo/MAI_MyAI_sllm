@@ -40,8 +40,8 @@ def test_separate_linux_llamacpp_launcher_keeps_ollama_script_untouched():
     assert 'LLM_BACKEND="ollama"' in old
     assert 'LLM_BACKEND=llamacpp' in new
     assert '--models-preset "$ini"' in new
-    assert 'VERIFIER_MODEL="$verifier_alias"' in new
-    assert 'print("mai-main" if shared_main_verifier else "mai-verifier")' in new
+    assert 'VERIFIER_MODEL="$default_model"' in new
+    assert 'llamacpp_model_catalog.py' in new
     assert 'resolve_llamacpp_settings import read_config' in new
 
 
