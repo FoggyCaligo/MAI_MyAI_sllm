@@ -4,7 +4,7 @@
 
 ## 검증 순서와 설정
 
-`settings.yaml`의 `VERIFIER_MODEL`로 검증 전용 모델을 지정한다. 배포 `settings.yaml`에는 `MAI_VERIFIER_BLOCKING_MODE: critical`이 지정되어 있다. `critical`은 검증 이슈 전체를 기록하되 실제 차단을 중대한 오류로 좁히며, `strict`는 기존처럼 검증 이슈 전부를 차단한다. 직접 `FinalGroundingVerifier`를 생성하는 경우 기본 인자는 `strict`다. 검증 요청의 `num_ctx`를 MAI가 강제로 제한하지 않고 모델 서버 설정을 따른다. 기본 구성은 본 모델 `ornith-1.5:9b`, 검증 모델 `LiquidAI/lfm2.5-2.6b:q4_k_m`다. 수치검증과 최종 사실검증은 같은 LFM 모델을 사용하지만 별도 호출한다. 같은 이름의 환경변수·`.env` 값이 YAML보다 우선하며, 설정을 생략하면 요청의 본 모델을 사용한다. 명시한 모델의 실패는 오류로 유지한다.
+Main·Verifier·기억 추출은 현재 UI에서 선택한 동일 llama.cpp GGUF를 사용한다. 서로 다른 모델을 지정하는 `VERIFIER_MODEL` 구성은 폐기했다. 수치 의미검증과 최종 사실검증은 **같은 모델의 별도 호출**이며 각각의 프롬프트·출력 스키마를 유지한다. 배포 `settings.yaml`에는 `MAI_VERIFIER_BLOCKING_MODE: critical`이 지정되어 있다. `critical`은 입증된 중대한 문제 위주로 차단하고 `strict`는 모든 유효한 이슈를 차단한다. 직접 `FinalGroundingVerifier`를 생성하면 기본 모드는 `strict`다. 모델의 문맥 상한은 llama.cpp 런처 설정을 따르며 추가 백엔드로 fallback하지 않는다.
 
 1. **수치 사전 검사:** Python이 `conversation_context`의 유저 발화와 현재 요청의 성공한 도구 결과에서 수치·날짜를 대조한다. 단순 표기 불일치는 독립 숫자검증 모델 호출로 보내며 Python 예외는 오류로 유지한다.
 2. **최종 사실검토:** 별도 호출에서 현재 답변 후보의 주장, 근거 범위, 날짜, 외부 작업 성공 여부를 확인한다. 수치검증 프롬프트나 수치 전용 응답 스키마를 이 호출에 섞지 않는다.
