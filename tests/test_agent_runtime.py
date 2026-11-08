@@ -273,7 +273,10 @@ def test_rejected_draft_replay_keeps_chronology_and_only_latest_body() -> None:
     messages = adapter.requests[2].messages
     joined = str(messages)
     assert "obsolete draft one" not in joined
-    assert "latest draft two" not in joined
+    assert "latest draft two" in joined  # Latest rejected draft is supplied only as correction context.
+    assert not any(m.get("role") == "assistant" and m.get("content") == "latest draft two" for m in messages)
+    correction_messages = [m for m in messages if m.get("role") == "system" and "rejected_provisional_answer" in m.get("content", "")]
+    assert len(correction_messages) == 1
     assert "reasoning one" not in joined and "reasoning two" not in joined
     assert "grounding defect 1" not in joined
     assert "grounding defect 2" in joined

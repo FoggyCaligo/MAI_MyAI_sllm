@@ -40,7 +40,7 @@ python run_server.py
 | 도구 결과 크기 제한·페이지네이션 | [도구 결과 전달](docs/TOOL_RESULT_PAGINATION.md) |
 | 수치·사실·작업 결과 검증 | [답변 검증](docs/verifier.md) |
 | llama.cpp·모델 장기 보존 | [로컬 추론 백엔드](docs/llamacpp-portability.md) |
-| 원격 PC 연결 | [원격 연결](docs/remote-powershell-connection.md) |
+| 원격 PC 연결 | [Windows/Linux 원격 연결](docs/remote-powershell-connection.md), [native 워커 계약](docs/remote-native-worker.md) |
 | 로그인 실패 제한 | [로그인 제한](docs/login-ip-lockout.md) |
 | 정적 코드 점검 | [참조 감사](docs/REFERENCE_AUDIT.md) |
 | 문장 분해기 알고리즘 | [문장 분해기](docs/sentence-breaker.md) |

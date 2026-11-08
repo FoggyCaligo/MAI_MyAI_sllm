@@ -8,7 +8,7 @@
 2. **별도로 라이선스를 확인한 GGUF 모델 파일**을 로컬에 보관함. Ollama `blobs` 디렉터리에 있는 파일을 곧바로 독립 GGUF 모델이라고 가정하지 않음. 내보낼 수 있는 형태인지 검증하고 원본 배포처를 확인할 것.
 3. `llama-server.exe -m C:\models\model.gguf --alias local-model --host 127.0.0.1 --port 8080 --jinja` 실행. `--jinja`는 모델의 chat template 및 function calling 확인을 위한 옵션. 템플릿이 도구 호출을 지원하지 않으면 사용할 수 없음.
 4. MAI의 `settings.yaml` 또는 기기별 덮어쓰기용 `.env`에서 `LLM_BACKEND=llamacpp`, `LLAMACPP_HOST=http://127.0.0.1:8080`, `MAIN_MODEL=local-model`을 지정하고 `python run_server.py`로 실행함.
-5. THINK 출력, `tool_manual`, `memory_search`, 수치 검증, Verifier 재시도, 사실 추출이 정상 동작하는지 실제 모델로 검증할 것. OpenAI 호환 API라고 해도 모델의 도구 호출·추론 출력이 동등하다는 보장은 없음. 별도의 이미지 인식 기능은 기존 Ollama `VISION_MODEL`을 사용함.
+5. THINK 출력, `tool_manual`, `memory_search`, 수치 검증, Verifier 재시도, 사실 추출이 정상 동작하는지 실제 모델로 검증할 것. OpenAI 호환 API라고 해도 모델의 도구 호출·추론 출력이 동등하다는 보장은 없음. llama.cpp 모드에서는 설정된 Main 모델로 첨부 이미지 바이트를 직접 전달하며, 별도 Ollama `image_analyze` 도구를 등록하지 않는다. 이미지 지원 여부는 모델·mmproj와 실제 추론 환경에서 검증해야 한다.
 
 llama.cpp 설정을 제거하고 기존 설정(`LLM_BACKEND=ollama`)으로 되돌리면 기존 Ollama 실행 경로로 복귀함.
 
@@ -25,4 +25,4 @@ Git 저장소에는 **MAI 소스코드·검증 스크립트·설치 방법**을 
 
 ## 호환성 범위
 
-현재 **텍스트 채팅 런타임의 llama.cpp 연결 경로**를 제공함. Windows Portable은 `--include-llamacpp`로 생성한 매니페스트와 `portable/prepare-portable.ps1`로 llama.cpp 실행 파일을 준비할 수 있음. GGUF 가중치는 별도로 준비해야 하며 현재 Ollama 모델이 llama.cpp에서 즉시 실행된다고 보장하지 않음. 실제 모델별 회귀 테스트 결과를 보고 지원 범위를 확정할 것.
+현재 **텍스트 및 설정된 Main 비전 입력을 포함하는 llama.cpp 연결 경로**를 제공함. GGUF 카탈로그·라우터의 모델 언로드 확인·단일 모델 상주 및 128K 실행기 기본 문맥은 [GGUF 모델 선택](llamacpp-gguf-model-selection.md)과 [Portable 안내](../portable/README.md)를 참고함. Windows Portable은 `--include-llamacpp`로 생성한 매니페스트와 `portable/prepare-portable.ps1`로 llama.cpp 실행 파일을 준비할 수 있음. GGUF 가중치는 별도로 준비해야 하며 현재 Ollama 모델이 llama.cpp에서 즉시 실행된다고 보장하지 않음. 실제 모델별 회귀 테스트 결과를 보고 지원 범위를 확정할 것.

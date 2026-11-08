@@ -159,35 +159,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable.ps
 
 ## Linux Vulkan GPU (AMD / Intel / NVIDIA)
 
-Ubuntu 24.04 x64 host GPU drivers are **host OS dependencies**, not files
-to copy to an NTFS portable SSD. For AMD RX 6800 XT, the standard Linux
-`amdgpu` kernel driver plus Mesa RADV user-space Vulkan driver is a
-supported route. Check the Linux host:
+Ubuntu 24.04 호스트의 GPU 드라이버는 외장 SSD의 Windows 실행 파일과 별개로 설치해야 한다. AMD RX 6800 XT는 Linux `amdgpu` 커널 드라이버와 Mesa RADV Vulkan 경로를 사용할 수 있지만, 해당 호스트에서 실제로 작동하는지 확인해야 한다.
 
 ```bash
 python3 portable/check-linux-gpu.py --require
 ```
 
-To explicitly install Mesa Vulkan runtime packages on an **AMD/Intel**
-Ubuntu host (requires sudo, internet and confirmation of package changes):
+AMD·Intel 호스트에 Vulkan 런타임 패키지를 설치하려면 관리자 권한과 네트워크 접속이 필요하다.
 
 ```bash
 bash portable/prepare-portable-linux.sh --install-vulkan
 ```
 
-NVIDIA hosts require the matching NVIDIA kernel/user-space Vulkan driver
-(e.g. via Ubuntu's `ubuntu-drivers` mechanism), not the Mesa RADV driver.
-The provisioning command does not attempt an unsolicited NVIDIA driver
-installation. After installing/upgrading GPU drivers, reboot when required.
-If `vulkaninfo` finds only software rendering (llvmpipe/lavapipe), the
-GPU preflight fails instead of silently allowing a CPU Vulkan device.
-
-**Important**: This verifies a real Vulkan-capable GPU is detected;
-it does not prove MAI's inference engine actually offloads layers to it.
-On the Ollama-backed dev branch, actual AMD GPU acceleration depends
-on the bundled Ollama GPU backend and its host prerequisites.
-On dev2 llama.cpp Vulkan needs a separate actual model load and inference test.
-Check runtime logs / utilization after starting MAI.
+NVIDIA는 Mesa RADV 대신 GPU·커널에 맞는 NVIDIA Vulkan 드라이버가 필요하며, 이 준비 명령이 NVIDIA 드라이버를 자동 설치하지는 않는다. `vulkaninfo`가 소프트웨어 장치만 찾으면 사전 점검은 실패한다. 점검 통과는 GPU 탐지를 의미하며, MAI의 모델 레이어가 실제로 GPU에 올라갔다는 증거는 아니다. 추론 로그와 GPU 사용량을 별도로 확인한다.
 
 ## Ubuntu 24.04 x86-64 실행 — 실험적
 
@@ -242,89 +226,60 @@ MAI와 모델 서버를 종료하고 **별도 물리 디스크**에 백업한다
 Verifier 기본 태그는 `LiquidAI/lfm2.5-2.6b:q4_k_m`이며, 일반 Ollama에서 `ollama pull LiquidAI/lfm2.5-2.6b:q4_k_m`로 먼저 다운로드할 수 있다. 외장 SSD에는 `-CopyLocalModels -Models "LiquidAI/lfm2.5-2.6b:q4_k_m"` 또는 `-PullModels`로 추가한다. 이전 개인 매니페스트에 남은 모델은 자동 삭제하지 않는다.
 
 
-## Optional llama.cpp router (dev; Ollama remains the default)
+## llama.cpp 라우터 — 선택형 실행 경로
 
-This is **opt-in** and does not replace `portable/start-portable.ps1` or change MAI's agent, prompts, verifier stages, and Ollama behavior. No KV save/restore is introduced. The llama.cpp router permits **only one loaded model at a time**: main remains loaded during tool rounds until the provisional answer, then verifier takes over; main reloads for corrections with full saved conversation/tool history and latest rejected provisional answer plus verifier feedback. The router is one public API server (`127.0.0.1:8080`) and may spawn separate per-model child processes internally.
+기본 백엔드는 Ollama이며 llama.cpp는 명시적으로 선택할 때만 사용한다. 기존 `start-portable.ps1`의 Ollama 동작을 변경하지 않는다. 라우터는 `--models-max 1`로 동시에 하나의 모델만 적재하며, MAI가 메인·Verifier·기억 추출에 필요한 모델 호출 전에 언로드/로드 완료 상태를 확인한다. Main이 임시답변을 생성한 뒤 Verifier로 전환할 때 Main KV는 보존하지 않는다. 교정 때에는 MAI의 기존 메시지·도구 결과와 최신 반려 초안·피드백을 다시 구성해 전달한다. 별도 KV 저장/복원 기능은 없다.
 
-1. Create the Windows pinned sources manifest **once** (do not overwrite an existing manifest automatically):
-   ```powershell
-   python portable/resolve_portable_sources.py --include-llamacpp
-   ```
-   Review `portable/portable-sources.json` for exact URLs, versions, and publisher checksums. It includes official **Python 3.11, uv, Ollama, and llama.cpp Vulkan Windows x64 release archives**. Ollama is still downloaded by the existing installer even when running llama.cpp; there is no requirement to **start** Ollama in llama.cpp mode. The installer additionally installs MAI and its `pyproject.toml` Python dependencies (and transitive dependencies); `-InstallChromium` downloads Chromium separately. **It does not download GGUF models or mmproj files.**
-2. Run the existing installer (use the previously generated and reviewed manifest):
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
-   ```
-3. Put GGUFs in `portable/portable-models/gguf/`. Download public models with Hugging Face CLI:
-   ```powershell
-   python -m pip install --upgrade huggingface_hub
-   hf download OWNER/REPO MODEL.gguf --local-dir "./portable/portable-models/gguf"
-   ```
-   Replace the placeholder owner/repo and filename with the actual model listing; download any required matching `mmproj` separately.
-4. Start the **optional** single-router launcher (the existing Ollama command stays unchanged):
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable-llamacpp-router.ps1
-   ```
-   Set the GGUF paths **only in project-root `settings.yaml`** (no model-path command-line switches):
-   ```yaml
-   LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
-   LLAMACPP_VERIFIER_GGUF_PATH: "portable/portable-models/gguf/verifier.gguf"
-   # LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
-   LLAMACPP_MAIN_VISION: false
-   # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
-   # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
-   ```
-   These are example filenames, not downloaded files. Replace both required paths with existing GGUFs. Main projector and separate vision-model settings are optional. When the main model supports integrated vision without a separate projector, set `LLAMACPP_MAIN_VISION: true`; this merely enables MAI image forwarding, not model compatibility. The router enforces only one resident model; no `-ModelsMax 2` or `-ModelsMax 3` mode is supported. Settings paths are resolved from the MAI project root, not the shell's working directory; the resolver uses the same strict YAML parser as MAI. The launcher generates an untracked `mai-models.generated.ini` in `portable/portable-runtimes/llamacpp/`. It sets **MAIN_MODEL=mai-main**, **VERIFIER_MODEL=mai-verifier**, optionally **VISION_MODEL=mai-vision** and connects all through `LLAMACPP_HOST=http://127.0.0.1:8080`. The main image input uses standard OpenAI `image_url` payloads when `LLAMACPP_MAIN_MMPROJ_PATH` is set or `LLAMACPP_MAIN_VISION: true` is configured.
-   
-   Projector presence is a **configuration assertion**, not proof the selected model supports images; end-to-end image inference must be checked. The verified GGUF magic only confirms the file container format. A router response from `/v1/models` confirms registration, not inference readiness. For main/verifier tool/JSON contracts, conduct an actual end-to-end smoke test.
-   
-   `--models-max 1` limits llama.cpp to a single loaded model. Main context KV may be reused within its uninterrupted tool rounds, but loading the verifier evicts the main model and its KV; corrections reconstruct context from MAI message/tool history, not from old KV. Larger contexts (default 16384) increase GPU memory usage. Roles are separate models, but **verifier behavior and prompts are unchanged**.
-   
-   **Important:** `dev`'s native Ubuntu 24.04 Portable preparation script currently provisions the **Ollama** Linux binary. This new llama.cpp router launcher is **Windows-only until Linux llama.cpp binary provisioning and a native Linux launcher are added and tested**. Do not run a Windows llama-server binary on Linux.
-
-### Regression checks (before merge)
+### Windows 준비·실행
 
 ```powershell
-python -m pytest -q tests/test_dev_optional_llamacpp_router.py tests/test_llamacpp_adapter.py tests/test_main_model_image_input.py tests/test_final_grounding_verifier.py tests/test_ollama_adapter.py
+python portable/resolve_portable_sources.py --include-llamacpp
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/prepare-portable.ps1 -Manifest ./portable/portable-sources.json
+powershell -NoProfile -ExecutionPolicy Bypass -File ./portable/start-portable-llamacpp-router.ps1
+```
+
+매니페스트가 이미 있으면 생성 명령은 기존 파일을 임의로 덮어쓰지 않는다. 런타임 URL·SHA-256을 검토한 뒤 준비한다. GGUF·projector는 자동 다운로드되지 않으며, 라이선스와 원본 해시를 확인한 파일을 `portable/portable-models/gguf/`에 넣는다.
+
+`settings.yaml`의 현재 주요 설정은 다음과 같다.
+
+```yaml
+LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
+LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
+LLAMACPP_MAIN_VISION: true
+LLAMACPP_REASONING_PRESERVE: false
+```
+
+모델 카탈로그는 지정 폴더의 **직접 자식 GGUF 파일**을 시작 시 검증해 생성한다. `LLAMACPP_MAIN_GGUF_PATH`는 기본 선택값이다. 옛 `mai-main`/`mai-verifier` 별칭과 별도의 `LLAMACPP_VERIFIER_GGUF_PATH` 입력을 필수로 요구하는 설치 설명은 현재의 UI 모델 선택 계약이 아니다. 현재 llama.cpp 라우터에서는 선택된 모델을 Main·Verifier·기억 추출에 공통 사용하며 검증 단계별 프롬프트·응답 스키마는 분리된다. 모델 변경 시 실제 언로드/로드 완료를 확인한다. 목록 변경은 MAI 재시작이 필요하다. 세부 사항은 [GGUF 선택](../docs/llamacpp-gguf-model-selection.md)을 따른다.
+
+### Ubuntu 24.04 x86-64 준비·실행
+
+```bash
+python3 portable/resolve_portable_sources_linux.py --include-llamacpp
+bash portable/prepare-portable-linux.sh --with-llamacpp
+bash portable/start-portable-llamacpp-linux.sh
+```
+
+AMD/Intel Linux에서 필요한 Vulkan 패키지를 설치할 때에는 별도로 `--install-vulkan` 옵션을 사용한다. Linux의 Python·llama.cpp 네이티브 실행 환경은 프로젝트 경로별 호스트 캐시 아래 준비된다. Windows `.exe`를 Linux에서 실행하지 않는다. 실행 드라이브의 권한·용량·GPU/Vulkan 지원을 실기기에서 확인한다.
+
+Linux 원격 **대상** 워커도 별도 Linux shell 시작 스크립트를 제공한다. 이는 llama.cpp Linux Portable과 별개의 기능이며, 설치·인증·실제 원격 도구 동작은 [원격 워커 문서](../docs/remote-native-worker.md)를 따라 검증한다.
+
+### 회귀 테스트와 실기기 확인
+
+```bash
+python -m pytest -q tests/test_llamacpp_auto_catalog_and_switch.py tests/test_llamacpp_shared_model_alias.py tests/test_linux_llamacpp_portable.py tests/test_llamacpp_confirmed_unload.py tests/test_final_grounding_verifier.py
 python -m pytest -q
 ```
 
-Then verify original Ollama Portable startup is unchanged and llama.cpp mode performs a real main tool call, a structured Verifier review, a main-image request (when configured), and memory extraction. These hardware integration checks have not been run by this change.
+테스트 결과 외에 Main 도구 호출, Verifier 구조화 JSON, 이미지 입력(지원 모델·mmproj 설정 시), 기억 추출, 모델 전환 후 VRAM 사용 및 실제 OS별 실행을 검증해야 한다. 모델 등록과 GGUF 헤더 검증은 정상 추론을 보장하지 않는다.
 
+### llama.cpp 모드에서 Ollama 서버 없이 실행
 
-## Ubuntu 24.04: optional llama.cpp router Portable (dev)
+llama.cpp 라우터는 독립 로컬 HTTP 서버와 `LlamaCppAdapter`를 사용하므로 실행 중인 Ollama 데몬이나 Ollama 모델 저장소가 필요하지 않다. Ollama SDK는 기본 프로젝트 의존성으로 선언되어 있으며 **일부 테스트는 직접 `ollama.ResponseError`를 import한다**. 따라서 llama.cpp 런타임에서 Ollama 서버가 불필요하다는 사실을 전체 테스트 환경에서 `ollama` Python 패키지도 생략해도 된다는 뜻으로 해석해서는 안 된다.
 
-The existing `prepare-portable-linux.sh` and `start-portable-linux.sh` continue to support **Ollama**. This is an **additional** backend, not a replacement. MAI's agent, verifier prompts, memory, tools and Ollama model files are unchanged. Main and verifier are separate GGUFs behind one llama.cpp router; only one is resident at a time.
+Portable Python에서 필수 패키지가 누락되면 원래의 `prepare-portable.ps1` 준비 절차로 의존성을 맞춘다. llama.cpp만 실행하려고 Ollama 애플리케이션을 추가로 시작할 필요는 없다.
 
-1. While online, create the publisher-digest-pinned manifest with llama.cpp:
-   ```bash
-   python3 portable/resolve_portable_sources_linux.py --include-llamacpp
-   ```
-   This command refuses to overwrite an existing `portable-sources-linux.json`; preserve/rename the old manifest first and review the new one before provisioning.
-2. On the Ubuntu 24.04 x86-64 host, prepare the Linux host cache (native executable and Python packages, separate from Windows NTFS runtimes):
-   ```bash
-   bash portable/prepare-portable-linux.sh --with-llamacpp
-   ```
-   Optionally add `--install-vulkan` to install host Mesa Vulkan dependencies on AMD/Intel. The existing hardware Vulkan preflight requires `vulkaninfo` and a non-software GPU; host driver installation, mount permissions and native libraries cannot be bundled as an identical cross-OS binary.
-3. Put the main, projector and verifier GGUF files in the locations already configured in **`settings.yaml`**: `LLAMACPP_MAIN_GGUF_PATH`, `LLAMACPP_MAIN_MMPROJ_PATH`, `LLAMACPP_VERIFIER_GGUF_PATH`. The same paths work on Windows and Linux if relative to the project root.
-4. Run the optional Linux router:
-   ```bash
-   bash portable/start-portable-llamacpp-linux.sh
-   ```
-   Only `1` resident model is supported, including when a separate Vision GGUF is configured. The script creates a private per-run router INI in the Linux host cache, validates GGUF headers and exposes the same `mai-main`, `mai-verifier`, optional `mai-vision` aliases as the Windows launcher. It does not reuse an occupied port or silently fall back to Ollama.
-
-**Host portability boundary:** Linux native Python, llama.cpp binaries and Python dependencies are cached under `~/.cache/mai-portable/<path-id>` (or `XDG_CACHE_HOME`). Moving the SSD to an **unprepared** Linux computer still requires the initial provisioning step, executable host tools, writable data filesystem, Vulkan drivers and adequate GPU/RAM; this is not yet guaranteed plug-and-run on arbitrary Linux hardware. Linux remote-agent bootstrap is still Windows PowerShell-only; a Linux MAI host can use local tools, but attaching a **Linux remote target** requires a separate remote worker implementation. Playwright Chromium and audio/microphone capabilities have native host dependencies.
-
-Before merging, run `python -m pytest -q` on Ubuntu and test actual Vulkan inference, image input, main tool calls, verifier JSON output, local file/code/CSV/document/terminal tool paths, browser Chromium, and remote Windows worker separately. No live Ubuntu inference has been run for this addition.
-
-
-### llama.cpp mode without Ollama installation or active Ollama server
-
-The llama.cpp router starts its own local API server and uses `LlamaCppAdapter` over HTTP. It does **not** need a running Ollama program, Ollama daemon, Ollama model store, or the `ollama` Python package at MAI startup. The SDK is imported and an `AsyncClient` is created **only** if `LLM_BACKEND=ollama`; the llama.cpp path does not construct one. Ollama mode remains available and requires its own Python dependency plus a running Ollama server.
-
-If a prior Portable Python environment is missing dependencies unrelated to Ollama, provision it with the existing `prepare-portable.ps1` procedure. Avoid installing or starting the Ollama application merely to run the llama.cpp router.
-
-Regression tests (run in the Portable Python environment):
+Portable Python에서 수행할 회귀 테스트:
 ```powershell
 ./portable/portable-runtimes/python/python.exe -m pytest -q tests/test_optional_ollama_dependency.py tests/test_llamacpp_adapter.py tests/test_ollama_adapter.py tests/test_final_grounding_verifier.py
 ```
@@ -352,10 +307,10 @@ Ollama 백엔드의 기존 `image_analyze` 별도 모델 경로는 변경하지 
 
 **Verifier HTTP 500 진단:** `/models/load` 실패 시 HTTP 코드·응답 본문(최대 800자), `/v1/chat/completions` 실패 시 HTTP 코드·모델 별칭·응답 본문(최대 1,000자)을 포함한 오류를 반환한다. 컨텍스트/VRAM/모델 GGUF 버전/라우터 서버 자체의 실패와 단순 JSON 파싱 오류를 혼동하지 않는다. 실기기 검증 전까지는 자동 재시도나 실패 응답 대체를 하지 않는다.
 
-### llama.cpp 128K context default (Windows / Ubuntu)
+### llama.cpp 128K 기본 컨텍스트 (Windows / Ubuntu)
 
-Windows `start-portable-llamacpp-router.ps1` uses `-ContextSize 131072` by default, and Linux `start-portable-llamacpp-linux.sh` writes `ctx-size = 131072` for both aliases. `--models-max 1` and explicit unload/load confirmation stay unchanged.
+Windows `start-portable-llamacpp-router.ps1`의 기본 `-ContextSize`는 131072이며, Linux `start-portable-llamacpp-linux.sh`도 모델 프리셋에 `ctx-size = 131072`를 작성한다. 단일 모델 상주와 명시적 언로드/로드 확인 계약은 유지한다.
 
-**Warning:** a 128K configured context is not a guarantee that the GPU can allocate it, complete inference at that length, or that the model was trained for 128K. Model weights, KV cache, projector and driver memory compete for capacity. In particular, 16 GB VRAM systems may hit allocation failures or CPU offloading; stop if the machine becomes unstable. On Windows, lower the size per launch with `-ContextSize 32768` or `-ContextSize 16384` if needed. The Linux launcher currently uses the fixed 128K preset; changing it requires editing its `ctx-size` line.
+**주의:** 128K 설정은 모델의 학습된 문맥 길이, GPU에서의 실제 할당 성공 또는 해당 길이의 안정적인 추론을 보장하지 않는다. 가중치·KV·projector·드라이버가 메모리를 함께 사용하므로 16GB VRAM에서는 할당 실패 또는 CPU 오프로딩이 발생할 수 있다. 불안정하면 중단해 확인한다. Windows는 실행 시 `-ContextSize 32768` 또는 `-ContextSize 16384`로 줄일 수 있고, Linux는 실행 스크립트의 `ctx-size` 기본값 변경이 필요하다.
 
-The separate web history compacting feature retains original `web_search` / `web_fetch` output in the run-local result store and persistent audit log, while later Main turns receive only source-bound excerpts + URLs + original-result lookup IDs. See [tool result pagination](../docs/TOOL_RESULT_PAGINATION.md). This reduces repeated context but does not guarantee 128K stability or perfect KV reuse.
+웹 도구 결과는 원문 저장소와 감사 로그에 보존하고 이후 Main 차례에는 출처 기반 발췌·URL·원문 참조 ID를 전달한다. [도구 결과 전달](../docs/TOOL_RESULT_PAGINATION.md) 참고. 반복 문맥을 줄이지만 128K 안정성이나 완전한 KV 재사용을 보장하지 않는다.

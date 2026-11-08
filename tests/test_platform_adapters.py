@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,8 @@ def test_windows_adapter_preserves_existing_contract():
     assert win.output_encoding == "utf-8"
     assert windows_cmd_args(Path("C:/tmp/command.cmd")) == _windows_cmd_args(Path("C:/tmp/command.cmd"))
     assert powershell_command("Write-Output '한글'") == _powershell_command("Write-Output '한글'")
-    with win.script_workspace("powershell") as workspace:\n        assert workspace is None
+    with win.script_workspace("powershell") as workspace:
+        assert workspace is None
     with win.script_workspace("default") as directory:
         assert directory is not None
 

@@ -1,5 +1,7 @@
 # MAI 실행 경로·미사용 참조 점검 (3·4단계)
 
+> 이 문서는 수행 시점의 정적 감사 기록이다. 실시간 `dev` 기능 명세가 아니므로 현재 지원 범위는 [실행 구조](architecture.md) 및 각 기능 문서를 우선한다.
+
 ## 3단계 — SQLite 저장 경로
 
 - `MEMORY_DB_PATH`, `SENTENCE_BREAKER_DB_PATH`, `CHAT_DB_PATH`, `LOG_DB_PATH`의 기본값을 `mai/app/server.py`의 `_DB_PATH_DEFAULTS`로 한곳에서 정의한다.
