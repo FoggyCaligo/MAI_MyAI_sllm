@@ -37,6 +37,15 @@ def test_powershell_entry_point_uses_existing_scripts_and_never_prompts_for_mani
 def test_launcher_does_not_modify_settings_or_install_without_setup():
     text = (ROOT / "mai.ps1").read_text(encoding="utf-8")
     assert "settings.yaml" in text
-    assert "from portable.llamacpp_model_catalog import from_settings" in text
+    assert "check_llamacpp_catalog.py" in text
+    assert "& $python -c" not in text
     assert "switch ($Command)" in text
     assert "Resolve-Path" not in text
+
+
+def test_catalog_checker_is_a_file_based_python_entry_point():
+    text = (ROOT / "portable/check_llamacpp_catalog.py").read_text(encoding="utf-8")
+    assert "from llamacpp_model_catalog import from_settings" in text
+    assert 'parser.add_argument("--root", type=Path, required=True)' in text
+    assert 'catalog = from_settings(args.root)' in text
+    assert 'if __name__ == "__main__":' in text
