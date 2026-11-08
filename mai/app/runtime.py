@@ -408,6 +408,7 @@ class MAIRuntime:
             ),
             final_verifier=FinalGroundingVerifier(
                 reviewer_adapter=verifier_adapter,
+                blocking_mode=os.environ.get("MAI_VERIFIER_BLOCKING_MODE", "strict"),
             ),
             max_semantic_verification_retries=2,
             tool_result_store=tool_result_store,

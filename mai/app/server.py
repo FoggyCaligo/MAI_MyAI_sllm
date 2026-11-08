@@ -210,6 +210,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             print(f"MAI remote hosting ({_hosting_provider}): {status_text}", flush=True)
     else:
         print("MAI remote hosting: disabled", flush=True)
+    idle_reaper = asyncio.create_task(_remote_idle_reaper())
     try:
         yield
     finally:
