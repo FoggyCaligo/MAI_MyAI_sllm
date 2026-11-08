@@ -43,3 +43,13 @@ def test_llamacpp_requests_in_memory_prompt_cache() -> None:
 
     assert asyncio.run(execute()).content == "ok"
     assert captured[0]["cache_prompt"] is True
+
+
+def test_verifier_is_disabled_by_default_for_ui_and_api() -> None:
+    from pathlib import Path
+    from mai.app.server import ChatRequest
+
+    html = Path("mai/app/static/index.html").read_text(encoding="utf-8")
+    assert '<input type="checkbox" id="verify-toggle" />' in html
+    assert ChatRequest(message="테스트").verify is False
+    assert ChatRequest(message="테스트", verify=True).verify is True
