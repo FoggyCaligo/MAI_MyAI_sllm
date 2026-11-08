@@ -70,6 +70,20 @@ ornmith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpr
 
 ## 4. 업데이트하는 방법
 
+MAI를 완전히 종료한 뒤 llama.cpp 실행 파일만 업데이트하려면 다음을 실행한다.
+
+```bash
+./mai.sh update
+./mai.sh check
+./mai.sh start
+```
+
+Windows PowerShell은 `.\\mai.ps1 update`, CMD는 `mai.cmd update`를 사용한다. 업데이트는 공식 llama.cpp GitHub 릴리스에 게시된 SHA-256을 확인하고, 교체 전 새 실행 파일의 `--version` 실행을 검사한다. 기존 llama.cpp 런타임과 설치 매니페스트는 날짜별 백업으로 보존하며 실패 시 원상 복구를 시도한다. Python, uv, GGUF, SQLite는 변경하지 않는다. 동일한 릴리스라면 아무것도 변경하지 않는다.
+
+실제 GPU 모델 추론은 `check`만으로 보장되지 않으므로 `start` 이후 별도로 시험한다.
+
+소스 코드 업데이트는 llama.cpp 업데이트와 별개다. `git status`, `git switch dev`, `git pull --ff-only origin dev` 순으로 진행한 뒤 필요할 때 `./mai.sh setup`을 실행한다. 개인 .env·DB·GGUF는 백업하고, 충돌하는 로컬 변경 사항을 강제로 삭제하지 않는다.
+
 
 
 
