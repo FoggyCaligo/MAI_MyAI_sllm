@@ -257,7 +257,7 @@ class ChatRequest(BaseModel):
     model: str | None = None
     remote_session_id: str | None = None
     attachments: list[str] = Field(default_factory=list)
-    verify: bool = False  # Optional per-request verification; disabled by default.
+    verify: bool = Field(default_factory=lambda: _env_bool("MAI_VERIFIER_ENABLED"))
 
 
 class ToolExecutionResponse(BaseModel):
@@ -324,6 +324,7 @@ async def health() -> dict[str, object]:
     runtime = _get_runtime()
     return {
         "status": "ok",
+        "verifier_default_enabled": _env_bool("MAI_VERIFIER_ENABLED"),
         "model": runtime.model,
         "main_vision_enabled": os.environ.get("LLAMACPP_MAIN_VISION", "false").lower() == "true",
         "tailscale_funnel": _hosting is not None and _hosting_provider == "tailscale",
