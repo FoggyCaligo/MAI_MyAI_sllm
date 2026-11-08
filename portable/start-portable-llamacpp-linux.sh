@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Optional Ubuntu llama.cpp Portable router (unchanged Ollama launcher).
+# Ubuntu llama.cpp Portable router.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo "Linux x86_64 required" >&2; exit 1; }
@@ -37,9 +37,8 @@ reasoning_preserve="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sy
 export LLAMA_ARG_REASONING_PRESERVE="$reasoning_preserve"
 reasoning_preserve_flag="--no-reasoning-preserve"
 if [[ "$reasoning_preserve" == true ]]; then reasoning_preserve_flag="--reasoning-preserve"; fi
-export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model" VERIFIER_MODEL="$default_model"
+export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model"
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
-if [[ "$main_vision" == true ]]; then export VISION_MODEL="$default_model"; else export VISION_MODEL=""; fi
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
 export MAI_CWD="$root" MAI_UPLOAD_ROOT="$root/mai_uploads"
