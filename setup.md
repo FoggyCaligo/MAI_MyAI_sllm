@@ -93,7 +93,7 @@ ornith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpro
 | `LLAMACPP_MAIN_MMPROJ_PATH`, `LLAMACPP_MAIN_VISION` | 비전 projector와 이미지 입력 |
 | `LLAMACPP_REASONING_PRESERVE` | llama.cpp 추론 보존 여부 |
 | `MODEL_MAX_OUTPUT_TOKENS` | 모델 출력 토큰 한도(기본 32768) |
-| `MODEL_REQUEST_TIMEOUT_SECONDS` | 요청 제한 시간(기본 500초) |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | 요청 제한 시간(기본 300초) |
 | `MAI_VERIFIER_BLOCKING_MODE` | `critical` 또는 `strict` |
 | `MAI_ANSWER_QUALITY_REVIEW` | 선택적 품질 검토(기본 `false`) |
 | `SESSION_HISTORY_MESSAGES` | 최근 대화 메시지 수(기본 10) |
