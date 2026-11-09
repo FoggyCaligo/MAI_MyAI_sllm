@@ -158,3 +158,29 @@ def test_web_fetch_http_status_error_reports_underlying_cause(monkeypatch):
         web_module.web_fetch("https://example.test/forbidden")
     assert "403" in str(raised.value)
     assert isinstance(raised.value.__cause__, httpx.HTTPStatusError)
+
+def test_web_fetch_user_agent_identifies_project_not_individual(monkeypatch):
+    import httpx
+
+    observed_headers = []
+    class RecordingClient:
+        def __init__(self, *, headers, **kwargs):
+            observed_headers.append(headers)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def get(self, url):
+            request = httpx.Request("GET", url)
+            return httpx.Response(200, request=request, headers={"content-type": "text/plain"}, text="ok")
+
+    monkeypatch.setattr(web_module, "_validate_public_url", lambda url: url)
+    monkeypatch.setattr(web_module.httpx, "Client", RecordingClient)
+    result = web_module.web_fetch("https://example.org/", max_chars=10)
+
+    assert result["text"] == "ok"
+    assert observed_headers == [{"User-Agent": web_module.WEB_FETCH_USER_AGENT}]
+    assert web_module.WEB_FETCH_USER_AGENT == (
+        "MAI/0.1 (https://github.com/FoggyCaligo/MAI_MyAI_sllm) httpx"
+    )
+
