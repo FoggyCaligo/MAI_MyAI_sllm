@@ -63,6 +63,7 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
             await lock.acquire()
         sampler = None
         upstream_response = None
+        handed_off = False
         try:
             if guarded:
                 try:
@@ -108,6 +109,7 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
             )
             upstream_response = None  # stream owns closure
             sampler = None  # stream owns cancellation
+            handed_off = True
             return response
         except RouterModelTransitionError as exc:
             guard._record_safety("gateway_rejected", path=route, reason=str(exc))
@@ -122,7 +124,7 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
                 sampler.cancel()
                 await asyncio.gather(sampler, return_exceptions=True)
             # A streaming response owns the lock until response completion.
-            if guarded and lock.locked() and upstream_response is not None:
+            if guarded and not handed_off:
                 lock.release()
 
     return app
