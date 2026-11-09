@@ -20,7 +20,6 @@ if ($LASTEXITCODE -ne 0) { throw 'pip 업데이트 실패' }
 if ($LASTEXITCODE -ne 0) { throw 'GAIA 평가 의존성 설치 실패' }
 Write-Host 'Hugging Face GAIA 접근 약관 동의 및 로그인 후 이어서 진행하세요.'
 Write-Host '접근 주소: https://huggingface.co/datasets/gaia-benchmark/GAIA'
-& $python -m huggingface_hub.commands.huggingface_cli --help *> $null
 # 인증은 기존 HF CLI 또는 HF_TOKEN 환경변수로 수행한다.
 # 인증되지 않았으면 snapshot_download에서 명시적 오류를 반환한다.
 & $python (Join-Path $adapter 'download_gaia.py')
