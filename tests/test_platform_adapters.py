@@ -57,3 +57,32 @@ def test_linux_shell_execution_and_failure_code(tmp_path):
     with pytest.raises(TerminalCommandError) as info:
         asyncio.run(terminal_run(command="exit 17", default_cwd=tmp_path))
     assert info.value.result["returncode"] == 17
+
+
+def test_terminal_child_environments_use_explicit_utf8_without_mutating_parent(monkeypatch):
+    monkeypatch.setenv("PYTHONIOENCODING", "cp949")
+    monkeypatch.setenv("LANG", "C")
+    for host in (WindowsPlatform(), LinuxPlatform()):
+        env = host.terminal_environment()
+        assert host.output_encoding == "utf-8"
+        assert env["PYTHONIOENCODING"] == "utf-8"
+        assert env["PYTHONUTF8"] == "1"
+        assert env["LANG"] == "C.UTF-8"
+    assert LinuxPlatform().terminal_environment()["LC_ALL"] == "C.UTF-8"
+    assert os.environ["PYTHONIOENCODING"] == "cp949"
+    assert os.environ["LANG"] == "C"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux integration only")
+def test_linux_utf8_terminal_roundtrip_matches_file_read_write(tmp_path):
+    from mai.tools.filesystem import file_read, file_write
+
+    target = tmp_path / "한글 경로.txt"
+    expected = "한글 경로 ✓"
+    file_write(path=str(target), content=expected)
+    assert file_read(path=str(target))["content"] == expected
+    result = asyncio.run(terminal_run(
+        command="python3 -c 'import pathlib,sys; sys.stdout.write(pathlib.Path(sys.argv[1]).read_text(encoding=\"utf-8\"))' '한글 경로.txt'",
+        cwd=str(tmp_path),
+    ))
+    assert result["stdout"] == expected
