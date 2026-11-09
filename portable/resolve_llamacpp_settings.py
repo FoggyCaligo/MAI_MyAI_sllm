@@ -20,6 +20,7 @@ KEYS = (
     "LLAMACPP_MAIN_MMPROJ_PATH",
     "LLAMACPP_MAIN_VISION",
     "LLAMACPP_REASONING_PRESERVE",
+    "LLAMACPP_MEMORY_GUARD_ENABLED",
     "LLAMACPP_MIN_FREE_VRAM_MIB",
     "MAI_MIN_AVAILABLE_RAM_MIB",
     "LLAMACPP_CONTEXT_SIZE",
@@ -42,6 +43,10 @@ def read_config(path: Path) -> dict[str, str | bool | None]:
     if raw_preserve not in {"true", "false"}:
         raise ValueError("LLAMACPP_REASONING_PRESERVE must be true or false")
     result["LLAMACPP_REASONING_PRESERVE"] = raw_preserve == "true"
+    raw_guard = data.get("LLAMACPP_MEMORY_GUARD_ENABLED", "true").lower()
+    if raw_guard not in {"true", "false"}:
+        raise ValueError("LLAMACPP_MEMORY_GUARD_ENABLED must be true or false")
+    result["LLAMACPP_MEMORY_GUARD_ENABLED"] = raw_guard == "true"
     for key, default, minimum, maximum in (
         ("LLAMACPP_MIN_FREE_VRAM_MIB", 1024, 128, 65536),
         ("MAI_MIN_AVAILABLE_RAM_MIB", 6144, 512, 262144),
