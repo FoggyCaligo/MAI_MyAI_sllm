@@ -669,11 +669,7 @@ async def chat(
         )
 
     def publish_round_timing(round_number: int, details: dict[str, object]) -> None:
-        audit.append(
-            run_id, "round_timing", "Agent round timing",
-            round_number=round_number, status=str(details["status"]),
-            details=details,
-        )
+        audit.append_timing(run_id, round_number, details)
 
     def publish_timeout_diagnostic(round_number: int, partial: dict[str, object]) -> None:
         details = {
