@@ -41,8 +41,8 @@ def test_remote_service_timeout_is_twice_current_local_service_timeout():
     # Host's routed wrapper defers its timeout to its inner local tool.
     # Remote worker receives twice the effective local execution limit.
     for name, remote_timeout in {
-        "current_time": 20,
-        "calculator": 20,
+        "current_time": 40,
+        "calculator": 40,
         "web_search": 120,
         "web_fetch": 120,
         "market_data": 120,
