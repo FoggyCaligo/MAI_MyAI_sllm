@@ -79,3 +79,16 @@ def test_dynamic_vram_and_free_ram_settings_are_allowed(tmp_path: Path) -> None:
     values = load_settings(path, environ={})
     assert values["LLAMACPP_MIN_FREE_VRAM_MIB"] == "1024"
     assert values["MAI_MIN_AVAILABLE_RAM_MIB"] == "6144"
+
+
+def test_common_memory_guard_toggle_accepts_true_and_false(tmp_path: Path) -> None:
+    from portable.resolve_llamacpp_settings import read_config
+
+    path = tmp_path / "settings.yaml"
+    for value, expected in (("true", True), ("false", False)):
+        path.write_text(
+            'LLAMACPP_MAIN_GGUF_PATH: "model.gguf"\\n'
+            + f"LLAMACPP_MEMORY_GUARD_ENABLED: {value}\\n",
+            encoding="utf-8",
+        )
+        assert read_config(path)["LLAMACPP_MEMORY_GUARD_ENABLED"] is expected
