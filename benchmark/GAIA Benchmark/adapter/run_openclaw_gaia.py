@@ -24,6 +24,7 @@ from run_gaia import (
 PROJECT_ROOT = BENCH_ROOT.parents[1]
 CONFIG_PROVIDER = "mai-local"
 MODEL_API_URL = "http://127.0.0.1:8080/v1/models"
+MODEL_TIMEOUT_SECONDS = 500
 
 
 def router_model_ids(url: str = MODEL_API_URL) -> set[str]:
@@ -64,7 +65,7 @@ def openclaw_config(model_id: str, *, context_size: int = 131072) -> dict:
                     "baseUrl": "http://127.0.0.1:8080/v1",
                     "apiKey": "local-unauthed-llamacpp",
                     "api": "openai-completions",
-                    "timeoutSeconds": 300,
+                    "timeoutSeconds": MODEL_TIMEOUT_SECONDS,
                     "models": [{
                         "id": model_id, "name": model_id, "reasoning": False,
                         "input": ["text"],
