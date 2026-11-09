@@ -151,6 +151,31 @@ class ToolResultStore:
             }, ensure_ascii=False, separators=(",", ":"))
         return ToolResultModelViews(initial_content=initial, compact_history_content=compact)
 
+    def file_model_views(self, content: str, *, tool_name: str) -> ToolResultModelViews:
+        """Compact older large file/code reads without adding generated claims.
+
+        Exact original bytes remain accessible through tool_result_read and
+        the audit result; the small excerpt is explicitly incomplete.
+        """
+        if tool_name not in {"file_read", "code_read"} or len(content) <= 2500:
+            return self.model_views(content)
+        stored = self.store(content)
+        initial = (
+            self._page_text(stored=stored, offset=0, requested_limit=self.max_read_chars)
+            if len(content) > self.max_inline_chars else content
+        )
+        compact = json.dumps({
+            "source_excerpt_only": True,
+            "tool": tool_name,
+            "source_text_excerpt": content[:min(1500, self.max_read_chars)],
+            "excerpt_incomplete": True,
+            "full_original_result_id": stored.result_id,
+            "full_original_chars": len(content),
+            "read_full_with": "tool_result_read",
+            "max_read_chars": self.max_read_chars,
+        }, ensure_ascii=False, separators=(",", ":"))
+        return ToolResultModelViews(initial_content=initial, compact_history_content=compact)
+
     def model_view(self, content: str) -> str:
         """Compatibility helper returning only the first model-visible view."""
 
