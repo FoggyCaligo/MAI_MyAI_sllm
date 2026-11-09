@@ -69,7 +69,7 @@ def openclaw_config(model_id: str, *, context_size: int = 131072) -> dict:
                         "id": model_id, "name": model_id, "reasoning": False,
                         "input": ["text"],
                         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-                        "contextWindow": context_size, "maxTokens": 8192,
+                        "contextWindow": context_size, "maxTokens": 32768,
                     }],
                 },
             },
