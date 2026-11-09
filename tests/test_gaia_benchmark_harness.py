@@ -172,3 +172,25 @@ def test_gaia_credentials_fails_closed_for_invalid_configuration(tmp_path, monke
     path.unlink()
     with pytest.raises(ValueError, match="OWNER_USERS is missing"):
         resolve_credentials(user=None, password=None, dotenv_path=path)
+
+
+def test_gaia_windows_launcher_reuses_one_portable_router():
+    root = Path(__file__).resolve().parents[1]
+    benchmark = (root / "benchmark" / "GAIA Benchmark" / "docs" / "start_benchmark_server.ps1").read_text(encoding="utf-8-sig")
+    portable = (root / "portable" / "start-portable-llamacpp-router.ps1").read_text(encoding="utf-8-sig")
+    assert "param([switch]$ServerOnly)" in benchmark
+    assert "& $routerLauncher -GaiaBenchmark" in benchmark
+    assert "& $benchmarkLauncher -ServerOnly" in portable
+    assert "[switch]$GaiaBenchmark" in portable
+    assert "$env:MAI_PORT = '8010'" in benchmark
+    assert "$env:REMOTE_HOSTING_PROVIDER = 'none'" in benchmark
+    assert "'--models-max', \"$ModelsMax\"" in portable
+
+
+def test_gaia_readme_includes_hf_token_and_server_launch_contract():
+    root = Path(__file__).resolve().parents[1]
+    document = (root / "benchmark" / "GAIA Benchmark" / "docs" / "README.md").read_text(encoding="utf-8")
+    assert "HF_TOKEN" in document
+    assert "start_benchmark_server.ps1" in document
+    assert "일반 MAI" in document
+    assert "8080" in document and "8010" in document
