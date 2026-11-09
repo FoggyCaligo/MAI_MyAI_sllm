@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import errno
 import os
 from pathlib import Path
 import re
@@ -29,7 +30,8 @@ def _lock(file, *, nonblocking: bool) -> bool:
         try:
             msvcrt.locking(file.fileno(), mode, 1)
         except OSError as exc:
-            if nonblocking and getattr(exc, "winerror", None) in (33, 36):
+            if nonblocking and (getattr(exc, "winerror", None) in (33, 36)
+                                or exc.errno in (errno.EACCES, errno.EAGAIN)):
                 return False
             raise
     else:
