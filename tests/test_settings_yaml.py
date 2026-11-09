@@ -55,3 +55,16 @@ def test_verifier_setting_defaults_and_precedence(tmp_path: Path) -> None:
     explicit = {"MAI_VERIFIER_ENABLED": "true"}
     load_settings(path, environ=explicit)
     assert explicit["MAI_VERIFIER_ENABLED"] == "true"
+
+
+def test_gpu_budget_and_context_settings_are_accepted(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text(
+        "LLAMACPP_GPU_MEMORY_BUDGET_MIB: 15360\nLLAMACPP_CONTEXT_SIZE: 65536\n",
+        encoding="utf-8",
+    )
+    env: dict[str, str] = {}
+    result = load_settings(path, environ=env)
+    assert result["LLAMACPP_GPU_MEMORY_BUDGET_MIB"] == "15360"
+    assert result["LLAMACPP_CONTEXT_SIZE"] == "65536"
+    assert env == result
