@@ -23,6 +23,7 @@ class OpenClawBenchmarkConfigTests(unittest.TestCase):
         model = config["models"]["providers"]["mai-local"]["models"][0]
         self.assertEqual(model["contextWindow"], 131072)
         self.assertEqual(model["maxTokens"], 32768)
+        self.assertEqual(config["models"]["providers"]["mai-local"]["timeoutSeconds"], 500)
 
     def test_longmemeval_plugin_directory_is_preserved(self):
         with tempfile.TemporaryDirectory() as temporary:

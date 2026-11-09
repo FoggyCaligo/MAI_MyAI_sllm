@@ -101,7 +101,7 @@ git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 | `LLAMACPP_MAIN_MMPROJ_PATH`, `LLAMACPP_MAIN_VISION` | 비전 projector와 이미지 입력 |
 | `LLAMACPP_REASONING_PRESERVE` | llama.cpp 추론 보존 여부 |
 | `MODEL_MAX_OUTPUT_TOKENS` | 모델 출력 토큰 한도(기본 32768) |
-| `MODEL_REQUEST_TIMEOUT_SECONDS` | **각 llama.cpp 모델 호출** 제한 시간(기본 300초, 전체 사용자 요청 시간 한도가 아님) |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | **각 llama.cpp 모델 호출** 제한 시간(기본 500초, 전체 사용자 요청 시간 한도가 아님) |
 | `MAI_VERIFIER_BLOCKING_MODE` | `critical` 또는 `strict` |
 | `MAI_VERIFIER_ENABLED` | 요청별 최종답변 검증 기본값(현재 `false`) |
 | `MAI_ANSWER_QUALITY_REVIEW` | 선택적 품질 검토(기본 `false`) |
