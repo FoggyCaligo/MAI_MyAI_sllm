@@ -16,7 +16,7 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 & $python -m pip install --disable-pip-version-check --no-input --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw 'pip 업데이트 실패' }
-& $python -m pip install --disable-pip-version-check --no-input 'datasets>=4,<5' 'huggingface_hub>=0.34' 'httpx>=0.27'
+& $python -m pip install --disable-pip-version-check --no-input 'datasets>=4,<5' 'huggingface_hub>=0.34' 'httpx>=0.27' 'python-dotenv>=1,<2'
 if ($LASTEXITCODE -ne 0) { throw 'GAIA 평가 의존성 설치 실패' }
 Write-Host 'Hugging Face GAIA 접근 약관 동의 및 로그인 후 이어서 진행하세요.'
 Write-Host '접근 주소: https://huggingface.co/datasets/gaia-benchmark/GAIA'
