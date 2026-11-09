@@ -44,9 +44,9 @@ def test_terminal_declares_authoritative_shell_runtime_context(tmp_path: Path) -
     assert contexts[0]["tool"] == "terminal_run"
     context = contexts[0]["context"]
     assert context["shell"]
-    assert context["shell_family"] in {"cmd", "sh"}
+    assert context["shell_family"] == "bash"
     assert context["default_cwd"] == str(tmp_path.resolve())
-    assert context["posix_shell_syntax"] is (context["shell_family"] == "sh")
+    assert context["posix_shell_syntax"] is True
 
 
 def test_agent_runtime_withholds_tool_context_before_activation() -> None:

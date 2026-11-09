@@ -71,6 +71,7 @@ def test_cmd_multiline_exit_status_and_shell_identity(tmp_path):
         asyncio.run(terminal_run(
             command="echo command started\ncmd.exe /d /c exit 19",
             cwd=str(tmp_path),
+            shell="cmd",
         ))
     result = exc.value.result
     assert result["returncode"] == 19
@@ -84,6 +85,7 @@ def test_cmd_native_failure_does_not_become_success(tmp_path):
         asyncio.run(terminal_run(
             command="reg.exe query HKCU\\Software\\MAI_Nonexistent_Contract_Test",
             cwd=str(tmp_path),
+            shell="cmd",
         ))
     assert exc.value.result["returncode"] != 0
     assert exc.value.result["stderr"]

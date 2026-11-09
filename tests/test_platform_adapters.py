@@ -17,22 +17,22 @@ from mai.tools.terminal import register_terminal_tools
 
 def test_windows_adapter_preserves_existing_contract():
     win = WindowsPlatform()
-    assert win.shell_family == "cmd"
+    assert win.shell_family == "bash"
     assert win.output_encoding == "utf-8"
     assert windows_cmd_args(Path("C:/tmp/command.cmd")) == _windows_cmd_args(Path("C:/tmp/command.cmd"))
     assert powershell_command("Write-Output '한글'") == _powershell_command("Write-Output '한글'")
     with win.script_workspace("powershell") as workspace:
         assert workspace is None
-    with win.script_workspace("default") as directory:
+    with win.script_workspace("cmd") as directory:
         assert directory is not None
 
 
 def test_linux_adapter_disallows_powershell_before_spawn():
     linux = LinuxPlatform()
-    assert linux.shell_description == "/bin/sh"
-    assert linux.shell_family == "sh"
+    assert Path(linux.shell_description).name == "bash"
+    assert linux.shell_family == "bash"
     assert "start_new_session" in linux.process_kwargs()
-    with pytest.raises(ValueError, match="requires Windows"):
+    with pytest.raises(ValueError, match="Unsupported Linux shell"):
         with linux.script_workspace("powershell"):
             pass
     with pytest.raises(ValueError, match="requires Windows"):
@@ -46,7 +46,7 @@ def test_current_host_and_tool_context_consistent(tmp_path):
     context = registry.get("terminal_run").metadata["model_context"]
     assert context["shell"] == host.shell_description
     assert context["shell_family"] == host.shell_family
-    assert context["posix_shell_syntax"] == (host.shell_family == "sh")
+    assert context["posix_shell_syntax"] is True
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux POSIX integration only")
@@ -54,7 +54,7 @@ def test_linux_shell_execution_and_failure_code(tmp_path):
     result = asyncio.run(terminal_run(
         command="printf 'hello\\n'", default_cwd=tmp_path))
     assert result["stdout"] == "hello\n"
-    assert result["shell_family"] == "sh"
+    assert result["shell_family"] == "bash"
     with pytest.raises(TerminalCommandError) as info:
         asyncio.run(terminal_run(command="exit 17", default_cwd=tmp_path))
     assert info.value.result["returncode"] == 17

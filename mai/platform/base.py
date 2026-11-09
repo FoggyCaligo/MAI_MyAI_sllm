@@ -6,7 +6,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Literal
 
-Shell = Literal["default", "powershell"]
+Shell = Literal["bash", "cmd", "powershell"]
 
 
 class HostPlatform(ABC):

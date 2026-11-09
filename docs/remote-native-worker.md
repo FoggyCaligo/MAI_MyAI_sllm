@@ -24,7 +24,7 @@
 
 `memory_search`, `tool_result_read`, `file_download_link`는 MAI 서버의 저장소·권한·토큰 상태에 종속되어 원격화되지 않는다. Ollama 전용 원격 `image_analyze` 도구는 폐기됐다. 메인 모델 이미지 입력은 MAI 서버에 전달된 첨부에 대한 llama.cpp 직접 입력이다.
 
-Windows `terminal_run`은 CMD를 기본으로, Linux는 `/bin/sh`를 기본으로 한다. 지원하지 않는 셸 조합은 문법을 암묵적으로 변경하지 않고 오류로 반환한다. 체험 계정은 기존 읽기·파일 범위 제한을 유지한다.
+`terminal_run`은 `shell`을 생략하면 Bash를 사용한다. Windows는 Git Bash, Linux는 Bash다. Windows 전용 명령은 `shell=cmd` 또는 `shell=powershell`을 명시한다. Windows 원격 노트북에는 Git for Windows가 설치되어 있어야 하며 설치 경로를 못 찾으면 오류를 반환한다. 지원하지 않는 셸 조합은 문법을 암묵적으로 변경하지 않고 오류로 반환한다. 체험 계정은 기존 읽기·파일 범위 제한을 유지한다.
 
 ## 연결과 설치
 

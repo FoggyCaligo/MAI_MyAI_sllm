@@ -19,7 +19,7 @@ class TerminalRunInput(BaseModel):
 
     command: str = Field(min_length=1)
     cwd: str | None = None
-    shell: Literal['default', 'powershell'] = 'default'
+    shell: Literal['bash', 'cmd', 'powershell'] = 'bash'
 
 
 class TerminalRunError(RuntimeError):
@@ -100,7 +100,7 @@ async def _communicate_bounded(process: asyncio.subprocess.Process, *, limit_byt
 
 
 async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
-                       shell: Literal["default", "powershell"] = "default") -> dict[str, Any]:
+                       shell: Literal["bash", "cmd", "powershell"] = "bash") -> dict[str, Any]:
     platform = current_platform()
     with platform.script_workspace(shell) as workspace:
         process = await platform.launch(command, cwd, shell, workspace)
@@ -130,8 +130,8 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
     return {
         "command": command,
         "cwd": str(cwd),
-        "shell": "powershell.exe" if shell == "powershell" else platform.shell_description,
-        "shell_family": "powershell" if shell == "powershell" else platform.shell_family,
+        "shell": "powershell.exe" if shell == "powershell" else ("cmd.exe" if shell == "cmd" else platform.shell_description),
+        "shell_family": "powershell" if shell == "powershell" else ("cmd" if shell == "cmd" else platform.shell_family),
         "stdout": stdout_bytes.decode(platform.output_encoding, errors="strict"),
         "stderr": stderr_bytes.decode(platform.output_encoding, errors="strict"),
         "returncode": process.returncode,
@@ -145,7 +145,7 @@ async def terminal_run(
     cwd: str | None = None,
     default_cwd: str | Path | None = None,
     default_timeout_seconds: float | None = None,
-    shell: Literal["default", "powershell"] = "default",
+    shell: Literal["bash", "cmd", "powershell"] = "bash",
 ) -> dict[str, Any]:
     base = cwd if cwd is not None else default_cwd
     resolved_cwd = Path(base or os.getcwd()).expanduser().resolve(strict=False)
@@ -175,7 +175,7 @@ def register_terminal_tools(
     async def handler(
         command: str,
         cwd: str | None = None,
-        shell: Literal["default", "powershell"] = "default",
+        shell: Literal["bash", "cmd", "powershell"] = "bash",
     ) -> dict[str, Any]:
         return await terminal_run(
             command=command,
@@ -191,70 +191,16 @@ def register_terminal_tools(
         name="terminal_run",
         description=(
             "Execute a shell script on the local PC with MAI process permissions. "
-            "On Windows shell=default uses CMD (cmd.exe), NOT Bash or PowerShell. "
+            "The default shell is Bash: Git Bash on Windows, and Bash on Linux. "
+            "Omit shell to select Bash; shell=bash is also accepted explicitly. "
+            "Write Bash commands using POSIX-compatible syntax, including pwd, ls, "
+            "grep, find, pipes, && and semicolon separators. "
+            "On Windows use Git Bash path conventions when constructing shell paths. "
+            "For Windows-only commands, select shell=cmd or shell=powershell explicitly. "
             "CMD uses && for success-dependent execution, || for failure-dependent execution, "
             "& for unconditional execution, and separate lines for sequential commands. "
             "CMD does not use semicolons as command separators, backslashes to escape quotes, "
-            "or POSIX 'for ... do ... done' syntax. In a CMD batch script, use %%V for "
-            "FOR variables (not %V), and quote executable paths containing spaces. "
+            "or POSIX 'for ... do ... done' syntax. In CMD scripts use %%V in FOR loops. "
             "Write command text in the syntax of the selected shell only; the runner "
-            "already invokes that shell. With shell=powershell, provide PowerShell "
-            "statements directly: do NOT wrap them in powershell -Command, "
-            "powershell.exe -Command, or another nested PowerShell invocation. "
-            "Nested invocation adds quoting and escaping layers and can break commands. "
-            "On Windows shell=powershell uses Windows PowerShell 5.1 with Unicode-safe "
-            "UTF-16LE EncodedCommand and child-only ExecutionPolicy Bypass. "
-            "Use PowerShell syntax, including semicolons or newlines, $variables, "
-            "and single quotes for literal strings. For registry writes use native "
-            "PowerShell registry cmdlets with Registry:: paths when appropriate; "
-            "reg.exe requires HKCU\\... paths instead of HKCU:\\... paths. "
-            "PowerShell native program failures are reflected in the shell exit status "
-            "when LASTEXITCODE is nonzero at the end of the script. For multi-step scripts, "
-            "check native $LASTEXITCODE after each step that must succeed; in CMD use && "
-            "or explicit errorlevel checks. A final zero exit does not prove every "
-            "For counting or deduplicating structured records, prefer native structured "
-            "objects and explicit aggregation in the selected shell over manually counting "
-            "formatted text lines. In PowerShell, retain objects until Select-Object, "
-            "Measure-Object or Group-Object has computed the requested totals; "
-            "ConvertTo-Json may serialize the final records and counts. Distinguish "
-            "row count, unique-item count and grouped counts, and report their scope "
-            "separately. Format-List and Format-Table are display formatting, not "
-            "reliable machine-readable records for counting. "
-            "earlier command succeeded. Do not claim success without verifying the "
-            "requested effect. On non-Windows platforms shell=default is /bin/sh; "
-            "shell=powershell is unavailable. Use the authoritative runtime context "
-            "for default shell, cwd and permissions; set cwd only when needed. "
-            "The runner preserves stdout, stderr and shell exit status. "
-            "For Windows lookup commands, distinguish a negative query result from a "
-            "malformed command or execution failure by inspecting the command-specific "
-            "exit status AND output; do not assume every exit code 1 means not found. "
-            "findstr uses exit code 0 for a match, 1 for no matching lines, and 2 "
-            "for an error. reg.exe query returns nonzero when a requested key/value "
-            "does not exist, but nonzero may also indicate access or syntax errors; "
-            "inspect stderr and the requested target rather than treating all nonzero "
-            "results as absent. CMD dir can report an empty/no-match result with "
-            "a nonzero exit; inspect the displayed diagnostics before deciding "
-            "whether it is an expected absence. Querying reg.exe with /ve checks "
-            "only the unnamed default value, not the named entries in a Run key. "
-            "For independent lookups, avoid chaining with && because an expected "
-            "no-match skips subsequent lookups; run queries separately or handle "
-            "each known query status explicitly. When no-match is expected, make "
-            "the shell script explicitly classify it and only then return success; "
-            "preserve unexpected errors and their nonzero exit codes. Do not "
-            "globally coerce return codes to zero or hide stderr. "
-            "Nonzero exits, timeouts and output limit violations fail visibly. Windows output is "
-            "UTF-8 decoded strictly. No stderr text matching is used to infer failures."
-        ),
-        input_model=TerminalRunInput,
-        handler=handler,
-        timeout_seconds=None,
-        category="terminal",
-        metadata={
-            "model_context": {
-                "shell": shell_description,
-                "shell_family": shell_family,
-                "default_cwd": str(register_default_cwd),
-                "posix_shell_syntax": shell_family == "sh",
-            }
-        },
-    )
+            "already invokes that shell. "
+            
