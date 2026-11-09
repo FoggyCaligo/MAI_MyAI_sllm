@@ -140,6 +140,19 @@ async def stream_completion(
                 "POST", url, json=stream_payload, timeout=timeout_seconds,
             ) as response:
                 response.raise_for_status()
+                # Older llama.cpp adapters and controlled test doubles can
+                # return an ordinary JSON completion despite stream=true.
+                # Preserve compatibility, but use incremental SSE whenever
+                # the provider supports it.
+                if response.headers.get("content-type", "").lower().startswith("application/json"):
+                    result = await response.aread()
+                    try:
+                        object_response = json.loads(result)
+                    except (ValueError, TypeError) as exc:
+                        raise ModelProtocolError("llama.cpp JSON fallback is invalid") from exc
+                    if not isinstance(object_response, dict):
+                        raise ModelProtocolError("llama.cpp JSON fallback must be an object")
+                    return object_response
                 pending_data: list[str] = []
                 async for line in response.aiter_lines():
                     if line.startswith("data:"):
