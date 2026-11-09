@@ -23,7 +23,7 @@ LLAMACPP_REASONING_PRESERVE: false
 # 이는 전력 제한이나 드라이버 수준의 하드 메모리 상한이 아니다.
 LLAMACPP_GPU_MEMORY_BUDGET_MIB: 15360
 # 모델 컨텍스트 상한(토큰). 모델 로딩 시 KV 캐시 메모리에 반영된다.
-LLAMACPP_CONTEXT_SIZE: 131072
+LLAMACPP_CONTEXT_SIZE: 65536
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
 # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
