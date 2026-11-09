@@ -137,3 +137,33 @@ def test_empty_later_page_without_usable_previous_results_is_not_success(monkeyp
     with pytest.raises(web_module.WebSearchError) as caught:
         web_module.web_search("test news")
     assert caught.value.page == 2
+
+
+def test_first_empty_provider_page_is_successful_no_results(monkeypatch):
+    calls = []
+
+    class EmptyDDGS(FakeDDGS):
+        def text(self, query, *, page, **kwargs):
+            calls.append(page)
+            return []
+
+    monkeypatch.setattr(web_module, "DDGS", EmptyDDGS)
+    result = web_module.web_search("test news")
+    assert calls == [1]
+    assert result["status"] == "no_results"
+    assert result["message"] == "결과없음"
+    assert result["results"] == []
+    assert result["stopped_on_empty_page"] == 1
+
+
+def test_filtered_out_provider_records_are_no_results(monkeypatch):
+    class InvalidRowsDDGS(FakeDDGS):
+        def text(self, query, *, page, **kwargs):
+            return [{"title": "no URL"}]
+
+    monkeypatch.setattr(web_module, "DDGS", InvalidRowsDDGS)
+    result = web_module.web_search("test news")
+    assert result["results"] == []
+    assert result["status"] == "no_results"
+    assert result["message"] == "결과없음"
+
