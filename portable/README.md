@@ -33,7 +33,7 @@ MAI/
     check_llamacpp_catalog.py
     portable_backup.py
     verify_portable_backup.py
-  MAI_MyAI_sllm_Memory/              # 별도 Git 저장소: SQLite 기억·대화·감사 기록
+  MAI_MEMORY/              # 별도 Git 저장소: SQLite 기억·대화·감사 기록
 ```
 
 Linux는 Ubuntu 24.04 x86-64 호스트에서 실행하며 네이티브 Python·uv·llama.cpp는 `~/.cache/mai-portable/<프로젝트 경로 해시>/` 또는 `XDG_CACHE_HOME`에 준비한다. SSD에 있는 Windows `.exe`를 Linux에서 실행하지 않는다. Linux에는 `python3`, `git`, `curl`, `tar`, `sha256sum`, `flock`, `zstd` 및 Vulkan 드라이버 등 호스트 의존성이 필요하다.
