@@ -134,10 +134,10 @@ class ToolExecution:
     content: str
     error_type: str | None = None
     handler_started: bool = False
-    reused: bool = False
     source_content_fingerprint: str | None = None
     compact_history_content: str | None = None
     source_content: str | None = None
+    reused: bool = False
 
     @property
     def audit_content(self) -> str:
