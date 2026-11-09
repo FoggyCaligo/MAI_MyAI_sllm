@@ -20,7 +20,7 @@ ROOT = HERE.parents[2]
 GAIA_ADAPTER = ROOT / "benchmark" / "GAIA Benchmark" / "adapter"
 sys.path.insert(0, str(GAIA_ADAPTER))
 from run_openclaw_gaia import (
-    CONFIG_PROVIDER, default_mai_model, openclaw_config, parse_envelope,
+    CONFIG_PROVIDER, MODEL_TIMEOUT_SECONDS, default_mai_model, openclaw_config, parse_envelope,
     require_openclaw_version, resolve_openclaw_executable, router_model_ids,
 )
 from dataset import load_cases
@@ -209,7 +209,7 @@ def main() -> None:
         "dataset": str(args.dataset.resolve()), "start": args.start, "limit": args.limit,
         "memory_protocol": "native_transcript_replay_session_memory_fts",
         "context": 131072, "max_tokens": 32768,
-        "provider_timeout_seconds": 300, "task_timeout_seconds": args.timeout_seconds,
+        "provider_timeout_seconds": MODEL_TIMEOUT_SECONDS, "task_timeout_seconds": args.timeout_seconds,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     prediction_file = args.output_dir / "predictions.jsonl"
     for index, case in enumerate(cases, 1):
