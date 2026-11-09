@@ -43,7 +43,7 @@ MAI 웹 UI (Owner)
                  ↓
              소스 ZIP + SHA-256 검증
                  ↓
-             Python 가상환경 + remote 의존성 + Chromium
+             의존성 해시별 공유 Python 가상환경 + Chromium
                  ↓
              mai.remote.agent_client
                  ↕ HTTPS 폴링·결과
@@ -60,11 +60,11 @@ MAI 웹 UI (Owner)
 | 설치 캐시 | `%LOCALAPPDATA%\MAI\RemoteWorker\<SHA256>\` | `${XDG_DATA_HOME:-$HOME/.local/share}/mai/remote-worker/<SHA256>/` |
 | 의존성 | `pyproject.toml:remote` 그룹 | 동일 |
 | 실행 프로세스 | `python -m mai.remote.agent_client` | 동일 |
-| 터미널 기본 셸 | CMD | `/bin/sh` |
+| `terminal_run` 기본 셸 | Git Bash | Bash |
 
 소스 묶음에는 MAI 서버가 사용 중인 `mai/**/*.py`와 `pyproject.toml`이 포함된다. **모델 GGUF·llama.cpp·서버의 기억 DB는 원격에 설치하지 않음.**
 
-설치 완료 마커 `.installed-ok`가 없으면 미완료 설치로 판단한다. 패키지 설치·브라우저 설치 오류는 실패로 드러낸다.
+소스와 공유 가상환경 각각의 설치 완료 마커 `.installed-ok`가 없으면 미완료로 판단한다. 원격 의존성 그룹과 Python 실행 버전·플랫폼이 같으면 다른 MAI 소스 ZIP에서도 공유 가상환경을 재사용한다. 새 가상환경이 필요하면 먼저 완전히 설치·검증하고, 원격 워커 실행 시 더 이상 사용하지 않는 이전 공유 가상환경을 잠금 확인 후 제거한다. 새 환경 설치가 실패하면 기존 정상 환경은 유지되며 실패가 드러난다.\n\n소스 ZIP은 동일한 바이트로 재생성되도록 아카이브 메타데이터를 정규화한다. 이전 정상 소스 묶음은 **마지막 사용 기준 30일** 보존한 다음 다음 워커 실행 시 정리한다. `.installed-ok`가 없는 이전 소스 폴더는 24시간 이상 경과하고 현재 사용 중이지 않을 때 정리한다. 설치 중인 환경과 연결된 실행 프로세스가 잠근 캐시는 정리하지 않는다. 기존 버전에서 만든 폴더 내부의 `.venv`는 이전 소스 버전과 함께 30일 보존될 수 있으므로, 업그레이드 직후 디스크 사용량이 바로 최저치가 되지는 않는다. pip 캐시와 Playwright 전역 브라우저 캐시는 별도 관리 대상이다. 패키지 설치·브라우저 설치 오류는 실패로 드러낸다.
 
 ## 4. 원격 도구 사용
 
