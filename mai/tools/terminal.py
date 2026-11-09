@@ -204,3 +204,39 @@ def register_terminal_tools(
             "Write command text in the syntax of the selected shell only; the runner "
             "already invokes that shell. "
             
+            "With shell=powershell, provide PowerShell statements directly; "
+            "do NOT wrap them in powershell -Command, powershell.exe -Command, "
+            "or another nested PowerShell invocation. On Windows, "
+            "PowerShell uses UTF-16LE EncodedCommand and child-only ExecutionPolicy Bypass. "
+            "Use PowerShell syntax with semicolons, variables, and native registry cmdlets. "
+            "For multiple commands, check each required native exit status; a successful "
+            "last command does not prove earlier commands succeeded. "
+            "For structured counting and deduplication prefer native structured objects; "
+            "in PowerShell use Group-Object, Measure-Object and ConvertTo-Json. "
+            "Distinguish row count, unique-item count, and grouped counts. "
+            "On Linux only Bash is supported; choose a Windows-specific shell explicitly "
+            "when running on Windows. Use authoritative runtime context for shell and cwd. "
+            "When querying Windows resources with CMD, findstr exit 1 means no match, "
+            "and reg.exe query may return nonzero for an absent key or another error. "
+            "CMD dir can also return nonzero for an empty match. When checking a registry "
+            "default value, reg.exe /ve queries only the unnamed default value. "
+            "For independent queries do not chain expected no-matches using &&; "
+            "inspect their specific results and preserve unexpected errors and their nonzero exit codes. "
+            "Do not globally coerce return codes to zero or hide stderr. "
+            "Nonzero exits, timeouts and output limit violations fail visibly. "
+            "Windows terminal output is decoded as UTF-8 strictly; stderr contents "
+            "are not used as a heuristic to determine success."
+        ),
+        input_model=TerminalRunInput,
+        handler=handler,
+        timeout_seconds=None,
+        category="terminal",
+        metadata={
+            "model_context": {
+                "shell": shell_description,
+                "shell_family": shell_family,
+                "default_cwd": str(register_default_cwd),
+                "posix_shell_syntax": shell_family == "bash",
+            },
+        },
+    )
