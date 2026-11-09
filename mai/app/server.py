@@ -668,6 +668,25 @@ async def chat(
             ]},
         )
 
+    def publish_timeout_diagnostic(round_number: int, partial: dict[str, object]) -> None:
+        details = {
+            "error_type": "ModelChatTimeoutError",
+            "incomplete": True,
+            "chunks": partial["chunks"],
+            "finish_reason": partial["finish_reason"],
+            "tool_fragments": partial["tool_fragments"],
+        }
+        if partial["thinking"]:
+            audit.append(
+                run_id, "model_think_step", partial["thinking"],
+                round_number=round_number, status="timeout_partial", details=details,
+            )
+        if partial["content"] or partial["tool_fragments"]:
+            audit.append(
+                run_id, "model", partial["content"],
+                round_number=round_number, status="timeout_partial", details=details,
+            )
+
     def publish_tool(execution: object) -> None:
         payload = _tool_payload(execution)
         audit.append(
@@ -716,6 +735,7 @@ async def chat(
             **({"attachments": attachments} if attachments else {}),
             on_tool_execution=publish_tool,
             on_model_turn=publish_model_turn,
+            on_model_timeout_diagnostic=publish_timeout_diagnostic,
             on_verification_rejection=publish_verification_rejection,
         )
         _append_session_message(principal, request.session_id, role="assistant", content=result.answer,
