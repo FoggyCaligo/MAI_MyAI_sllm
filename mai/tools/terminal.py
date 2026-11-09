@@ -137,17 +137,36 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
             if timeout_seconds is None:
                 stdout_bytes, stderr_bytes = await collector
             else:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(collector, timeout=timeout_seconds)
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    asyncio.shield(collector), timeout=timeout_seconds
+                )
         except asyncio.TimeoutError:
             timed_out = True
-            await asyncio.to_thread(platform.terminate_process_tree, process.pid)
-            stdout_bytes, stderr_bytes = await _communicate_bounded(process, limit_bytes=max_output_bytes)
+            # Never start a second pipe reader; the original collector owns
+            # stdout/stderr. Bound cleanup after terminating the process tree.
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(platform.terminate_process_tree, process.pid),
+                    timeout=5.0,
+                )
+            except (asyncio.TimeoutError, OSError):
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    asyncio.shield(collector), timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                collector.cancel()
+                await asyncio.gather(collector, return_exceptions=True)
+                stdout_bytes, stderr_bytes = b"", b""
         except BaseException:
             if not collector.done():
                 collector.cancel()
                 await asyncio.gather(collector, return_exceptions=True)
             await asyncio.to_thread(platform.terminate_process_tree, process.pid)
-            await process.wait()
             raise
 
     stdout, stdout_encoding = _decode_terminal_output(stdout_bytes)
@@ -223,7 +242,9 @@ def register_terminal_tools(
             "Write Bash commands using POSIX-compatible syntax, including pwd, ls, "
             "grep, find, pipes, && and semicolon separators. "
             "On Windows use Git Bash path conventions when constructing shell paths. "
-            "For Windows-only commands, select shell=cmd or shell=powershell explicitly. "
+            "For Windows-only commands, prefer shell=powershell and stay in one shell. " 
+            "Do not pipe cmd.exe /c or powershell.exe -Command into Bash loops; " 
+            "use PowerShell Where-Object and Select-Object for structured filtering. "
             "CMD uses && for success-dependent execution, || for failure-dependent execution, "
             "& for unconditional execution, and separate lines for sequential commands. "
             "CMD does not use semicolons as command separators, backslashes to escape quotes, "
