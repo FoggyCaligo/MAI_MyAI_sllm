@@ -83,7 +83,6 @@ class AgentRuntime:
                 options=options,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
-            on_model_timeout_diagnostic=on_model_timeout_diagnostic,
                 on_model_timeout_diagnostic=on_model_timeout_diagnostic,
                 on_verification_rejection=on_verification_rejection,
                 on_verification_audit=on_verification_audit,
@@ -122,6 +121,7 @@ class AgentRuntime:
             options=options,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_model_timeout_diagnostic=on_model_timeout_diagnostic,
             on_verification_rejection=on_verification_rejection,
             on_verification_audit=on_verification_audit,
         )
