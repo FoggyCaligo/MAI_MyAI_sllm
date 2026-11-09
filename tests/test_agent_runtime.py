@@ -220,7 +220,7 @@ def test_agent_flow_is_logged_to_uvicorn_terminal(caplog) -> None:
 
     assert result.content == "done"
     assert 'MAI tool call round=2 name=echo args={"text":"hello"}' in caplog.text
-    assert "MAI tool result round=2 name=echo ok=true handler_started=true error_type=-" in caplog.text
+    assert "MAI tool result round=2 name=echo ok=true handler_started=true reused=false error_type=-" in caplog.text
     assert "MAI provisional answer verification round=3" in caplog.text
     assert "MAI final accepted round=3" in caplog.text
 
