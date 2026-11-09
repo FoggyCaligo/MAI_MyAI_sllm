@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Callable
 
 from ..llm.models import Message, ThinkSetting
 from ..llm.llamacpp import LlamaCppAdapter
@@ -58,6 +58,7 @@ class AgentRuntime:
         options: Mapping[str, Any] | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
@@ -82,6 +83,7 @@ class AgentRuntime:
                 options=options,
                 on_tool_execution=on_tool_execution,
                 on_model_turn=on_model_turn,
+                on_model_timeout_diagnostic=on_model_timeout_diagnostic,
                 on_verification_rejection=on_verification_rejection,
                 on_verification_audit=on_verification_audit,
             )
@@ -98,6 +100,7 @@ class AgentRuntime:
         options: Mapping[str, Any] | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
@@ -118,6 +121,7 @@ class AgentRuntime:
             options=options,
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
+            on_model_timeout_diagnostic=on_model_timeout_diagnostic,
             on_verification_rejection=on_verification_rejection,
             on_verification_audit=on_verification_audit,
         )

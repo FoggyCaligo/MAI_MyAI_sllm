@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Callable
 
 
 def model_generation_limit(name: str, default: int) -> int:
@@ -86,3 +86,4 @@ class ChatRequest:
     think: ThinkSetting | None = None
     options: Mapping[str, Any] | None = None
     response_format: Mapping[str, Any] | str | None = None
+    on_timeout_diagnostic: Callable[[dict[str, Any]], None] | None = None

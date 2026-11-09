@@ -223,6 +223,7 @@ class AgentLoop:
         options: Mapping[str, Any] | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
@@ -314,6 +315,10 @@ class AgentLoop:
                     tools=active_tools,
                     think=think,
                     options=options,
+                    on_timeout_diagnostic=(
+                        (lambda partial: on_model_timeout_diagnostic(round_number, partial))
+                        if on_model_timeout_diagnostic is not None else None
+                    ),
                 ))
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
