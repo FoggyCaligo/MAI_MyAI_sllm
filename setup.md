@@ -42,6 +42,14 @@ ornith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpro
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
  
+**개인 DB 저장소 준비:** MAI는 기본적으로 프로젝트 루트 `MAI_MEMORY/`의 DB를 사용한다. 별도 비공개 저장소를 처음 설치할 때 아래 명령으로 체크아웃한다. 기존에 보유한 `MAI_MEMORY/`가 있으면 다시 복제하거나 덮어쓰지 않는다.
+
+```bash
+git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
+```
+
+저장소 이름 변경 이전의 개인 `.env`에는 `data/` 또는 `MAI_MyAI_sllm_Memory/` 경로가 남아 있을 수 있으므로 [데이터 이전 안내](docs/memory-repository.md)를 참고해 경로를 직접 확인한다.
+
 ## 2. 모델 추가 다운받는 방법
 기본 다운로드 모델 출처: https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main
 
@@ -93,8 +101,9 @@ ornith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmpro
 | `LLAMACPP_MAIN_MMPROJ_PATH`, `LLAMACPP_MAIN_VISION` | 비전 projector와 이미지 입력 |
 | `LLAMACPP_REASONING_PRESERVE` | llama.cpp 추론 보존 여부 |
 | `MODEL_MAX_OUTPUT_TOKENS` | 모델 출력 토큰 한도(기본 32768) |
-| `MODEL_REQUEST_TIMEOUT_SECONDS` | 요청 제한 시간(기본 300초) |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | **각 llama.cpp 모델 호출** 제한 시간(기본 300초, 전체 사용자 요청 시간 한도가 아님) |
 | `MAI_VERIFIER_BLOCKING_MODE` | `critical` 또는 `strict` |
+| `MAI_VERIFIER_ENABLED` | 요청별 최종답변 검증 기본값(현재 `false`) |
 | `MAI_ANSWER_QUALITY_REVIEW` | 선택적 품질 검토(기본 `false`) |
 | `SESSION_HISTORY_MESSAGES` | 최근 대화 메시지 수(기본 10) |
 | `MAX_INLINE_TOOL_RESULT_CHARS` | 모델에게 보여주는 도구 결과 크기 |

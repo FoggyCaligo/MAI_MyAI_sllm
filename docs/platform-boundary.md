@@ -35,7 +35,7 @@ Owner 원격 PC 작업은 `mai/remote/routing.py`의 `native.invoke` 경로를 �
 
 ## Git과 데이터 백업
 
-Git에는 소스·설정 예시·빌드 스크립트·민감하지 않은 매니페스트·문서만 기록한다. `portable/portable-runtimes/`, `portable/portable-models/`, `portable/portable-slot-cache/`, `.env` 및 개인 메모리·대화·감사 DB를 커밋하지 않는다. GGUF를 배포할 때도 모델 라이선스 및 해시를 확인한다.
+**목표 정책:** Git 본체에는 소스·설정 예시·빌드 스크립트·민감하지 않은 매니페스트·문서만 기록한다. **다만 현재 `dev` 트리에는 과거 `data/*.sqlite3` 파일이 이미 추적되어 있다.** 이 문장만으로 현재 저장소가 완전히 분리된 상태라고 주장하지 않는다. `portable/portable-runtimes/`, `portable/portable-models/`, `portable/portable-slot-cache/`, `.env` 및 새 개인 메모리·대화·감사 DB는 `MAI_MEMORY/` 별도 저장소에서 관리하고, 본체에는 새로 커밋하지 않는다. 이미 추적된 구 데이터는 별도 이전/추적 해제 정책이 필요하다. GGUF를 배포할 때도 모델 라이선스 및 해시를 확인한다.
 
 Git만으로 모델·실행 바이너리·개인 데이터까지 장기 복원할 수는 없다. 운영체제에 맞는 파일, 모델 가중치, 잠긴 버전·해시 목록 및 독립된 암호화 백업을 별도로 보관해야 한다.
 

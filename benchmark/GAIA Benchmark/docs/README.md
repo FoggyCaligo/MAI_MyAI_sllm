@@ -17,6 +17,7 @@ benchmark/
    ├─ adapter/
    │  ├─ download_gaia.py
    │  ├─ run_gaia.py
+   │  ├─ resolve_main_model.py
    │  ├─ score_gaia.py
    │  └─ data/gaia/                 # 인증 후 데이터 자동 다운로드(추적 안 함)
    └─ result/                       # 실행 결과(추적 안 함)
@@ -31,7 +32,7 @@ benchmark/
 
 **중요:** GAIA 원본 데이터/첨부파일은 이 PR에 포함할 수 없다. 실제 문제·첨부파일은 아래 설정 스크립트가 본인의 인증 상태를 사용해 `adapter/data/gaia/`로 다운로드한다. 정답은 채점 과정에만 사용하며 MAI에 전달하지 않는다.
 
-2025년 10월부터 GAIA는 Parquet 메타데이터를 제공한다. 코드에서 `task_id`, `Question`, `Level`, `Final answer`, `file_path` 필드를 사용한다.
+현재 어댑터는 로컬로 내려받은 GAIA의 `2023_all` 또는 `2023_level1/2/3` 구성에서 `task_id`, `Question`, `Level`, `Final answer`, `file_path` 필드를 읽는다. 데이터셋 개정 시 필드와 첨부 경로는 실제 다운로드 결과로 재확인한다.
 
 ## 2. Windows 자동 설정
 
@@ -45,21 +46,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 
 스크립트는 `adapter/.venv`를 만들고 Python 패키지를 설치한 후 GAIA 데이터를 다운로드한다. 기존 MAI 모델 설치를 변경하지 않는다. 설치·인증 실패 시 명시적으로 중단한다.
 
-Linux/WSL은 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 실행한다.
+Ubuntu Linux에서는 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 데이터와 어댑터 가상환경을 준비할 수 있다. **현재 저장소에는 GAIA 평가 서버용 Linux 전용 시작 스크립트가 없다.** 아래 `start_benchmark_server.ps1`은 Windows PowerShell용이며, Linux에서 동일 격리 환경변수와 `MAIN_MODEL`을 준비하지 않은 채 그대로 명령을 변형해 실행하면 안 된다.
 
 데이터 다운로드에는 Hugging Face에 접근할 수 있는 인터넷 연결이 필요하며, 인증 전에는 자동으로 약관을 대신 동의하지 않는다.
 
 ## 3. MAI 벤치마크 전용 서버
 
-**사용 중인 MAI 서버를 종료한 뒤** 기존 llama.cpp router를 실행한 상태에서 별도 PowerShell 창에 다음 명령을 실행한다.
+**llama.cpp router(`http://127.0.0.1:8080`)가 실행 중인지 확인한 뒤**, 별도 PowerShell 창에서 다음 명령을 실행한다. GAIA 서버는 일반 MAI 서버의 `8000`과 다른 `8010`을 사용하므로 포트 충돌은 없지만, 같은 router와 모델 계산 자원을 공유한다. 비교의 재현성을 높이려면 일반 MAI 채팅을 동시에 수행하지 않는다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\start_benchmark_server.ps1"
 ```
 
-이 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
+이 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. **음성 프로필(`VOICE_PROFILE_DIR`), 업로드 디렉터리, 파일·터미널·네트워크 도구의 OS 접근 권한까지 분리하는 스크립트는 아니다.** 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
 
-로그인 계정은 MAI 서버의 기존 `OWNER_USERS` 환경 설정을 사용한다. 기존 사용자의 비밀번호를 벤치마크 명령 인수에 직접 넣지 않는다. **장기기억 데이터뿐 아니라 시험용 서버 프로세스 환경 및 브라우저 세션을 분리해야 오염 위험을 줄일 수 있다.**
+로그인 계정은 MAI 서버의 기존 `OWNER_USERS` 환경 설정을 사용한다. `run_gaia.py`는 먼저 `GET /login/session`으로 사전 세션 토큰을 받고 `X-MAI-Preauth-Session` 헤더를 붙여 `POST /login`으로 로그인한다. 기존 사용자의 비밀번호를 벤치마크 명령 인수에 직접 넣지 않는다. **장기기억 데이터뿐 아니라 시험용 서버 프로세스 환경 및 브라우저 세션을 분리해야 오염 위험을 줄일 수 있다.**
 
 평가 작업 중 실제 파일·인터넷·셸 명령을 실행할 수 있으므로, 개인 파일·Git 작업 디렉터리가 아니라 별도 Windows 사용자 또는 VM에서 실행하는 것이 더 안전하다. 이 스크립트는 DB 경로 분리만 수행하며 OS 권한을 제한하거나 파일 작업을 샌드박싱하지는 않는다.
 
@@ -72,7 +73,7 @@ $env:MAI_BENCH_USER = "본인의-MAI-로그인-ID"
 & ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" ".\benchmark\GAIA Benchmark\adapter\run_gaia.py" --server http://127.0.0.1:8010 --split validation --level level1 --limit 10
 ```
 
-비밀번호는 기본적으로 터미널의 숨김 입력으로 요청한다. 요청당 최대 실행 시간은 기본 1800초이며, `--timeout-seconds`로 변경할 수 있다. MAI 자체의 모델 호출 제한은 별도 적용된다.
+먼저 한 문제만 실행할 경우 `--limit 1`을 사용한다. 최초 실행 전에 `Invoke-RestMethod http://127.0.0.1:8080/v1/models`로 router 모델 목록, `Invoke-RestMethod http://127.0.0.1:8010/health`로 시험 서버 상태를 확인할 수 있다. MAI 로그인 비밀번호는 기본적으로 터미널의 숨김 입력으로 요청한다. 요청당 최대 실행 시간은 기본 1800초이며, `--timeout-seconds`로 변경할 수 있다. MAI 자체의 모델 호출 제한은 별도 적용된다.
 
 최초 10문제가 정상 완료되면:
 
@@ -91,6 +92,8 @@ $env:MAI_BENCH_USER = "본인의-MAI-로그인-ID"
 - `manifest.json`: 평가 조건
 - `local_score.json`: 간이 채점을 별도 수행할 때만 생성
 
+기록의 `completed`는 **MAI 실행 및 출력 형식 완료**를 의미하며 GAIA 정답 여부가 아니다. 정답률은 아래 별도 채점으로 확인한다. 서버가 실패해도 `predictions.jsonl`에는 해당 `task_id`와 빈 `model_answer`가 남고 `execution.jsonl`에는 실패 원인이 기록된다.
+
 중단된 실행 재개:
 
 ```powershell
@@ -105,7 +108,7 @@ $env:MAI_BENCH_USER = "본인의-MAI-로그인-ID"
 & ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" ".\benchmark\GAIA Benchmark\adapter\score_gaia.py" ".\benchmark\GAIA Benchmark\result\gaia_실행폴더\predictions.jsonl" --level level1
 ```
 
-이 채점은 공백 제거·대소문자 통일만 수행하는 **보수적 참고 지표**다. GAIA 공식 평가의 정규화 규칙과 동일하지 않으므로 공식 리더보드 점수로 발표하면 안 된다. 시험 문제의 정답이 공개되지 않은 `test`는 로컬 채점하지 않는다.
+이 채점은 양끝 공백 제거(`strip`)와 대소문자 통일(`casefold`)로 비교하는 **엄격한 완전 일치 참고 지표**다. 중간 공백·구두점·단위 등의 의미 동등성은 평가하지 않는다. `score_percent_on_attempted`는 기록된 예측 수를 분모로 사용하고, 데이터셋 전체 대비 수행 비율은 `coverage_percent`로 별도 보고한다. GAIA 공식 평가의 정규화 규칙과 동일하지 않으므로 공식 리더보드 점수로 발표하면 안 된다. 시험 문제의 정답이 공개되지 않은 `test`는 로컬 채점하지 않는다.
 
 ## 7. OpenClaw와 Hermes Agent 비교용 소스 다운로드
 
@@ -125,12 +128,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 
 1. MAI vs Hermes vs OpenClaw는 동일 GGUF SHA-256, llama.cpp 빌드, ctx, GPU 오프로딩, 입력 문제, 실행 예산을 기록해야 한다.
 2. 비교 대상별로 새 대화·작업 공간을 사용하고 이전 문제 정답·결과를 문맥에 넣지 않는다.
-3. 첨부파일 문제는 **MAI 서버가 데이터 경로에 직접 접근 가능한 동일 컴퓨터에서만** 실행한다. 비이미지 자료는 정답 메타데이터를 포함한 원본 데이터 폴더가 아닌 \`result/실행폴더/inputs/\`에 복사하고, MAI의 기존 파일 도구를 통해 읽도록 절대 경로를 문제 입력에 제공한다. 단, MAI 서버가 같은 OS 사용자 권한으로 실행되면 데이터 원본 접근 자체를 차단하지는 못한다. 정식 공정성 검증에는 평가 데이터가 접근 불가능한 격리 실행 계정 또는 별도 프로세스 권한 구성이 필요하다.
-4. 점수에는 정답률 외에 문제당 시간, 모델 라운드 수, 도구 호출 수, 실패 및 타임아웃을 포함한다.
-5. GAIA는 외부 웹 자료가 변경될 수 있는 문제들이 있다. 실행 날짜와 외부 접근 범위를 기록한다.
-6. 실험에서 문제별 장기기억 데이터가 DB 경로로 격리되어도, **동일 실행 중** 문제 간 기억 간섭 가능성이 있으므로 최종 공식 시험에서는 독립 실행/기억 리셋 정책을 추가 검증해야 한다.
-7. GAIA 질문 및 첨부파일은 사용자 접근 승인을 받은 후에만 다운로드하고, 공개 PR이나 버그 보고에 포함하지 않는다.
+3. 첨부파일 문제는 **MAI 서버가 파일 경로에 직접 접근 가능한 동일 컴퓨터에서만** 실행한다. 비이미지 자료는 정답 메타데이터를 포함한 원본 데이터 폴더가 아닌 \`result/실행폴더/inputs/\`에 복사하고, MAI의 기존 파일 도구를 통해 읽도록 절대 경로를 문제 입력에 제공한다. 단, MAI 서버가 같은 OS 사용자 권한으로 실행되면 데이터 원본 접근 자체를 차단하지는 못한다. 정식 공정성 검증에는 평가 데이터가 접근 불가능한 격리 실행 계정 또는 별도 프로세스 권한 구성이 필요하다.
+4. `run_gaia.py`는 질문에 `FINAL ANSWER: <answer>` 최종 줄을 요구한다. 마지막 줄이 그 형식이 아니면 실패로 기록한다. 첨부파일은 `result/실행폴더/inputs/<task_id>/`로 복사해 절대경로를 프롬프트에 제공하며, 별도의 이미지 업로드 API로 자동 첨부하지 않는다. 따라서 첨부 형식별 실제 접근 능력과 모델의 이미지 입력 능력을 혼동하지 않는다.
+5. 점수에는 정답률 외에 문제당 시간, 모델 라운드 수, 도구 호출 수, 실패 및 타임아웃을 포함한다.
+6. GAIA는 외부 웹 자료가 변경될 수 있는 문제들이 있다. 실행 날짜와 외부 접근 범위를 기록한다.
+7. 실험에서 문제별 장기기억 데이터가 DB 경로로 격리되어도, **동일 실행 중** 문제 간 기억 간섭 가능성이 있으므로 최종 공식 시험에서는 독립 실행/기억 리셋 정책을 추가 검증해야 한다.
+8. GAIA 질문 및 첨부파일은 사용자 접근 승인을 받은 후에만 다운로드하고, 공개 PR이나 버그 보고에 포함하지 않는다.
 
-## 9. 하드웨어 기준
+## 9. 고장 진단
+
+- 모든 문제가 수 초 만에 `All connection attempts failed`로 끝나면 먼저 `127.0.0.1:8080/v1/models`와 시험 서버 `/health`를 각각 확인한다. `8010`의 정상 구동만으로 추론 서버 연결이 증명되지는 않는다.
+- llama.cpp 모델 호출 `ModelChatTimeoutError`와 평가 실행기의 `--timeout-seconds` 초과는 다른 제한이다. 모델 요청 제한은 현재 `settings.yaml`의 `MODEL_REQUEST_TIMEOUT_SECONDS: 300`이며 평가 실행기는 기본 1800초다.
+- 검색 반복, 외부 사이트 차단, 답변 형식 위반은 `execution.jsonl` 및 시험 서버의 감사 로그(`result/_runtime/log.sqlite3`)를 함께 대조한다. 실패를 정답 오답과 혼동하지 않는다.
+- `--output-dir`을 변경하지 않고 재개하면 이미 `predictions.jsonl`에 기록된 실패 건도 건너뛴다. 재시험은 새로운 결과 폴더에서 수행한다.
+
+## 10. 하드웨어 기준
 
 i5-12400F, RAM 16GB, RX 6800 XT 16GB의 기존 Ornith 9B 단일 실행 구성을 사용한다. GAIA 자체는 GPU 계산을 수행하지 않으며, 에이전트별 **순차 실행**을 권장한다. 128K 컨텍스트를 전부 사용하는 상황은 RAM/VRAM 부담이 생길 수 있으므로 첫 10문제에서 피크 메모리를 확인한다.

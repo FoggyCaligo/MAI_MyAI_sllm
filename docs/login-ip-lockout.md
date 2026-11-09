@@ -11,6 +11,8 @@
 - sessionStorage 제거/새 브라우저 세션 생성으로 횟수를 우회할 수 있음. 공격자가 계속 세션을 재발급하면 이 제한만으로는 비밀번호 추측 공격을 막지 못함.
 - 사용자가 MAI 웹에서 로그아웃하면 해당 브라우저 인증 토큰만 폐기하며, 이미 연결된 Owner 원격 관리 세션은 유지되어 재로그인 시 `/remote/sessions/current`로 다시 조회할 수 있음(원격 세션 종료는 **연결 해제** 또는 Agent 종료·만료 시 수행).
 
+GAIA의 `run_gaia.py` 역시 `GET /login/session` → `X-MAI-Preauth-Session` 헤더와 함께 `POST /login` 순서를 사용한다. 시험 서버는 기본적으로 동일한 Owner 로그인 계약을 공유한다. [GAIA Benchmark 안내](../benchmark/GAIA%20Benchmark/docs/README.md)를 참고한다.
+
 ## 테스트
 
 동일 세션 9회 실패는 허용, 10회째는 3600초 잠금, 다른 세션은 영향 없음, 1시간 경과 시 다시 시도, 로그인 성공 시 실패 횟수 초기화를 단위 테스트로 확인해야 함.

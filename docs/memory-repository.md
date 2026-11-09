@@ -23,7 +23,11 @@ git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 
 ## 2. 기존 data 폴더 이전 (필요한 경우에만)
 
-이미 `MAI_MEMORY/`에 최신 데이터베이스가 있다면 이 단계는 **생략**한다. 이전 도구는 `data/`의 내용을 새 저장소에 추가해야 할 때만 사용한다.\n\n```bash\n./portable/portable-runtimes/python/python.exe scripts/migrate_memory_data.py\n```
+이미 `MAI_MEMORY/`에 최신 데이터베이스가 있다면 이 단계는 **생략**한다. 이전 도구는 `data/`의 내용을 새 저장소에 추가해야 할 때만 사용한다.
+
+```bash
+./portable/portable-runtimes/python/python.exe scripts/migrate_memory_data.py
+```
 
 계획 출력에 충돌이 없다면 **MAI가 중지된 상태**에서 실행한다.
 
@@ -50,7 +54,7 @@ VOICE_PROFILE_DIR=./MAI_MEMORY/voice_profiles
 
 Windows/Linux Portable 실행기는 기본 DB 경로에 Memory 저장소를 사용한다.
 설정값 `MEMORY_DB_PATH` 등의 명시적인 환경변수가 지정되어 있다면 해당 값이 우선한다.
-벤치마크 서버는 여전히 독립된 `benchmark/GAIA Benchmark/result/_runtime/`을 사용하므로 시험용 결과는 개인 Memory 저장소에 섞이지 않는다.
+벤치마크 서버는 `benchmark/GAIA Benchmark/result/_runtime/`의 네 SQLite DB 경로를 별도로 설정한다. 단, 음성 프로필 및 업로드 경로·파일/터미널 도구의 OS 접근 범위까지 자동으로 분리하는 것은 아니다. [GAIA 실행 안내](../benchmark/GAIA%20Benchmark/docs/README.md)를 참고한다.
 
 ## 4. 두 저장소 각각의 Git 관리
 
@@ -65,3 +69,8 @@ git status
 현재 사용하는 네 개의 DB와 음성 프로필이 `MAI_MEMORY/`에 존재하고, `.env` 및 MAI 서버의 경로 설정이 새 폴더를 가리키는 것이 확인된 뒤에는 기존 `data/` 폴더를 정리할 수 있다. **삭제는 사용자가 직접 수행한다.** 기존 경로가 남아 있는 커스텀 스크립트 또는 다른 프로세스가 없는지 먼저 확인한다.
 **Git에서 DB를 커밋하기 전에 MAI 프로세스 및 SQLite 쓰기 작업을 종료**하고,
 백업·개인 정보 노출 위험 및 용량을 확인해야 한다.
+
+
+## 이전 파일과 Git 추적 이력 주의
+
+현재 `dev` Git 트리에는 과거 `data/`에서 추적한 SQLite 바이너리 파일들이 남아 있다. **새 기본 경로를 `MAI_MEMORY/`로 변경한 것만으로 Git에 이미 추적된 `data/*.sqlite3`가 사라지지는 않는다.** 이 파일의 삭제·추적 해제·과거 Git 기록 정리는 별도 데이터 보존 및 이력 정책 검토 후 수행해야 하며, 이 문서는 해당 작업을 자동으로 수행하지 않는다. `MAI_MEMORY/`의 별도 Git 저장소 및 `.gitignore` 적용과 본체에 남은 과거 추적 파일은 구분한다.

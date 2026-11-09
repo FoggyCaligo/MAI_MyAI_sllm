@@ -50,7 +50,7 @@ Linux 실행기는 `portable/start-portable-llamacpp-linux.sh`. 모델 카탈로
 
 | 기능 | 구현 경로 | Linux 확인 방법 |
 |---|---|---|
-| 터미널 | `mai/platform/linux.py`, `mai/tools/terminal.py` | `terminal_run`: `pwd; uname -a`; 기본 `/bin/sh` |
+| 터미널 | `mai/platform/linux.py`, `mai/tools/terminal.py` | `terminal_run`: `pwd; uname -a`; 기본 Bash |
 | 파일 | `mai/tools/filesystem.py` | 한글 이름 파일 읽기·쓰기·삭제 권한 확인 |
 | 코드 | `mai/tools/code.py` | Python 파일 분석·편집, 저장 내용 재확인 |
 | CSV | `mai/tools/csv_aggregate.py` | 필터·그룹·집계 결과 재계산 |
@@ -60,11 +60,11 @@ Linux 실행기는 `portable/start-portable-llamacpp-linux.sh`. 모델 카탈로
 | 이미지 | `mai/app/main_model_images.py` | 지원 GGUF·projector에서 이미지 직접 입력 |
 | 음성 | `mai/app/voice.py` | 마이크·오디오 환경 및 실제 인식 확인 |
 
-**터미널 계약:** Linux는 `/bin/sh` 사용. `shell=powershell`은 지원하지 않으며 오류로 처리. Windows 셸 명령을 자동 변환하지 않음.
+**터미널 계약:** Linux는 설치된 `bash` 사용. `shell=powershell`은 지원하지 않으며 오류로 처리. Windows 셸 명령을 자동 변환하지 않음.
 
 **이미지 계약:** 별도 Ollama `image_analyze` 없음. `LLAMACPP_MAIN_VISION`과 실제 GGUF/projector 호환성 필요.
 
-**Verifier 계약:** 기존 LFM 별도 모델이 아닌 현재 선택된 Main GGUF로 별도 검증 요청 수행. 모델 상주는 유지할 수 있지만 KV Cache 공유는 보장하지 않음.
+**Verifier 계약:** `MAI_VERIFIER_ENABLED`가 켜진 요청에서 기존 LFM 별도 모델이 아닌 현재 선택된 Main GGUF로 별도 검증 요청 수행. 기본 배포 값은 `false`다. 모델 상주는 유지할 수 있지만 KV Cache 공유는 보장하지 않음.
 
 ## 4. 원격 워커·외부 접속
 
@@ -94,3 +94,7 @@ python -m pytest -q
 | Linux 원격 워커 종단간 | 실기기 검증 미확인 |
 
 **기록 원칙:** 성공 / 실패 / 미실행을 구분. 필수 의존성 오류를 건너뛰거나 정상으로 표시하지 않음.
+
+**문자 인코딩:** Linux Bash 자식 프로세스는 `C.UTF-8`, Python은 UTF-8 출력으로 구성하고, 터미널 수신 바이트는 UTF-8 우선 후 명시된 한국어 구형 인코딩을 순서대로 시도한다. [운영체제 경계](platform-boundary.md)를 참고한다.
+
+**지속 DB:** 기본 경로는 별도 Git 저장소 `MAI_MEMORY/`이며, 본체 Git에 남은 과거 `data/` 파일의 정리는 별도 작업이다.
