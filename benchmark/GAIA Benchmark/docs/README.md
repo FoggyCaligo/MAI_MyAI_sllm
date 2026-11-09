@@ -69,13 +69,13 @@ Ubuntu Linux에서는 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 데이터
 
 ## 3. MAI 벤치마크 전용 서버
 
-**일반 MAI(`./mai.sh start`)를 따로 실행하지 않는다.** GAIA 전용 스크립트가 기존 Portable 런처를 사용해 **llama.cpp router 한 개(8080)**를 시작하고, 정상 준비를 확인한 뒤 **GAIA 전용 MAI 웹 서버 한 개(8010)**를 실행한다. 일반 MAI 서버(8000)는 시작하지 않는다. 이 명령은 이전에 실행 중인 router(8080)가 있으면 중복 실행하지 않고 명시적으로 실패한다. 따라서 먼저 일반 MAI와 기존 router를 종료한다.
+**일반 MAI(`./mai.sh start`)를 따로 실행하지 않는다.** GAIA 전용 스크립트가 기존 Portable 런처를 사용해 **llama.cpp router 한 개(보호 기능 사용 시 내부 8081)**를 시작하고, 정상 준비를 확인한 뒤 **GAIA 전용 MAI 웹 서버 한 개(8010)**를 실행한다. 일반 MAI 서버(8000)는 시작하지 않는다. 이 명령은 이전에 실행 중인 Router 또는 게이트웨이(8080/8081)가 있으면 중복 실행하지 않고 명시적으로 실패한다. 따라서 먼저 일반 MAI와 기존 router를 종료한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\start_benchmark_server.ps1"
 ```
 
-이 한 명령으로 시작되는 구성은 `llama-server` **1개**와 MAI 평가용 서버 프로세스 **1개**다. 모델 상주 제한 `--models-max 1`도 유지한다. 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. **음성 프로필(`VOICE_PROFILE_DIR`), 업로드 디렉터리, 파일·터미널·네트워크 도구의 OS 접근 권한까지 분리하는 스크립트는 아니다.** 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
+보호 기능이 켜져 있으면 이 한 명령으로 `llama-server` **1개**, 공통 메모리 게이트웨이 **1개**, MAI 평가용 서버 프로세스 **1개**가 시작된다. 보호 기능을 끄면 게이트웨이 없이 기존 Router 8080과 평가 서버 8010을 사용한다. 모델 상주 제한 `--models-max 1`도 유지한다. 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. **음성 프로필(`VOICE_PROFILE_DIR`), 업로드 디렉터리, 파일·터미널·네트워크 도구의 OS 접근 권한까지 분리하는 스크립트는 아니다.** 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
 
 로그인 계정은 MAI 서버의 기존 `OWNER_USERS` 환경 설정을 사용한다. 평가 실행기 역시 루트 `.env`의 `OWNER_USERS`를 읽어 인증 정보를 자동 선택한다. 계정이 하나라면 ID와 비밀번호를 입력할 필요가 없고, 계정이 여러 개면 `MAI_BENCH_USER` 또는 `--user`로 사용할 Owner를 명시한다. `MAI_BENCH_PASSWORD` 환경변수가 설정된 경우 명시적 비밀번호를 우선 사용한다. 자격 증명은 결과 JSONL·manifest에 기록하지 않는다. `run_gaia.py`는 먼저 `GET /login/session`으로 사전 세션 토큰을 받고 `X-MAI-Preauth-Session` 헤더를 붙여 `POST /login`으로 로그인한다. 기존 사용자의 비밀번호를 벤치마크 명령 인수에 직접 넣지 않는다. **장기기억 데이터뿐 아니라 시험용 서버 프로세스 환경 및 브라우저 세션을 분리해야 오염 위험을 줄일 수 있다.**
 
@@ -199,6 +199,100 @@ OpenClaw CLI가 표준 PATH에 없는 환경에서는 `--openclaw`에 절대경�
 
 참고: [OpenClaw 로컬 커스텀 제공자](https://docs.openclaw.ai/concepts/model-providers/custom-providers), [OpenClaw agent exec](https://docs.openclaw.ai/cli/agent), [Windows 설치](https://docs.openclaw.ai/platforms/windows).
 
+## 실행 옵션 전체 목록 (현재 adapter 기준)
+
+실제 인자는 각 스크립트의 `--help`로 검증한다. **평가 실행기의 제한시간과 MAI 모델 API 호출 제한시간은 별개**이며, `--limit 0`은 선택된 범위의 전체 문제를 의미한다.
+
+### MAI: `adapter/run_gaia.py`
+
+| 인자 | 기본값 | 의미 |
+|---|---|---|
+| `--server` | `http://127.0.0.1:8000` | MAI API. **GAIA 격리 서버에서는 명시적으로 `http://127.0.0.1:8010` 입력** |
+| `--split` | `validation` | `validation` / `test` |
+| `--level` | `level1` | `level1`, `level2`, `level3`, `all` |
+| `--limit` | `10` | 시작 인덱스부터 실행할 최대 문제 수; `0`이면 끝까지 |
+| `--start` | `0` | 선택한 split/level에서 시작할 **0 기반** 인덱스 |
+| `--timeout-seconds` | `1800` | **문제 하나당** GAIA 실행 한도(초) |
+| `--poll-seconds` | `2.0` | 작업 완료 상태 조회 간격(초) |
+| `--output-dir` | UTC 시각 기반 `result/gaia_*/` | 결과 및 체크포인트 폴더 |
+| `--model` | 서버 기본 모델 | MAI에 넘길 등록된 GGUF 모델 ID |
+| `--verify` | 미지정 / 비활성 | MAI의 최종 검증 기능을 **실험군에서만** 활성화 |
+| `--user` | `MAI_BENCH_USER` 또는 단일 Owner 자동 선택 | Owner 로그인 ID |
+
+`--verify`를 주지 않으면 평가 요청은 검증을 명시적으로 활성화하지 않는다. 검증 사용 여부는 **MAI와 OpenClaw의 프레임워크 비교 조건이 달라질 수 있으므로** 결과와 함께 기록한다. `--model`에는 사람이 보는 레이블이 아닌 Router에 등록된 정확한 ID를 사용한다.
+
+예: Level 2 중 11번째부터 5문제를 별도 출력 폴더에서 실행:
+
+```powershell
+& ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" `
+  ".\benchmark\GAIA Benchmark\adapter\run_gaia.py" `
+  --server http://127.0.0.1:8010 `
+  --split validation --level level2 --start 10 --limit 5 `
+  --timeout-seconds 1800 --poll-seconds 2 `
+  --output-dir ".\benchmark\GAIA Benchmark\result\gaia_level2_sample"
+```
+
+### OpenClaw: `adapter/run_openclaw_gaia.py`
+
+| 인자 | 기본값 | 의미 |
+|---|---|---|
+| `--split` | `validation` | `validation` / `test` |
+| `--level` | `level1` | `level1`, `level2`, `level3`, `all` |
+| `--limit` | `1` | 최대 문제 수; `0`이면 끝까지 |
+| `--start` | `0` | 선택한 split/level의 0 기반 시작 인덱스 |
+| `--timeout-seconds` | `1800` | OpenClaw **문제 하나당** 실행 제한(초) |
+| `--openclaw` | `openclaw` | OpenClaw 실행 파일명 또는 실행 경로 |
+| `--output-dir` | UTC 시각 기반 `result/openclaw_*/` | 출력 및 재개 폴더 |
+
+OpenClaw 어댑터에는 MAI 전용 `--server`, `--model`, `--user`, `--verify`, `--poll-seconds` 옵션이 **없다**. 모델과 API는 자동 생성된 벤치마크 전용 설정으로 고정되며 엔드포인트는 `http://127.0.0.1:8080/v1`이다. 기존 OpenClaw 개인 설정과 벤치마크용 설정을 혼용하지 않는다.
+
+예: MAI와 동일한 Level 2 범위 5문제 실행:
+
+```powershell
+& ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" `
+  ".\benchmark\GAIA Benchmark\adapter\run_openclaw_gaia.py" `
+  --split validation --level level2 --start 10 --limit 5 `
+  --timeout-seconds 1800 `
+  --output-dir ".\benchmark\GAIA Benchmark\result\openclaw_level2_sample"
+```
+
+### Router / 메모리 보호 옵션 (공통)
+
+`settings.yaml`에서 선택하며 런처 **재시작** 시 적용된다.
+
+| 설정 | 현재 기본 구성 | 동작 |
+|---|---|---|
+| `LLAMACPP_MEMORY_GUARD_ENABLED` | `true` | 공통 RAM/VRAM 보호 게이트웨이 활성화; `false`는 비활성화 |
+| `MAI_MIN_AVAILABLE_RAM_MIB` | `6144` | 모델 요청 전 최소 가용 RAM(MiB) |
+| `LLAMACPP_MIN_FREE_VRAM_MIB` | `1024` | 예상 모델 로딩 후 최소 여유 VRAM(MiB); 별도 추가 오버헤드도 산정 |
+| `LLAMACPP_CONTEXT_SIZE` | `65536` | 모델 컨텍스트 크기(토큰) |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | `500` | **MAI의 개별 모델 요청** 제한(초); GAIA 문제 전체 한도와 다름 |
+
+보호 `true`: MAI/OpenClaw → `127.0.0.1:8080` 게이트웨이 → `127.0.0.1:8081` Router. 보호 `false`: Router가 `127.0.0.1:8080`에 직접 바인딩. **두 경우 모두 외부 클라이언트는 8080을 사용한다.** 8081 직접 호출은 보호 계층을 우회하므로 비교 실험에 사용하지 않는다.
+
+현재 구현은 새 요청의 RAM 검사와 로딩 전 VRAM 추정치를 확인하며, 추론 중 RAM을 기록하지만 실행 중 하드웨어 메모리 할당량을 강제 제한하거나 추론을 강제 중단하지는 않는다. 사용량 로그는 `MAI_MEMORY/gpu_ram_safety.jsonl`이다. 비교 실험에서는 MAI·OpenClaw 모두 보호 기능의 ON/OFF 및 최소 RAM·VRAM 값을 동일하게 맞춘다.
+
+### Portable Windows Router 런처 스위치
+
+`portable/start-portable-llamacpp-router.ps1`의 인자는 다음과 같다.
+
+| 스위치 | 기본값 | 동작 |
+|---|---|---|
+| `-ModelsMax` | `1` | 동시에 적재 가능한 모델 수; 현재 **1만 허용** |
+| `-GpuLayers` | `99` | 모델 GPU 오프로딩 레이어 수 |
+| `-ContextSize` | `0` | `0`이면 `settings.yaml` 값을 사용; 직접 설정 시 카탈로그에 반영 |
+| `-GaiaBenchmark` | 꺼짐 | 격리된 MAI GAIA 평가 서버(8010)를 실행 |
+| `-RouterOnly` | 꺼짐 | Router만 실행하여 OpenClaw 등의 클라이언트가 연결하도록 사용 |
+
+`-GaiaBenchmark`와 `-RouterOnly`는 동시에 사용할 수 없다. GAIA MAI 평가에는 `start_benchmark_server.ps1`, OpenClaw 평가에는 `-RouterOnly`를 사용한다. 메모리 보호가 켜졌다면 `-RouterOnly`도 **Router와 공통 보호 게이트웨이**를 함께 실행한다.
+
+직접 옵션을 확인하려면:
+
+```powershell
+& ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" ".\benchmark\GAIA Benchmark\adapter\run_gaia.py" --help
+& ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" ".\benchmark\GAIA Benchmark\adapter\run_openclaw_gaia.py" --help
+```
+
 ## 8. 공개 비교 시 주의
 
 1. MAI vs Hermes vs OpenClaw는 동일 GGUF SHA-256, llama.cpp 빌드, ctx, GPU 오프로딩, 입력 문제, 실행 예산을 기록해야 한다.
@@ -213,10 +307,10 @@ OpenClaw CLI가 표준 PATH에 없는 환경에서는 `--openclaw`에 절대경�
 ## 9. 고장 진단
 
 - 모든 문제가 수 초 만에 `All connection attempts failed`로 끝나면 먼저 `127.0.0.1:8080/v1/models`와 시험 서버 `/health`를 각각 확인한다. **기존 문서에는 router를 시작하는 단계가 없었다. 지금은 `start_benchmark_server.ps1` 한 번으로 두 서비스를 실행하므로 일반 `./mai.sh start`를 추가로 실행하지 않는다.** `8010`의 정상 구동만으로 추론 서버 연결이 증명되지는 않는다.
-- llama.cpp 모델 호출 `ModelChatTimeoutError`와 평가 실행기의 `--timeout-seconds` 초과는 다른 제한이다. 모델 요청 제한은 현재 `settings.yaml`의 `MODEL_REQUEST_TIMEOUT_SECONDS: 300`이며 평가 실행기는 기본 1800초다.
+- llama.cpp 모델 호출 `ModelChatTimeoutError`와 평가 실행기의 `--timeout-seconds` 초과는 다른 제한이다. 모델 요청 제한은 현재 `settings.yaml`의 `MODEL_REQUEST_TIMEOUT_SECONDS: 500`이며 평가 실행기는 기본 1800초다.
 - 검색 반복, 외부 사이트 차단, 답변 형식 위반은 `execution.jsonl` 및 시험 서버의 감사 로그(`result/_runtime/log.sqlite3`)를 함께 대조한다. 실패를 정답 오답과 혼동하지 않는다.
 - `--output-dir`을 변경하지 않고 재개하면 이미 `predictions.jsonl`에 기록된 실패 건도 건너뛴다. 재시험은 새로운 결과 폴더에서 수행한다.
 
 ## 10. 하드웨어 기준
 
-i5-12400F, RAM 16GB, RX 6800 XT 16GB의 기존 Ornith 9B 단일 실행 구성을 사용한다. GAIA 자체는 GPU 계산을 수행하지 않으며, 에이전트별 **순차 실행**을 권장한다. 128K 컨텍스트를 전부 사용하는 상황은 RAM/VRAM 부담이 생길 수 있으므로 첫 10문제에서 피크 메모리를 확인한다.
+i5-12400F, RX 6800 XT 16GB의 Ornith 9B 단일 실행 구성을 예시로 사용한다. 실제 호스트 RAM 용량은 실행 기기에 따라 달라지므로 실행 전 확인한다. GAIA 자체는 GPU 계산을 수행하지 않으며, 에이전트별 **순차 실행**을 권장한다. 현재 설정의 64K 컨텍스트에서도 RAM/VRAM 부담이 생길 수 있으므로 첫 10문제에서 피크 메모리를 확인한다.
