@@ -144,3 +144,27 @@ def test_remote_transport_missing_value_envelope_fails(monkeypatch):
                 {"expression": "1+2", "is_remote": True}
             )
     asyncio.run(exercise())
+
+
+def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(tmp_path):
+    from mai.tools.local import register_local_pc_tools
+    from mai.tools.registry import ToolRegistry
+    from mai.remote.python_worker import REMOTE_TOOL_TIMEOUT_MULTIPLIER
+
+    local = ToolRegistry()
+    register_local_pc_tools(local, cwd=tmp_path)
+    remote = build_registry(cwd=tmp_path)
+    assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2
+    for definition in local.definitions():
+        expected = (None if definition.timeout_seconds is None
+                    else definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER)
+        assert remote.get(definition.name).timeout_seconds == expected
+    assert remote.get("browser_open").timeout_seconds == 120
+    assert remote.get("calculator").timeout_seconds == 20
+
+
+def test_remote_transport_budget_covers_terminal_execution():
+    import inspect
+    from mai.remote.session import RemoteSessionManager
+    timeout = inspect.signature(RemoteSessionManager.execute).parameters["timeout"].default
+    assert timeout > 120 * 2
