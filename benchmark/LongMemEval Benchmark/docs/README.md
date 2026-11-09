@@ -6,7 +6,9 @@ LongMemEval은 GAIA와 달리 **질문에 앞서 주어진 과거 대화 전체�
 
 이 첫 단계에서는 MAI의 기존 `ChatSessionStore`, `MemoryRuntime.extract_facts`, `record_raw_user_evidence`, `finish_turn`, `run_user_message`를 그대로 사용해 **원본 대화를 순서대로 오프라인 재생하는 실행기**를 구현했다. 기억 전용 DB, 대화 DB, 문장 분리 DB, 작업 디렉터리는 질문마다 별도로 생성된다. 과거 대화가 다른 문항의 점수에 영향을 주지 않게 하기 위함이다.
 
-현재는 **MAI 실행기만 구현**했다. OpenClaw의 일반 `agent exec` 인터페이스는 한 번의 사용자 요청 실행용이므로, LongMemEval 원본 기록에 들어 있는 과거 `assistant` 역할의 메시지를 그대로 저장·재생시키는 계약을 확인하기 전까지는 OpenClaw용 평가기를 제공하지 않는다. 과거 Assistant 발화를 사용자 발화로 둔갑시키거나, 수십 회의 대화를 단일 요약 프롬프트로 바꿔 입력하면 동등 비교가 아니다. 따라서 현재 코드만으로는 **MAI vs OpenClaw LongMemEval 점수 비교가 완성되지 않는다.**
+**OpenClaw용 원본 대화 재생 어댑터도 구현했다.** OpenClaw의 플러그인 SDK가 제공하는 세션 생성과 `withSessionTranscriptWrite`를 사용하여 `user`·`assistant` 원문을 순서대로 기록한다. 파일로 기억을 만들어 넣거나 내부 SQLite에 SQL을 직접 실행하지 않는다. 기록 뒤에는 세션을 다시 읽어 역할·내용·메시지 수를 검증하고, `memory-core`의 세션 기록 검색을 활성화해 새 질문으로 평가한다. **OpenClaw 실제 Windows 실행은 아직 검증되지 않았다.**
+
+다만 MAI는 원본 발화와 답변을 사용해 모델 기반 사실 추출까지 수행하고, OpenClaw는 원본 대화를 네이티브 세션 저장소에 기록하고 해당 세션 기록을 검색한다. 이는 같은 입력·같은 모델에서 *기본 제품의 기억 시스템*을 비교하는 프로토콜이며 **기억 생성 알고리즘만 통제한 동일 조건 실험은 아니다.**
 
 ## 데이터셋 및 입력 계약
 
@@ -70,13 +72,45 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\portable\\start-port
 
 검증이 완료되면 `--limit 10`으로 증가시키고, 전체 평가에는 `--limit 0`을 사용한다. 새 실행마다 서로 다른 `--output-dir`를 지정한다. 문항별 기록은 `predictions.jsonl`이며 정답을 넣지 않는다.
 
+### 2-1. OpenClaw에서 동일 문항 평가
+
+공식 [OpenClaw 설치 안내](https://docs.openclaw.ai/install)에 따라 Windows CLI를 설치하고 `openclaw --version`이 성공하는지 확인한다. **MAI와 OpenClaw를 순차적으로 평가한다.** Ornith의 동일한 GGUF와 8080번 `llama.cpp` 라우터를 사용하며 별도의 클라우드 모델을 연결하지 않는다. 위 2절의 `-RouterOnly`를 실행한 상태여야 한다.
+
+```powershell
+& ".\\portable\\portable-runtimes\\python\\python.exe" `
+  ".\\benchmark\\LongMemEval Benchmark\\adapter\\run_openclaw.py" `
+  --dataset ".\\benchmark\\LongMemEval Benchmark\\data\\longmemeval_s_cleaned.json" `
+  --start 0 --limit 1 `
+  --output-dir ".\\benchmark\\LongMemEval Benchmark\\result\\openclaw_trial_001"
+```
+
+이 명령은 **원본 역할이 보존된 대화 기록을 OpenClaw의 네이티브 세션에 주입**하기 위한 벤치마크 전용 로컬 플러그인을 사용한다. `openclaw-plugin/index.ts`는 OpenClaw의 공식 Plugin SDK `createSessionEntry` / `withSessionTranscriptWrite` / `readVisibleSessionTranscriptMessageEntries` API를 사용한다. 설치된 OpenClaw 버전에서 플러그인 API가 달라지면 실패한다. 호출은 다음 순서다.
+
+1. 질문마다 새 `state/`, `workspace/` 디렉터리 및 해당 모델 전용 `openclaw.json`을 준비한다.
+2. `OPENCLAW_STATE_DIR`·`OPENCLAW_CONFIG_PATH`를 **평가 폴더로만 설정한 자식 프로세스**에서 `openclaw longmemeval import --input history.json`을 호출한다. 플러그인은 원본 대화의 역할·메시지 수를 검증하고, 원래 세션 하나마다 새 세션을 만든다. Gold answer·`has_answer`·정답 세션 ID는 `history.json`에 포함되지 않는다.
+3. `openclaw memory index --force --agent main`으로 네이티브 **세션 기록 인덱스**를 갱신한다. 비교의 로컬 모델 제약을 지키기 위해 `memory.search.provider = "none"`으로 고정하며, **의도적인 FTS 전용 모드**임을 기록한다. MAI의 기억 검색과 임베딩 방식이 같다는 뜻은 아니다.
+4. `openclaw agent exec --state-dir ... --config ... --model mai-local/<GGUF>`로 별도 신규 세션에서 평가 질문의 원문만 전달한다. 원본 과거 대화를 질문 프롬프트에 붙이지 않는다.
+5. `predictions.jsonl`에 응답·상태·걸린 시간·메시지 수를 기록한다. 전체 실행 이력과 CLI 표준 출력·오류는 문항별 폴더에 보존한다. 역할 검증 실패·플러그인 부재·기억 인덱싱 실패·모델 호출 실패 시 **해당 문항을 실패로 기록하고 즉시 중단**한다.
+
+사용자 홈의 기존 `~/.openclaw` 기억 데이터를 벤치마크에 사용하지 않기 위해, 케이스별 전용 상태 디렉터리를 지정한다. 단, `openclaw agent exec`는 설정한 `--cwd` 밖으로의 OS 파일 접근이 완전히 샌드박싱된다는 뜻이 아니다. **별도 시험용 Windows 계정 또는 VM에서 실행**해야 한다. 인터넷 검색이나 추가 API 키가 필요한 기능을 평가에 섞지 않는다.
+
+1문항 종단간 검증에 성공하면 `--limit 10`, 전체 500문항은 `--limit 0`을 사용하고 **새 `--output-dir`**를 지정한다. 이 플러그인은 별도 상용 서비스나 일반 사용을 목적으로 설치하는 것이 아니며, 벤치마크 전용 `openclaw.json`에서만 명시적으로 로딩한다.
+
+**점수 주의:** 두 어댑터가 만드는 `predictions.jsonl`은 실행 결과이며, 공식 LongMemEval의 의미 평가 점수는 아니다. 공식 채점기 연결 전에는 전체 정답률을 공식 수치로 보고하지 않는다.
+
 ### 3. 검증
 
 ```powershell
 & ".\portable\portable-runtimes\python\python.exe" -m pytest -q tests/test_longmemeval_benchmark.py
 ```
 
-이 테스트는 데이터셋 역할·시간 순서·정답 메타데이터 비노출 계약만 검증한다. 사용자 PC에서 실제 모델과 임베딩/기억을 포함한 종단간 테스트는 **아직 수행되지 않았다**.
+OpenClaw 어댑터 계약 테스트도 별도로 추가했다. 아래 명령은 실제 OpenClaw 실행 없이 원본 역할·입력 격리·출력 계약만 검사한다.
+
+```powershell
+& ".\\portable\\portable-runtimes\\python\\python.exe" -m pytest -q tests/test_longmemeval_openclaw_adapter.py
+```
+
+기존 MAI 테스트는 데이터셋 역할·시간 순서·정답 메타데이터 비노출 계약을 검증한다. 사용자 PC에서 실제 모델과 임베딩/기억을 포함한 종단간 테스트는 **아직 수행되지 않았다**.
 
 ## 점수 산정과 보완 과제
 
@@ -84,9 +118,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\portable\\start-port
 
 다음은 별도 구현이 필요한 항목이다.
 
-1. OpenClaw의 기본 memory-core·세션 저장소에 **원래 user와 assistant 역할 그대로** 시간순 주입할 수 있는 지원된 API 확인 및 어댑터 구현
-2. 동일 대화 주입 이후 OpenClaw와 MAI의 새 세션 질문 실행 및 동일 채점기 적용
-3. 공식 평가 코드와 평가 모델 계약 확인 후 점수 산정, 비용·시간·저장 공간 분리 기록
-4. 모델 호출 없이 재생되는 원본 어시스턴트 턴의 의미, 시대별 도구 결과 부재, 두 시스템의 기억 입장 정책 차이를 최종 점수와 함께 공개
+1. OpenClaw의 실제 Windows 환경에서 플러그인 CLI 로딩·세션 저장·인덱스 생성·신규 세션 회상을 1문항으로 검증
+2. 공식 평가 코드와 평가 모델 계약 확인 후 MAI·OpenClaw **공통 채점기** 추가
+3. 기억 적재 시간·답변 시간·인덱스 크기·모델 호출 수 분리 기록
+4. 모델 호출 없이 재생되는 과거 어시스턴트 턴, 원본 툴 결과 부재, 각 제품 기억 저장·검색 알고리즘의 차이를 최종 비교표에 함께 공개
 
 **이 벤치마크는 MAI/ OpenClaw의 기본 기억 엔진을 비교하는 평가이지 완전 동일한 내부 추출 파이프라인 비교가 아니다.**
