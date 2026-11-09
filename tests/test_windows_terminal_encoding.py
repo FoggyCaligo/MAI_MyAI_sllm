@@ -24,7 +24,7 @@ def test_powershell_launch_contract_uses_text_output():
 def test_cmd_multiline_unicode_and_cleanup(tmp_path: Path):
     work = tmp_path / "한글 작업"
     work.mkdir()
-    result = asyncio.run(_run_command("echo 첫째\necho 둘째\necho 셋째", work, 15))
+    result = asyncio.run(_run_command("echo 첫째\necho 둘째\necho 셋째", work, 15, shell="cmd"))
     assert "첫째" in result["stdout"]
     assert "둘째" in result["stdout"]
     assert "셋째" in result["stdout"]
@@ -33,7 +33,7 @@ def test_cmd_multiline_unicode_and_cleanup(tmp_path: Path):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CMD integration test")
 def test_cmd_nonzero_exit_is_not_hidden(tmp_path: Path):
-    result = asyncio.run(_run_command("echo 시작\nexit /b 7", tmp_path, 15))
+    result = asyncio.run(_run_command("echo 시작\nexit /b 7", tmp_path, 15, shell="cmd"))
     assert "시작" in result["stdout"]
     assert result["returncode"] == 7
 
