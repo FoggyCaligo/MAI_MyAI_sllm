@@ -48,3 +48,11 @@ python -m pytest -q
 ```
 
 테스트가 통과해도 GPU offload, Vulkan 드라이버, Playwright Chromium, 오디오 장치, 웹 외부 공개 및 원격 Linux 네트워크를 실제 장비에서 검증했다는 뜻은 아니다. 테스트 수집 오류와 필수 의존성 누락은 정상 통과로 취급하지 않는다.
+
+## 터미널과 파일 도구의 텍스트 인코딩 계약
+
+- Windows Git Bash, CMD, PowerShell 및 Linux Bash에서 MAI가 시작하는 터미널 자식 프로세스는 UTF-8 텍스트를 출력하도록 환경변수를 명시한다. Windows CMD는 `chcp 65001`, PowerShell 5.1은 콘솔 출력 인코딩을 사용한다. Linux Bash는 지원 OS인 Ubuntu의 `C.UTF-8` 로케일을 사용한다.
+- 터미널은 stdout/stderr의 바이트를 우선 `utf-8-sig`로 읽는다. 실패할 때만 `cp949`, `euc-kr`, `iso2022_kr`을 순서대로 각각 strict 디코딩으로 재시도한다. 선택한 디코딩은 `stdout_encoding`, `stderr_encoding` 필드에 표시한다. 전부 실패하면 `UnicodeError`를 발생시키며 `replace`나 `ignore`로 오류를 숨기지 않는다.
+- 외부 프로그램이 UTF-8 외의 인코딩을 출력할 가능성은 여전히 있다. 어떤 바이트열은 잘못된 인코딩에서도 유효한 문자가 될 수 있으므로, 자동 선택의 의미적 정확성까지 보장하지는 않는다. 필요하면 반환된 디코딩 방식과 원본 프로그램 설정을 확인한다.
+- 일반 텍스트 파일은 `file_write` 기본 UTF-8, `file_read` 기본 `utf-8-sig`다. Windows PowerShell 5.1용 `.ps1` 파일을 기본값으로 작성할 때에는 UTF-8 BOM을 유지한다. 기존 CP949 파일 등은 파일 도구의 `encoding` 인자로 명시적으로 지정한다. 기존 파일을 자동 재인코딩하지 않는다.
+- 원격 Windows/Linux 워커도 플랫폼별 터미널·파일 도구를 통해 같은 정책을 적용한다. 전송 JSON은 별도의 텍스트 계약을 따른다.
