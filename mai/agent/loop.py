@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -236,6 +237,10 @@ class AgentLoop:
         active_tools = (manual_schema,)
         active_tool_names = frozenset({"tool_manual"})
         guard = AgentGuard(self.guard_config)
+        reuse_enabled = os.environ.get("AGENT_EVIDENCE_REUSE_ENABLED", "true").lower() in {"true", "1", "yes"}
+        progress_enabled = os.environ.get("AGENT_PROGRESS_SUMMARY_ENABLED", "true").lower() in {"true", "1", "yes"}
+        read_cache: dict[str, ToolExecution] = {}
+        reuse_count = 0
         round_number = 1
         semantic_verification_retries = 0
         evidence_verification_retries = 0
@@ -256,6 +261,8 @@ class AgentLoop:
 
         try:
             while True:
+                round_started = time.perf_counter()
+                tool_elapsed_ms = 0
                 _LOG.info("MAI model round start round=%d", round_number)
                 # Keep the latest rejected draft and its corresponding verifier
                 # feedback together. Older rejected drafts, reasoning, and
@@ -307,9 +314,41 @@ class AgentLoop:
                     name for name in self.registry.names()
                     if name in activated_tool_names
                 ]
+                if progress_enabled and len(executions) >= 3:
+                    recent = []
+                    seen = set()
+                    for item in reversed(executions):
+                        if item.name == "tool_manual":
+                            continue
+                        key = call_fingerprint(item.name, item.arguments)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        target = item.arguments.get("url") or item.arguments.get("path") or item.arguments.get("target")
+                        recent.append({
+                            "tool": item.name, "ok": item.ok,
+                            "error_type": item.error_type,
+                            "source_sha256": item.source_content_fingerprint,
+                            "target": str(target)[:200] if target is not None else None,
+                        })
+                        if len(recent) == 6:
+                            break
+                    model_history.append({
+                        "role": "system",
+                        "content": "Deterministic progress ledger (tool metadata only; not a factual summary): "
+                                   + json.dumps({
+                                       "total_tool_calls": len(executions),
+                                       "successful": sum(item.ok for item in executions),
+                                       "failed": sum(not item.ok for item in executions),
+                                       "reused_read_calls": reuse_count,
+                                       "recent_distinct_executions": recent,
+                                   }, ensure_ascii=False, separators=(",", ":"))
+                                   + ". Refer to original tool outputs or tool_result_read for factual claims.",
+                    })
                 _insert_tool_catalog(model_history, self.registry, activated_order)
                 active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
                 active_tool_names = frozenset({"tool_manual", *activated_order})
+                model_started = time.perf_counter()
                 turn = await self.adapter.chat(ChatRequest(
                     messages=model_history,
                     tools=active_tools,
@@ -320,6 +359,8 @@ class AgentLoop:
                         if on_model_timeout_diagnostic is not None else None
                     ),
                 ))
+                model_elapsed_ms = int((time.perf_counter() - model_started) * 1000)
+                _LOG.info("MAI model timing round=%d model_elapsed_ms=%d", round_number, model_elapsed_ms)
                 for history_index, compact_content in pending_history_compactions.items():
                     previous = history[history_index]
                     history[history_index] = {**previous, "content": compact_content}
@@ -348,6 +389,7 @@ class AgentLoop:
                                 "you still need, or provide a non-empty final answer that directly addresses the user."
                             ),
                         })
+                        _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=empty_final_retry", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
                         round_number += 1
                         continue
 
@@ -465,8 +507,10 @@ class AgentLoop:
                             history.append({"role": "system", "content": feedback})
                             rejection_feedback_indices.append(len(history) - 1)
                             latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
+                            _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=verification_retry", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
                             round_number += 1
                             continue
+                    _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=completed", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
                     _LOG.info("MAI final accepted round=%d", round_number)
                     for history_index in reversed(rejected_final_indices):
                         del history[history_index]
@@ -504,12 +548,27 @@ class AgentLoop:
                             "or finish by reporting the remaining failure."
                         )
                     else:
-                        execution = await self._execute_tool(
-                            call,
-                            available_tool_names=active_tool_names,
-                            activated_tool_names=activated_tool_names,
-                        )
+                        cacheable = call.name in {"web_search", "web_fetch", "file_read", "code_read"}
+                        cached = read_cache.get(call_fp) if reuse_enabled and cacheable else None
+                        if cached is not None:
+                            # Read-only output reuse within this run. Never cache
+                            # mutations or calls that previously failed.
+                            execution = replace(cached)
+                            reuse_count += 1
+                            _LOG.info("MAI read cache hit round=%d name=%s", round_number, call.name)
+                        else:
+                            execution = await self._execute_tool(
+                                call,
+                                available_tool_names=active_tool_names,
+                                activated_tool_names=activated_tool_names,
+                            )
+                            if reuse_enabled and cacheable and execution.ok and execution.handler_started:
+                                read_cache[call_fp] = execution
+                            if call.name in {"file_write", "document_edit", "terminal_run", "code_write"}:
+                                # An arbitrary shell command can modify files.
+                                read_cache.clear()
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    tool_elapsed_ms += elapsed_ms
                     executions.append(execution)
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
@@ -539,6 +598,13 @@ class AgentLoop:
                         notice = guard.after_tool_execution(observation)
                         if notice is not None:
                             round_notices.append(notice)
+                        if not execution.ok:
+                            similar_notice = guard.after_similar_failure(
+                                call.name, call.arguments, ok=False,
+                                error_type=execution.error_type,
+                            )
+                            if similar_notice is not None:
+                                round_notices.append(similar_notice)
                     round_observations.append(observation)
 
                 try:
@@ -558,6 +624,7 @@ class AgentLoop:
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})
+                _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=tools", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
                 round_number += 1
         except AgentRunFailure:
             raise
@@ -661,6 +728,9 @@ class AgentLoop:
             # Preserve full evidence for audit and on-demand reads, while
             # keeping only literal source excerpts in subsequent model rounds.
             views = self.tool_result_store.web_model_views(source_content, tool_name=call.name)
+            model_content, compact_content = views.initial_content, views.compact_history_content
+        elif call.name in {"file_read", "code_read"} and self.tool_result_store is not None and os.environ.get("AGENT_PROGRESS_SUMMARY_ENABLED", "true").lower() in {"true", "1", "yes"}:
+            views = self.tool_result_store.file_model_views(source_content, tool_name=call.name)
             model_content, compact_content = views.initial_content, views.compact_history_content
         else:
             model_content, compact_content = self._model_contents(source_content)
