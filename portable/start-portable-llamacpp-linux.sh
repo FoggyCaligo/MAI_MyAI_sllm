@@ -62,7 +62,9 @@ export VOICE_PROFILE_DIR="$root/MAI_MEMORY/voice_profiles"
 export SENTENCE_BREAKER_DB_PATH="$root/MAI_MEMORY/sentence_breaker.sqlite3"
 export LD_LIBRARY_PATH="$cache/llamacpp/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 command -v setsid >/dev/null || { echo "Missing setsid" >&2; exit 1; }
-setsid "$llama" --models-preset "$ini" --models-max "$models_max" --models-memory-margin "$min_free_vram_mib" --host 127.0.0.1 --port "$router_port" --jinja "$reasoning_preserve_flag" &
+margin_args=()
+if [[ "$guard_enabled" == true ]]; then margin_args=(--models-memory-margin "$min_free_vram_mib"); fi
+setsid "$llama" --models-preset "$ini" --models-max "$models_max" "${margin_args[@]}" --host 127.0.0.1 --port "$router_port" --jinja "$reasoning_preserve_flag" &
 router_pid=$!
 ready=0
 for attempt in {1..120}; do
