@@ -306,6 +306,7 @@ class MAIRuntime:
         verify: bool = True,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> MAIRunResult:
@@ -365,6 +366,7 @@ class MAIRuntime:
                     images=inline_images,
                     on_tool_execution=on_tool_execution,
                     on_model_turn=on_model_turn,
+                    on_model_timeout_diagnostic=on_model_timeout_diagnostic,
                     on_verification_rejection=on_verification_rejection,
                     on_verification_audit=(
                         (lambda round_number, event, data: on_verification_audit(
