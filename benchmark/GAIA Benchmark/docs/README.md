@@ -23,16 +23,33 @@ benchmark/
    └─ result/                       # 실행 결과(추적 안 함)
 ```
 
-## 1. GAIA 데이터 접근 동의
+## 1. Hugging Face 접근 권한과 토큰 설정
 
-1. Hugging Face 로그인: https://huggingface.co/
-2. GAIA 공식 페이지 https://huggingface.co/datasets/gaia-benchmark/GAIA 에서 **데이터 이용 약관**에 직접 동의한다.
-3. HF CLI를 사용해 로그인(`hf auth login`)하거나 본인 PC의 사용자 환경변수 `HF_TOKEN`을 설정한다. 이 토큰과 인증 파일을 Git에 올리지 않는다.
-4. 데이터셋 파일은 약관상 공개 미러나 일반 GitHub 저장소에 재배포하지 않는다.
+GAIA 원본 문제·정답·첨부파일은 접근 승인이 필요한 데이터다. **처음 다운로드하기 전에** 직접 접근 권한을 확보한다. 해당 권한은 MAI 자체의 Owner 계정과 별개다.
 
-**중요:** GAIA 원본 데이터/첨부파일은 이 PR에 포함할 수 없다. 실제 문제·첨부파일은 아래 설정 스크립트가 본인의 인증 상태를 사용해 `adapter/data/gaia/`로 다운로드한다. 정답은 채점 과정에만 사용하며 MAI에 전달하지 않는다.
+1. [Hugging Face](https://huggingface.co/)에서 로그인한다.
+2. [GAIA 데이터셋](https://huggingface.co/datasets/gaia-benchmark/GAIA)에 접속해 이용 조건에 동의하고 접근 권한을 확인한다.
+3. [Access Tokens](https://huggingface.co/settings/tokens)에서 본인에게 적절한 읽기 권한의 토큰을 만든다. 가능한 경우 GAIA 데이터셋 접근만 허용한다.
+4. 아래의 방법으로 **데이터 다운로드를 실행하는 PowerShell 프로세스**에 `HF_TOKEN`을 제공한다. 실제 토큰을 Git, 대화·스크린샷, 명령줄 인수, 일반 문서에 적지 않는다.
 
-현재 어댑터는 로컬로 내려받은 GAIA의 `2023_all` 또는 `2023_level1/2/3` 구성에서 `task_id`, `Question`, `Level`, `Final answer`, `file_path` 필드를 읽는다. 데이터셋 개정 시 필드와 첨부 경로는 실제 다운로드 결과로 재확인한다.
+PowerShell에서 토큰을 화면에 표시하지 않고 입력하려면 다음을 사용한다.
+
+```powershell
+$secret = Read-Host "HF 읽기 토큰" -AsSecureString
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+try {
+    $env:HF_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+} finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+    Remove-Variable secret, pointer -ErrorAction SilentlyContinue
+}
+```
+
+`HF_TOKEN`은 **현재 PowerShell 세션**과 그 자식 프로세스에서만 사용한다. 영구 환경변수나 MAI `.env`에 저장할 필요가 없다. 이미 Hugging Face CLI에 로그인되어 있다면 해당 인증을 사용해도 된다. 토큰은 학습 데이터 다운로드에만 필요하며, 이미 로컬에 내려받은 GAIA 데이터를 실행하거나 채점할 때 재입력할 필요는 없다.
+
+데이터 다운로드에 성공한 뒤 현재 PowerShell에서만 토큰을 지우려면 `Remove-Item Env:HF_TOKEN`을 실행한다. 사용자의 Hugging Face 계정 및 토큰은 MAI 서버 로그인에 사용되지 않는다.
+
+**데이터 주의:** GAIA 원본 및 정답·첨부파일을 본체나 Memory Git 저장소에 커밋하지 않는다. 메타데이터 필드는 현재 어댑터가 사용하는 `task_id`, `Question`, `Level`, `Final answer`, `file_path`를 따른다.
 
 ## 2. Windows 자동 설정
 
@@ -52,13 +69,13 @@ Ubuntu Linux에서는 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 데이터
 
 ## 3. MAI 벤치마크 전용 서버
 
-**llama.cpp router(`http://127.0.0.1:8080`)가 실행 중인지 확인한 뒤**, 별도 PowerShell 창에서 다음 명령을 실행한다. GAIA 서버는 일반 MAI 서버의 `8000`과 다른 `8010`을 사용하므로 포트 충돌은 없지만, 같은 router와 모델 계산 자원을 공유한다. 비교의 재현성을 높이려면 일반 MAI 채팅을 동시에 수행하지 않는다.
+**일반 MAI(`./mai.sh start`)를 따로 실행하지 않는다.** GAIA 전용 스크립트가 기존 Portable 런처를 사용해 **llama.cpp router 한 개(8080)**를 시작하고, 정상 준비를 확인한 뒤 **GAIA 전용 MAI 웹 서버 한 개(8010)**를 실행한다. 일반 MAI 서버(8000)는 시작하지 않는다. 이 명령은 이전에 실행 중인 router(8080)가 있으면 중복 실행하지 않고 명시적으로 실패한다. 따라서 먼저 일반 MAI와 기존 router를 종료한다.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\start_benchmark_server.ps1"
 ```
 
-이 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. **음성 프로필(`VOICE_PROFILE_DIR`), 업로드 디렉터리, 파일·터미널·네트워크 도구의 OS 접근 권한까지 분리하는 스크립트는 아니다.** 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
+이 한 명령으로 시작되는 구성은 `llama-server` **1개**와 MAI 평가용 서버 프로세스 **1개**다. 모델 상주 제한 `--models-max 1`도 유지한다. 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. **음성 프로필(`VOICE_PROFILE_DIR`), 업로드 디렉터리, 파일·터미널·네트워크 도구의 OS 접근 권한까지 분리하는 스크립트는 아니다.** 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
 
 로그인 계정은 MAI 서버의 기존 `OWNER_USERS` 환경 설정을 사용한다. 평가 실행기 역시 루트 `.env`의 `OWNER_USERS`를 읽어 인증 정보를 자동 선택한다. 계정이 하나라면 ID와 비밀번호를 입력할 필요가 없고, 계정이 여러 개면 `MAI_BENCH_USER` 또는 `--user`로 사용할 Owner를 명시한다. `MAI_BENCH_PASSWORD` 환경변수가 설정된 경우 명시적 비밀번호를 우선 사용한다. 자격 증명은 결과 JSONL·manifest에 기록하지 않는다. `run_gaia.py`는 먼저 `GET /login/session`으로 사전 세션 토큰을 받고 `X-MAI-Preauth-Session` 헤더를 붙여 `POST /login`으로 로그인한다. 기존 사용자의 비밀번호를 벤치마크 명령 인수에 직접 넣지 않는다. **장기기억 데이터뿐 아니라 시험용 서버 프로세스 환경 및 브라우저 세션을 분리해야 오염 위험을 줄일 수 있다.**
 
@@ -74,7 +91,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 & ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" ".\benchmark\GAIA Benchmark\adapter\run_gaia.py" --server http://127.0.0.1:8010 --split validation --level level1 --limit 10
 ```
 
-먼저 한 문제만 실행할 경우 `--limit 1`을 사용한다. 최초 실행 전에 `Invoke-RestMethod http://127.0.0.1:8080/v1/models`로 router 모델 목록, `Invoke-RestMethod http://127.0.0.1:8010/health`로 시험 서버 상태를 확인할 수 있다. MAI 로그인 비밀번호는 프로젝트 루트의 `.env`에서 자동으로 읽어오므로 별도 숨김 입력을 요구하지 않는다. `.env` 파일 또는 필요한 설정이 없으면 명시적으로 실패하며, 이전의 대화형 암호 입력 경로는 사용하지 않는다. 요청당 최대 실행 시간은 기본 1800초이며, `--timeout-seconds`로 변경할 수 있다. MAI 자체의 모델 호출 제한은 별도 적용된다.
+먼저 한 문제만 실행할 경우 `--limit 1`을 사용한다. **GAIA 전용 서버 실행 창은 열린 상태로 유지**하고 다른 PowerShell에서 `Invoke-RestMethod http://127.0.0.1:8080/v1/models`로 router 모델 목록, `Invoke-RestMethod http://127.0.0.1:8010/health`로 시험 서버 상태를 각각 확인한다. 둘 중 하나라도 실패하면 벤치마크를 진행하지 않는다. MAI 로그인 비밀번호는 프로젝트 루트의 `.env`에서 자동으로 읽어오므로 별도 숨김 입력을 요구하지 않는다. `.env` 파일 또는 필요한 설정이 없으면 명시적으로 실패하며, 이전의 대화형 암호 입력 경로는 사용하지 않는다. 요청당 최대 실행 시간은 기본 1800초이며, `--timeout-seconds`로 변경할 수 있다. MAI 자체의 모델 호출 제한은 별도 적용된다.
 
 최초 10문제가 정상 완료되면:
 
@@ -138,7 +155,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 
 ## 9. 고장 진단
 
-- 모든 문제가 수 초 만에 `All connection attempts failed`로 끝나면 먼저 `127.0.0.1:8080/v1/models`와 시험 서버 `/health`를 각각 확인한다. `8010`의 정상 구동만으로 추론 서버 연결이 증명되지는 않는다.
+- 모든 문제가 수 초 만에 `All connection attempts failed`로 끝나면 먼저 `127.0.0.1:8080/v1/models`와 시험 서버 `/health`를 각각 확인한다. **기존 문서에는 router를 시작하는 단계가 없었다. 지금은 `start_benchmark_server.ps1` 한 번으로 두 서비스를 실행하므로 일반 `./mai.sh start`를 추가로 실행하지 않는다.** `8010`의 정상 구동만으로 추론 서버 연결이 증명되지는 않는다.
 - llama.cpp 모델 호출 `ModelChatTimeoutError`와 평가 실행기의 `--timeout-seconds` 초과는 다른 제한이다. 모델 요청 제한은 현재 `settings.yaml`의 `MODEL_REQUEST_TIMEOUT_SECONDS: 300`이며 평가 실행기는 기본 1800초다.
 - 검색 반복, 외부 사이트 차단, 답변 형식 위반은 `execution.jsonl` 및 시험 서버의 감사 로그(`result/_runtime/log.sqlite3`)를 함께 대조한다. 실패를 정답 오답과 혼동하지 않는다.
 - `--output-dir`을 변경하지 않고 재개하면 이미 `predictions.jsonl`에 기록된 실패 건도 건너뛴다. 재시험은 새로운 결과 폴더에서 수행한다.

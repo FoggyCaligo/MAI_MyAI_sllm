@@ -3,7 +3,8 @@
 param(
     [ValidateRange(1,1)][int]$ModelsMax = 1,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
-    [ValidateRange(512,262144)][int]$ContextSize = 131072
+    [ValidateRange(512,262144)][int]$ContextSize = 131072,
+    [switch]$GaiaBenchmark
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -65,8 +66,16 @@ try {
     if (-not $ready) { throw 'Router model aliases not registered within startup deadline' }
     Write-Host 'MAI llama.cpp router ready on 127.0.0.1:8080; '
     Write-Host 'MAI Portable single-resident mode: max one GGUF loaded by llama.cpp router.'
-    & $python run_server.py
-    if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
+    if ($GaiaBenchmark) {
+        $benchmarkLauncher = Join-Path $root 'benchmark/GAIA Benchmark/docs/start_benchmark_server.ps1'
+        if (-not (Test-Path -LiteralPath $benchmarkLauncher -PathType Leaf)) {
+            throw "GAIA benchmark server launcher missing: $benchmarkLauncher"
+        }
+        & $benchmarkLauncher -ServerOnly
+    } else {
+        & $python run_server.py
+        if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
+    }
 } finally {
     if ($null -ne $process -and -not $process.HasExited) {
         # A router can spawn children; terminate the entire process tree.
