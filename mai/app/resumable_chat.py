@@ -148,11 +148,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 )
 
             def publish_round_timing(round_number: int, details: dict[str, object]) -> None:
-                audit.append(
-                    job_id, "round_timing", "Agent round timing",
-                    round_number=round_number, status=str(details["status"]),
-                    details=details,
-                )
+                audit.append_timing(job_id, round_number, details)
 
             def publish_verification_audit(round_number: int, event: str, details: object) -> None:
                 # Full reviewer inputs and output are audit-only and never enter agent history.
