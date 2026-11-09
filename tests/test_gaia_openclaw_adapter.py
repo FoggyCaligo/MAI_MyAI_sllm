@@ -26,6 +26,9 @@ def test_openclaw_config_pins_only_local_router_and_model():
     assert providers["mai-local"]["baseUrl"] == "http://127.0.0.1:8080/v1"
     assert providers["mai-local"]["api"] == "openai-completions"
     assert config["agents"]["defaults"]["model"]["primary"] == "mai-local/gguf-abc"
+    assert "contextTokens" not in config["agents"]["defaults"]
+    assert providers["mai-local"]["models"][0]["contextWindow"] == 131072
+    assert providers["mai-local"]["models"][0]["contextTokens"] == 131072
     assert config["agents"]["defaults"]["contextInjection"] == "never"
     with pytest.raises(ValueError):
         mod.openclaw_config("openai/remote")
