@@ -128,19 +128,76 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 
 이 채점은 양끝 공백 제거(`strip`)와 대소문자 통일(`casefold`)로 비교하는 **엄격한 완전 일치 참고 지표**다. 중간 공백·구두점·단위 등의 의미 동등성은 평가하지 않는다. `score_percent_on_attempted`는 기록된 예측 수를 분모로 사용하고, 데이터셋 전체 대비 수행 비율은 `coverage_percent`로 별도 보고한다. GAIA 공식 평가의 정규화 규칙과 동일하지 않으므로 공식 리더보드 점수로 발표하면 안 된다. 시험 문제의 정답이 공개되지 않은 `test`는 로컬 채점하지 않는다.
 
-## 7. OpenClaw와 Hermes Agent 비교용 소스 다운로드
+## 7. OpenClaw와 MAI의 동일 GGUF 비교
+
+OpenClaw는 Windows PowerShell CLI를 지원한다. 공식 [Windows 설치](https://docs.openclaw.ai/platforms/windows) 및 [`agent exec` 명령](https://docs.openclaw.ai/cli/agent)을 참고한다. 이 절은 **OpenClaw를 Windows 네이티브 CLI로 실행**하는 첫 번째 비교안이며, WSL2 실험과 혼합하지 않는다.
+
+### 7.1 OpenClaw 설치 및 버전 고정
+
+공식 Windows PowerShell 설치 프로그램([설치 안내](https://docs.openclaw.ai/install))을 사용할 수 있다.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\download_agents.ps1"
+iwr -useb https://openclaw.ai/install.ps1 | iex
+openclaw --version
 ```
 
-`benchmark/agents/openclaw` 및 `benchmark/agents/hermes-agent`에 각 프로젝트의 공식 GitHub 저장소를 얕게 복제한다. **두 에이전트의 설치·온보딩·구동은 자동으로 하지 않는다.** 비교 평가에서 동일한 Ornith 9B와 llama.cpp 서버를 연결할 때 필요한 각 프로젝트별 설정은 별도로 수행해야 한다.
+인터넷에서 받아온 스크립트이므로 신뢰성을 검토한 뒤 실행한다. 설치만으로 API 모델이 자동 연결되는 것은 아니다. **OpenClaw의 클라우드 계정이나 추가 유료 API를 등록할 필요가 없는 GAIA 전용 어댑터**를 사용한다. `openclaw --version`의 출력은 벤치마크 `manifest.json`에 저장한다.
 
-공식 자료:
-- OpenClaw: https://docs.openclaw.ai/install
-- Hermes Agent: https://hermes-agent.nousresearch.com/docs/getting-started/installation
-- GAIA: https://huggingface.co/datasets/gaia-benchmark/GAIA
-- GAIA 제출: https://huggingface.co/spaces/gaia-benchmark/leaderboard
+기존 `docs/download_agents.ps1`은 OpenClaw/Hermes **소스를 얕게 체크아웃만** 한다. 설치나 GAIA 실행을 수행하지 않으므로, 아래 OpenClaw CLI 어댑터와 역할이 다르다.
+
+### 7.2 모델 서버: 하나만 사용
+
+MAI와 OpenClaw를 동시에 실행하지 않는다. GAIA 서버를 띄우는 `start_benchmark_server.ps1`은 8010 MAI 서버까지 시작하므로 **OpenClaw 실험에서는 이 명령을 사용하지 않는다**. OpenClaw 실험에서는 Windows PowerShell을 별도로 열어 MAI Portable 라우터의 **단일 GGUF 모델 서버만** 실행한다.
+
+현재 Portable 런처는 기본 실행 시 MAI 앱 서버를 함께 띄운다. OpenClaw 비교 시 MAI 서버를 띄울 필요 없이 router만 구동하려면 `portable/start-portable-llamacpp-router.ps1 -RouterOnly`를 사용한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\portable\start-portable-llamacpp-router.ps1" -RouterOnly
+```
+
+별도 PowerShell에서 `Invoke-RestMethod http://127.0.0.1:8080/v1/models`로 모델 목록을 확인한다. OpenClaw 평가 실행기는 `resolve_main_model.py`를 호출해 MAI의 현재 GGUF 모델 별칭을 얻고, router의 실제 모델 목록에 없으면 실패한다. **동일한 GGUF SHA-256, llama.cpp 빌드, GPU layers, 컨텍스트 크기**를 사용하고 MAI 평가와 동시에 문제를 돌리지 않는다.
+
+### 7.3 OpenClaw GAIA 한 문제 실행
+
+이미 2절에서 GAIA 데이터를 다운로드했다면 재다운로드할 필요 없다. **실행기만 사용**하므로 MAI Owner ID/비밀번호 입력도 필요 없다.
+
+```powershell
+& ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" `
+  ".\benchmark\GAIA Benchmark\adapter\run_openclaw_gaia.py" `
+  --split validation `
+  --level level1 `
+  --limit 1
+```
+
+OpenClaw CLI가 표준 PATH에 없는 환경에서는 `--openclaw`에 절대경로를 전달한다. 평가 어댑터는 다음을 수행한다.
+
+- 동일 데이터셋의 동일 문제를 로드하고 `FINAL ANSWER:` 최종 줄 형식과 `score_gaia.py` 채점 계약을 재사용한다.
+- `openclaw agent exec --json --config ... --model mai-local/<GGUF 별칭> --code-mode direct` 호출을 문제마다 별도 임시 상태로 실행한다. 별도의 OpenClaw Gateway를 요구하지 않으며 기존 개인 OpenClaw 대화 기록을 재사용하지 않는다.
+- 8080 라우터만 연결하는 평가용 OpenClaw config를 `result/openclaw_*/openclaw.gaia.json`에 생성한다. 그 외 모델 제공자를 구성하지 않으며, 추가 모델 fallback도 제공하지 않는다.
+- 문제 파일을 `result/openclaw_*/workspaces/<task_id>/`로 복사하고, 같은 디렉터리를 OpenClaw의 `--cwd`로 전달한다. 스크립트가 보장하는 것은 평가용 작업 디렉터리 분리이지 **OS 전체 파일 접근 차단이 아니다**.
+- `result/openclaw_*/predictions.jsonl`은 MAI와 동일한 `task_id`, `model_answer`를 기록한다. `execution.jsonl`은 수행 시간, OpenClaw에서 관측 가능한 모델 라운드·도구 요약 등을 기록하며, 원본 CLI 출력과 표준 오류는 문제별 작업 폴더에 보존한다.
+- 실패한 문제는 빈 답변으로 **실패 기록**하며 정상 완료나 정답으로 보고하지 않는다. 재개 시 기록된 실패도 건너뛴다. 실패 건 재시험은 새 출력 폴더에서 실행한다.
+
+1문제 실행에 성공하면 `--limit 10`, Level 1 전체에는 `--limit 0`을 사용한다. 동일한 시작 인덱스(`--start`)와 정렬·버전을 유지해야 MAI와 1:1 비교가 된다.
+
+### 7.4 OpenClaw 결과 채점
+
+```powershell
+& ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" `
+  ".\benchmark\GAIA Benchmark\adapter\score_gaia.py" `
+  ".\benchmark\GAIA Benchmark\result\openclaw_실행폴더\predictions.jsonl" `
+  --level level1
+```
+
+이 점수는 **로컬 GAIA Validation 엄격 일치 점수**이지 GAIA 공식 리더보드 점수가 아니다.
+
+### 7.5 비교 해석 시 주의
+
+모델·하드웨어·문제·시간 예산을 일치시키더라도 **두 에이전트의 도구와 기본 시스템 프롬프트는 다르다**. 따라서 결과는 동일 모델 환경에서 두 *프레임워크 전체의 성능* 비교이지 프롬프트만 분리한 원인 실험이 아니다. OpenClaw `agent exec`의 기본 도구는 MAI와 완전 동일하지 않으며, `--code-mode direct`를 사용한 프로파일을 명시적으로 기록한다. OpenClaw의 toolSummary는 내부 도구 이벤트를 포함할 수 있으므로 MAI의 도구 호출 숫자와 기계적으로 같은 단위라고 간주하지 않는다.
+
+각 GAIA 문제에는 적대적 내용이 있을 수 있고 두 에이전트 모두 파일·네트워크·셸에 접근할 수 있다. **개인 Windows 계정에서 무제한 권한으로 실험하는 것은 권장하지 않는다.** 별도 OS 계정/VM에서 데이터 원본 및 개인 파일에 접근하지 못하도록 권한을 제한하는 것이 필요하다.
+
+참고: [OpenClaw 로컬 커스텀 제공자](https://docs.openclaw.ai/concepts/model-providers/custom-providers), [OpenClaw agent exec](https://docs.openclaw.ai/cli/agent), [Windows 설치](https://docs.openclaw.ai/platforms/windows).
 
 ## 8. 공개 비교 시 주의
 
