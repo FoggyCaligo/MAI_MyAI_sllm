@@ -280,6 +280,7 @@ class AgentLoop:
             while True:
                 round_started = time.perf_counter()
                 tool_elapsed_ms = 0
+                model_elapsed_ms = 0
                 _LOG.info("MAI model round start round=%d", round_number)
                 # Keep the latest rejected draft and its corresponding verifier
                 # feedback together. Older rejected drafts, reasoning, and
@@ -648,7 +649,7 @@ class AgentLoop:
         except AgentRunFailure:
             raise
         except Exception as exc:
-            record_timing(round_number, "failed", tool_ms=locals().get("tool_elapsed_ms", 0), model_ms=locals().get("model_elapsed_ms", 0))
+            record_timing(round_number, "failed", tool_ms=tool_elapsed_ms, model_ms=model_elapsed_ms)
             _LOG.exception("MAI agent run failed round=%d error_type=%s", round_number, type(exc).__name__)
             raise AgentRunFailure(
                 exc,
