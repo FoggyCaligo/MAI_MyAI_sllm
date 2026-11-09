@@ -113,3 +113,20 @@ def test_gaia_login_rejects_missing_pre_auth_session():
     with httpx.Client(base_url="http://localhost", transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(RuntimeError, match="session_token"):
             login(client, "tester", "secret")
+
+
+def test_gaia_model_resolver_uses_portable_catalog(tmp_path, monkeypatch):
+    import resolve_main_model
+    import portable.llamacpp_model_catalog as catalog
+
+    monkeypatch.setattr(catalog, "from_settings", lambda root: {"default": "gguf-example-model"})
+    assert resolve_main_model.resolve_main_model(tmp_path) == "gguf-example-model"
+
+
+def test_gaia_model_resolver_rejects_empty_default(tmp_path, monkeypatch):
+    import resolve_main_model
+    import portable.llamacpp_model_catalog as catalog
+
+    monkeypatch.setattr(catalog, "from_settings", lambda root: {"default": ""})
+    with pytest.raises(ValueError, match="valid default model"):
+        resolve_main_model.resolve_main_model(tmp_path)
