@@ -210,7 +210,11 @@ def web_fetch(url: str, max_chars: int = 33333) -> dict[str, object]:
     except WebFetchError:
         raise
     except Exception as exc:
-        raise WebFetchError(f"web fetch failed for URL {current!r}") from exc
+        _LOG.exception("MAI web_fetch failed url=%r cause_type=%s", current, type(exc).__name__)
+        raise WebFetchError(
+            f"web fetch failed for URL {current!r}: "
+            f"cause_type={type(exc).__name__} cause={str(exc)!r}"
+        ) from exc
 
     content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if content_type not in {"text/html", "application/xhtml+xml", "text/plain"}:
