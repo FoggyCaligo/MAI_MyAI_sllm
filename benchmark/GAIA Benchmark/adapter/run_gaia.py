@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
-import getpass
 import json
 import os
 import shutil
@@ -67,6 +66,49 @@ def extract_answer(response: str) -> str:
     if not answer:
         raise ValueError("GAIA final answer is empty")
     return answer
+
+
+def resolve_credentials(*, user: str | None, password: str | None,
+                        dotenv_path: Path) -> tuple[str, str]:
+    """Use explicitly selected owner account in MAI's existing private .env.
+
+    Explicit process credentials override the configured password. Ambiguous
+    owner accounts require a user ID; never silently choose the first owner.
+    """
+    from dotenv import dotenv_values
+
+    values = dotenv_values(dotenv_path) if dotenv_path.is_file() else {}
+    raw = os.environ.get("OWNER_USERS")
+    if raw is None:
+        raw = values.get("OWNER_USERS")
+    if raw is None:
+        if user and password:
+            return user, password
+        raise ValueError("MAI OWNER_USERS is missing; set MAI_BENCH_USER and MAI_BENCH_PASSWORD or configure MAI .env")
+    try:
+        owners = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("OWNER_USERS must be valid JSON") from exc
+    if not isinstance(owners, list) or not owners:
+        raise ValueError("OWNER_USERS must be a nonempty JSON array")
+    by_id: dict[str, str] = {}
+    for item in owners:
+        if not isinstance(item, dict) or set(item) != {"user_id", "user_pw", "db_id"}:
+            raise ValueError("OWNER_USERS entries must contain exactly user_id, user_pw, db_id")
+        if any(not isinstance(item[k], str) or not item[k] for k in ("user_id", "user_pw", "db_id")):
+            raise ValueError("OWNER_USERS contains invalid account fields")
+        if item["user_id"] in by_id:
+            raise ValueError("OWNER_USERS contains duplicate user_id")
+        by_id[item["user_id"]] = item["user_pw"]
+    if user is None:
+        if len(by_id) != 1:
+            raise ValueError("Multiple OWNER_USERS accounts: specify MAI_BENCH_USER or --user")
+        user = next(iter(by_id))
+    if password is not None:
+        return user, password
+    if user not in by_id:
+        raise ValueError("Benchmark user is not a configured OWNER_USERS account")
+    return user, by_id[user]
 
 
 def login(client: httpx.Client, user: str, password: str) -> dict[str, str]:
@@ -150,8 +192,6 @@ def main() -> None:
     parser.add_argument("--model", help="MAI 모델 선택값, 생략 시 서버 기본 모델")
     parser.add_argument("--verify", action="store_true", help="Verifier 실험군에서만 설정")
     args = parser.parse_args()
-    if not args.user:
-        parser.error("--user 또는 MAI_BENCH_USER 필요")
     if args.limit < 0 or args.start < 0 or args.timeout_seconds <= 0 or args.poll_seconds <= 0:
         parser.error("limit/start/timeout/poll 값이 올바르지 않음")
     dataset = load_examples(args.split, args.level)
@@ -175,9 +215,13 @@ def main() -> None:
     else:
         manifest_file.write_text(json.dumps(run_settings, indent=2), encoding="utf-8")
     done = completed_ids(prediction_file)
-    password = os.environ.get("MAI_BENCH_PASSWORD") or getpass.getpass("MAI benchmark 전용 계정 암호: ")
+    user, password = resolve_credentials(
+        user=args.user,
+        password=os.environ.get("MAI_BENCH_PASSWORD"),
+        dotenv_path=BENCH_ROOT.parents[1] / ".env",
+    )
     with httpx.Client(base_url=args.server.rstrip("/"), timeout=30.0) as client:
-        headers = login(client, args.user, password)
+        headers = login(client, user, password)
         for index in range(args.start, end):
             example = dict(dataset[index])
             task_id = example.get("task_id")
