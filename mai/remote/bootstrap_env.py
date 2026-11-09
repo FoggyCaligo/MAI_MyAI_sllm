@@ -15,7 +15,6 @@ import platform
 import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 
 from .cache import _bundle_lock
@@ -82,11 +81,12 @@ def prepare_environment(base: Path, source: Path) -> Path:
                 if target.is_symlink() or not target.is_dir():
                     raise RuntimeError(f"invalid shared environment directory: {target}")
                 shutil.rmtree(target)
-            stage = Path(tempfile.mkdtemp(prefix=".building-", dir=env_base))
             try:
+                # Virtualenv console entrypoints encode absolute paths; install
+                # in the final directory instead of renaming a staged venv.
                 print(f"Installing remote dependency environment: {target}", flush=True)
-                subprocess.run([sys.executable, "-m", "venv", str(stage)], check=True)
-                python = environment_python(stage)
+                subprocess.run([sys.executable, "-m", "venv", str(target)], check=True)
+                python = environment_python(target)
                 subprocess.run([
                     str(python), "-m", "pip", "install",
                     "--disable-pip-version-check", "--no-input", "--upgrade", "pip>=25.1",
@@ -98,11 +98,12 @@ def prepare_environment(base: Path, source: Path) -> Path:
                 ], check=True)
                 subprocess.run([str(python), "-m", "pip", "check"], check=True)
                 subprocess.run([str(python), "-m", "playwright", "install", "chromium"], check=True)
-                (stage / _READY).touch()
-                stage.rename(target)
-            finally:
-                if stage.exists():
-                    shutil.rmtree(stage)
+                (target / _READY).touch()
+            except BaseException:
+                # No completed marker means this environment is not reusable.
+                # A previously completed environment with another key survives.
+                shutil.rmtree(target, ignore_errors=True)
+                raise
     # Publish the exact environment identity only after installation succeeded.
     # Source files are imported through PYTHONPATH, not installed editable into venv.
     (source / _KEY_FILE).write_text(key + "\n", encoding="ascii")
