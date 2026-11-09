@@ -88,6 +88,8 @@ MAI 웹 UI (Owner)
 
 자세한 구현: [Native 워커 계약](remote-native-worker.md).
 
+**문자 인코딩:** 로컬·원격 워커는 같은 `mai/tools/terminal.py`, `mai/tools/filesystem.py`를 사용한다. 현재 터미널 자식 프로세스는 Windows Git Bash/CMD/PowerShell과 Ubuntu Bash에서 UTF-8 출력을 우선하며, 디코딩 오류 시 `utf-8-sig`, `cp949`, `euc-kr`, `iso2022_kr` 순으로 엄격히 시도한다. 파일 읽기는 기본 `utf-8-sig`, 쓰기는 기본 `utf-8`이다. Windows `.ps1` 기본 저장은 PowerShell 5.1을 위한 UTF-8 BOM을 사용한다. 선택한 터미널 디코딩은 `stdout_encoding`·`stderr_encoding`에 보고한다. 자세한 사항은 [운영체제 경계](platform-boundary.md)를 참고한다.
+
 ## 원격 도구 타임아웃
 
 도구별 원격 실행 제한은 동일 도구의 로컬 실행 제한의 **2배**로 적용한다. 예를 들어 터미널 명령의 실행 한도는 로컬 240초 / 원격 480초다. 파일·코드·웹·브라우저 등의 도구도 로컬 등록 제한을 기준으로 원격 2배를 적용한다.
