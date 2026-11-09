@@ -20,7 +20,7 @@ ThinkSetting = bool | str
 
 
 def _request_timeout_seconds_from_env() -> float:
-    return float(os.environ.get("MODEL_REQUEST_TIMEOUT_SECONDS", "300"))
+    return float(os.environ.get("MODEL_REQUEST_TIMEOUT_SECONDS", "500"))
 
 
 @dataclass(frozen=True, slots=True)
