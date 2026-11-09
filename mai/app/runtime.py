@@ -171,9 +171,9 @@ class MAIRuntime:
         self._llamacpp_execution_lock = asyncio.Lock()
         self._llamacpp_router = SingleResidentRouter(
             self.llamacpp_host,
-            min_free_vram_mib=int(os.environ.get("LLAMACPP_MIN_FREE_VRAM_MIB", "1024")),
-            min_available_ram_mib=int(os.environ.get("MAI_MIN_AVAILABLE_RAM_MIB", "6144")),
-            telemetry_path=Path(os.environ.get("LOG_DB_PATH", "MAI_MEMORY/log.sqlite3")).with_name("gpu_ram_safety.jsonl"),
+            min_free_vram_mib=(None if os.environ.get("LLAMACPP_MEMORY_GUARD_ENABLED", "false").lower() == "true" else int(os.environ.get("LLAMACPP_MIN_FREE_VRAM_MIB", "1024"))),
+            min_available_ram_mib=(None if os.environ.get("LLAMACPP_MEMORY_GUARD_ENABLED", "false").lower() == "true" else int(os.environ.get("MAI_MIN_AVAILABLE_RAM_MIB", "6144"))),
+            telemetry_path=(None if os.environ.get("LLAMACPP_MEMORY_GUARD_ENABLED", "false").lower() == "true" else Path(os.environ.get("LOG_DB_PATH", "MAI_MEMORY/log.sqlite3")).with_name("gpu_ram_safety.jsonl")),
         )
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
