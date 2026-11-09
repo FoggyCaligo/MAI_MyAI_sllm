@@ -96,8 +96,15 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
 
             async def stream(response=upstream_response, sampler_task=sampler, owns_lock=serialized):
                 try:
-                    async for chunk in response.aiter_raw():
-                        yield chunk
+                    # MockTransport and some HTTP adapters return an already
+                    # consumed, buffered response even with stream=True.
+                    # Real llama.cpp streaming responses remain unread and
+                    # must be forwarded incrementally without buffering.
+                    if response.is_stream_consumed:
+                        yield response.content
+                    else:
+                        async for chunk in response.aiter_raw():
+                            yield chunk
                 finally:
                     await response.aclose()
                     if sampler_task is not None:
