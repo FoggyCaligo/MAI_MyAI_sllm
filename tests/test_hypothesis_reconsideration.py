@@ -51,7 +51,11 @@ def test_two_consecutive_grounding_failures_trigger_hypothesis_reconsideration()
     assert "Repeated factual grounding failures" in second_retry
     assert "consider alternative hypotheses" in second_retry
     assert "draft 1" not in second_retry
-    assert "draft 2" not in second_retry
+    correction = next(message["content"] for message in adapter.requests[2].messages
+                      if message["role"] == "system" and "correction_contract" in message["content"])
+    contract = json.loads(correction[correction.index('{"reconsider_initial_hypothesis"'):])
+    assert contract["rejected_provisional_answer"] == "draft 2"
+    assert contract["reconsider_initial_hypothesis"] is True
 
 
 def test_non_grounding_rejection_breaks_streak():
@@ -113,7 +117,8 @@ def test_repeated_correction_tracks_evidence_content_not_number_of_tool_calls(ne
     assert data["unchanged_evidence_rejections"] == expected
     assert ("Grounding was rejected repeatedly with unchanged successful evidence" in retry) == (expected == 2)
     assert "unsupported first" not in retry
-    assert "unsupported second" not in retry
+    assert data["rejected_provisional_answer"] == "unsupported second"
+    assert data["correction_contract"]
 
 
 def test_runtime_delivers_neutral_identity_and_interpretation_guidance_before_first_search():
