@@ -2,6 +2,8 @@
 
 검증은 이미 생성된 답변 초안을 검사한다. 승인되면 그 초안을 그대로 전달하고, 반려되면 도구를 사용할 수 있는 본 모델 차례로 돌아가 수정한다. 검증기를 통과하지 않은 초안을 보조 경로로 성공 처리하지 않는다.
 
+현재 `settings.yaml`에서 `MAI_VERIFIER_ENABLED: false`이므로 최종답변 검증은 **요청에서 활성화한 경우**에 실행한다. UI 체크박스 또는 `ChatRequest.verify=true`로 활성화할 수 있다. `MAI_ANSWER_QUALITY_REVIEW=false`는 검증기가 활성화되었을 때의 **추가 품질 검토 단계만** 끄는 값이다.
+
 ## 검증 순서와 설정
 
 Main·Verifier·기억 추출은 현재 UI에서 선택한 동일 llama.cpp GGUF를 사용한다. 서로 다른 모델을 지정하는 `VERIFIER_MODEL` 구성은 폐기했다. 수치 의미검증과 최종 사실검증은 **같은 모델의 별도 호출**이며 각각의 프롬프트·출력 스키마를 유지한다. 배포 `settings.yaml`에는 `MAI_VERIFIER_BLOCKING_MODE: critical`이 지정되어 있다. `critical`은 입증된 중대한 문제 위주로 차단하고 `strict`는 모든 유효한 이슈를 차단한다. 직접 `FinalGroundingVerifier`를 생성하면 기본 모드는 `strict`다. 모델의 문맥 상한은 llama.cpp 런처 설정을 따르며 추가 백엔드로 fallback하지 않는다.
