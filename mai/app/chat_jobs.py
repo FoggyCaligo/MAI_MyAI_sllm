@@ -79,6 +79,7 @@ class ChatJobStore:
             "finish_reason": partial.get("finish_reason"),
             "complete": partial.get("complete", False),
             "tool_call_fragments": len(partial.get("tool_fragments") or []),
+            "reasoning_diagnostics": partial.get("reasoning_diagnostics"),
         }
         job.updated_at = time.time()
 
