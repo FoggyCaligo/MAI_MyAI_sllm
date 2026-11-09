@@ -3,7 +3,7 @@
 param(
     [ValidateRange(1,1)][int]$ModelsMax = 1,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
-    [ValidateRange(512,262144)][int]$ContextSize = 131072,
+    [ValidateRange(0,262144)][int]$ContextSize = 0,
     [switch]$GaiaBenchmark,
     [switch]$RouterOnly
 )
@@ -20,7 +20,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) { thr
 # The catalog is generated from verified GGUF files on every launcher start.
 $iniDir = Join-Path $root 'portable/portable-runtimes/llamacpp'
 $ini = Join-Path $iniDir 'mai-models.generated.ini'
-$catalogJson = & $python (Join-Path $root 'portable/llamacpp_model_catalog.py') --root $root --ini $ini --context-size $ContextSize --gpu-layers $GpuLayers
+$catalogArgs = @((Join-Path $root 'portable/llamacpp_model_catalog.py'), '--root', $root, '--ini', $ini, '--gpu-layers', "$GpuLayers")
+if ($ContextSize -ne 0) { $catalogArgs += @('--context-size', "$ContextSize") }
+$catalogJson = & $python @catalogArgs
 if ($LASTEXITCODE -ne 0) { throw 'Could not discover GGUF models and create router preset' }
 $catalog = $catalogJson | ConvertFrom-Json
 $defaultModel = [string]$catalog.default
@@ -44,6 +46,7 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'MAI_MEMORY/sentence_breaker.sql
 $env:CHAT_DB_PATH = Join-Path $root 'MAI_MEMORY/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'MAI_MEMORY/log.sqlite3'
 $env:VOICE_PROFILE_DIR = Join-Path $root 'MAI_MEMORY/voice_profiles'
+$env:LLAMACPP_GPU_MEMORY_BUDGET_MIB = [string]$catalog.gpu_memory_budget_mib
 $env:LLM_BACKEND = 'llamacpp'
 $env:MAIN_MODEL = $defaultModel
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
