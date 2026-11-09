@@ -109,3 +109,40 @@ def test_reuse_disabled_does_not_suppress_reads(monkeypatch):
     runtime = AgentRuntime(adapter, registry, tool_result_store=ToolResultStore(max_inline_chars=4000))
     asyncio.run(runtime.run_user_message("Read file twice"))
     assert calls == ["example.txt", "example.txt"]
+
+
+class _WriteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    content: str
+
+
+def test_file_write_invalidates_read_cache(monkeypatch):
+    monkeypatch.setenv("AGENT_EVIDENCE_REUSE_ENABLED", "true")
+    state = {"content": "before"}
+    read_calls = []
+    registry = ToolRegistry()
+    registry.add(
+        name="file_read", description="Read test", input_model=_Input,
+        handler=lambda path: (read_calls.append(path), state["content"])[1],
+    )
+    registry.add(
+        name="file_write", description="Write test", input_model=_WriteInput,
+        handler=lambda path, content: state.update(content=content) or "saved",
+    )
+    read = ("file_read", {"path": "sample.txt"})
+    write = ("file_write", {"path": "sample.txt", "content": "after"})
+    adapter = _Adapter([
+        _turn(("tool_manual", {"tools": ["file_read", "file_write"]})),
+        _turn(read),
+        _turn(write),
+        _turn(read),
+        _turn(content="done"),
+    ])
+    runtime = AgentRuntime(adapter, registry, tool_result_store=ToolResultStore(max_inline_chars=4000))
+    result = asyncio.run(runtime.run_user_message("Read then modify then reread"))
+    assert result.content == "done"
+    assert read_calls == ["sample.txt", "sample.txt"]
+    assert [item.audit_content for item in result.tool_executions if item.name == "file_read"] == [
+        '"before"', '"after"',
+    ]
