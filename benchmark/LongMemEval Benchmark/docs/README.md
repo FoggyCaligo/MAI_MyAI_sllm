@@ -96,7 +96,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\portable\\start-port
 
 1문항 종단간 검증에 성공하면 `--limit 10`, 전체 500문항은 `--limit 0`을 사용하고 **새 `--output-dir`**를 지정한다. 이 플러그인은 별도 상용 서비스나 일반 사용을 목적으로 설치하는 것이 아니며, 벤치마크 전용 `openclaw.json`에서만 명시적으로 로딩한다.
 
-**점수 주의:** 두 어댑터가 만드는 `predictions.jsonl`은 실행 결과이며, 공식 LongMemEval의 의미 평가 점수는 아니다. 공식 채점기 연결 전에는 전체 정답률을 공식 수치로 보고하지 않는다.
+**점수 주의:** 두 어댑터가 만드는 `predictions.jsonl`은 실행 결과이며, 공식 LongMemEval의 의미 평가 점수는 아니다. 아래 공통 변환기를 사용하면 **MAI·OpenClaw를 같은 공식 LongMemEval QA 채점기**에 제출할 수 있는 `hypothesis` 파일이 생성된다. 변환기는 평가하거나 정답을 전송하지 않으며 모든 문항의 성공과 중복 부재를 확인한다.
+
+```powershell
+# MAI와 OpenClaw 각각에 대해 같은 명령 실행. 파일 경로만 해당 실행 폴더로 변경
+& ".\\portable\\portable-runtimes\\python\\python.exe" `
+  ".\\benchmark\\LongMemEval Benchmark\\adapter\\prepare_official_scoring.py" `
+  --dataset ".\\benchmark\\LongMemEval Benchmark\\data\\longmemeval_s_cleaned.json" `
+  --predictions ".\\benchmark\\LongMemEval Benchmark\\result\\openclaw_trial_001\\predictions.jsonl" `
+  --output ".\\benchmark\\LongMemEval Benchmark\\result\\openclaw_trial_001\\hypotheses.jsonl" `
+  --start 0 --limit 1
+```
+
+공식 [LongMemEval 저장소](https://github.com/xiaowu0162/LongMemEval)의 `src/evaluation/evaluate_qa.py`는 `evaluate_qa.py <metric_model> <hyp_file> <ref_file>` 형식으로 채점한다. 해당 스크립트의 공식 judge(예: `gpt-4o`)를 쓰면 질문·정답·응답이 외부 API로 전달되므로, **별도 API 키와 데이터 전달에 대한 명시적 결정이 필요하다.** 이 벤치마크는 해당 채점기를 자동 호출하지 않는다. 실행·출력 기록은 로컬에만 두며, 추후 두 에이전트 모두 같은 judge 및 프롬프트 버전으로 채점해야 비교가 가능하다.
 
 ### 3. 검증
 
@@ -119,7 +131,7 @@ OpenClaw 어댑터 계약 테스트도 별도로 추가했다. 아래 명령은 
 다음은 별도 구현이 필요한 항목이다.
 
 1. OpenClaw의 실제 Windows 환경에서 플러그인 CLI 로딩·세션 저장·인덱스 생성·신규 세션 회상을 1문항으로 검증
-2. 공식 평가 코드와 평가 모델 계약 확인 후 MAI·OpenClaw **공통 채점기** 추가
+2. 공식 LongMemEval 평가 코드의 judge 모델·판정 프롬프트를 고정한 뒤 같은 모델로 양쪽 hypothesis를 채점 (공통 제출 형식 변환기는 구현 완료)
 3. 기억 적재 시간·답변 시간·인덱스 크기·모델 호출 수 분리 기록
 4. 모델 호출 없이 재생되는 과거 어시스턴트 턴, 원본 툴 결과 부재, 각 제품 기억 저장·검색 알고리즘의 차이를 최종 비교표에 함께 공개
 
