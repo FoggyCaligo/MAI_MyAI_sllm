@@ -68,3 +68,14 @@ def test_gpu_budget_and_context_settings_are_accepted(tmp_path: Path) -> None:
     assert result["LLAMACPP_GPU_MEMORY_BUDGET_MIB"] == "15360"
     assert result["LLAMACPP_CONTEXT_SIZE"] == "65536"
     assert env == result
+
+
+def test_dynamic_vram_and_free_ram_settings_are_allowed(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text(
+        "LLAMACPP_MIN_FREE_VRAM_MIB: 1024\\nMAI_MIN_AVAILABLE_RAM_MIB: 6144\\n",
+        encoding="utf-8",
+    )
+    values = load_settings(path, environ={})
+    assert values["LLAMACPP_MIN_FREE_VRAM_MIB"] == "1024"
+    assert values["MAI_MIN_AVAILABLE_RAM_MIB"] == "6144"
