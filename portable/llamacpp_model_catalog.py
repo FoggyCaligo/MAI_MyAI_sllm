@@ -1,8 +1,10 @@
 """Structural catalog of local llama.cpp GGUF models.
 
 The only discovery criterion is a regular GGUF file in the configured model
-directory, excluding explicitly configured multimodal projector paths.
-No model capability is inferred from a filename.
+directory, excluding explicitly configured multimodal projector paths and
+files conventionally named mmproj-*.gguf or mmproj_*.gguf.
+No model capability is inferred from a filename; the mmproj rule excludes a
+known auxiliary-file naming convention.
 """
 from __future__ import annotations
 
@@ -30,6 +32,11 @@ def valid_gguf(path: Path) -> None:
         raise ValueError(f"Newline in GGUF path: {path}")
 
 
+def is_mmproj_filename(path: Path) -> bool:
+    """Exclude unconfigured projector files before registering model aliases."""
+    return path.name.lower().startswith(("mmproj-", "mmproj_"))
+
+
 def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
     root = root.resolve()
     main_raw = config.get("LLAMACPP_MAIN_GGUF_PATH")
@@ -37,6 +44,8 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
         raise ValueError("LLAMACPP_MAIN_GGUF_PATH is required as the default model")
     default_path = resolve_path(root, main_raw)
     valid_gguf(default_path)
+    if is_mmproj_filename(default_path):
+        raise ValueError("Default main GGUF cannot be an mmproj projector")
     directory_raw = config.get("LLAMACPP_GGUF_DIRECTORY")
     directory = (resolve_path(root, directory_raw) if isinstance(directory_raw, str)
                  and directory_raw.strip() else default_path.parent)
@@ -57,7 +66,7 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
     ids: set[str] = set()
     for path in sorted(directory.glob("*.gguf")):
         resolved = path.resolve(strict=True)
-        if resolved in excluded:
+        if resolved in excluded or is_mmproj_filename(resolved):
             continue
         valid_gguf(resolved)
         # Stable ID comes from the exact canonical path, not a naming heuristic.
