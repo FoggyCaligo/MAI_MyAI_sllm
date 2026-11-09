@@ -35,6 +35,7 @@ async def _execute_chat(
     on_model_turn=None,
     on_round_timing=None,
     on_model_stream_progress=None,
+    on_model_timeout_diagnostic=None,
     on_verification_rejection=None,
     on_verification_audit=None,
 ) -> tuple[int, dict[str, object]]:
@@ -73,6 +74,7 @@ async def _execute_chat(
             on_model_turn=on_model_turn,
             on_round_timing=on_round_timing,
             on_model_stream_progress=on_model_stream_progress,
+            on_model_timeout_diagnostic=on_model_timeout_diagnostic,
             on_verification_rejection=on_verification_rejection,
             on_verification_audit=on_verification_audit,
         )
@@ -149,6 +151,27 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                     ]},
                 )
 
+            def publish_timeout_diagnostic(round_number: int, partial: dict[str, object]) -> None:
+                # Timeout partials are audit-only and must never be used as
+                # successful model output or executable tool arguments.
+                details = {
+                    "error_type": "ModelChatTimeoutError",
+                    "incomplete": True,
+                    "chunks": partial.get("chunks", 0),
+                    "finish_reason": partial.get("finish_reason"),
+                    "tool_fragments": partial.get("tool_fragments", []),
+                }
+                if partial.get("thinking"):
+                    audit.append(
+                        job_id, "model_think_step", str(partial["thinking"]),
+                        round_number=round_number, status="timeout_partial", details=details,
+                    )
+                if partial.get("content") or partial.get("tool_fragments"):
+                    audit.append(
+                        job_id, "model", str(partial.get("content") or ""),
+                        round_number=round_number, status="timeout_partial", details=details,
+                    )
+
             def publish_model_stream_progress(round_number: int, partial: dict[str, object]) -> None:
                 # Stream is untrusted/incomplete until [DONE]. Preserve it only
                 # as live job progress, not a final answer or tool execution.
@@ -192,6 +215,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 on_model_turn=publish_model_turn,
                 on_round_timing=publish_round_timing,
                 on_model_stream_progress=publish_model_stream_progress,
+                on_model_timeout_diagnostic=publish_timeout_diagnostic,
                 on_verification_rejection=publish_verification_rejection,
                 on_verification_audit=publish_verification_audit,
             )
