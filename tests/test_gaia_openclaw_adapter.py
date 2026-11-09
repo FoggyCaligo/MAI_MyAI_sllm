@@ -107,7 +107,8 @@ def test_router_only_starts_no_mai_app_and_conflicts_with_gaia():
 
 def test_windows_openclaw_npm_cmd_is_resolved_before_subprocess(monkeypatch):
     seen = []
-    monkeypatch.setattr(mod.os, "name", "nt")
+    from types import SimpleNamespace
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
     def which(name):
         seen.append(name)
         return r"C:\\Users\\tester\\AppData\\Roaming\\npm\\openclaw.cmd" if name == "openclaw.cmd" else None
