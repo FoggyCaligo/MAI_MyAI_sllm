@@ -9,9 +9,11 @@ Agent / Verifier / Memory
   ├─ MAI 호스트 Native 도구
   └─ Owner 원격 Native 워커 (is_remote=true)
        └─ terminal_run → current_platform()
-            ├─ Windows: CMD / PowerShell, UTF-8, Windows 프로세스 그룹
-            └─ Linux: /bin/sh, POSIX 세션 및 프로세스 그룹
+            ├─ Windows: Git Bash(기본) / CMD / PowerShell, UTF-8, Windows 프로세스 그룹
+            └─ Linux: Bash(기본), POSIX 세션 및 프로세스 그룹
 ```
+
+`terminal_run`의 `shell`은 선택값이며 생략하면 `bash`다. Windows에서는 Git for Windows의 `bash.exe`를 명시적인 경로에서 찾아 실행하며, 없는 경우 WSL의 `bash.exe`를 대체 사용하지 않고 오류로 처리한다. 특수 설치 경로는 `MAI_GIT_BASH_PATH`로 지정할 수 있다. Windows 전용 CMD와 PowerShell은 각각 `shell=cmd`, `shell=powershell`로 명시한다. Linux에서는 설치된 `bash`를 기본으로 사용하며 CMD/PowerShell 선택은 명시적으로 실패한다. 현재 MAI 플랫폼 계층은 macOS 실행을 지원하지 않으므로 이 변경으로 macOS 지원이 추가되는 것은 아니다.
 
 운영체제 감지는 **명령을 실행하는 실제 컴퓨터**에서 수행한다. 브라우저 위치나 요청 문자열로 운영체제를 추정하지 않는다. 미지원 운영체제와 셸 조합은 명시적으로 실패하며 Linux/Windows로 임의 변환하지 않는다.
 
