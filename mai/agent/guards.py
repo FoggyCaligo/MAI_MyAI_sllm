@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -74,6 +75,7 @@ class AgentGuard:
         self._identical_rounds = 0
         self._previous_verification_signature: str | None = None
         self._identical_verification_rejections = 0
+        self._similar_failures: dict[tuple[str, str, str], int] = {}
 
     def before_tool_call(self, name: str, arguments: Mapping[str, Any]) -> str:
         fingerprint = call_fingerprint(name, arguments)
@@ -111,6 +113,48 @@ class AgentGuard:
                 f"{self._failure_streak_count} consecutive times. The tool failures above are real. "
                 "Do not repeat the identical call unchanged; change the call arguments, choose another available "
                 "tool or approach, or finish by reporting the failure if no valid recovery remains."
+            )
+        return None
+
+    def after_similar_failure(
+        self, name: str, arguments: Mapping[str, Any], *, ok: bool,
+        error_type: str | None, threshold: int = 2,
+    ) -> str | None:
+        """Warn on a related *failure family*, never block a changed action.
+
+        No inference or model calls: grouping is based only on tool name,
+        reported error class and a conservative execution target. Different
+        outcomes and commands remain available as recovery attempts.
+        """
+        if ok or not error_type or threshold < 2:
+            return None
+        target = str(arguments.get("is_remote", False))
+        if name == "terminal_run":
+            command = str(arguments.get("command", "")).strip().lower()
+            # Strip common wrappers and use a command family, not entire
+            # arguments; avoid claims about semantic equivalence.
+            executable = re.search(r"(?:^|[\\s|;&])([\\w.-]+(?:\\.exe)?)(?=\\s|$|[|;&])", command)
+            family = executable.group(1) if executable else ""
+            family = {"cmd.exe": "cmd", "powershell.exe": "powershell"}.get(family, family)
+            target += ":" + family
+        elif name in {"web_fetch", "file_read", "code_read"}:
+            target += ":" + str(arguments.get("url") or arguments.get("path") or arguments.get("target") or "")
+        elif name == "web_search":
+            # Only exact canonical query repeats should group as one target.
+            target += ":" + str(arguments.get("query") or arguments.get("queries") or "")
+        else:
+            return None
+        key = (name, error_type, target)
+        count = self._similar_failures.get(key, 0) + 1
+        self._similar_failures[key] = count
+        if count == threshold:
+            return (
+                f"Related tool failures: {name} returned {error_type} "
+                f"{count} times for the same conservative target family. "
+                "This does not prove the attempted commands are equivalent. "
+                "Inspect earlier failures and prefer a genuinely different "
+                "approach rather than superficial argument or shell rewrites. "
+                "Do not claim unavailable evidence is verified."
             )
         return None
 
