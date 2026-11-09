@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -125,10 +126,12 @@ async def stream_completion(
     payload: dict[str, Any],
     *,
     timeout_seconds: float,
-    on_timeout: Callable[[dict[str, Any]], None],
+    on_timeout: Callable[[dict[str, Any]], None] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     partial = PartialCompletion()
     stream_payload = {**payload, "stream": True}
+    last_progress_at = 0.0
     try:
         # An absolute deadline is necessary: a model emitting tokens forever
         # must still time out even though each socket read succeeds.
@@ -145,6 +148,10 @@ async def stream_completion(
                         if pending_data:
                             partial.consume("\n".join(pending_data))
                             pending_data.clear()
+                            now = time.monotonic()
+                            if on_progress is not None and (now - last_progress_at >= 0.5 or partial.saw_done):
+                                on_progress(partial.snapshot())
+                                last_progress_at = now
                     elif line.startswith(":") or line.startswith("event:"):
                         continue
                     else:
@@ -153,7 +160,10 @@ async def stream_completion(
                         break
                 if pending_data and not partial.saw_done:
                     partial.consume("\n".join(pending_data))
+                    if on_progress is not None:
+                        on_progress(partial.snapshot())
         return partial.completed_response()
     except (TimeoutError, httpx.TimeoutException):
-        on_timeout(partial.snapshot())
+        if on_timeout is not None:
+            on_timeout(partial.snapshot())
         raise
