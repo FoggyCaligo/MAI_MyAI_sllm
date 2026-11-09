@@ -62,15 +62,12 @@ def test_terminal_decode_retries_legacy_korean_codecs():
 
 def test_terminal_decode_failure_remains_explicit():
     with pytest.raises(UnicodeError, match="utf-8-sig, cp949, euc-kr, iso2022_kr"):
-        _decode_terminal_output(b"\\xff\\xfe\\xff")
+        _decode_terminal_output(bytes([0xff, 0xfe, 0xff]))
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Git Bash integration test")
 def test_git_bash_python_stdout_unicode_roundtrip(tmp_path: Path):
-    command = (
-        "python -c 'import sys; "
-        "sys.stdout.write(\"한글 경로 ✓\")'"
-    )
+    command = "printf '한글 경로 ✓'"
     result = asyncio.run(_run_command(command, tmp_path, 15, shell="bash"))
     assert result["stdout"] == "한글 경로 ✓"
     assert result["stdout_encoding"] == "utf-8-sig"
