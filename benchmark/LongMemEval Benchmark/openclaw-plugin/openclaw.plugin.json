@@ -1,0 +1,18 @@
+{
+  "id": "longmemeval-replay",
+  "name": "LongMemEval Native Replay",
+  "description": "Benchmark-only import of original user/assistant transcripts into isolated native sessions",
+  "cliCommands": [
+    {
+      "name": "longmemeval",
+      "description": "Import original LongMemEval conversation sessions into the native OpenClaw transcript store",
+      "hasSubcommands": true
+    }
+  ],
+  "activation": {
+    "onStartup": false,
+    "onCommands": ["longmemeval"]
+  },
+  "commandAliases": [{"name": "longmemeval", "kind": "cli"}],
+  "configSchema": {"type": "object", "additionalProperties": false, "properties": {}}
+}
