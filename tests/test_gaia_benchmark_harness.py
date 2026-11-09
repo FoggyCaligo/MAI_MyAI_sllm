@@ -130,3 +130,45 @@ def test_gaia_model_resolver_rejects_empty_default(tmp_path, monkeypatch):
     monkeypatch.setattr(catalog, "from_settings", lambda root: {"default": ""})
     with pytest.raises(ValueError, match="valid default model"):
         resolve_main_model.resolve_main_model(tmp_path)
+
+
+def test_gaia_credentials_uses_existing_owner_dotenv(tmp_path, monkeypatch):
+    from run_gaia import resolve_credentials
+
+    monkeypatch.delenv("OWNER_USERS", raising=False)
+    configured = [{"user_id": "한글 사용자", "user_pw": "한글 비밀번호", "db_id": "owner-db"}]
+    path = tmp_path / ".env"
+    path.write_text("OWNER_USERS='" + json.dumps(configured, ensure_ascii=False) + "'\\n", encoding="utf-8")
+    assert resolve_credentials(user=None, password=None, dotenv_path=path) == ("한글 사용자", "한글 비밀번호")
+    assert resolve_credentials(user="한글 사용자", password=None, dotenv_path=path) == ("한글 사용자", "한글 비밀번호")
+    assert resolve_credentials(user="한글 사용자", password="override", dotenv_path=path) == ("한글 사용자", "override")
+
+
+def test_gaia_credentials_multiple_owners_requires_explicit_user(tmp_path, monkeypatch):
+    from run_gaia import resolve_credentials
+
+    monkeypatch.delenv("OWNER_USERS", raising=False)
+    configured = [
+        {"user_id": "one", "user_pw": "pass-one", "db_id": "db-one"},
+        {"user_id": "two", "user_pw": "pass-two", "db_id": "db-two"},
+    ]
+    path = tmp_path / ".env"
+    path.write_text("OWNER_USERS='" + json.dumps(configured) + "'\\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Multiple OWNER_USERS"):
+        resolve_credentials(user=None, password=None, dotenv_path=path)
+    assert resolve_credentials(user="two", password=None, dotenv_path=path) == ("two", "pass-two")
+    with pytest.raises(ValueError, match="not a configured OWNER_USERS"):
+        resolve_credentials(user="missing", password=None, dotenv_path=path)
+
+
+def test_gaia_credentials_fails_closed_for_invalid_configuration(tmp_path, monkeypatch):
+    from run_gaia import resolve_credentials
+
+    monkeypatch.delenv("OWNER_USERS", raising=False)
+    path = tmp_path / ".env"
+    path.write_text("OWNER_USERS=not-json\\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="valid JSON"):
+        resolve_credentials(user=None, password=None, dotenv_path=path)
+    path.unlink()
+    with pytest.raises(ValueError, match="OWNER_USERS is missing"):
+        resolve_credentials(user=None, password=None, dotenv_path=path)
