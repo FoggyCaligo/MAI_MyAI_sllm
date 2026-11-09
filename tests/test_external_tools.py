@@ -127,3 +127,34 @@ def test_market_data_protocol_drift_fails_visibly(monkeypatch):
     monkeypatch.setattr(market_module.httpx, "Client", FakeHttpClient)
     with pytest.raises(MarketDataProtocolError):
         market_module.market_data("테스트")
+
+
+def test_web_fetch_transport_error_reports_underlying_cause(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(web_module, "_validate_public_url", lambda url: url)
+
+    def fail_get(self, url, *args, **kwargs):
+        raise httpx.ConnectError("network route unavailable")
+
+    monkeypatch.setattr(httpx.Client, "get", fail_get)
+    with pytest.raises(WebFetchError, match="cause_type=ConnectError") as raised:
+        web_module.web_fetch("https://example.test/article")
+    assert "network route unavailable" in str(raised.value)
+    assert isinstance(raised.value.__cause__, httpx.ConnectError)
+
+
+def test_web_fetch_http_status_error_reports_underlying_cause(monkeypatch):
+    import httpx
+
+    monkeypatch.setattr(web_module, "_validate_public_url", lambda url: url)
+
+    def forbidden(self, url, *args, **kwargs):
+        request = httpx.Request("GET", url)
+        return httpx.Response(403, request=request)
+
+    monkeypatch.setattr(httpx.Client, "get", forbidden)
+    with pytest.raises(WebFetchError, match="cause_type=HTTPStatusError") as raised:
+        web_module.web_fetch("https://example.test/forbidden")
+    assert "403" in str(raised.value)
+    assert isinstance(raised.value.__cause__, httpx.HTTPStatusError)
