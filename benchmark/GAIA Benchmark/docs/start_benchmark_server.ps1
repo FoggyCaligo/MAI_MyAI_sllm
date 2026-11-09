@@ -1,6 +1,15 @@
-﻿# 평가 전용 MAI 서버: 실제 사용자 DB를 사용하지 않도록 별도 경로 지정
+﻿# 평가 전용 MAI 서버: router 1개 + MAI 평가 서버 1개.
+param([switch]$ServerOnly)
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+if (-not $ServerOnly) {
+    $routerLauncher = Join-Path $project 'portable/start-portable-llamacpp-router.ps1'
+    if (-not (Test-Path -LiteralPath $routerLauncher -PathType Leaf)) {
+        throw "MAI Portable router launcher missing: $routerLauncher"
+    }
+    & $routerLauncher -GaiaBenchmark
+    return
+}
 $data = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'result\_runtime'
 New-Item -ItemType Directory -Force -Path $data | Out-Null
 $env:MEMORY_DB_PATH = Join-Path $data 'memory.sqlite3'
