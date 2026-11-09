@@ -44,18 +44,18 @@ def migrate(plan: list[tuple[Path, Path]]) -> None:
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists():
                 raise FileExistsError(destination)
+            created.append(destination)
             if source.suffix == ".sqlite3":
                 with sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True) as original:
                     with sqlite3.connect(destination) as backup:
                         original.backup(backup)
             else:
                 shutil.copy2(source, destination)
-            created.append(destination)
     except BaseException:
         # Newly created snapshots only. Never touch files that were present
         # before this migration; the originals remain in the old data folder.
         for path in reversed(created):
-            path.unlink()
+            path.unlink(missing_ok=True)
         raise
 
 
