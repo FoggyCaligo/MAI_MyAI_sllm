@@ -227,6 +227,7 @@ class AgentLoop:
         on_model_turn: ModelTurnObserver | None = None,
         on_round_timing: Callable[[int, dict[str, Any]], None] | None = None,
         on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
+        on_model_stream_progress: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
@@ -375,6 +376,10 @@ class AgentLoop:
                     on_timeout_diagnostic=(
                         (lambda partial: on_model_timeout_diagnostic(round_number, partial))
                         if on_model_timeout_diagnostic is not None else None
+                    ),
+                    on_stream_progress=(
+                        (lambda partial: on_model_stream_progress(round_number, partial))
+                        if on_model_stream_progress is not None else None
                     ),
                 ))
                 model_elapsed_ms = int((time.perf_counter() - model_started) * 1000)
