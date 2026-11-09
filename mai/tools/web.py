@@ -27,6 +27,9 @@ WEB_SEARCH_PAGE_COUNT = 3
 WEB_SEARCH_DEFAULT_RESULTS = 10
 WEB_SEARCH_MAX_RESULTS = 15
 WEB_SEARCH_SNIPPET_CHARS = 160
+# Identify the application, never its operator. Wikimedia accepted this project URL
+# in the 2026-11-09 Portable Python HTTPX check (HTTP 200).
+WEB_FETCH_USER_AGENT = "MAI/0.1 (https://github.com/FoggyCaligo/MAI_MyAI_sllm) httpx"
 
 
 class WebSearchError(RuntimeError):
@@ -192,7 +195,7 @@ def web_fetch(url: str, max_chars: int = 33333) -> dict[str, object]:
     current = _validate_public_url(url.strip())
     max_redirects = 5
     try:
-        with httpx.Client(timeout=20, follow_redirects=False, headers={"User-Agent": "MAI/0.1 web_fetch"}) as client:
+        with httpx.Client(timeout=20, follow_redirects=False, headers={"User-Agent": WEB_FETCH_USER_AGENT}) as client:
             for redirect_count in range(max_redirects + 1):
                 response = client.get(current)
                 if response.status_code in {301, 302, 303, 307, 308}:
