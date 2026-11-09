@@ -64,7 +64,7 @@ def test_windows_git_bash_real_execution_and_nonzero(tmp_path):
     assert error.value.result["returncode"] == 13
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Linux Bash integration only")
+@pytest.mark.skipif(not __import__("sys").platform.startswith("linux"), reason="Linux Bash integration only")
 def test_linux_bash_default_and_failure_preserved(tmp_path):
     result = asyncio.run(terminal_run(command="printf 'MAI_BASH_OK\\n'", cwd=str(tmp_path)))
     assert result["shell_family"] == "bash"
