@@ -5,6 +5,8 @@ heuristics or user-text matching are used to decide remote eligibility.
 """
 from __future__ import annotations
 
+import os
+
 from typing import Any
 
 from pydantic import create_model
@@ -91,7 +93,7 @@ def _add_remote_context(registry: ToolRegistry, names: tuple[str, ...], key: str
 
 def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str) -> None:
     local = ToolRegistry()
-    register_local_pc_tools(local, cwd=cwd)
+    register_local_pc_tools(local, cwd=cwd, terminal_timeout_seconds=float(os.environ.get("TERMINAL_TIMEOUT_SECONDS", "120")))
     _add_routed_definitions(registry, local, owner_id=owner_id)
     _add_remote_context(registry, local.names(), "remote_execution_target")
 
