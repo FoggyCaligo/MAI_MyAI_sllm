@@ -1,0 +1,7 @@
+# GAIA gated 자료·문항·정답·첨부파일 및 평가 출력은 원격 공개 금지
+GAIA Benchmark/adapter/data/
+GAIA Benchmark/adapter/.venv/
+GAIA Benchmark/result/*
+!GAIA Benchmark/result/.gitkeep
+GAIA Benchmark/adapter/__pycache__/
+agents/
