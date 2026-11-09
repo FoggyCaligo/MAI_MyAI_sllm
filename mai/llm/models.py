@@ -87,3 +87,4 @@ class ChatRequest:
     options: Mapping[str, Any] | None = None
     response_format: Mapping[str, Any] | str | None = None
     on_timeout_diagnostic: Callable[[dict[str, Any]], None] | None = None
+    on_stream_progress: Callable[[dict[str, Any]], None] | None = None
