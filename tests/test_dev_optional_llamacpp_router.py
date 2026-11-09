@@ -43,7 +43,7 @@ def test_llamacpp_router_request_has_requested_model_and_json_schema():
 def test_llamacpp_main_image_opt_in(tmp_path, monkeypatch):
     principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
     upload = principal_upload_directory(tmp_path, principal)
-    upload.mkdir(parents=True)
+    upload.mkdir(parents=True, exist_ok=True)
     raw = b"\x89PNG\r\n\x1a\nexample"
     (upload / "picture.png").write_bytes(raw)
     params = dict(prompt="describe", attachments=("picture.png",), principal=principal,
