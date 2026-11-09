@@ -47,6 +47,8 @@ def sanitized_history(case) -> dict:
 
 
 def benchmark_config(model: str, plugin_path: Path) -> dict:
+    if not plugin_path.is_dir():
+        raise NotADirectoryError(plugin_path)
     if not (plugin_path / "openclaw.plugin.json").is_file():
         raise FileNotFoundError(plugin_path / "openclaw.plugin.json")
     config = openclaw_config(model)
@@ -187,6 +189,20 @@ def main() -> None:
         json.dumps(benchmark_config(model, PLUGIN_DIR), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # Validate the generated config with the installed OpenClaw before importing.
+    # A valid schema can still carry warnings about inaccessible plugin paths.
+    validation_env = dict(os.environ)
+    validation_env["OPENCLAW_CONFIG_PATH"] = str(config.resolve())
+    validation_stdout = run_command(
+        [executable, "config", "validate", "--json"],
+        env=validation_env, timeout=60, log_dir=args.output_dir, label="config_validation",
+    )
+    validation = json.loads(validation_stdout)
+    if not isinstance(validation, dict) or validation.get("valid") is not True:
+        raise ValueError(f"OpenClaw configuration validation failed: {validation!r}")
+    warnings = validation.get("warnings")
+    if not isinstance(warnings, list) or warnings:
+        raise ValueError(f"OpenClaw configuration validation warnings: {warnings!r}")
     (args.output_dir / "manifest.json").write_text(json.dumps({
         "agent": "OpenClaw", "benchmark": "LongMemEval-S",
         "version": version, "model": model,
