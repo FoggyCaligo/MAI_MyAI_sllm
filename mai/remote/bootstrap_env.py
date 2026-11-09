@@ -104,10 +104,11 @@ def prepare_environment(base: Path, source: Path) -> Path:
                     subprocess.run([str(python), "-m", "pip", "check"], check=True)
                     subprocess.run([str(python), "-m", "playwright", "install", "chromium"], check=True)
                     (target / _READY).touch()
-                except BaseException:
+                except Exception:
                     # No completed marker means this environment is not reusable.
                     # A previously completed environment with another key survives.
-                    shutil.rmtree(target, ignore_errors=True)
+                    if target.exists():
+                        shutil.rmtree(target)
                     raise
         # Publish the exact environment identity only after installation succeeded.
         # Source files are imported through PYTHONPATH, not installed editable into venv.
