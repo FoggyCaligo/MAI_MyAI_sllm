@@ -8,12 +8,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
 
+from .reasoning_monitor import ReasoningMonitor
 from .errors import ModelProtocolError
 
 _LOG = logging.getLogger("uvicorn.error")
@@ -27,6 +29,7 @@ class PartialCompletion:
     finish_reason: str | None = None
     saw_done: bool = False
     chunks: int = 0
+    reasoning_diagnostics: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -39,6 +42,7 @@ class PartialCompletion:
             "chunks": self.chunks,
             "finish_reason": self.finish_reason,
             "complete": self.saw_done,
+            "reasoning_diagnostics": self.reasoning_diagnostics,
         }
 
     def consume(self, data: str) -> None:
@@ -137,6 +141,9 @@ async def stream_completion(
     last_progress_at = 0.0
     stream_started = time.monotonic()
     last_logged_at = stream_started
+    last_monitor_at = stream_started
+    monitor = (ReasoningMonitor() if os.environ.get("AGENT_REASONING_MONITOR_ENABLED", "true").strip().lower() in {"true", "1", "yes"} else None)
+    last_monitor_status: str | None = None
     try:
         # An absolute deadline is necessary: a model emitting tokens forever
         # must still time out even though each socket read succeeds.
@@ -167,6 +174,24 @@ async def stream_completion(
                             partial.consume("\n".join(pending_data))
                             pending_data.clear()
                             now = time.monotonic()
+                            if monitor is not None and (now - last_monitor_at >= 1.0 or partial.saw_done):
+                                diagnostic = monitor.observe(
+                                    "".join(partial.thinking_parts),
+                                    content_chars=sum(map(len, partial.content_parts)),
+                                    tool_fragment_count=len(partial.tool_fragments),
+                                )
+                                partial.reasoning_diagnostics = diagnostic
+                                if diagnostic["status"] != last_monitor_status and diagnostic["status"] in {
+                                    "repetition_suspected", "long_unresolved", "output_progress",
+                                }:
+                                    _LOG.warning(
+                                        "MAI reasoning diagnostic status=%s thinking_chars=%d repeat_checks=%d "
+                                        "recent_similarity=%.3f action=diagnostic_only",
+                                        diagnostic["status"], diagnostic["thinking_chars"],
+                                        diagnostic["repeat_checks"], diagnostic["recent_similarity"],
+                                    )
+                                last_monitor_status = diagnostic["status"]
+                                last_monitor_at = now
                             if partial.chunks == 1 or now - last_logged_at >= 10.0 or partial.saw_done:
                                 _LOG.info(
                                     "MAI llama.cpp stream progress chunks=%d elapsed_ms=%d "
@@ -188,10 +213,22 @@ async def stream_completion(
                         break
                 if pending_data and not partial.saw_done:
                     partial.consume("\n".join(pending_data))
-                    if on_progress is not None:
-                        on_progress(partial.snapshot())
+                if monitor is not None:
+                    partial.reasoning_diagnostics = monitor.observe(
+                        "".join(partial.thinking_parts),
+                        content_chars=sum(map(len, partial.content_parts)),
+                        tool_fragment_count=len(partial.tool_fragments),
+                    )
+                if on_progress is not None:
+                    on_progress(partial.snapshot())
         return partial.completed_response()
     except (TimeoutError, httpx.TimeoutException):
+        if monitor is not None:
+            partial.reasoning_diagnostics = monitor.observe(
+                "".join(partial.thinking_parts),
+                content_chars=sum(map(len, partial.content_parts)),
+                tool_fragment_count=len(partial.tool_fragments),
+            )
         if on_timeout is not None:
             on_timeout(partial.snapshot())
         raise
