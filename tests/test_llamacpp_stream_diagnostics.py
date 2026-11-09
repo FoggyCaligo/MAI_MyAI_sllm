@@ -102,9 +102,9 @@ def test_stream_missing_done_fails_protocol_contract():
     assert diagnostics == []
 
 
-def test_existing_nonstream_contract_stays_unchanged():
+def test_json_compatibility_fallback_when_server_ignores_stream_request():
     def responder(request):
-        assert json.loads(request.content)["stream"] is False
+        assert json.loads(request.content)["stream"] is True
         return httpx.Response(200, json={
             "choices": [{"message": {"role": "assistant", "content": "ok"}}],
         })
@@ -113,3 +113,30 @@ def test_existing_nonstream_contract_stays_unchanged():
             adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
             return await adapter.chat(ChatRequest(messages=[{"role":"user","content":"test"}]))
     assert asyncio.run(run()).content == "ok"
+
+
+def test_streaming_without_timeout_diagnostics_still_yields_progress():
+    progress = []
+    def responder(request):
+        assert json.loads(request.content)["stream"] is True
+        return httpx.Response(
+            200,
+            content=b"".join([
+                frame({"reasoning_content": "still thinking"}),
+                frame({"content": "finished"}, "stop"),
+                b"data: [DONE]\\n\\n",
+            ]),
+            headers={"content-type": "text/event-stream"},
+        )
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+            adapter = LlamaCppAdapter(ModelConfig(model="local", host="http://test"), client=client)
+            return await adapter.chat(ChatRequest(
+                messages=[{"role": "user", "content": "test"}],
+                on_stream_progress=progress.append,
+            ))
+    result = asyncio.run(run())
+    assert result.content == "finished"
+    assert result.thinking == "still thinking"
+    assert progress and progress[-1]["complete"] is True
+    assert any(item["thinking"] == "still thinking" for item in progress)
