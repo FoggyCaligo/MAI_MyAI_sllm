@@ -8,6 +8,8 @@ mai_uploads/
 .coverage
 htmlcov/
 data/log.sqlite3*
+MAI_MEMORY/*
+MAI_MyAI_sllm/*
 
 # 로컬 화자 특징 데이터
 data/voice_profiles/
