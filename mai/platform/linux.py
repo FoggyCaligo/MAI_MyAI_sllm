@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import nullcontext
-import locale
 import os
 from pathlib import Path
 import signal
@@ -31,7 +30,13 @@ class LinuxPlatform(HostPlatform):
 
     @property
     def output_encoding(self) -> str:
-        return locale.getpreferredencoding(False)
+        return "utf-8"
+
+    def terminal_environment(self) -> dict[str, str]:
+        """Pin the Ubuntu shell and child Python text streams to UTF-8."""
+        env = os.environ.copy()
+        env.update({"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        return env
 
     def process_kwargs(self) -> dict[str, Any]:
         return {"start_new_session": True}
@@ -47,7 +52,7 @@ class LinuxPlatform(HostPlatform):
         return await asyncio.create_subprocess_shell(
             command, executable=self.shell_description, cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            **self.process_kwargs(),
+            env=self.terminal_environment(), **self.process_kwargs(),
         )
 
     def terminate_process_tree(self, pid: int) -> None:

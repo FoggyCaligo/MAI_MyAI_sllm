@@ -99,6 +99,29 @@ async def _communicate_bounded(process: asyncio.subprocess.Process, *, limit_byt
     return bytes(output[0]), bytes(output[1])
 
 
+_TERMINAL_DECODE_CANDIDATES = ("utf-8-sig", "cp949", "euc-kr", "iso2022_kr")
+
+
+def _decode_terminal_output(payload: bytes) -> tuple[str, str]:
+    """Decode captured shell output without replacing invalid bytes.
+
+    The first candidate matches the UTF-8 child process contract. On failure,
+    attempt three explicitly documented legacy encodings in order. The
+    selected encoding is reported rather than silently pretending it was UTF-8.
+    """
+    failures: list[UnicodeDecodeError] = []
+    for encoding in _TERMINAL_DECODE_CANDIDATES:
+        try:
+            return payload.decode(encoding, errors="strict"), encoding
+        except UnicodeDecodeError as exc:
+            failures.append(exc)
+    raise UnicodeError(
+        "terminal output could not be decoded with any of: "
+        + ", ".join(_TERMINAL_DECODE_CANDIDATES)
+        + f" (last error: {failures[-1]})"
+    ) from failures[-1]
+
+
 async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
                        shell: Literal["bash", "cmd", "powershell"] = "bash") -> dict[str, Any]:
     platform = current_platform()
@@ -127,13 +150,17 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
             await process.wait()
             raise
 
+    stdout, stdout_encoding = _decode_terminal_output(stdout_bytes)
+    stderr, stderr_encoding = _decode_terminal_output(stderr_bytes)
     return {
         "command": command,
         "cwd": str(cwd),
         "shell": "powershell.exe" if shell == "powershell" else ("cmd.exe" if shell == "cmd" else platform.shell_description),
         "shell_family": "powershell" if shell == "powershell" else ("cmd" if shell == "cmd" else platform.shell_family),
-        "stdout": stdout_bytes.decode(platform.output_encoding, errors="strict"),
-        "stderr": stderr_bytes.decode(platform.output_encoding, errors="strict"),
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdout_encoding": stdout_encoding,
+        "stderr_encoding": stderr_encoding,
         "returncode": process.returncode,
         "timed_out": timed_out,
     }

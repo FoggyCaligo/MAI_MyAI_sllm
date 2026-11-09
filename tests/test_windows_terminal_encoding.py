@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mai.tools.terminal import TerminalCommandError, _powershell_command, _run_command
+from mai.tools.terminal import TerminalCommandError, _powershell_command, _run_command, _decode_terminal_output
 
 
 def test_powershell_launch_contract_uses_text_output():
@@ -45,3 +45,29 @@ def test_powershell_unicode_and_native_failure(tmp_path: Path):
     assert result["returncode"] == 0
     failure = asyncio.run(_run_command("cmd.exe /c exit 9", tmp_path, 15, shell="powershell"))
     assert failure["returncode"] == 9
+
+
+def test_terminal_decode_prefers_utf8_for_unicode_output():
+    text, encoding = _decode_terminal_output("한글 경로 UTF-8".encode("utf-8"))
+    assert text == "한글 경로 UTF-8"
+    assert encoding == "utf-8-sig"
+
+
+def test_terminal_decode_retries_legacy_korean_codecs():
+    original = "한글 경로 확인"
+    text, encoding = _decode_terminal_output(original.encode("cp949"))
+    assert text == original
+    assert encoding in {"cp949", "euc-kr"}
+
+
+def test_terminal_decode_failure_remains_explicit():
+    with pytest.raises(UnicodeError, match="utf-8-sig, cp949, euc-kr, iso2022_kr"):
+        _decode_terminal_output(bytes([0xff, 0xfe, 0xff]))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Git Bash integration test")
+def test_git_bash_python_stdout_unicode_roundtrip(tmp_path: Path):
+    command = "printf '한글 경로 ✓'"
+    result = asyncio.run(_run_command(command, tmp_path, 15, shell="bash"))
+    assert result["stdout"] == "한글 경로 ✓"
+    assert result["stdout_encoding"] == "utf-8-sig"

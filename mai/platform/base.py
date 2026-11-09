@@ -23,6 +23,9 @@ class HostPlatform(ABC):
     def output_encoding(self) -> str: ...
 
     @abstractmethod
+    def terminal_environment(self) -> dict[str, str]: ...
+
+    @abstractmethod
     def process_kwargs(self) -> dict[str, Any]: ...
 
     @abstractmethod

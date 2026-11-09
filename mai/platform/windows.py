@@ -84,6 +84,12 @@ class WindowsPlatform(HostPlatform):
     def output_encoding(self) -> str:
         return "utf-8"
 
+    def terminal_environment(self) -> dict[str, str]:
+        """Specify UTF-8 for child Python and Git Bash, not the host process."""
+        env = os.environ.copy()
+        env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1", "LANG": "C.UTF-8"})
+        return env
+
     def process_kwargs(self) -> dict[str, Any]:
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
 
@@ -107,7 +113,7 @@ class WindowsPlatform(HostPlatform):
             raise ValueError(f"Unsupported Windows shell: {shell}")
         return await asyncio.create_subprocess_exec(
             *argv, cwd=str(cwd), stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, **self.process_kwargs(),
+            stderr=asyncio.subprocess.PIPE, env=self.terminal_environment(), **self.process_kwargs(),
         )
 
     def terminate_process_tree(self, pid: int) -> None:
