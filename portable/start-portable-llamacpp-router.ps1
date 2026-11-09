@@ -33,8 +33,10 @@ $mainProjector = [string]$catalog.projector
 # processes. Keep the policy in settings.yaml, not in the downloaded binary.
 $preserveReasoning = [bool]$catalog.reasoning_preserve
 $env:LLAMA_ARG_REASONING_PRESERVE = if ($preserveReasoning) { 'true' } else { 'false' }
-if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue) {
-    throw 'Port 8080 occupied; refusing to connect to another router.'
+foreach ($port in @(8080, 8081)) {
+    if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+        throw "Port $port occupied; refusing to connect to another router."
+    }
 }
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
@@ -46,6 +48,9 @@ $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'MAI_MEMORY/sentence_breaker.sql
 $env:CHAT_DB_PATH = Join-Path $root 'MAI_MEMORY/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'MAI_MEMORY/log.sqlite3'
 $env:VOICE_PROFILE_DIR = Join-Path $root 'MAI_MEMORY/voice_profiles'
+$guardEnabled = [bool]$catalog.memory_guard_enabled
+$routerPort = if ($guardEnabled) { 8081 } else { 8080 }
+$env:LLAMACPP_MEMORY_GUARD_ENABLED = if ($guardEnabled) { 'true' } else { 'false' }
 $env:LLAMACPP_MIN_FREE_VRAM_MIB = [string]$catalog.min_free_vram_mib
 $env:MAI_MIN_AVAILABLE_RAM_MIB = [string]$catalog.min_available_ram_mib
 $env:LLM_BACKEND = 'llamacpp'
@@ -55,23 +60,44 @@ $env:LLAMACPP_MAIN_VISION = if ($mainProjector -or $MainVision) { 'true' } else 
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
                '--models-memory-margin', [string]$catalog.min_free_vram_mib,
-               '--host', '127.0.0.1', '--port', '8080', '--jinja')
+               '--host', '127.0.0.1', '--port', "$routerPort", '--jinja')
 if ($preserveReasoning) { $arguments += '--reasoning-preserve' } else { $arguments += '--no-reasoning-preserve' }
 $process = $null
+$gateway = $null
 try {
     $process = Start-Process -FilePath $server -ArgumentList $arguments -WorkingDirectory $iniDir -PassThru -NoNewWindow
     $ready = $false
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
         if ($process.HasExited) { throw "llama.cpp router exited with $($process.ExitCode)" }
         try {
-            $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
+            $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:$routerPort/v1/models' -TimeoutSec 2
             $ids = @($listing.data | ForEach-Object { $_.id })
             if ($ids -contains $defaultModel -and @($catalog.models | Where-Object { $ids -notcontains $_.id }).Count -eq 0) { $ready = $true; break }
         } catch { }
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw 'Router model aliases not registered within startup deadline' }
-    Write-Host 'MAI llama.cpp router ready on 127.0.0.1:8080; '
+    if ($guardEnabled) {
+        $gatewayArgs = @('-m', 'portable.llamacpp_memory_gateway',
+            '--upstream', 'http://127.0.0.1:8081',
+            '--port', '8080',
+            '--min-free-vram-mib', [string]$catalog.min_free_vram_mib,
+            '--min-available-ram-mib', [string]$catalog.min_available_ram_mib,
+            '--telemetry-path', (Join-Path $root 'MAI_MEMORY/gpu_ram_safety.jsonl'))
+        $gateway = Start-Process -FilePath $python -ArgumentList $gatewayArgs -WorkingDirectory $root -PassThru -NoNewWindow
+        $gatewayReady = $false
+        for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            if ($gateway.HasExited) { throw "Memory gateway exited with $($gateway.ExitCode)" }
+            try {
+                $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
+                if (@($listing.data).Count -gt 0) { $gatewayReady = $true; break }
+            } catch { }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $gatewayReady) { throw 'Memory gateway did not become ready' }
+    }
+    Write-Host 'MAI llama.cpp router endpoint ready on 127.0.0.1:8080; '
+    Write-Host "Shared memory guard: $guardEnabled"
     Write-Host 'MAI Portable single-resident mode: max one GGUF loaded by llama.cpp router.'
     if ($RouterOnly) {
         Write-Host 'MAI Portable router-only mode: no MAI application server started.'
@@ -88,6 +114,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
     }
 } finally {
+    if ($null -ne $gateway -and -not $gateway.HasExited) {
+        & taskkill.exe /PID $gateway.Id /T /F 2>$null | Out-Null
+    }
     if ($null -ne $process -and -not $process.HasExited) {
         # A router can spawn children; terminate the entire process tree.
         & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
