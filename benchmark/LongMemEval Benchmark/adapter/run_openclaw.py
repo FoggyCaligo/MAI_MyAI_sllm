@@ -21,7 +21,7 @@ GAIA_ADAPTER = ROOT / "benchmark" / "GAIA Benchmark" / "adapter"
 sys.path.insert(0, str(GAIA_ADAPTER))
 from run_openclaw_gaia import (
     CONFIG_PROVIDER, default_mai_model, openclaw_config, parse_envelope,
-    require_openclaw_version, router_model_ids,
+    require_openclaw_version, resolve_openclaw_executable, router_model_ids,
 )
 from dataset import load_cases, dialogue_pairs
 
@@ -182,7 +182,8 @@ def main() -> None:
     model = default_mai_model()
     if model not in router_model_ids():
         raise RuntimeError(f"Selected MAI GGUF {model!r} not in router catalog")
-    version = require_openclaw_version(args.openclaw)
+    executable = resolve_openclaw_executable(args.openclaw)
+    version = require_openclaw_version(executable)
     args.output_dir.mkdir(parents=True)
     config = args.output_dir / "openclaw.json"
     config.write_text(
@@ -201,7 +202,7 @@ def main() -> None:
     for index, case in enumerate(cases, 1):
         result = run_case(
             case=case, output=args.output_dir, config=config,
-            cli=args.openclaw, model=model, timeout=args.timeout_seconds,
+            cli=executable, model=model, timeout=args.timeout_seconds,
         )
         with prediction_file.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(result, ensure_ascii=False) + "\n")
