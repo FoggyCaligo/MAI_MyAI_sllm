@@ -153,7 +153,7 @@ class RemoteSessionManager:
         for session_id in ids:
             await self.close(session_id)
 
-    async def execute(self, owner_id: str, session_id: str, operation: RemoteOperation, *, timeout: float = 120) -> dict[str, Any]:
+    async def execute(self, owner_id: str, session_id: str, operation: RemoteOperation, *, timeout: float = 300) -> dict[str, Any]:
         session = self.get(session_id)
         if session.owner_id != owner_id:
             raise RemoteExecutionError("remote session belongs to another owner")
