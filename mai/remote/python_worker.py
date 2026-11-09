@@ -27,9 +27,9 @@ REMOTE_TOOL_TIMEOUT_MULTIPLIER = 2
 def build_registry(*, cwd: str | Path | None = None,
                    browser_manager: BrowserSessionManager | None = None) -> ToolRegistry:
     registry = ToolRegistry()
-    # The remote inner command timeout and registry outer timeout must agree.
-    # In particular, terminal_run must not end at the local 240s limit while
-    # its remote registry wrapper still allows 480s.
+    # The terminal tool enforces its execution deadline inside terminal_run;
+    # other registered tools enforce it through their registry definitions.
+    # Both must use twice the current local execution limit.
     register_local_pc_tools(
         registry, cwd=cwd or os.getcwd(),
         filesystem_timeout_seconds=120,
