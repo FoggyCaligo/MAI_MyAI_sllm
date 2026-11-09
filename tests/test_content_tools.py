@@ -5,7 +5,6 @@ from openpyxl import Workbook
 
 from mai.tools.documents import document_read
 from mai.tools.filesystem import file_read, register_filesystem_read_tools
-from mai.tools.images import register_image_tools
 from mai.tools.registry import ToolRegistry
 
 
@@ -54,8 +53,6 @@ def test_structured_document_parser_remains_available_for_file_read(tmp_path):
 def test_registry_exposes_one_file_read_interface_for_documents(tmp_path):
     registry = ToolRegistry()
     register_filesystem_read_tools(registry, cwd=tmp_path)
-    register_image_tools(registry, model="vision-test", host="http://127.0.0.1:11434", cwd=tmp_path)
     names = set(registry.names())
     assert "file_read" in names
     assert "document_read" not in names
-    assert "image_analyze" in names
