@@ -70,7 +70,7 @@ try {
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
         if ($process.HasExited) { throw "llama.cpp router exited with $($process.ExitCode)" }
         try {
-            $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:$routerPort/v1/models' -TimeoutSec 2
+            $listing = Invoke-RestMethod -Uri "http://127.0.0.1:$routerPort/v1/models" -TimeoutSec 2
             $ids = @($listing.data | ForEach-Object { $_.id })
             if ($ids -contains $defaultModel -and @($catalog.models | Where-Object { $ids -notcontains $_.id }).Count -eq 0) { $ready = $true; break }
         } catch { }
@@ -83,7 +83,7 @@ try {
             '--port', '8080',
             '--min-free-vram-mib', [string]$catalog.min_free_vram_mib,
             '--min-available-ram-mib', [string]$catalog.min_available_ram_mib,
-            '--telemetry-path', (Join-Path $root 'MAI_MEMORY/gpu_ram_safety.jsonl'))
+            '--telemetry-path', ('"' + (Join-Path $root 'MAI_MEMORY/gpu_ram_safety.jsonl') + '"'))
         $gateway = Start-Process -FilePath $python -ArgumentList $gatewayArgs -WorkingDirectory $root -PassThru -NoNewWindow
         $gatewayReady = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
