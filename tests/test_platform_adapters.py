@@ -17,7 +17,7 @@ from mai.tools.terminal import register_terminal_tools
 
 def test_windows_adapter_preserves_existing_contract():
     win = WindowsPlatform()
-    assert "git_bash_executable" in WindowsPlatform.shell_description.fget.__code__.co_names
+    assert win.shell_family == "bash"
     assert win.output_encoding == "utf-8"
     assert windows_cmd_args(Path("C:/tmp/command.cmd")) == _windows_cmd_args(Path("C:/tmp/command.cmd"))
     assert powershell_command("Write-Output '한글'") == _powershell_command("Write-Output '한글'")
