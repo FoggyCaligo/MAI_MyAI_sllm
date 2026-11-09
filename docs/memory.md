@@ -86,4 +86,4 @@
 | 모델 출력·도구 | `working.py`, `tools.py` |
 | 저장 순서·비동기 처리 | `mai/app/runtime.py` |
 
-기억 DB는 `MAI_MyAI_sllm_Memory/memory.sqlite3`, 분해기 상태는 `MAI_MyAI_sllm_Memory/sentence_breaker.sqlite3`다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
+기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
