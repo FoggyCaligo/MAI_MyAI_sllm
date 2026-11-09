@@ -61,6 +61,7 @@ class AgentRuntime:
         on_model_turn: ModelTurnObserver | None = None,
         on_round_timing: Callable[[int, dict[str, Any]], None] | None = None,
         on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
+        on_model_stream_progress: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
@@ -87,6 +88,7 @@ class AgentRuntime:
                 on_model_turn=on_model_turn,
             on_round_timing=on_round_timing,
                 on_model_timeout_diagnostic=on_model_timeout_diagnostic,
+            on_model_stream_progress=on_model_stream_progress,
                 on_verification_rejection=on_verification_rejection,
                 on_verification_audit=on_verification_audit,
             )
@@ -105,6 +107,7 @@ class AgentRuntime:
         on_model_turn: ModelTurnObserver | None = None,
         on_round_timing: Callable[[int, dict[str, Any]], None] | None = None,
         on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
+        on_model_stream_progress: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
     ) -> AgentRunResult:
@@ -127,6 +130,7 @@ class AgentRuntime:
             on_model_turn=on_model_turn,
             on_round_timing=on_round_timing,
             on_model_timeout_diagnostic=on_model_timeout_diagnostic,
+            on_model_stream_progress=on_model_stream_progress,
             on_verification_rejection=on_verification_rejection,
             on_verification_audit=on_verification_audit,
         )
