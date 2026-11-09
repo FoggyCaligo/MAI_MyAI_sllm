@@ -34,6 +34,7 @@ async def _execute_chat(
     on_tool_execution=None,
     on_model_turn=None,
     on_round_timing=None,
+    on_model_stream_progress=None,
     on_verification_rejection=None,
     on_verification_audit=None,
 ) -> tuple[int, dict[str, object]]:
@@ -71,6 +72,7 @@ async def _execute_chat(
             on_tool_execution=on_tool_execution,
             on_model_turn=on_model_turn,
             on_round_timing=on_round_timing,
+            on_model_stream_progress=on_model_stream_progress,
             on_verification_rejection=on_verification_rejection,
             on_verification_audit=on_verification_audit,
         )
@@ -147,6 +149,13 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                     ]},
                 )
 
+            def publish_model_stream_progress(round_number: int, partial: dict[str, object]) -> None:
+                # Stream is untrusted/incomplete until [DONE]. Preserve it only
+                # as live job progress, not a final answer or tool execution.
+                chat_job_store.update_stream_progress(
+                    job_id, model_round=round_number, partial=partial,
+                )
+
             def publish_round_timing(round_number: int, details: dict[str, object]) -> None:
                 audit.append_timing(job_id, round_number, details)
 
@@ -182,6 +191,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 on_tool_execution=publish_tool,
                 on_model_turn=publish_model_turn,
                 on_round_timing=publish_round_timing,
+                on_model_stream_progress=publish_model_stream_progress,
                 on_verification_rejection=publish_verification_rejection,
                 on_verification_audit=publish_verification_audit,
             )
