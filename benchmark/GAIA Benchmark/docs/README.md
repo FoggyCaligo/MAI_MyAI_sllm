@@ -38,14 +38,10 @@ benchmark/
 저장소 루트의 PowerShell에서:
 
 ```powershell
-& ".\benchmark\GAIA Benchmark\docs\setup.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\setup.ps1"
 ```
 
-실행 정책으로 차단되면 **이 명령에 한해서만** 다음과 같이 실행한다.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\setup.ps1"
-```
+위 명령은 새 PowerShell 프로세스에만 실행 정책 `Bypass`를 적용하며 시스템 전체 정책을 변경하지 않는다.
 
 스크립트는 `adapter/.venv`를 만들고 Python 패키지를 설치한 후 GAIA 데이터를 다운로드한다. 기존 MAI 모델 설치를 변경하지 않는다. 설치·인증 실패 시 명시적으로 중단한다.
 
@@ -58,7 +54,7 @@ Linux/WSL은 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 실행한다.
 **사용 중인 MAI 서버를 종료한 뒤** 기존 llama.cpp router를 실행한 상태에서 별도 PowerShell 창에 다음 명령을 실행한다.
 
 ```powershell
-& ".\benchmark\GAIA Benchmark\docs\start_benchmark_server.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\start_benchmark_server.ps1"
 ```
 
 이 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. 원격 공개 호스팅을 끈다.
@@ -114,7 +110,7 @@ $env:MAI_BENCH_USER = "본인의-MAI-로그인-ID"
 ## 7. OpenClaw와 Hermes Agent 비교용 소스 다운로드
 
 ```powershell
-& ".\benchmark\GAIA Benchmark\docs\download_agents.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\download_agents.ps1"
 ```
 
 `benchmark/agents/openclaw` 및 `benchmark/agents/hermes-agent`에 각 프로젝트의 공식 GitHub 저장소를 얕게 복제한다. **두 에이전트의 설치·온보딩·구동은 자동으로 하지 않는다.** 비교 평가에서 동일한 Ornith 9B와 llama.cpp 서버를 연결할 때 필요한 각 프로젝트별 설정은 별도로 수행해야 한다.

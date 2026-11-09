@@ -27,16 +27,24 @@ REMOTE_TOOL_TIMEOUT_MULTIPLIER = 2
 def build_registry(*, cwd: str | Path | None = None,
                    browser_manager: BrowserSessionManager | None = None) -> ToolRegistry:
     registry = ToolRegistry()
+    # The terminal tool enforces its execution deadline inside terminal_run;
+    # other registered tools enforce it through their registry definitions.
+    # Both must use twice the current local execution limit.
     register_local_pc_tools(
         registry, cwd=cwd or os.getcwd(),
-        filesystem_timeout_seconds=60,
-        code_timeout_seconds=60,
-        terminal_timeout_seconds=120 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
+        filesystem_timeout_seconds=120,
+        code_timeout_seconds=120,
+        terminal_timeout_seconds=240 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
     )
-    register_time_tools(registry)
-    register_calculator_tools(registry)
-    register_external_information_tools(registry)
-    register_browser_tools(registry, browser_manager or BrowserSessionManager())
+    register_time_tools(registry, timeout_seconds=20)
+    register_calculator_tools(registry, timeout_seconds=20)
+    register_external_information_tools(
+        registry, web_timeout_seconds=60, market_timeout_seconds=60,
+    )
+    register_browser_tools(
+        registry, browser_manager or BrowserSessionManager(),
+        timeout_multiplier=2,
+    )
     remote_registry = ToolRegistry()
     for definition in registry.definitions():
         remote_registry.register(replace(

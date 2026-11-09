@@ -153,8 +153,8 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
 
     local = ToolRegistry()
     register_local_pc_tools(
-        local, cwd=tmp_path, filesystem_timeout_seconds=60,
-        code_timeout_seconds=60, terminal_timeout_seconds=120,
+        local, cwd=tmp_path, filesystem_timeout_seconds=120,
+        code_timeout_seconds=120, terminal_timeout_seconds=240,
     )
     remote = build_registry(cwd=tmp_path)
     assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2
@@ -162,12 +162,13 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
         expected = (None if definition.timeout_seconds is None
                     else definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER)
         assert remote.get(definition.name).timeout_seconds == expected
-    assert remote.get("browser_open").timeout_seconds == 120
-    assert remote.get("calculator").timeout_seconds == 20
+    assert remote.get("browser_open").timeout_seconds == 240
+    assert remote.get("calculator").timeout_seconds == 40
 
 
 def test_remote_transport_budget_covers_terminal_execution():
     import inspect
     from mai.remote.session import RemoteSessionManager
     timeout = inspect.signature(RemoteSessionManager.execute).parameters["timeout"].default
-    assert timeout > 120 * 2
+    assert timeout == 600
+    assert timeout > 240 * 2
