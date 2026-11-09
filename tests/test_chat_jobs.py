@@ -211,3 +211,26 @@ def test_resumable_chat_routes_install_without_fastapi_model_error() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "installed" in result.stdout
+
+
+def test_live_stream_progress_visible_during_running_job() -> None:
+    store = ChatJobStore()
+    job = store.create(auth_user_id="owner")
+    store.mark_running(job.job_id)
+    store.update_stream_progress(
+        job.job_id, model_round=3,
+        partial={
+            "thinking": "reasoning in progress", "content": "partial",
+            "chunks": 8, "finish_reason": None, "complete": False,
+            "tool_fragments": [{"index": 0, "name": "file_read"}],
+        },
+    )
+    snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert snapshot is not None
+    assert snapshot["status"] == "running"
+    assert snapshot["model_round"] == 3
+    assert snapshot["thinking"] == "reasoning in progress"
+    assert snapshot["stream_progress"]["chunks"] == 8
+    assert snapshot["stream_progress"]["complete"] is False
+    assert snapshot["stream_progress"]["tool_call_fragments"] == 1
+    assert store.snapshot_for(job_id=job.job_id, auth_user_id="other") is None
