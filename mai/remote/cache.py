@@ -59,7 +59,9 @@ def _unlock(file) -> None:
 
 @contextmanager
 def _bundle_lock(directory: Path, *, nonblocking: bool) -> Iterator[bool]:
-    lock_path = directory / _LOCK_NAME
+    lock_dir = directory.parent / ".cache-locks"
+    lock_dir.mkdir(exist_ok=True)
+    lock_path = lock_dir / (directory.name + _LOCK_NAME)
     with lock_path.open("a+b") as file:
         if file.seek(0, os.SEEK_END) == 0:
             file.write(b"\\0")
