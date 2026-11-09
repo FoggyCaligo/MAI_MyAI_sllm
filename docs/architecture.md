@@ -120,7 +120,7 @@ Windows Git Bash / Ubuntu 24.04 Bash 공통. Windows PowerShell은 `mai.ps1`, CM
 | `LLM_BACKEND` | `llamacpp` |
 | `LLAMACPP_HOST` | `http://127.0.0.1:8080` |
 | `MODEL_MAX_OUTPUT_TOKENS` | `32768` |
-| `MODEL_REQUEST_TIMEOUT_SECONDS` | `500` |
+| `MODEL_REQUEST_TIMEOUT_SECONDS` | `300` |
 | `SESSION_HISTORY_MESSAGES` | `10` |
 | `MAX_INLINE_TOOL_RESULT_CHARS` | `8000` |
 | `MAI_ANSWER_QUALITY_REVIEW` | `false` |
