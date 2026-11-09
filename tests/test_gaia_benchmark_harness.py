@@ -11,7 +11,7 @@ import pytest
 ADAPTER = Path(__file__).resolve().parents[1] / "benchmark" / "GAIA Benchmark" / "adapter"
 sys.path.insert(0, str(ADAPTER))
 
-from run_gaia import extract_answer, model_prompt, completed_ids, submit_and_poll
+from run_gaia import extract_answer, model_prompt, completed_ids, submit_and_poll, login
 
 
 def test_gaia_answer_extraction_requires_final_line_contract():
@@ -81,3 +81,52 @@ def test_gaia_offline_paths_are_gitignored():
     assert "adapter/data/" in ignored
     assert "result/*" in ignored
     assert "agents/" in ignored
+
+
+def test_gaia_login_uses_required_pre_auth_session():
+    import httpx
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/login/session":
+            return httpx.Response(200, json={"session_token": "test-session-token"})
+        if request.url.path == "/login":
+            assert request.headers["X-MAI-Preauth-Session"] == "test-session-token"
+            assert json.loads(request.content) == {"user_id": "tester", "user_pw": "secret"}
+            return httpx.Response(200, json={"token": "test-auth-token"})
+        raise AssertionError(request.url.path)
+
+    with httpx.Client(base_url="http://localhost", transport=httpx.MockTransport(handler)) as client:
+        assert login(client, "tester", "secret") == {"Authorization": "Bearer test-auth-token"}
+    assert calls == [("GET", "/login/session"), ("POST", "/login")]
+
+
+def test_gaia_login_rejects_missing_pre_auth_session():
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/login/session"
+        return httpx.Response(200, json={})
+
+    with httpx.Client(base_url="http://localhost", transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RuntimeError, match="session_token"):
+            login(client, "tester", "secret")
+
+
+def test_gaia_model_resolver_uses_portable_catalog(tmp_path, monkeypatch):
+    import resolve_main_model
+    import portable.llamacpp_model_catalog as catalog
+
+    monkeypatch.setattr(catalog, "from_settings", lambda root: {"default": "gguf-example-model"})
+    assert resolve_main_model.resolve_main_model(tmp_path) == "gguf-example-model"
+
+
+def test_gaia_model_resolver_rejects_empty_default(tmp_path, monkeypatch):
+    import resolve_main_model
+    import portable.llamacpp_model_catalog as catalog
+
+    monkeypatch.setattr(catalog, "from_settings", lambda root: {"default": ""})
+    with pytest.raises(ValueError, match="valid default model"):
+        resolve_main_model.resolve_main_model(tmp_path)
