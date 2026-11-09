@@ -29,6 +29,8 @@ def migration_plan(source: Path, target: Path) -> list[tuple[Path, Path]]:
         and not path.name.endswith(("-wal", "-shm", "-journal"))
     )
     plan = [(path, target / path.relative_to(source)) for path in files]
+    if any(path.is_symlink() for path, _ in plan):
+        raise ValueError("old data directory contains symlinked files; resolve before migrating")
     if not plan:
         raise ValueError("old data directory has no files to migrate")
     conflicts = [str(destination) for _, destination in plan if destination.exists()]
@@ -46,7 +48,7 @@ def migrate(plan: list[tuple[Path, Path]]) -> None:
                 raise FileExistsError(destination)
             created.append(destination)
             if source.suffix == ".sqlite3":
-                with sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True) as original:
+                with sqlite3.connect(source.as_uri() + "?mode=ro", uri=True) as original:
                     with sqlite3.connect(destination) as backup:
                         original.backup(backup)
             else:
