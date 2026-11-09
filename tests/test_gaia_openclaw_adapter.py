@@ -94,3 +94,12 @@ def test_openclaw_cli_failure_cannot_be_scored_as_completion(tmp_path, monkeypat
             config=config, model_id="gguf-abc", timeout_seconds=1800,
         )
     assert (work / "openclaw_stderr.log").read_text(encoding="utf-8") == "offline error"
+
+
+def test_router_only_starts_no_mai_app_and_conflicts_with_gaia():
+    launcher = (ROOT / "portable" / "start-portable-llamacpp-router.ps1").read_text(encoding="utf-8-sig")
+    assert "[switch]$RouterOnly" in launcher
+    assert "if ($GaiaBenchmark -and $RouterOnly)" in launcher
+    assert "if ($RouterOnly)" in launcher
+    assert "Wait-Process -Id $process.Id" in launcher
+    assert "'--models-max', \"$ModelsMax\"" in launcher
