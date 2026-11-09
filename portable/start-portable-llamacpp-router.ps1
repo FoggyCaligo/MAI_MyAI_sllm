@@ -4,9 +4,11 @@ param(
     [ValidateRange(1,1)][int]$ModelsMax = 1,
     [ValidateRange(0,999)][int]$GpuLayers = 99,
     [ValidateRange(512,262144)][int]$ContextSize = 131072,
-    [switch]$GaiaBenchmark
+    [switch]$GaiaBenchmark,
+    [switch]$RouterOnly
 )
 $ErrorActionPreference = 'Stop'
+if ($GaiaBenchmark -and $RouterOnly) { throw 'GaiaBenchmark and RouterOnly cannot be combined' }
 Set-StrictMode -Version Latest
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -66,7 +68,11 @@ try {
     if (-not $ready) { throw 'Router model aliases not registered within startup deadline' }
     Write-Host 'MAI llama.cpp router ready on 127.0.0.1:8080; '
     Write-Host 'MAI Portable single-resident mode: max one GGUF loaded by llama.cpp router.'
-    if ($GaiaBenchmark) {
+    if ($RouterOnly) {
+        Write-Host 'MAI Portable router-only mode: no MAI application server started.'
+        Wait-Process -Id $process.Id
+        if ($process.ExitCode -ne 0) { throw "llama.cpp router exited with $($process.ExitCode)" }
+    } elseif ($GaiaBenchmark) {
         $benchmarkLauncher = Join-Path $root 'benchmark/GAIA Benchmark/docs/start_benchmark_server.ps1'
         if (-not (Test-Path -LiteralPath $benchmarkLauncher -PathType Leaf)) {
             throw "GAIA benchmark server launcher missing: $benchmarkLauncher"
