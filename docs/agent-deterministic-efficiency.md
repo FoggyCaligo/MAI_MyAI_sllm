@@ -13,7 +13,9 @@ AGENT_PROGRESS_SUMMARY_ENABLED: true
 ## 1. Round timing
 
 Every successful model call emits `MAI model timing round=N model_elapsed_ms=X`
-through the server logger. At the end of a tool round, successful answer, or
+through the server logger. Successful requests also write structured timings to
+`round_timings` in the existing `LOG_DB_PATH` SQLite file; a new table is
+created automatically without modifying the legacy `steps` schema. At the end of a tool round, successful answer, or
 verifier retry it emits `MAI round timing` with:
 - `round`: current agent round number.
 - `total_elapsed_ms`: elapsed wall-clock time in that round.
