@@ -1,4 +1,4 @@
-# 평가 전용 MAI 서버: 실제 사용자 DB를 사용하지 않도록 별도 경로 지정
+﻿# 평가 전용 MAI 서버: 실제 사용자 DB를 사용하지 않도록 별도 경로 지정
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $data = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'result\_runtime'

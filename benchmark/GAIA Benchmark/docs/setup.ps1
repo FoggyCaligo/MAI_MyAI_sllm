@@ -1,4 +1,4 @@
-# Windows PowerShell: GAIA 평가 전용 환경 및 데이터 설치
+﻿# Windows PowerShell: GAIA 평가 전용 환경 및 데이터 설치
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $adapter = Join-Path $root 'adapter'

@@ -90,10 +90,10 @@ Verifier 순서: **수치 대조 → 사실·작업 근거 검증 → (활성화
 
 | 데이터 | 기본 경로 |
 |---|---|
-| 장기기억 | `data/memory.sqlite3` |
-| 분해기 누적 데이터 | `data/sentence_breaker.sqlite3` |
-| 대화 | `data/chat.sqlite3` |
-| 감사 | `data/log.sqlite3` |
+| 장기기억 | `MAI_MyAI_sllm_Memory/memory.sqlite3` |
+| 분해기 누적 데이터 | `MAI_MyAI_sllm_Memory/sentence_breaker.sqlite3` |
+| 대화 | `MAI_MyAI_sllm_Memory/chat.sqlite3` |
+| 감사 | `MAI_MyAI_sllm_Memory/log.sqlite3` |
 | 업로드 | `mai_uploads/` |
 
 - **Owner:** 호스트 파일·터미널 및 승인된 원격 Native 도구 사용.

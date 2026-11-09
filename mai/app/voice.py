@@ -25,7 +25,7 @@ class VoiceService:
             raise ValueError("VOICE_SILENCE_SECONDS must be between 1 and 120")
         if not 0 < self.match_threshold < 1:
             raise ValueError("VOICE_MATCH_THRESHOLD must be between 0 and 1")
-        self.root = Path(os.environ.get("VOICE_PROFILE_DIR", "./data/voice_profiles")).expanduser().resolve()
+        self.root = Path(os.environ.get("VOICE_PROFILE_DIR", "./MAI_MyAI_sllm_Memory/voice_profiles")).expanduser().resolve()
         self._encoder = None
         self._vad = None
         self._transcriber = None

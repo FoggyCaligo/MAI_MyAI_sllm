@@ -114,7 +114,7 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
                             or exc.args != ("No results found.",)):
                         raise
                     raw_results = []
-                if page > 1 and merged and not raw_results:
+                if not raw_results:
                     stopped_on_empty_page = page
                     _LOG.info(
                         "MAI web_search pagination ended provider=ddgs empty_page=%d completed_pages=%d unique_results=%d",
@@ -161,6 +161,8 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
         "provider_pages": completed_pages,
         "stopped_on_empty_page": stopped_on_empty_page,
         "results": results,
+        "status": "results" if results else "no_results",
+        "message": None if results else "결과없음",
     }
 
 
@@ -290,6 +292,8 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
             "the web. Queries up to three provider result pages in one call and returns one compact merged list "
             "of ranked titles, URLs, and short snippets. If a later page has no results, earlier results remain "
             "valid; provider_pages reports completed pages and stopped_on_empty_page identifies that stop. "
+            "A completed search with zero matches returns status=no_results and message=결과없음; "
+            "provider errors, rate limits and connection failures remain explicit failures. "
             "Use web_fetch for page contents."
         ),
         input_model=WebSearchInput,
