@@ -60,6 +60,8 @@ function Initialize-MaiRemotePython {
             if ($LASTEXITCODE -ne 0) { throw 'Remote Chromium installation failed' }
             New-Item -ItemType File -Path $installReady -Force | Out-Null
         }
+        $env:MAI_REMOTE_CACHE_ROOT = $base
+        $env:MAI_REMOTE_CACHE_DIGEST = $digest
         $env:MAI_REMOTE_PYTHON = $venvPython
         $env:PYTHONPATH = $target
         Write-Host "MAI remote Python worker ready: $target"
@@ -80,6 +82,8 @@ try {
         throw "MAI remote agent exited with code $exitCode"
     }
 } finally {
+    Remove-Item Env:MAI_REMOTE_CACHE_ROOT -ErrorAction SilentlyContinue
+    Remove-Item Env:MAI_REMOTE_CACHE_DIGEST -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_SERVER -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_SESSION -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_KEY -ErrorAction SilentlyContinue
