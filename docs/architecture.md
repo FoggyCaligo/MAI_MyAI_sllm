@@ -58,7 +58,7 @@ AgentRuntime / AgentLoop
 | 다른 GGUF 선택 | 이전 모델 `unloaded` 확인 → 새 모델 `loaded` 확인 |
 | 모델 전환 실패 | 오류 보고. 다른 모델로 자동 대체하지 않음 |
 
-Verifier 순서: **수치 대조 → 사실·작업 근거 검증 → (활성화된 경우) 품질 검토**. 배포 설정 `MAI_ANSWER_QUALITY_REVIEW: false`, `MAI_VERIFIER_BLOCKING_MODE: critical`. 숫자·사실 검사는 품질 검토를 끄더라도 수행.
+**Verifier를 활성화한 요청의 순서:** 수치 대조 → 사실·작업 근거 검증 → (활성화된 경우) 품질 검토. 배포 `settings.yaml`은 `MAI_VERIFIER_ENABLED: false`이므로 기본 요청에서는 이 단계 전체를 수행하지 않는다. `verify=true`로 활성화하거나 UI에서 검증을 켤 수 있다. 배포 설정 `MAI_ANSWER_QUALITY_REVIEW: false`, `MAI_VERIFIER_BLOCKING_MODE: critical`. 숫자·사실 검사는 품질 검토를 끄더라도 수행.
 
 - 검증 입력: 현재 사용자 요청, 이전 대화의 노출 가능한 본문, 임시답변, 해당 요청의 성공한 도구 결과·실행 인수.
 - 제외: Main의 비공개 thinking, 이전 반려 초안의 일반 Assistant 증거화, 감사 DB의 자동 주입.
@@ -103,7 +103,7 @@ Verifier 순서: **수치 대조 → 사실·작업 근거 검증 → (활성화
 - **기억 검색:** 필요할 때 `memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
 - **보안:** `.env`, 업로드, 개인 SQLite, 원격 인증 키는 Git에 올리지 않음.
 
-참조: [기억](memory.md), [로그인 제한](login-ip-lockout.md).
+참조: [기억](memory.md), [별도 Memory Git 저장소](memory-repository.md), [로그인 제한](login-ip-lockout.md).
 
 ## 6. 실행·설정·검증
 
@@ -123,6 +123,7 @@ Windows Git Bash / Ubuntu 24.04 Bash 공통. Windows PowerShell은 `mai.ps1`, CM
 | `MODEL_REQUEST_TIMEOUT_SECONDS` | `300` |
 | `SESSION_HISTORY_MESSAGES` | `10` |
 | `MAX_INLINE_TOOL_RESULT_CHARS` | `8000` |
+| `MAI_VERIFIER_ENABLED` | `false` |
 | `MAI_ANSWER_QUALITY_REVIEW` | `false` |
 | `MAI_VERIFIER_BLOCKING_MODE` | `critical` |
 
