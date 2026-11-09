@@ -20,8 +20,8 @@ def register_readonly_local_tools(
     *,
     cwd: str | Path | None = None,
     upload_root: str | Path | None = None,
-    filesystem_timeout_seconds: float | None = 60,
-    code_timeout_seconds: float | None = 60,
+    filesystem_timeout_seconds: float | None = 120,
+    code_timeout_seconds: float | None = 120,
 ) -> None:
     """Register read-only local capabilities plus optional trial upload-scoped file_write."""
     register_filesystem_read_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
@@ -39,9 +39,9 @@ def register_local_pc_tools(
     registry: ToolRegistry,
     *,
     cwd: str | Path | None = None,
-    filesystem_timeout_seconds: float | None = 60,
-    code_timeout_seconds: float | None = 60,
-    terminal_timeout_seconds: float | None = 120,
+    filesystem_timeout_seconds: float | None = 120,
+    code_timeout_seconds: float | None = 120,
+    terminal_timeout_seconds: float | None = 240,
 ) -> None:
     """Register all currently implemented PC-wide tools into one registry."""
     register_filesystem_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
