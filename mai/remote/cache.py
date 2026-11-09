@@ -17,6 +17,7 @@ from typing import Iterator
 
 RETENTION_DAYS = 30
 INCOMPLETE_RETENTION_HOURS = 24
+ENVIRONMENT_HANDOFF_GRACE_MINUTES = 10
 _SHARED_ENVS = ".shared-envs"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _LOCK_NAME = ".active.lock"
@@ -157,6 +158,7 @@ def prune_replaced_dependency_envs(base: Path, active_env_digest: str) -> list[P
     root = base / _SHARED_ENVS
     if not root.is_dir():
         raise FileNotFoundError(f"shared remote environment directory missing: {root}")
+    cutoff = datetime.now(timezone.utc).timestamp() - timedelta(minutes=ENVIRONMENT_HANDOFF_GRACE_MINUTES).total_seconds()
     active = root / active_env_digest
     if not (active / ".installed-ok").is_file():
         raise RuntimeError("active remote dependency environment is incomplete")
@@ -166,10 +168,15 @@ def prune_replaced_dependency_envs(base: Path, active_env_digest: str) -> list[P
             continue
         if candidate.is_symlink() or not candidate.is_dir() or not (candidate / ".installed-ok").is_file():
             continue
+        last_used = candidate / _LAST_USED_NAME
+        if last_used.is_symlink() or not last_used.is_file() or last_used.stat().st_mtime >= cutoff:
+            continue
         with _bundle_lock(candidate, nonblocking=True) as acquired:
             if not acquired:
                 continue
             if not candidate.is_dir() or not (candidate / ".installed-ok").is_file():
+                continue
+            if last_used.stat().st_mtime >= cutoff:
                 continue
             shutil.rmtree(candidate)
             removed.append(candidate)
@@ -207,6 +214,8 @@ def maintain_remote_worker_cache(
         with env_lock as env_acquired:
             if not env_acquired:
                 raise RuntimeError("remote dependency environment is already locked")
+            if environment is not None:
+                (environment / _LAST_USED_NAME).touch()
             deleted = prune_remote_worker_cache(base, digest)
             deleted.extend(prune_incomplete_worker_cache(base, digest))
             if environment_digest is not None:
