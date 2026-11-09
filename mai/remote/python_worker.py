@@ -34,7 +34,7 @@ def build_registry(*, cwd: str | Path | None = None,
         registry, cwd=cwd or os.getcwd(),
         filesystem_timeout_seconds=120,
         code_timeout_seconds=120,
-        terminal_timeout_seconds=240 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
+        terminal_timeout_seconds=float(os.environ.get("TERMINAL_TIMEOUT_SECONDS", "120")) * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
     )
     register_time_tools(registry, timeout_seconds=20)
     register_calculator_tools(registry, timeout_seconds=20)
