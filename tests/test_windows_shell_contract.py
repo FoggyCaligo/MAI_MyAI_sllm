@@ -71,6 +71,7 @@ def test_cmd_multiline_exit_status_and_shell_identity(tmp_path):
         asyncio.run(terminal_run(
             command="echo command started\ncmd.exe /d /c exit 19",
             cwd=str(tmp_path),
+            shell="cmd",
         ))
     result = exc.value.result
     assert result["returncode"] == 19
