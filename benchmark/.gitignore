@@ -5,3 +5,8 @@ GAIA Benchmark/result/*
 !GAIA Benchmark/result/.gitkeep
 GAIA Benchmark/adapter/__pycache__/
 agents/
+
+# LongMemEval 원문, 정답, 평가 결과와 로그는 Git에서 제외
+LongMemEval Benchmark/data/
+LongMemEval Benchmark/result/
+LongMemEval Benchmark/adapter/__pycache__/
