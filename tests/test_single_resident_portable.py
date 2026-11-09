@@ -44,3 +44,19 @@ def test_router_memory_measurement_enabled_on_windows_and_linux():
     linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
     assert "'--models-memory-margin', [string]$catalog.min_free_vram_mib" in win
     assert '--models-memory-margin "$min_free_vram_mib"' in linux
+
+
+def test_memory_guard_routes_all_clients_through_local_gateway():
+    from portable.resolve_llamacpp_settings import read_config
+
+    cfg = read_config(ROOT / "settings.yaml")
+    assert cfg["LLAMACPP_MEMORY_GUARD_ENABLED"] is True
+    win = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
+    linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
+    for launcher in (win, linux):
+        assert "portable.llamacpp_memory_gateway" in launcher
+        assert "8081" in launcher
+        assert "8080" in launcher
+        assert "memory_guard_enabled" in launcher
+    assert "if ($guardEnabled)" in win
+    assert 'if [[ "$guard_enabled" == true ]]' in linux
