@@ -21,7 +21,7 @@ GAIA_ADAPTER = PROJECT_ROOT / "benchmark" / "GAIA Benchmark" / "adapter"
 sys.path.insert(0, str(GAIA_ADAPTER))
 sys.path.insert(0, str(PROJECT_ROOT))
 from resolve_main_model import resolve_main_model
-from dataset import dialogue_pairs, load_cases
+from dataset import load_cases
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.app.chat_sessions import ChatSessionStore
 from mai.app.runtime import MAIRuntime
@@ -45,28 +45,44 @@ async def evaluate_case(*, case, root: Path, model: str, router: str) -> dict:
     )
     chat = ChatSessionStore(case_dir / "chat.sqlite3")
     observed_turns = 0
+    observed_messages = 0
+    unmatched_messages = 0
     started = time.monotonic()
     try:
         previous_assistant = None
         for session in case.sessions:
             runtime.memory.now = lambda when=session.date: when
-            for user_text, original_assistant in dialogue_pairs(session):
+            pending_user = None
+            for turn in session.turns:
+                # Keep all original messages; never invent a missing answer.
                 chat.append(
                     db_id=principal.db_id, session_id=session.session_id,
-                    role="user", content=user_text,
+                    role=turn.role, content=turn.content,
                     created_at=session.date.timestamp(),
                 )
-                chat.append(
-                    db_id=principal.db_id, session_id=session.session_id,
-                    role="assistant", content=original_assistant,
-                    created_at=session.date.timestamp(),
-                )
-                # Reuse the production fact extractor and durable memory admission.
-                # Unlike MAI's background path, errors must stop this benchmark.
+                observed_messages += 1
+                if turn.role == "user":
+                    if pending_user is not None:
+                        runtime.memory.record_raw_user_evidence(
+                            principal.memory_user_id, pending_user,
+                        )
+                        unmatched_messages += 1
+                    pending_user = turn.content
+                    continue
+                if turn.role != "assistant":
+                    raise ValueError(f"invalid dialogue role in {session.session_id}")
+                if pending_user is None:
+                    # An assistant-only message cannot enter the completed
+                    # user-response fact-extraction contract.
+                    unmatched_messages += 1
+                    previous_assistant = turn.content
+                    continue
+                user_text = pending_user
+                pending_user = None
                 facts = await runtime.memory.extract_facts(
                     user_text=user_text,
                     previous_assistant_message=previous_assistant,
-                    final_answer=original_assistant,
+                    final_answer=turn.content,
                     successful_tool_results=(),
                     fact_extractor=runtime._fact_extractor_for(model),
                 )
@@ -77,13 +93,18 @@ async def evaluate_case(*, case, root: Path, model: str, router: str) -> dict:
                     user_id=principal.memory_user_id,
                     user_text=user_text,
                     previous_assistant_message=previous_assistant,
-                    final_answer=original_assistant,
+                    final_answer=turn.content,
                     user_evidence=evidence,
                     successful_tool_results=(),
                     fact_texts=facts,
                 )
-                previous_assistant = original_assistant
+                previous_assistant = turn.content
                 observed_turns += 1
+            if pending_user is not None:
+                runtime.memory.record_raw_user_evidence(
+                    principal.memory_user_id, pending_user,
+                )
+                unmatched_messages += 1
 
         # Separate query session, no original history in model context.
         runtime.memory.now = lambda: datetime.now(timezone.utc)
@@ -108,6 +129,8 @@ async def evaluate_case(*, case, root: Path, model: str, router: str) -> dict:
         "error": error,
         "history_sessions": len(case.sessions),
         "history_turn_pairs": observed_turns,
+        "history_messages": observed_messages,
+        "unmatched_messages": unmatched_messages,
         "elapsed_seconds": round(time.monotonic() - started, 3),
     }
 
@@ -140,7 +163,9 @@ def main() -> None:
             stream.write(json.dumps(result, ensure_ascii=False) + "\n")
         print(
             f"[{index}] {case.question_id}: {result['status']}; "
-            f"{result['history_turn_pairs']} replayed turns; "
+            f"{result['history_messages']} source messages, "
+            f"{result['history_turn_pairs']} completed turns, "
+            f"{result['unmatched_messages']} unmatched; "
             f"{result['elapsed_seconds']}s", flush=True,
         )
         if result["error"]:

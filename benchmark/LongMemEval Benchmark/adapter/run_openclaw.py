@@ -23,7 +23,7 @@ from run_openclaw_gaia import (
     CONFIG_PROVIDER, default_mai_model, openclaw_config, parse_envelope,
     require_openclaw_version, resolve_openclaw_executable, router_model_ids,
 )
-from dataset import load_cases, dialogue_pairs
+from dataset import load_cases
 
 PLUGIN_DIR = HERE.parent / "openclaw-plugin"
 
@@ -35,15 +35,12 @@ def safe_filename(identity: str) -> str:
 def sanitized_history(case) -> dict:
     sessions = []
     for session in case.sessions:
-        # Fail before writing anything if roles are not exact paired turns.
-        pairs = list(dialogue_pairs(session))
         sessions.append({
             "session_id": session.session_id,
             "timestamp_ms": int(session.date.timestamp() * 1000),
             "turns": [
-                {"role": role, "content": content}
-                for user_text, assistant_text in pairs
-                for role, content in (("user", user_text), ("assistant", assistant_text))
+                {"role": turn.role, "content": turn.content}
+                for turn in session.turns
             ],
         })
     return {"case_id": case.question_id, "sessions": sessions}

@@ -35,8 +35,8 @@ function checkImport(value: unknown): ImportFile {
     if (typeof ts !== "number" || !Number.isFinite(ts) || ts < prev) {
       throw new Error("LongMemEval session timestamp invalid or out of chronological order");
     }
-    if (!Array.isArray(rawTurns) || !rawTurns.length || rawTurns.length % 2) {
-      throw new Error("LongMemEval sessions require paired user and assistant turns");
+    if (!Array.isArray(rawTurns) || !rawTurns.length) {
+      throw new Error("LongMemEval sessions require nonempty ordered source turns");
     }
     const turns: SourceTurn[] = [];
     for (let index = 0; index < rawTurns.length; index++) {
@@ -45,11 +45,11 @@ function checkImport(value: unknown): ImportFile {
         throw new TypeError("LongMemEval turn must be an object");
       }
       const turn = entry as Record<string, unknown>;
-      const expected = index % 2 === 0 ? "user" : "assistant";
-      if (turn.role !== expected || typeof turn.content !== "string" || !turn.content) {
+      if ((turn.role !== "user" && turn.role !== "assistant") ||
+          typeof turn.content !== "string" || !turn.content) {
         throw new Error("LongMemEval turn role/content contract violation");
       }
-      turns.push({ role: expected, content: turn.content });
+      turns.push({ role: turn.role, content: turn.content });
     }
     sessions.push({ session_id: id, timestamp_ms: ts, turns });
     ids.add(id);

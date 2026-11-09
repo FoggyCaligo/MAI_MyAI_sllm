@@ -146,3 +146,49 @@ def test_shared_official_judge_export_refuses_missing_or_failed_predictions(tmp_
             start=0, limit=1,
         )
     assert not (tmp_path / "judge.jsonl").exists()
+
+
+def test_unpaired_source_turns_are_kept_in_order_without_inventing_assistant(tmp_path):
+    raw = [{
+        "question_id": "odd-history",
+        "question_type": "multi-session",
+        "question": "What happened?",
+        "answer": "No answer",
+        "haystack_session_ids": ["sharegpt_odd"],
+        "haystack_dates": ["2024/01/01 (Mon) 10:00"],
+        "haystack_sessions": [[
+            {"role": "user", "content": "First question."},
+            {"role": "assistant", "content": "First answer."},
+            {"role": "user", "content": "Unanswered follow-up."},
+        ]],
+    }]
+    dataset_path = tmp_path / "odd.json"
+    dataset_path.write_text(json.dumps(raw), encoding="utf-8")
+    (case,) = tuple(load_cases(dataset_path))
+    payload = runner.sanitized_history(case)
+    assert payload["sessions"][0]["turns"] == [
+        {"role": "user", "content": "First question."},
+        {"role": "assistant", "content": "First answer."},
+        {"role": "user", "content": "Unanswered follow-up."},
+    ]
+    assert len(payload["sessions"][0]["turns"]) == len(case.sessions[0].turns)
+    assert "answer" not in payload
+    assert "has_answer" not in json.dumps(payload)
+
+
+def test_assistant_only_source_turn_is_preserved_without_user_fabrication(tmp_path):
+    raw = [{
+        "question_id": "assistant-only",
+        "question_type": "single-session-assistant",
+        "question": "What did the assistant say?",
+        "answer": "Hello.",
+        "haystack_session_ids": ["s1"],
+        "haystack_dates": ["2024/01/01 (Mon) 10:00"],
+        "haystack_sessions": [[{"role": "assistant", "content": "Hello."}]],
+    }]
+    source = tmp_path / "assistant-only.json"
+    source.write_text(json.dumps(raw), encoding="utf-8")
+    (case,) = tuple(load_cases(source))
+    assert runner.sanitized_history(case)["sessions"][0]["turns"] == [
+        {"role": "assistant", "content": "Hello."}
+    ]
