@@ -225,6 +225,7 @@ class AgentLoop:
         options: Mapping[str, Any] | None = None,
         on_tool_execution: ToolExecutionObserver | None = None,
         on_model_turn: ModelTurnObserver | None = None,
+        on_round_timing: Callable[[int, dict[str, Any]], None] | None = None,
         on_model_timeout_diagnostic: Callable[[int, dict[str, Any]], None] | None = None,
         on_verification_rejection: VerificationRejectionObserver | None = None,
         on_verification_audit: VerificationAuditObserver | None = None,
@@ -259,6 +260,21 @@ class AgentLoop:
         hypothesis_reconsideration_pending = False
         rejected_evidence_snapshot: frozenset[tuple[str, str]] | None = None
         unchanged_evidence_rejections = 0
+
+
+        def record_timing(round_idx: int, status: str, *, model_ms: int = 0,
+                          tool_ms: int = 0, verifier_ms: int = 0) -> None:
+            total_ms = int((time.perf_counter() - round_started) * 1000)
+            details = {
+                "status": status, "total_elapsed_ms": total_ms,
+                "model_elapsed_ms": model_ms, "tool_elapsed_ms": tool_ms,
+                "verifier_elapsed_ms": verifier_ms,
+            }
+            _LOG.info("MAI round timing round=%d %s", round_idx, " ".join(
+                f"{key}={value}" for key, value in details.items()
+            ))
+            if on_round_timing is not None:
+                on_round_timing(round_idx, details)
 
         try:
             while True:
@@ -390,7 +406,7 @@ class AgentLoop:
                                 "you still need, or provide a non-empty final answer that directly addresses the user."
                             ),
                         })
-                        _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=empty_final_retry", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
+                        record_timing(round_number, "empty_final_retry", model_ms=model_elapsed_ms, tool_ms=tool_elapsed_ms)
                         round_number += 1
                         continue
 
@@ -509,10 +525,10 @@ class AgentLoop:
                             history.append({"role": "system", "content": feedback})
                             rejection_feedback_indices.append(len(history) - 1)
                             latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
-                            _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=verification_retry verifier_elapsed_ms=%d", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms, int((time.perf_counter()-verification_started)*1000))
+                            record_timing(round_number, "verification_retry", model_ms=model_elapsed_ms, tool_ms=tool_elapsed_ms, verifier_ms=int((time.perf_counter()-verification_started)*1000))
                             round_number += 1
                             continue
-                    _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=completed verifier_elapsed_ms=%d", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms, int((time.perf_counter()-verification_started)*1000) if self.final_verifier is not None else 0)
+                    record_timing(round_number, "completed", model_ms=model_elapsed_ms, tool_ms=tool_elapsed_ms, verifier_ms=int((time.perf_counter()-verification_started)*1000) if self.final_verifier is not None else 0)
                     _LOG.info("MAI final accepted round=%d", round_number)
                     for history_index in reversed(rejected_final_indices):
                         del history[history_index]
@@ -627,12 +643,12 @@ class AgentLoop:
                 for notice in dict.fromkeys(round_notices):
                     _LOG.warning("MAI structural recovery notice round=%d message=%s", round_number, notice)
                     history.append({"role": "system", "content": notice})
-                _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=tools", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
+                record_timing(round_number, "tools", model_ms=model_elapsed_ms, tool_ms=tool_elapsed_ms)
                 round_number += 1
         except AgentRunFailure:
             raise
         except Exception as exc:
-            _LOG.warning("MAI round timing round=%d total_elapsed_ms=%d status=failed error_type=%s", round_number, int((time.perf_counter()-round_started)*1000), type(exc).__name__)
+            record_timing(round_number, "failed", tool_ms=locals().get("tool_elapsed_ms", 0), model_ms=locals().get("model_elapsed_ms", 0))
             _LOG.exception("MAI agent run failed round=%d error_type=%s", round_number, type(exc).__name__)
             raise AgentRunFailure(
                 exc,
