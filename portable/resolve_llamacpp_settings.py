@@ -20,7 +20,8 @@ KEYS = (
     "LLAMACPP_MAIN_MMPROJ_PATH",
     "LLAMACPP_MAIN_VISION",
     "LLAMACPP_REASONING_PRESERVE",
-    "LLAMACPP_GPU_MEMORY_BUDGET_MIB",
+    "LLAMACPP_MIN_FREE_VRAM_MIB",
+    "MAI_MIN_AVAILABLE_RAM_MIB",
     "LLAMACPP_CONTEXT_SIZE",
     "LLAMACPP_VISION_GGUF_PATH",
     "LLAMACPP_VISION_MMPROJ_PATH",
@@ -42,7 +43,8 @@ def read_config(path: Path) -> dict[str, str | bool | None]:
         raise ValueError("LLAMACPP_REASONING_PRESERVE must be true or false")
     result["LLAMACPP_REASONING_PRESERVE"] = raw_preserve == "true"
     for key, default, minimum, maximum in (
-        ("LLAMACPP_GPU_MEMORY_BUDGET_MIB", 15360, 1024, 262144),
+        ("LLAMACPP_MIN_FREE_VRAM_MIB", 1024, 128, 65536),
+        ("MAI_MIN_AVAILABLE_RAM_MIB", 6144, 512, 262144),
         ("LLAMACPP_CONTEXT_SIZE", 131072, 512, 262144),
     ):
         value = data.get(key, str(default))
