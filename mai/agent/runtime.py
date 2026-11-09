@@ -19,6 +19,7 @@ The user cannot see internal native tool calls, tool results, terminal stdout/st
 """.strip()
 
 TOOL_RUNTIME_CONTEXT_CONTRACT = """
+The terminal_run tool uses Bash by default when shell is omitted. On Windows the default terminal shell is Git Bash; on Linux it is Bash. Set shell=cmd or shell=powershell explicitly for Windows-specific syntax. Do not generate CMD syntax for Bash calls. This rule applies on the actual execution host, including an authorized remote worker.
 The following JSON is authoritative runtime context declared structurally by registered runtime components and native tools. Respect these context blocks when interpreting tool results and constructing tool arguments. Do not infer a different operating system, shell, working directory, temporal authority, or other runtime condition than the declared context supports.
 """.strip()
 
