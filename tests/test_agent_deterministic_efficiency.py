@@ -144,7 +144,7 @@ def test_file_write_invalidates_read_cache(monkeypatch):
     assert result.content == "done"
     assert read_calls == ["sample.txt", "sample.txt"]
     assert [item.audit_content for item in result.tool_executions if item.name == "file_read"] == [
-        '"before"', '"after"',
+        "before", "after",
     ]
 
 
