@@ -37,3 +37,10 @@ def test_windows_and_linux_router_take_64k_context_from_settings():
     assert "if ($ContextSize -ne 0)" in win
     assert '"$root/portable/llamacpp_model_catalog.py"' in linux
     assert '"context_size": int(config.get("LLAMACPP_CONTEXT_SIZE", 131072))' in catalog
+
+
+def test_router_memory_measurement_enabled_on_windows_and_linux():
+    win = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
+    linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
+    assert "'--models-memory-margin', [string]$catalog.min_free_vram_mib" in win
+    assert '--models-memory-margin "$min_free_vram_mib"' in linux
