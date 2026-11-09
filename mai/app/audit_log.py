@@ -40,6 +40,19 @@ class AuditLogStore:
                     details_json TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_audit_steps_run ON steps(run_id,id);
+                CREATE TABLE IF NOT EXISTS round_timings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    timestamp TEXT NOT NULL,
+                    round_number INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    total_elapsed_ms INTEGER NOT NULL,
+                    model_elapsed_ms INTEGER NOT NULL,
+                    tool_elapsed_ms INTEGER NOT NULL,
+                    verifier_elapsed_ms INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_round_timings_run ON round_timings(run_id, round_number);
+
             """)
 
     def _connect(self) -> sqlite3.Connection:
@@ -66,6 +79,20 @@ class AuditLogStore:
             raise ValueError(f"invalid audit role: {role}")
         with self._connect() as conn:
             self._append(conn, run_id, role, content, round_number, status, details)
+
+    def append_timing(self, run_id: str, round_number: int, details: dict[str, Any]) -> None:
+        """Store deterministic timing without modifying legacy steps CHECK constraints."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO round_timings(run_id,timestamp,round_number,status,"
+                "total_elapsed_ms,model_elapsed_ms,tool_elapsed_ms,verifier_elapsed_ms)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    run_id, self._now(), round_number, str(details["status"]),
+                    int(details["total_elapsed_ms"]), int(details["model_elapsed_ms"]),
+                    int(details["tool_elapsed_ms"]), int(details["verifier_elapsed_ms"]),
+                ),
+            )
 
     def _append(self, conn: sqlite3.Connection, run_id: str, role: str, content: str,
                 round_number: int | None = None, status: str | None = None,
