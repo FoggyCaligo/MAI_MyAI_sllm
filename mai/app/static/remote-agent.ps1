@@ -23,45 +23,50 @@ function Initialize-MaiRemotePython {
             throw 'MAI worker bundle checksum mismatch'
         }
         $target = Join-Path $base $digest
-        $venvPython = Join-Path $target '.venv\\Scripts\\python.exe'
-        $installReady = Join-Path $target '.installed-ok'
-        # A partial venv is not a complete install; retry until the marker exists.
-        if (-not (Test-Path -LiteralPath $installReady -PathType Leaf)) {
-            if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
-                if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-                    throw 'Python 3.11+ is missing, and winget is unavailable to install it automatically'
-                }
-                & winget install --id Python.Python.3.12 --exact --accept-source-agreements --accept-package-agreements --silent
-                if ($LASTEXITCODE -ne 0) { throw "Python setup failed (winget exit $LASTEXITCODE)" }
-            }
-            $pyCommand = Get-Command py -ErrorAction SilentlyContinue
-            if (-not $pyCommand) {
-                $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Python\\Python312\\python.exe'
-                if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
-                    throw 'Python setup completed but the Python executable cannot be resolved'
-                }
-                $pythonCommand = $installed
-                $pythonArgs = @()
-            } else {
-                $pythonCommand = $pyCommand.Source
-                $pythonArgs = @('-3.12')
-            }
+        $sourceReady = Join-Path $target '.installed-ok'
+        # Source ZIP is a verified exact digest. The Python environment is
+        # separate and reused as long as its declared dependencies are unchanged.
+        if (-not (Test-Path -LiteralPath $sourceReady -PathType Leaf)) {
             New-Item -ItemType Directory -Force -Path $target | Out-Null
             Expand-Archive -LiteralPath $zipPath -DestinationPath $target -Force
-            & $pythonCommand @pythonArgs -m venv (Join-Path $target '.venv')
-            if ($LASTEXITCODE -ne 0) { throw 'Remote Python venv creation failed' }
-            & $venvPython -m pip install --disable-pip-version-check --no-input --upgrade "pip>=25.1"
-            if ($LASTEXITCODE -ne 0) { throw 'Remote worker pip upgrade failed' }
-            & $venvPython -m pip install --disable-pip-version-check --no-input --group ((Join-Path $target 'pyproject.toml') + ':remote')
-            if ($LASTEXITCODE -ne 0) { throw 'Remote worker dependency group installation failed' }
-            & $venvPython -m pip install --disable-pip-version-check --no-input -e $target --no-deps
-            if ($LASTEXITCODE -ne 0) { throw 'Remote worker editable install failed' }
-            & $venvPython -m playwright install chromium
-            if ($LASTEXITCODE -ne 0) { throw 'Remote Chromium installation failed' }
-            New-Item -ItemType File -Path $installReady -Force | Out-Null
+        }
+        if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+            if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+                throw 'Python 3.11+ is missing, and winget is unavailable to install it automatically'
+            }
+            & winget install --id Python.Python.3.12 --exact --accept-source-agreements --accept-package-agreements --silent
+            if ($LASTEXITCODE -ne 0) { throw "Python setup failed (winget exit $LASTEXITCODE)" }
+        }
+        $pyCommand = Get-Command py -ErrorAction SilentlyContinue
+        if (-not $pyCommand) {
+            $installed = Join-Path $env:LOCALAPPDATA 'Programs\\Python\\Python312\\python.exe'
+            if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+                throw 'Python setup completed but the Python executable cannot be resolved'
+            }
+            $pythonCommand = $installed
+            $pythonArgs = @()
+        } else {
+            $pythonCommand = $pyCommand.Source
+            $pythonArgs = @('-3.12')
+        }
+        $env:PYTHONPATH = $target
+        & $pythonCommand @pythonArgs -m mai.remote.bootstrap_env --base $base --source $target
+        if ($LASTEXITCODE -ne 0) { throw 'Remote shared dependency installation failed' }
+        $envDigestFile = Join-Path $target '.shared-env-key'
+        if (-not (Test-Path -LiteralPath $envDigestFile -PathType Leaf)) {
+            throw 'Remote dependency environment identity is missing'
+        }
+        $envDigest = (Get-Content -LiteralPath $envDigestFile -Raw).Trim()
+        if ($envDigest -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Remote dependency environment identity is invalid'
+        }
+        $venvPython = Join-Path (Join-Path (Join-Path $base '.shared-envs') $envDigest) 'Scripts\\python.exe'
+        if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+            throw "Remote dependency Python executable is missing: $venvPython"
         }
         $env:MAI_REMOTE_CACHE_ROOT = $base
         $env:MAI_REMOTE_CACHE_DIGEST = $digest
+        $env:MAI_REMOTE_ENV_DIGEST = $envDigest
         $env:MAI_REMOTE_PYTHON = $venvPython
         $env:PYTHONPATH = $target
         Write-Host "MAI remote Python worker ready: $target"
@@ -84,6 +89,7 @@ try {
 } finally {
     Remove-Item Env:MAI_REMOTE_CACHE_ROOT -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_CACHE_DIGEST -ErrorAction SilentlyContinue
+    Remove-Item Env:MAI_REMOTE_ENV_DIGEST -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_SERVER -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_SESSION -ErrorAction SilentlyContinue
     Remove-Item Env:MAI_REMOTE_KEY -ErrorAction SilentlyContinue
