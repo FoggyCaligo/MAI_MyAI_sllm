@@ -1,6 +1,8 @@
 """호스트 도구 타임아웃 확대 및 원격 비중복 회귀 테스트."""
 from __future__ import annotations
 
+import asyncio
+
 from mai.remote.python_worker import build_registry
 from mai.remote.routing import register_routed_pc_tools, register_routed_service_tools
 from mai.tools.browser import BrowserSessionManager
@@ -16,7 +18,6 @@ def test_owner_host_pc_timeouts_are_doubled(tmp_path):
     assert local.get("code_search").timeout_seconds == 120
     # Terminal timeout is enforced by terminal_run's handler, not ToolDefinition.
     assert local.get("terminal_run").timeout_seconds is None
-    assert local.get("terminal_run").handler.__closure__ is not None
 
     routed = ToolRegistry()
     register_routed_pc_tools(routed, owner_id="owner", cwd=str(tmp_path))
@@ -59,3 +60,19 @@ def test_remote_pc_limits_are_not_quadrupled(tmp_path):
     assert worker.get("file_search").timeout_seconds == 120
     assert worker.get("code_search").timeout_seconds == 120
     assert worker.get("terminal_run").timeout_seconds is None
+
+
+def test_local_terminal_handler_uses_240_second_execution_budget(tmp_path, monkeypatch):
+    from mai.tools import terminal
+
+    captured = []
+    async def fake_terminal_run(**kwargs):
+        captured.append(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
+    registry = ToolRegistry()
+    register_local_pc_tools(registry, cwd=tmp_path)
+    result = asyncio.run(registry.get("terminal_run").invoke({"command": "echo hello"}))
+    assert result == {"ok": True}
+    assert captured[0]["default_timeout_seconds"] == 240
