@@ -100,10 +100,12 @@ def register_routed_service_tools(
 ) -> None:
     """Add worker-portable, request-independent services with identical local schemas."""
     local = ToolRegistry()
-    register_time_tools(local)
-    register_calculator_tools(local)
-    register_external_information_tools(local)
-    register_browser_tools(local, browser_manager)
+    register_time_tools(local, timeout_seconds=20)
+    register_calculator_tools(local, timeout_seconds=20)
+    register_external_information_tools(
+        local, web_timeout_seconds=60, market_timeout_seconds=60,
+    )
+    register_browser_tools(local, browser_manager, timeout_multiplier=2)
     _add_routed_definitions(registry, local, owner_id=owner_id)
     _add_remote_context(registry, local.names(), "remote_service_execution_target")
 

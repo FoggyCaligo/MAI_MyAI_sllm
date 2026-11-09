@@ -152,7 +152,10 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
     from mai.remote.python_worker import REMOTE_TOOL_TIMEOUT_MULTIPLIER
 
     local = ToolRegistry()
-    register_local_pc_tools(local, cwd=tmp_path)
+    register_local_pc_tools(
+        local, cwd=tmp_path, filesystem_timeout_seconds=60,
+        code_timeout_seconds=60, terminal_timeout_seconds=120,
+    )
     remote = build_registry(cwd=tmp_path)
     assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2
     for definition in local.definitions():

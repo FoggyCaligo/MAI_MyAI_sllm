@@ -212,11 +212,15 @@ class BrowserSessionManager:
                 self._playwright = None
 
 
-def register_browser_tools(registry: ToolRegistry, manager: BrowserSessionManager) -> None:
-    registry.add(name="browser_open", description="Open a public HTTP(S) URL in isolated Chromium, execute JavaScript and return rendered text, actual links, and interactive element refs. Returns session_id. For static pages, use faster web_fetch. Never guess URLs.", input_model=BrowserOpenInput, handler=manager.open, timeout_seconds=60, category="web")
-    registry.add(name="browser_snapshot", description="Refresh the rendered DOM, visible text, absolute link URLs, and click element refs for an open browser session. Use after dynamic loading.", input_model=BrowserSessionInput, handler=manager.snapshot, timeout_seconds=30, category="web")
-    registry.add(name="browser_click", description="Click an exact element_ref returned by the most recent browser snapshot in this session; never use text guessing. Returns updated snapshot.", input_model=BrowserClickInput, handler=manager.click, timeout_seconds=40, category="web")
-    registry.add(name="browser_input_text", description="Fill a text-capable element identified by a fresh browser snapshot ref. Replaces its current value; do not guess refs. Returns updated snapshot.", input_model=BrowserInputText, handler=manager.input_text, timeout_seconds=40, category="web")
-    registry.add(name="browser_press_key", description="Press a Playwright keyboard key or key combination in the current browser session, for example Enter, Tab, or Control+A. Returns updated snapshot.", input_model=BrowserPressKey, handler=manager.press_key, timeout_seconds=30, category="web")
-    registry.add(name="browser_scroll", description="Scroll a browser page by signed pixels and return an updated DOM snapshot for infinite-scroll content.", input_model=BrowserScrollInput, handler=manager.scroll, timeout_seconds=30, category="web")
-    registry.add(name="browser_close", description="Explicitly close a browser session. Every remaining session is also cleaned at the end of the agent run.", input_model=BrowserSessionInput, handler=manager.close, timeout_seconds=20, category="web")
+def register_browser_tools(
+    registry: ToolRegistry, manager: BrowserSessionManager, *, timeout_multiplier: float = 1,
+) -> None:
+    if timeout_multiplier <= 0:
+        raise ValueError("browser timeout multiplier must be positive")
+    registry.add(name="browser_open", description="Open a public HTTP(S) URL in isolated Chromium, execute JavaScript and return rendered text, actual links, and interactive element refs. Returns session_id. For static pages, use faster web_fetch. Never guess URLs.", input_model=BrowserOpenInput, handler=manager.open, timeout_seconds=60 * timeout_multiplier, category="web")
+    registry.add(name="browser_snapshot", description="Refresh the rendered DOM, visible text, absolute link URLs, and click element refs for an open browser session. Use after dynamic loading.", input_model=BrowserSessionInput, handler=manager.snapshot, timeout_seconds=30 * timeout_multiplier, category="web")
+    registry.add(name="browser_click", description="Click an exact element_ref returned by the most recent browser snapshot in this session; never use text guessing. Returns updated snapshot.", input_model=BrowserClickInput, handler=manager.click, timeout_seconds=40 * timeout_multiplier, category="web")
+    registry.add(name="browser_input_text", description="Fill a text-capable element identified by a fresh browser snapshot ref. Replaces its current value; do not guess refs. Returns updated snapshot.", input_model=BrowserInputText, handler=manager.input_text, timeout_seconds=40 * timeout_multiplier, category="web")
+    registry.add(name="browser_press_key", description="Press a Playwright keyboard key or key combination in the current browser session, for example Enter, Tab, or Control+A. Returns updated snapshot.", input_model=BrowserPressKey, handler=manager.press_key, timeout_seconds=30 * timeout_multiplier, category="web")
+    registry.add(name="browser_scroll", description="Scroll a browser page by signed pixels and return an updated DOM snapshot for infinite-scroll content.", input_model=BrowserScrollInput, handler=manager.scroll, timeout_seconds=30 * timeout_multiplier, category="web")
+    registry.add(name="browser_close", description="Explicitly close a browser session. Every remaining session is also cleaned at the end of the agent run.", input_model=BrowserSessionInput, handler=manager.close, timeout_seconds=20 * timeout_multiplier, category="web")
