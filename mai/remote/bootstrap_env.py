@@ -67,47 +67,52 @@ def prepare_environment(base: Path, source: Path) -> Path:
 
     # Prevent simultaneous installs from replacing a partially written environment.
     # Running clients hold the same per-environment lock while using that Python.
-    with _bundle_lock(target, nonblocking=False) as acquired:
-        if not acquired:
-            raise RuntimeError("shared remote environment lock could not be acquired")
-        ready = target / _READY
-        executable = environment_python(target)
-        if ready.is_file() and executable.is_file():
-            print(f"Reusing remote dependency environment: {target}", flush=True)
-        else:
-            # Do not overwrite a previous complete env until replacement is ready.
-            # A partial destination from a prior crash is never interpreted as ready.
-            if target.exists():
-                if target.is_symlink() or not target.is_dir():
-                    raise RuntimeError(f"invalid shared environment directory: {target}")
-                shutil.rmtree(target)
-            try:
-                # Virtualenv console entrypoints encode absolute paths; install
-                # in the final directory instead of renaming a staged venv.
-                print(f"Installing remote dependency environment: {target}", flush=True)
-                subprocess.run([sys.executable, "-m", "venv", str(target)], check=True)
-                python = environment_python(target)
-                subprocess.run([
-                    str(python), "-m", "pip", "install",
-                    "--disable-pip-version-check", "--no-input", "--upgrade", "pip>=25.1",
-                ], check=True)
-                subprocess.run([
-                    str(python), "-m", "pip", "install",
-                    "--disable-pip-version-check", "--no-input",
-                    "--group", f"{pyproject}:remote",
-                ], check=True)
-                subprocess.run([str(python), "-m", "pip", "check"], check=True)
-                subprocess.run([str(python), "-m", "playwright", "install", "chromium"], check=True)
-                (target / _READY).touch()
-            except BaseException:
-                # No completed marker means this environment is not reusable.
-                # A previously completed environment with another key survives.
-                shutil.rmtree(target, ignore_errors=True)
-                raise
-    # Publish the exact environment identity only after installation succeeded.
-    # Source files are imported through PYTHONPATH, not installed editable into venv.
-    (source / _KEY_FILE).write_text(key + "\n", encoding="ascii")
-    (source / _READY).touch()
+    # The source lock also guards unfinished source bundles against concurrent
+    # retention cleanup while a dependency installation is in progress.
+    with _bundle_lock(source, nonblocking=False) as source_acquired:
+        if not source_acquired:
+            raise RuntimeError("remote source bundle lock could not be acquired")
+        with _bundle_lock(target, nonblocking=False) as acquired:
+            if not acquired:
+                raise RuntimeError("shared remote environment lock could not be acquired")
+            ready = target / _READY
+            executable = environment_python(target)
+            if ready.is_file() and executable.is_file():
+                print(f"Reusing remote dependency environment: {target}", flush=True)
+            else:
+                # Do not overwrite a previous complete env until replacement is ready.
+                # A partial destination from a prior crash is never interpreted as ready.
+                if target.exists():
+                    if target.is_symlink() or not target.is_dir():
+                        raise RuntimeError(f"invalid shared environment directory: {target}")
+                    shutil.rmtree(target)
+                try:
+                    # Virtualenv console entrypoints encode absolute paths; install
+                    # in the final directory instead of renaming a staged venv.
+                    print(f"Installing remote dependency environment: {target}", flush=True)
+                    subprocess.run([sys.executable, "-m", "venv", str(target)], check=True)
+                    python = environment_python(target)
+                    subprocess.run([
+                        str(python), "-m", "pip", "install",
+                        "--disable-pip-version-check", "--no-input", "--upgrade", "pip>=25.1",
+                    ], check=True)
+                    subprocess.run([
+                        str(python), "-m", "pip", "install",
+                        "--disable-pip-version-check", "--no-input",
+                        "--group", f"{pyproject}:remote",
+                    ], check=True)
+                    subprocess.run([str(python), "-m", "pip", "check"], check=True)
+                    subprocess.run([str(python), "-m", "playwright", "install", "chromium"], check=True)
+                    (target / _READY).touch()
+                except BaseException:
+                    # No completed marker means this environment is not reusable.
+                    # A previously completed environment with another key survives.
+                    shutil.rmtree(target, ignore_errors=True)
+                    raise
+        # Publish the exact environment identity only after installation succeeded.
+        # Source files are imported through PYTHONPATH, not installed editable into venv.
+        (source / _KEY_FILE).write_text(key + "\n", encoding="ascii")
+        (source / _READY).touch()
     return executable
 
 
