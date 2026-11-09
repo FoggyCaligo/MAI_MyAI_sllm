@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 from pathlib import Path
 
 from mai.remote.python_worker import REMOTE_TOOL_TIMEOUT_MULTIPLIER, build_registry
@@ -12,7 +13,7 @@ from mai.tools.local import register_local_pc_tools
 from mai.tools.registry import ToolRegistry
 
 
-def test_remote_tool_limits_are_twice_local_limits(tmp_path):
+def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
     local = ToolRegistry()
     register_local_pc_tools(local, cwd=tmp_path)
     register_external_information_tools(
@@ -22,7 +23,7 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path):
     remote = build_registry(cwd=tmp_path)
     assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2
     for name in (
-        "file_read", "file_write", "code_read", "terminal_run",
+        "file_read", "file_write", "code_read",
         "web_search", "browser_open", "browser_click",
     ):
         local_timeout = local.get(name).timeout_seconds
@@ -31,15 +32,27 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path):
         assert remote_timeout == 2 * local_timeout, (
             f"{name} local={local_timeout} remote={remote_timeout}"
         )
-    # terminal_run also passes a process-level deadline to its subprocess,
-    # so its registry timeout must match rather than double that once more.
-    assert remote.get("terminal_run").timeout_seconds == 480
+    # TerminalTool has an internal subprocess deadline instead of an outer
+    # registry deadline. Assert the exact deadline passed to the subprocess.
+    from mai.tools import terminal
+    seen = []
+    async def fake_terminal_run(**kwargs):
+        seen.append(kwargs["default_timeout_seconds"])
+        return {"stdout": "", "stderr": "", "exit_code": 0}
+    monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
+    async def exercise():
+        await local.get("terminal_run").invoke({"command": "echo ok"})
+        await remote.get("terminal_run").invoke({"command": "echo ok"})
+    asyncio.run(exercise())
+    assert seen == [240, 480]
+    assert local.get("terminal_run").timeout_seconds is None
+    assert remote.get("terminal_run").timeout_seconds is None
 
 
 def test_remote_result_deadline_covers_longest_remote_tool():
     dispatch_timeout = inspect.signature(RemoteSessionManager.execute).parameters["timeout"].default
     assert dispatch_timeout == 600
-    assert dispatch_timeout > build_registry().get("terminal_run").timeout_seconds
+    assert dispatch_timeout > 480
 
 
 def test_gaia_setup_instruction_uses_child_only_execution_policy_bypass():
