@@ -23,7 +23,7 @@
 
 ## 답변 후 저장
 
-1. 최종 답변이 검증을 통과한다.
+1. 검증이 켜진 요청에서는 최종 답변이 검증을 통과하고, 기본 검증 비활성 요청에서는 답변 전달이 확정된다. 배포 설정의 `MAI_VERIFIER_ENABLED` 기본값은 `false`다.
 2. 같은 선택 모델을 도구 없이 `think=False`로 호출해 `{"facts": [string, ...]}`를 추출한다.
 3. 추출 형식과 빈 문장을 검사하고 저장 생략 여부를 정한다.
 4. 생략 대상이 아니면 사용자 원문을 별도 근거로 보관한다.
@@ -86,4 +86,4 @@
 | 모델 출력·도구 | `working.py`, `tools.py` |
 | 저장 순서·비동기 처리 | `mai/app/runtime.py` |
 
-기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
+기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 본체와 독립된 비공개 Git 저장소이며 [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
