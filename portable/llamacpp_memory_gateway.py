@@ -29,7 +29,8 @@ _HOP_HEADERS = frozenset({
 def create_app(*, upstream: str = "http://127.0.0.1:8081",
                min_free_vram_mib: int = 1024,
                min_available_ram_mib: int = 6144,
-               telemetry_path: Path | None = None) -> FastAPI:
+               telemetry_path: Path | None = None,
+               http_client: httpx.AsyncClient | None = None) -> FastAPI:
     if upstream.rstrip("/") == "http://127.0.0.1:8080":
         raise ValueError("Gateway upstream must not point to its own public port")
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -39,11 +40,12 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
         telemetry_path=telemetry_path,
     )
     lock = asyncio.Lock()
-    client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0))
+    client = http_client or httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0))
 
     @app.on_event("shutdown")
     async def shutdown() -> None:
-        await client.aclose()
+        if http_client is None:
+            await client.aclose()
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
     async def proxy(path: str, request: Request):
@@ -91,16 +93,16 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
                 if k.lower() not in _HOP_HEADERS
             }
 
-            async def stream():
+            async def stream(response=upstream_response, sampler_task=sampler, owns_lock=guarded):
                 try:
-                    async for chunk in upstream_response.aiter_raw():
+                    async for chunk in response.aiter_raw():
                         yield chunk
                 finally:
-                    await upstream_response.aclose()
-                    if sampler is not None:
-                        sampler.cancel()
-                        await asyncio.gather(sampler, return_exceptions=True)
-                    if guarded:
+                    await response.aclose()
+                    if sampler_task is not None:
+                        sampler_task.cancel()
+                        await asyncio.gather(sampler_task, return_exceptions=True)
+                    if owns_lock:
                         lock.release()
 
             response = StreamingResponse(
