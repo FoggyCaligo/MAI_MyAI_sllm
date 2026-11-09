@@ -25,9 +25,9 @@ def test_powershell_bootstrap_delegates_session_to_persistent_python_client():
     assert "Initialize-MaiRemotePython" in content
     assert "X-MAI-Bundle-SHA256" in content
     assert "-m mai.remote.agent_client" in content
-    assert "--group" in content
-    assert "pyproject.toml" in content
-    assert "playwright install chromium" in content
+    assert "-m mai.remote.bootstrap_env" in content
+    assert "MAI_REMOTE_ENV_DIGEST" in content
+    assert ".shared-envs" in content
     assert "mai.remote.python_worker" not in content
     assert "'file.read' {" not in content
     assert "'file.write' {" not in content
@@ -40,13 +40,12 @@ def test_linux_remote_agent_bootstraps_same_python_worker():
     assert "X-MAI-Bundle-SHA256" in content
     assert "sha256sum" in content
     assert "-m mai.remote.agent_client" in content
-    assert "--group" in content
-    assert "pyproject.toml" in content
-    assert "playwright install chromium" in content
+    assert "-m mai.remote.bootstrap_env" in content
+    assert "MAI_REMOTE_ENV_DIGEST" in content
+    assert ".shared-envs" in content
     assert "MAI_REMOTE_SERVER" in content
     assert "MAI_REMOTE_SESSION" in content
     assert "MAI_REMOTE_KEY" in content
-    assert "python3 -m venv" in content
     assert "Python 3.11+" in content
 
 
@@ -60,9 +59,9 @@ def test_worker_bootstraps_require_completed_install_marker():
     windows = Path("mai/app/static/remote-agent.ps1").read_text(encoding="utf-8")
     linux = Path("mai/app/static/remote-agent-linux.sh").read_text(encoding="utf-8")
     assert "'.installed-ok'" in windows
-    assert "New-Item -ItemType File -Path $installReady" in windows
+    assert ".shared-env-key" in windows
     assert 'INSTALL_READY="$TARGET/.installed-ok"' in linux
-    assert 'touch "$INSTALL_READY"' in linux
+    assert ".shared-env-key" in linux
 
 
 def test_worker_source_archive_and_native_client_do_not_require_codeact():
