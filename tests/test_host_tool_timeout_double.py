@@ -32,33 +32,33 @@ def test_host_readonly_tools_use_same_doubled_timeouts(tmp_path):
     assert registry.get("code_search").timeout_seconds == 120
 
 
-def test_host_services_doubled_but_remote_services_remain_original_double():
+def test_remote_service_timeout_is_twice_current_local_service_timeout():
     host = ToolRegistry()
     register_routed_service_tools(
         host, owner_id="owner", browser_manager=BrowserSessionManager(),
     )
     worker = build_registry()
-    # Both environments have twice the original limits; the worker should not
-    # multiply the newly extended host defaults again.
-    for name, timeout in {
+    # Host's routed wrapper defers its timeout to its inner local tool.
+    # Remote worker receives twice the effective local execution limit.
+    for name, remote_timeout in {
         "current_time": 20,
         "calculator": 20,
-        "web_search": 60,
-        "web_fetch": 60,
-        "market_data": 60,
-        "browser_open": 120,
-        "browser_snapshot": 60,
-        "browser_click": 80,
-        "browser_close": 40,
+        "web_search": 120,
+        "web_fetch": 120,
+        "market_data": 120,
+        "browser_open": 240,
+        "browser_snapshot": 120,
+        "browser_click": 160,
+        "browser_close": 80,
     }.items():
-        assert worker.get(name).timeout_seconds == timeout
+        assert worker.get(name).timeout_seconds == remote_timeout
         assert host.has(name)
 
 
-def test_remote_pc_limits_are_not_quadrupled(tmp_path):
+def test_remote_pc_limits_double_current_local(tmp_path):
     worker = build_registry(cwd=tmp_path)
-    assert worker.get("file_search").timeout_seconds == 120
-    assert worker.get("code_search").timeout_seconds == 120
+    assert worker.get("file_search").timeout_seconds == 240
+    assert worker.get("code_search").timeout_seconds == 240
     assert worker.get("terminal_run").timeout_seconds is None
 
 
