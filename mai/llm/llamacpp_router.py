@@ -90,12 +90,28 @@ class SingleResidentRouter:
         """
         if self.gpu_memory_budget_mib is None:
             return
-        try:
-            response = await client.get(self.host + "/models", timeout=10.0)
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                response = await client.get(self.host + "/models", timeout=10.0)
             response.raise_for_status()
             payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise RouterModelTransitionError("Cannot query GPU memory estimates; load blocked") from exc
+            except (httpx.HTTPError, ValueError) as exc:
+                raise RouterModelTransitionError("Cannot query GPU memory estimates; load blocked") from exc
+            entries = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(entries, list):
+                raise RouterModelTransitionError("Missing router model memory metadata; load blocked")
+            target = next((m for m in entries if isinstance(m, dict) and m.get("id") == model), None)
+            if not isinstance(target, dict):
+                raise RouterModelTransitionError(f"Missing memory estimate for {model}; load blocked")
+            memory = target.get("memory")
+            if isinstance(memory, dict) and memory.get("status") == "measured":
+                break
+            if isinstance(memory, dict) and memory.get("status") == "failed":
+                raise RouterModelTransitionError(f"Model memory measurement failed: {model}; load blocked")
+            if time.monotonic() >= deadline:
+                raise RouterModelTransitionError(f"Model memory measurement timed out: {model}; load blocked")
+            await asyncio.sleep(self.poll_interval_seconds)
         entries = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(entries, list):
             raise RouterModelTransitionError("Missing router model memory metadata; load blocked")
