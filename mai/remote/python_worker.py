@@ -47,14 +47,9 @@ def build_registry(*, cwd: str | Path | None = None,
     )
     remote_registry = ToolRegistry()
     for definition in registry.definitions():
-        # terminal_run already has a doubled internal subprocess budget.
-        # Doubling its registry timeout again would allow a misleading 960s
-        # outer deadline and disagree with the subprocess timeout.
         remote_registry.register(replace(
             definition,
             timeout_seconds=(
-                definition.timeout_seconds
-                if definition.name == "terminal_run" else
                 definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER
                 if definition.timeout_seconds is not None else None
             ),
