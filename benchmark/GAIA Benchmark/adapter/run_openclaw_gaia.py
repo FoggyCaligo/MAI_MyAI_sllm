@@ -84,6 +84,25 @@ def openclaw_config(model_id: str, *, context_size: int = 131072) -> dict:
     }
 
 
+def resolve_openclaw_executable(requested: str) -> str:
+    """Resolve the executable explicitly, including Windows npm .cmd shims.
+
+    Keep explicit user paths authoritative. Missing commands are errors, not
+    signals to try a different agent or hide an environment problem.
+    """
+    if requested == "openclaw" and os.name == "nt":
+        executable = shutil.which("openclaw.cmd")
+    else:
+        executable = shutil.which(requested)
+    if executable is None:
+        raise FileNotFoundError(
+            f"OpenClaw CLI executable not found: {requested!r}. "
+            "On Windows run 'Get-Command openclaw -All' and 'where.exe openclaw'; "
+            "install OpenClaw or pass --openclaw with the actual openclaw.cmd path."
+        )
+    return executable
+
+
 def require_openclaw_version(executable: str) -> str:
     process = subprocess.run(
         [executable, "--version"], capture_output=True, text=True,
@@ -158,7 +177,8 @@ def main() -> None:
     model_id = default_mai_model()
     if model_id not in router_model_ids():
         raise RuntimeError(f"MAI model alias {model_id!r} not exposed by llama.cpp router 8080")
-    version = require_openclaw_version(args.openclaw)
+    executable = resolve_openclaw_executable(args.openclaw)
+    version = require_openclaw_version(executable)
     dataset = load_examples(args.split, args.level)
     if args.start >= len(dataset):
         raise ValueError("start exceeds available dataset")
@@ -208,7 +228,7 @@ def main() -> None:
             # Keep the attachment path accessible through the workspace tool boundary.
             prompt = model_prompt(task, attachment_path=staged)
             answer, envelope = run_one(
-                executable=args.openclaw, prompt=prompt,
+                executable=executable, prompt=prompt,
                 workspace=workdir, config=config,
                 model_id=model_id, timeout_seconds=args.timeout_seconds,
             )
