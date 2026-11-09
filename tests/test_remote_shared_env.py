@@ -5,6 +5,7 @@ import io
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 import zipfile
 
@@ -42,7 +43,7 @@ def test_same_dependency_contract_reuses_venv_across_source_digests(tmp_path, mo
             python.touch()
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(bootstrap_env.subprocess, "run", fake_run)
+    monkeypatch.setattr(bootstrap_env, "subprocess", SimpleNamespace(run=fake_run))
     one = bootstrap_env.prepare_environment(tmp_path, first)
     two = bootstrap_env.prepare_environment(tmp_path, second)
     assert one == two
@@ -64,7 +65,7 @@ def test_dependency_update_builds_replacement_before_pruning_old(tmp_path, monke
             path.touch()
         return subprocess.CompletedProcess(cmd, 0)
 
-    monkeypatch.setattr(bootstrap_env.subprocess, "run", fake_run)
+    monkeypatch.setattr(bootstrap_env, "subprocess", SimpleNamespace(run=fake_run))
     old = bootstrap_env.prepare_environment(tmp_path, source)
     (source / "pyproject.toml").write_text(
         '[dependency-groups]\nremote = ["httpx>=0.28"]\n', encoding="utf-8",
@@ -94,7 +95,7 @@ def test_failed_upgrade_retains_previous_completed_environment(tmp_path, monkeyp
     def fail_install(cmd, **kwargs):
         raise subprocess.CalledProcessError(7, cmd)
 
-    monkeypatch.setattr(bootstrap_env.subprocess, "run", fail_install)
+    monkeypatch.setattr(bootstrap_env, "subprocess", SimpleNamespace(run=fail_install))
     with pytest.raises(subprocess.CalledProcessError):
         bootstrap_env.prepare_environment(tmp_path, source)
     assert old_python.exists()
@@ -139,7 +140,7 @@ def test_remote_bundle_digest_ignores_source_file_mtimes(monkeypatch, tmp_path):
     (root / "mai" / "app").mkdir(parents=True)
     (root / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
     source = root / "mai" / "app" / "demo.py"
-    source.write_text("demo = 1\n", encoding="utf-8")
+    source.write_bytes(b"demo = 1\n")
 
     original_path = server.__file__
     # Keep the normal function's root calculation but substitute a test file
