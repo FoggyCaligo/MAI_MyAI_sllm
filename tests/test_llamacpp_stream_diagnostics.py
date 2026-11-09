@@ -124,7 +124,7 @@ def test_streaming_without_timeout_diagnostics_still_yields_progress():
             content=b"".join([
                 frame({"reasoning_content": "still thinking"}),
                 frame({"content": "finished"}, "stop"),
-                b"data: [DONE]\\n\\n",
+                b"data: [DONE]\n\n",
             ]),
             headers={"content-type": "text/event-stream"},
         )
