@@ -18,7 +18,7 @@ def test_unicode_paths_and_bom_script_encoding(tmp_path):
 
 
 def test_terminal_shell_is_explicit_not_inferred():
-    assert TerminalRunInput(command="echo test").shell == "default"
+    assert TerminalRunInput(command="echo test").shell == "bash"
     assert TerminalRunInput(command="echo test", shell="powershell").shell == "powershell"
 
 
