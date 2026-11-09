@@ -15,7 +15,7 @@ from mai.tools.registry import ToolRegistry
 
 def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
     local = ToolRegistry()
-    register_local_pc_tools(local, cwd=tmp_path)
+    register_local_pc_tools(local, cwd=tmp_path, terminal_timeout_seconds=120)
     register_external_information_tools(
         local, web_timeout_seconds=60, market_timeout_seconds=60,
     )
@@ -44,7 +44,7 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
         await local.get("terminal_run").invoke({"command": "echo ok"})
         await remote.get("terminal_run").invoke({"command": "echo ok"})
     asyncio.run(exercise())
-    assert seen == [240, 480]
+    assert seen == [120, 240]
     assert local.get("terminal_run").timeout_seconds is None
     assert remote.get("terminal_run").timeout_seconds is None
 
