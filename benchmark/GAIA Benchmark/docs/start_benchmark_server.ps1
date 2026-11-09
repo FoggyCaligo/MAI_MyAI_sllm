@@ -15,6 +15,12 @@ $python = Join-Path $project 'portable\portable-runtimes\python\python.exe'
 if (-not (Test-Path -LiteralPath $python)) {
     throw "MAI Portable Python 실행 파일 없음: $python"
 }
+$resolver = Join-Path $project 'benchmark\GAIA Benchmark\adapter\resolve_main_model.py'
+$model = & $python $resolver --root $project
+if ($LASTEXITCODE -ne 0) { throw 'GAIA main model resolution failed' }
+if (-not $model -or @($model).Count -ne 1 -or -not [string]$model[0]) { throw 'GAIA main model resolver did not return exactly one model ID' }
+$env:MAIN_MODEL = [string]$model
+Write-Host "MAI benchmark model: $($env:MAIN_MODEL)"
 Write-Host "MAI benchmark server: http://127.0.0.1:8010"
 Write-Host "DB directory: $data"
 Push-Location $project
