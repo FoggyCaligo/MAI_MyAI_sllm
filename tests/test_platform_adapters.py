@@ -29,13 +29,12 @@ def test_windows_adapter_preserves_existing_contract():
 
 def test_linux_adapter_disallows_powershell_before_spawn():
     linux = LinuxPlatform()
-    assert Path(linux.shell_description).name == "bash"
     assert linux.shell_family == "bash"
     assert "start_new_session" in linux.process_kwargs()
     with pytest.raises(ValueError, match="Unsupported Linux shell"):
         with linux.script_workspace("powershell"):
             pass
-    with pytest.raises(ValueError, match="requires Windows"):
+    with pytest.raises(ValueError, match="Unsupported Linux shell"):
         asyncio.run(linux.launch("echo test", Path.cwd(), "powershell", None))
 
 

@@ -77,35 +77,35 @@ def test_funnel_failure_does_not_block_local_server(monkeypatch, tmp_path, caplo
     import mai.app.server as server
 
     class FailingFunnel:
-        def __init__(self, *, port):
-            assert port == 8000
-
         def start(self):
             raise TailscaleFunnelError("unexpected state: NoState")
 
-    runtime = SimpleNamespace(close=lambda: None, model="test-model", vision_model=None)
+    runtime = SimpleNamespace(close=lambda: None, model="test-model")
     policy = SimpleNamespace(user_to_db_ids=lambda: {})
     monkeypatch.setattr(server, "VoiceService", lambda: object())
-    monkeypatch.setattr(
-        server.AccessPolicy, "from_env_values", lambda **kwargs: policy
-    )
-    monkeypatch.setattr(server, "ChatSessionStore", lambda path: object())
+    monkeypatch.setattr(server.AccessPolicy, "from_env_values", lambda **kwargs: policy)
+    monkeypatch.setattr(server, "ChatSessionStore", lambda path: SimpleNamespace(migrate_db_id=lambda **kw: None))
     monkeypatch.setattr(server, "LoginRateLimiter", lambda path: object())
     runtime_options = {}
+
     def create_runtime(**kwargs):
         runtime_options.update(kwargs)
         return runtime
+
     monkeypatch.setattr(server, "MAIRuntime", create_runtime)
-    monkeypatch.setenv("VERIFIER_MODEL", "configured-reviewer")
-    monkeypatch.setattr(server, "TailscaleFunnel", FailingFunnel)
-    monkeypatch.setenv("TAILSCALE_FUNNEL", "true")
-    monkeypatch.delenv("TAILSCALE_SERVE", raising=False)
+
+    def create_funnel(*, provider, port):
+        assert provider == "tailscale" and port == 8000
+        return FailingFunnel()
+
+    monkeypatch.setattr(server, "create_hosting", create_funnel)
+    monkeypatch.setenv("REMOTE_HOSTING_PROVIDER", "tailscale")
 
     async def check_startup():
         async with server.lifespan(server.app):
             assert server._runtime is runtime
-            assert runtime_options["verifier_model"] == "configured-reviewer"
-            assert server._tailscale is None
+            assert runtime_options["llm_backend"] == "llamacpp"
+            assert server._hosting is None
             assert (await server.health())["tailscale_funnel"] is False
         assert server._runtime is None
 

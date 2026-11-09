@@ -10,10 +10,10 @@ from mai.app.settings import load_settings
 
 def test_yaml_populates_defaults_but_preserves_explicit_env(tmp_path: Path) -> None:
     path = tmp_path / "settings.yaml"
-    path.write_text('MAIN_MODEL: "model-a"\nOLLAMA_THINK: true\n', encoding="utf-8")
+    path.write_text('MAIN_MODEL: "model-a"\nMAI_VERIFIER_ENABLED: true\n', encoding="utf-8")
     env = {"MAIN_MODEL": "user-selected"}
-    assert load_settings(path, environ=env) == {"MAIN_MODEL": "model-a", "OLLAMA_THINK": "true"}
-    assert env == {"MAIN_MODEL": "user-selected", "OLLAMA_THINK": "true"}
+    assert load_settings(path, environ=env) == {"MAIN_MODEL": "model-a", "MAI_VERIFIER_ENABLED": "true"}
+    assert env == {"MAIN_MODEL": "user-selected", "MAI_VERIFIER_ENABLED": "true"}
 
 
 @pytest.mark.parametrize("content,error", [
@@ -40,10 +40,10 @@ def test_missing_settings_fails(tmp_path: Path) -> None:
 
 def test_verifier_model_setting_has_independent_environment_precedence(tmp_path):
     path = tmp_path / "settings.yaml"
-    path.write_text('MAIN_MODEL: "main"\nVERIFIER_MODEL: "reviewer"\n', encoding="utf-8")
-    env = {"VERIFIER_MODEL": "explicit-reviewer"}
+    path.write_text('MAIN_MODEL: "main"\nMAI_VERIFIER_ENABLED: true\n', encoding="utf-8")
+    env = {"MAI_VERIFIER_ENABLED": "false"}
     load_settings(path, environ=env)
-    assert env == {"MAIN_MODEL": "main", "VERIFIER_MODEL": "explicit-reviewer"}
+    assert env == {"MAIN_MODEL": "main", "MAI_VERIFIER_ENABLED": "false"}
 
 
 def test_verifier_setting_defaults_and_precedence(tmp_path: Path) -> None:
