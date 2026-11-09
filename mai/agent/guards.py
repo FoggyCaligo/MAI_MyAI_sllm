@@ -140,8 +140,13 @@ class AgentGuard:
         elif name in {"web_fetch", "file_read", "code_read"}:
             target += ":" + str(arguments.get("url") or arguments.get("path") or arguments.get("target") or "")
         elif name == "web_search":
-            # Only exact canonical query repeats should group as one target.
-            target += ":" + str(arguments.get("query") or arguments.get("queries") or "")
+            # A repeated provider-level error across different queries warrants
+            # a warning, but not a block: distinct searches may be valuable.
+            target += ":search-provider" if error_type == "WebSearchError" else ":" + str(arguments.get("query") or arguments.get("queries") or "")
+        elif name == "calculator":
+            # Invalid arithmetic expressions in different calls are also a
+            # recovery signal; warn only, never impose a call cap.
+            target += ":arithmetic"
         else:
             return None
         key = (name, error_type, target)
