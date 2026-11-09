@@ -67,6 +67,8 @@ LLAMACPP_REASONING_PRESERVE: false
 
 **동일 GGUF를 계속 사용할 때는 강제 언로드·재로드하지 않는다.** Main과 Verifier는 같은 모델 가중치를 사용하되 프롬프트·검증 계약은 분리된다. 비전 지원 여부를 파일명으로 추측하지 않으며, 기본 Ornith용 mmproj를 다른 모델에 자동 적용하지 않는다.
 
+**시간 제한:** `MODEL_REQUEST_TIMEOUT_SECONDS: 300`은 각 모델 API 요청의 기본 제한이다. 요청 전체, 도구 실행 또는 GAIA 문제별 제한과 혼동하지 않는다. Verifier는 배포 설정 `MAI_VERIFIER_ENABLED: false`에서 기본적으로 꺼져 있다.
+
 ## 검증
 
 ```bash
