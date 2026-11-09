@@ -146,3 +146,25 @@ def test_file_write_invalidates_read_cache(monkeypatch):
     assert [item.audit_content for item in result.tool_executions if item.name == "file_read"] == [
         '"before"', '"after"',
     ]
+
+
+def test_round_timing_audit_is_backward_compatible(tmp_path):
+    from mai.app.audit_log import AuditLogStore
+    store = AuditLogStore(tmp_path / "legacy.sqlite3")
+    store.start("run", db_id="owner", session_id="session", prompt="question")
+    store.append_timing("run", 1, {
+        "status": "tools",
+        "total_elapsed_ms": 1400,
+        "model_elapsed_ms": 1000,
+        "tool_elapsed_ms": 400,
+        "verifier_elapsed_ms": 0,
+    })
+    import sqlite3
+    with sqlite3.connect(store.path) as conn:
+        row = conn.execute(
+            "SELECT round_number,status,total_elapsed_ms,model_elapsed_ms,"
+            "tool_elapsed_ms,verifier_elapsed_ms FROM round_timings"
+        ).fetchone()
+        assert row == (1, "tools", 1400, 1000, 400, 0)
+        assert conn.execute("SELECT count(*) FROM steps").fetchone()[0] == 1
+    store.finish("run", status="completed")
