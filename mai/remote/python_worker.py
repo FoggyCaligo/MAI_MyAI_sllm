@@ -29,8 +29,6 @@ def build_registry(*, cwd: str | Path | None = None,
     registry = ToolRegistry()
     register_local_pc_tools(
         registry, cwd=cwd or os.getcwd(),
-        filesystem_timeout_seconds=60 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
-        code_timeout_seconds=60 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
         terminal_timeout_seconds=120 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
     )
     register_time_tools(registry)
