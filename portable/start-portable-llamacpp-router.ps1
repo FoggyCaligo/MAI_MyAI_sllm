@@ -54,6 +54,7 @@ $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
 $env:LLAMACPP_MAIN_VISION = if ($mainProjector -or $MainVision) { 'true' } else { 'false' }
 # Start-Process ArgumentList needs quoted file paths.
 $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMax",
+               '--models-memory-margin', [string]$catalog.min_free_vram_mib,
                '--host', '127.0.0.1', '--port', '8080', '--jinja')
 if ($preserveReasoning) { $arguments += '--reasoning-preserve' } else { $arguments += '--no-reasoning-preserve' }
 $process = $null
