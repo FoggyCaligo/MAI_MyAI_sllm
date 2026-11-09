@@ -34,6 +34,8 @@ catalog_json="$("$python" "$root/portable/llamacpp_model_catalog.py" --root "$ro
 default_model="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["default"])')"
 main_vision="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; c=json.load(sys.stdin); print("true" if c["main_vision"] or c["projector"] else "false")')"
 reasoning_preserve="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print("true" if json.load(sys.stdin)["reasoning_preserve"] else "false")')"
+gpu_memory_budget_mib="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["gpu_memory_budget_mib"])')"
+export LLAMACPP_GPU_MEMORY_BUDGET_MIB="$gpu_memory_budget_mib"
 export LLAMA_ARG_REASONING_PRESERVE="$reasoning_preserve"
 reasoning_preserve_flag="--no-reasoning-preserve"
 if [[ "$reasoning_preserve" == true ]]; then reasoning_preserve_flag="--reasoning-preserve"; fi
