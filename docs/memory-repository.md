@@ -1,7 +1,7 @@
 # 독립 Memory Git 저장소 연결 및 데이터 이전
 
 MAI는 개인 데이터베이스를 본체 코드 저장소와 분리한다. 기본 데이터 저장소 경로는
-프로젝트 루트의 `MAI_MyAI_sllm_Memory/`다. 이 폴더는 별도 Git 저장소이고
+프로젝트 루트의 `MAI_MEMORY/`다. 이 폴더는 별도 Git 저장소이고
 MAI 본체의 `.gitignore`로 추적하지 않는다.
 
 ## 안전 수칙
@@ -16,7 +16,7 @@ MAI 본체의 `.gitignore`로 추적하지 않는다.
 MAI 저장소 루트의 Git Bash에서 다음을 실행한다.
 
 ```bash
-git clone https://github.com/FoggyCaligo/MAI_MyAI_sllm_Memory.git MAI_MyAI_sllm_Memory
+git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 ```
 
 이미 클론되어 있다면 다시 실행하지 않는다. 비공개 저장소이므로 GitHub 접근 권한과 인증이 필요하다.
@@ -43,11 +43,11 @@ git clone https://github.com/FoggyCaligo/MAI_MyAI_sllm_Memory.git MAI_MyAI_sllm_
 기존 MAI의 `.env`가 존재하면 자동으로 수정되지 않는다. 아래 기존 경로를 Memory 저장소 기준으로 직접 변경한다.
 
 ```dotenv
-MEMORY_DB_PATH=./MAI_MyAI_sllm_Memory/memory.sqlite3
-CHAT_DB_PATH=./MAI_MyAI_sllm_Memory/chat.sqlite3
-LOG_DB_PATH=./MAI_MyAI_sllm_Memory/log.sqlite3
-SENTENCE_BREAKER_DB_PATH=./MAI_MyAI_sllm_Memory/sentence_breaker.sqlite3
-VOICE_PROFILE_DIR=./MAI_MyAI_sllm_Memory/voice_profiles
+MEMORY_DB_PATH=./MAI_MEMORY/memory.sqlite3
+CHAT_DB_PATH=./MAI_MEMORY/chat.sqlite3
+LOG_DB_PATH=./MAI_MEMORY/log.sqlite3
+SENTENCE_BREAKER_DB_PATH=./MAI_MEMORY/sentence_breaker.sqlite3
+VOICE_PROFILE_DIR=./MAI_MEMORY/voice_profiles
 ```
 
 Windows/Linux Portable 실행기는 기본 DB 경로에 Memory 저장소를 사용한다.
@@ -56,11 +56,11 @@ Windows/Linux Portable 실행기는 기본 DB 경로에 Memory 저장소를 사�
 
 ## 4. 두 저장소 각각의 Git 관리
 
-MAI 본체의 `git status`에 `MAI_MyAI_sllm_Memory/`의 내용이 나타나서는 안 된다.
+MAI 본체의 `git status`에 `MAI_MEMORY/`의 내용이 나타나서는 안 된다.
 메모리 데이터 변경 내역은 아래처럼 별도 저장소 안에서 확인한다.
 
 ```bash
-cd MAI_MyAI_sllm_Memory
+cd MAI_MEMORY
 git status
 ```
 
