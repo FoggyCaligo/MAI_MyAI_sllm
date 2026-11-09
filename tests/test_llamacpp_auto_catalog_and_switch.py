@@ -54,7 +54,7 @@ def test_catalog_fails_on_bad_file_or_default_outside_directory(tmp_path):
     (folder / "broken.gguf").unlink()
     elsewhere = tmp_path / "other"
     elsewhere.mkdir()
-    with pytest.raises(ValueError, match="default"):
+    with pytest.raises(ValueError, match="Default main GGUF"):
         discover(tmp_path, {
             "LLAMACPP_MAIN_GGUF_PATH": str(main),
             "LLAMACPP_GGUF_DIRECTORY": str(elsewhere),
