@@ -134,6 +134,7 @@ class ToolExecution:
     content: str
     error_type: str | None = None
     handler_started: bool = False
+    reused: bool = False
     source_content_fingerprint: str | None = None
     compact_history_content: str | None = None
     source_content: str | None = None
@@ -554,7 +555,7 @@ class AgentLoop:
                         if cached is not None:
                             # Read-only output reuse within this run. Never cache
                             # mutations or calls that previously failed.
-                            execution = replace(cached)
+                            execution = replace(cached, reused=True, handler_started=False)
                             reuse_count += 1
                             _LOG.info("MAI read cache hit round=%d name=%s", round_number, call.name)
                         else:
@@ -574,11 +575,12 @@ class AgentLoop:
                     if on_tool_execution is not None:
                         on_tool_execution(execution)
                     _LOG.info(
-                        "MAI tool result round=%d name=%s ok=%s handler_started=%s error_type=%s elapsed_ms=%d visible_chars=%d",
+                        "MAI tool result round=%d name=%s ok=%s handler_started=%s reused=%s error_type=%s elapsed_ms=%d visible_chars=%d",
                         round_number,
                         execution.name,
                         str(execution.ok).lower(),
                         str(execution.handler_started).lower(),
+                        str(execution.reused).lower(),
                         execution.error_type or "-",
                         elapsed_ms,
                         len(execution.content),
