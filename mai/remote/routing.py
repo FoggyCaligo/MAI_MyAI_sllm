@@ -73,6 +73,8 @@ def _add_remote_context(registry: ToolRegistry, names: tuple[str, ...], key: str
             ),
             "remote": (
                 "is_remote=true executes on the connected owner-authorized Windows or Linux worker. "
+                "The terminal_run shell defaults to Bash (Git Bash on Windows, Bash on Linux); "
+                "select shell=cmd or shell=powershell explicitly for Windows-specific commands. "
                 "A remote browser session ID is owned by that connected worker until it disconnects."
             ),
             "session_selection": (
