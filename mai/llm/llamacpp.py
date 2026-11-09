@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import base64
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -11,6 +12,7 @@ import httpx
 from .models import ChatRequest, ModelConfig, ModelTurn, NativeToolCall
 from .llamacpp_router import SingleResidentRouter, RouterModelTransitionError
 from .errors import ModelChatTimeoutError, ModelProtocolError, ModelRequestError
+from .stream_diagnostics import stream_completion
 
 
 class LlamaCppAdapter:
@@ -42,6 +44,14 @@ class LlamaCppAdapter:
             else:
                 raise ValueError("Unsupported llama.cpp response format")
         async def send(client: httpx.AsyncClient) -> dict[str, Any]:
+            if request.on_timeout_diagnostic is not None:
+                return await stream_completion(
+                    client,
+                    self.config.host.rstrip("/") + "/v1/chat/completions",
+                    payload,
+                    timeout_seconds=self.config.request_timeout_seconds,
+                    on_timeout=request.on_timeout_diagnostic,
+                )
             response = await client.post(
                 self.config.host.rstrip("/") + "/v1/chat/completions",
                 json=payload,
@@ -60,7 +70,7 @@ class LlamaCppAdapter:
             else:
                 result = (await self._router.execute(self.config.model, self._client, send)
                           if self._router is not None else await send(self._client))
-        except httpx.TimeoutException as exc:
+        except (httpx.TimeoutException, TimeoutError) as exc:
             raise ModelChatTimeoutError("llama.cpp chat request timed out") from exc
         except httpx.HTTPStatusError as exc:
             raise ModelRequestError(
