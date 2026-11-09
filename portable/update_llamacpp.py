@@ -23,7 +23,11 @@ from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 import zipfile
 
-from resolve_portable_sources import SOURCES, github_json, matching_assets
+if __package__:
+    from .resolve_portable_sources import SOURCES, github_json, matching_assets
+else:
+    # Executing portable/update_llamacpp.py as a standalone script.
+    from resolve_portable_sources import SOURCES, github_json, matching_assets
 
 
 
