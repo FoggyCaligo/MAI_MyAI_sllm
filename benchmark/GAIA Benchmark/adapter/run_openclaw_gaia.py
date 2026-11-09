@@ -113,7 +113,8 @@ def run_one(
     *, executable: str, prompt: str, workspace: Path,
     config: Path, model_id: str, timeout_seconds: int,
 ) -> tuple[str, dict]:
-    workspace.mkdir(parents=True, exist_ok=False)
+    if not workspace.is_dir():
+        raise FileNotFoundError(workspace)
     # Pass prompt by file rather than a command-line argument.
     prompt_file = workspace / "gaia_prompt.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
@@ -208,7 +209,7 @@ def main() -> None:
             prompt = model_prompt(task, attachment_path=staged)
             answer, envelope = run_one(
                 executable=args.openclaw, prompt=prompt,
-                workspace=workdir / "agent", config=config,
+                workspace=workdir, config=config,
                 model_id=model_id, timeout_seconds=args.timeout_seconds,
             )
             metrics = {
