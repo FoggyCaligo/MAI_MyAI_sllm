@@ -110,6 +110,8 @@ def prepare_environment(base: Path, source: Path) -> Path:
                     if target.exists():
                         shutil.rmtree(target)
                     raise
+            # Protect the handoff from installer to the actual worker process.
+            (target / ".last-used").touch()
         # Publish the exact environment identity only after installation succeeded.
         # Source files are imported through PYTHONPATH, not installed editable into venv.
         (source / _KEY_FILE).write_text(key + "\n", encoding="ascii")
