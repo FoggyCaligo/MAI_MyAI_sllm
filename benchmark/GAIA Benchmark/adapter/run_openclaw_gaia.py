@@ -77,7 +77,6 @@ def openclaw_config(model_id: str, *, context_size: int = 131072) -> dict:
         "agents": {
             "defaults": {
                 "model": {"primary": f"{CONFIG_PROVIDER}/{model_id}"},
-                "contextTokens": context_size,
                 "contextInjection": "never",
             },
         },
