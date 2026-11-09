@@ -66,8 +66,11 @@ def benchmark_config(model: str, plugin_path: Path) -> dict:
     config["tools"] = {"sessions": {"visibility": "agent"}}
     config["plugins"] = {
         "load": {"paths": [str(plugin_path.resolve())]},
-        "allow": ["longmemeval-replay"],
-        "entries": {"longmemeval-replay": {"enabled": True}},
+        "allow": ["longmemeval-replay", "memory-core"],
+        "entries": {
+            "longmemeval-replay": {"enabled": True},
+            "memory-core": {"enabled": True},
+        },
     }
     return config
 
@@ -193,7 +196,6 @@ def main() -> None:
         "memory_protocol": "native_transcript_replay_session_memory_fts",
         "context": 131072, "max_tokens": 32768,
         "provider_timeout_seconds": 300, "task_timeout_seconds": args.timeout_seconds,
-        "agent": "OpenClaw",
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     prediction_file = args.output_dir / "predictions.jsonl"
     for index, case in enumerate(cases, 1):
