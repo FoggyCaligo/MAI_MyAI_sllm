@@ -19,6 +19,9 @@ LLAMACPP_MAIN_VISION: true
 # llama.cpp router와 자식 모델에 적용. 모델 버전을 교체해도 유지되는 런타임 설정.
 # 과거 추론의 보존만 끔. 현재 요청의 thinking 자체는 비활성화하지 않음.
 LLAMACPP_REASONING_PRESERVE: false
+# 공통 메모리 보호 게이트웨이. true: MAI/OpenClaw 등 8080을 쓰는 모든 클라이언트에 적용.
+# false: 게이트웨이 없이 기존 llama.cpp Router를 8080에 직접 노출 (재시작 필요).
+LLAMACPP_MEMORY_GUARD_ENABLED: true
 # 모델 로딩 전 남겨 둘 최소 VRAM(MiB). llama.cpp의 GPU 메모리 추정치 기준.
 # 측정 결과는 스냅샷이며 하드웨어 수준의 할당 상한이 아니다.
 LLAMACPP_MIN_FREE_VRAM_MIB: 1024
