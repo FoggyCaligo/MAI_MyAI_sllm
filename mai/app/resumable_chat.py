@@ -160,6 +160,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                     "chunks": partial.get("chunks", 0),
                     "finish_reason": partial.get("finish_reason"),
                     "tool_fragments": partial.get("tool_fragments", []),
+                    "reasoning_diagnostics": partial.get("reasoning_diagnostics"),
                 }
                 if partial.get("thinking"):
                     audit.append(
