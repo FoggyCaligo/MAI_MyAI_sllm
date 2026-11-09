@@ -34,8 +34,8 @@ _CURRENT_DB_CHAT_COLUMNS = _KNOWN_DB_CHAT_COLUMNS | {"metadata_json"}
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Reset one configured MAI trial account so it can be reused.")
     parser.add_argument("trial_id", help="Exact user_id configured in TRIAL_USERS")
-    parser.add_argument("--db", default=None, help="Memory SQLite path. Defaults to MEMORY_DB_PATH or ./data/memory.sqlite3.")
-    parser.add_argument("--chat-db", default=None, help="Chat SQLite path. Defaults to CHAT_DB_PATH or ./data/chat.sqlite3.")
+    parser.add_argument("--db", default=None, help="Memory SQLite path. Defaults to MEMORY_DB_PATH or ./MAI_MyAI_sllm_Memory/memory.sqlite3.")
+    parser.add_argument("--chat-db", default=None, help="Chat SQLite path. Defaults to CHAT_DB_PATH or ./MAI_MyAI_sllm_Memory/chat.sqlite3.")
     parser.add_argument("--upload-root", default=None, help="Upload root. Defaults to MAI_UPLOAD_ROOT or ./mai_uploads.")
     parser.add_argument("--yes", action="store_true", help="Skip the interactive confirmation prompt.")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be deleted without changing data.")
@@ -256,8 +256,8 @@ def main() -> int:
         print(f"Refusing reset: {exc}", file=sys.stderr)
         return 2
 
-    db_path = Path(args.db or os.environ.get("MEMORY_DB_PATH", "./data/memory.sqlite3")).expanduser().resolve()
-    chat_db_path = Path(args.chat_db or os.environ.get("CHAT_DB_PATH", "./data/chat.sqlite3")).expanduser().resolve(strict=False)
+    db_path = Path(args.db or os.environ.get("MEMORY_DB_PATH", "./MAI_MyAI_sllm_Memory/memory.sqlite3")).expanduser().resolve()
+    chat_db_path = Path(args.chat_db or os.environ.get("CHAT_DB_PATH", "./MAI_MyAI_sllm_Memory/chat.sqlite3")).expanduser().resolve(strict=False)
     upload_root = Path(args.upload_root or os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads")).expanduser().resolve(strict=False)
     upload_dir = trial_upload_directory(upload_root, principal.db_id)
 
