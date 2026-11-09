@@ -27,21 +27,34 @@ REMOTE_TOOL_TIMEOUT_MULTIPLIER = 2
 def build_registry(*, cwd: str | Path | None = None,
                    browser_manager: BrowserSessionManager | None = None) -> ToolRegistry:
     registry = ToolRegistry()
+    # The remote inner command timeout and registry outer timeout must agree.
+    # In particular, terminal_run must not end at the local 240s limit while
+    # its remote registry wrapper still allows 480s.
     register_local_pc_tools(
         registry, cwd=cwd or os.getcwd(),
-        filesystem_timeout_seconds=60,
-        code_timeout_seconds=60,
-        terminal_timeout_seconds=120 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
+        filesystem_timeout_seconds=120,
+        code_timeout_seconds=120,
+        terminal_timeout_seconds=240 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
     )
     register_time_tools(registry)
     register_calculator_tools(registry)
-    register_external_information_tools(registry)
-    register_browser_tools(registry, browser_manager or BrowserSessionManager())
+    register_external_information_tools(
+        registry, web_timeout_seconds=60, market_timeout_seconds=60,
+    )
+    register_browser_tools(
+        registry, browser_manager or BrowserSessionManager(),
+        timeout_multiplier=2,
+    )
     remote_registry = ToolRegistry()
     for definition in registry.definitions():
+        # terminal_run already has a doubled internal subprocess budget.
+        # Doubling its registry timeout again would allow a misleading 960s
+        # outer deadline and disagree with the subprocess timeout.
         remote_registry.register(replace(
             definition,
             timeout_seconds=(
+                definition.timeout_seconds
+                if definition.name == "terminal_run" else
                 definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER
                 if definition.timeout_seconds is not None else None
             ),
