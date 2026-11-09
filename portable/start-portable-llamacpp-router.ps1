@@ -40,6 +40,7 @@ $env:MEMORY_DB_PATH = Join-Path $root 'MAI_MyAI_sllm_Memory/memory.sqlite3'
 $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'MAI_MyAI_sllm_Memory/sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'MAI_MyAI_sllm_Memory/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'MAI_MyAI_sllm_Memory/log.sqlite3'
+$env:VOICE_PROFILE_DIR = Join-Path $root 'MAI_MyAI_sllm_Memory/voice_profiles'
 $env:LLM_BACKEND = 'llamacpp'
 $env:MAIN_MODEL = $defaultModel
 $env:LLAMACPP_HOST = 'http://127.0.0.1:8080'
