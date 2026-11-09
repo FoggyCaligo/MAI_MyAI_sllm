@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .python_worker import RemoteWorker
+from .cache import maintain_remote_worker_cache
 
 
 class RemoteAgentProtocolError(RuntimeError):
@@ -94,11 +95,17 @@ async def run_agent(*, server: str, session: str, key: str,
 
 def main() -> int:
     try:
-        asyncio.run(run_agent(
-            server=os.environ["MAI_REMOTE_SERVER"],
-            session=os.environ["MAI_REMOTE_SESSION"],
-            key=os.environ["MAI_REMOTE_KEY"],
-        ))
+        from pathlib import Path
+
+        with maintain_remote_worker_cache(
+            Path(os.environ["MAI_REMOTE_CACHE_ROOT"]),
+            os.environ["MAI_REMOTE_CACHE_DIGEST"],
+        ):
+            asyncio.run(run_agent(
+                server=os.environ["MAI_REMOTE_SERVER"],
+                session=os.environ["MAI_REMOTE_SESSION"],
+                key=os.environ["MAI_REMOTE_KEY"],
+            ))
     except KeyboardInterrupt:
         return 130
     return 0
