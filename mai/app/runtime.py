@@ -169,7 +169,9 @@ class MAIRuntime:
         self._adapters: dict[str, LlamaCppAdapter] = {}
         self._fact_extractors: dict[str, ModelFactExtractor] = {}
         self._llamacpp_execution_lock = asyncio.Lock()
-        # Memory admission and monitoring belong exclusively to the shared\n        # gateway on port 8080, for MAI and all other llama.cpp clients.\n        self._llamacpp_router = SingleResidentRouter(self.llamacpp_host)\n        self._background_tasks: set[asyncio.Task[None]] = set()
+        # Memory admission and monitoring belong to the shared gateway on port 8080.
+        self._llamacpp_router = SingleResidentRouter(self.llamacpp_host)
+        self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 
     @asynccontextmanager
