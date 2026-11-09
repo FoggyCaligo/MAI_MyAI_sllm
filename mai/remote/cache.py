@@ -16,6 +16,9 @@ import shutil
 from typing import Iterator
 
 RETENTION_DAYS = 30
+INCOMPLETE_RETENTION_HOURS = 24
+ENVIRONMENT_HANDOFF_GRACE_MINUTES = 10
+_SHARED_ENVS = ".shared-envs"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _LOCK_NAME = ".active.lock"
 _LAST_USED_NAME = ".last-used"
@@ -116,9 +119,75 @@ def prune_remote_worker_cache(
     return deleted
 
 
+def prune_incomplete_worker_cache(
+    base: Path, active_digest: str, *, now: datetime | None = None,
+) -> list[Path]:
+    """Remove abandoned incomplete source bundles, not active or recent ones."""
+    if _DIGEST.fullmatch(active_digest) is None:
+        raise ValueError("remote worker bundle digest must be lowercase SHA-256")
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    cutoff = now.timestamp() - timedelta(hours=INCOMPLETE_RETENTION_HOURS).total_seconds()
+    removed: list[Path] = []
+    for candidate in base.iterdir():
+        if candidate.name == active_digest or _DIGEST.fullmatch(candidate.name) is None:
+            continue
+        if candidate.is_symlink() or not candidate.is_dir() or (candidate / ".installed-ok").is_file():
+            continue
+        if candidate.stat().st_mtime >= cutoff:
+            continue
+        with _bundle_lock(candidate, nonblocking=True) as acquired:
+            if not acquired or not candidate.is_dir() or (candidate / ".installed-ok").is_file():
+                continue
+            if candidate.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(candidate)
+            removed.append(candidate)
+    return removed
+
+
+def prune_replaced_dependency_envs(base: Path, active_env_digest: str) -> list[Path]:
+    """Delete obsolete completed dependency environments after the new one is ready.
+
+    Every running modern worker holds an env lock. Older environments currently
+    in use are skipped, never forcibly removed.
+    """
+    if _DIGEST.fullmatch(active_env_digest) is None:
+        raise ValueError("remote environment digest must be lowercase SHA-256")
+    root = base / _SHARED_ENVS
+    if not root.is_dir():
+        raise FileNotFoundError(f"shared remote environment directory missing: {root}")
+    cutoff = datetime.now(timezone.utc).timestamp() - timedelta(minutes=ENVIRONMENT_HANDOFF_GRACE_MINUTES).total_seconds()
+    active = root / active_env_digest
+    if not (active / ".installed-ok").is_file():
+        raise RuntimeError("active remote dependency environment is incomplete")
+    removed: list[Path] = []
+    for candidate in root.iterdir():
+        if candidate.name == active_env_digest or _DIGEST.fullmatch(candidate.name) is None:
+            continue
+        if candidate.is_symlink() or not candidate.is_dir() or not (candidate / ".installed-ok").is_file():
+            continue
+        last_used = candidate / _LAST_USED_NAME
+        if last_used.is_symlink() or not last_used.is_file() or last_used.stat().st_mtime >= cutoff:
+            continue
+        with _bundle_lock(candidate, nonblocking=True) as acquired:
+            if not acquired:
+                continue
+            if not candidate.is_dir() or not (candidate / ".installed-ok").is_file():
+                continue
+            if last_used.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(candidate)
+            removed.append(candidate)
+    return removed
+
+
 @contextmanager
-def maintain_remote_worker_cache(base: Path, digest: str) -> Iterator[None]:
-    """Lock the active bundle for the entire session and update its last-use."""
+def maintain_remote_worker_cache(
+    base: Path, digest: str, *, environment_digest: str | None = None,
+) -> Iterator[None]:
+    """Protect active source/environment and prune safely idle obsolete caches."""
     if _DIGEST.fullmatch(digest) is None:
         raise ValueError("remote worker bundle digest must be lowercase SHA-256")
     base = base.resolve(strict=True)
@@ -132,10 +201,28 @@ def maintain_remote_worker_cache(base: Path, digest: str) -> Iterator[None]:
         if marker.is_symlink():
             raise RuntimeError("remote worker last-used marker must not be a symbolic link")
         marker.touch()
-        removed = prune_remote_worker_cache(base, digest)
-        for directory in removed:
-            print(f"Removed expired remote worker cache: {directory}", flush=True)
-        try:
-            yield
-        finally:
-            marker.touch()
+        if environment_digest is None:
+            environment = None
+        else:
+            if _DIGEST.fullmatch(environment_digest) is None:
+                raise ValueError("remote dependency environment digest must be lowercase SHA-256")
+            environment = base / _SHARED_ENVS / environment_digest
+            if environment.is_symlink() or not (environment / ".installed-ok").is_file():
+                raise RuntimeError("active remote dependency environment is incomplete")
+        from contextlib import nullcontext
+        env_lock = _bundle_lock(environment, nonblocking=True) if environment is not None else nullcontext(True)
+        with env_lock as env_acquired:
+            if not env_acquired:
+                raise RuntimeError("remote dependency environment is already locked")
+            if environment is not None:
+                (environment / _LAST_USED_NAME).touch()
+            deleted = prune_remote_worker_cache(base, digest)
+            deleted.extend(prune_incomplete_worker_cache(base, digest))
+            if environment_digest is not None:
+                deleted.extend(prune_replaced_dependency_envs(base, environment_digest))
+            for directory in deleted:
+                print(f"Removed expired or superseded remote worker cache: {directory}", flush=True)
+            try:
+                yield
+            finally:
+                marker.touch()

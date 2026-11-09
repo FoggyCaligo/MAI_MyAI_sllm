@@ -859,9 +859,15 @@ def _remote_worker_bundle() -> tuple[bytes, str]:
     root = Path(__file__).resolve().parents[2]
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.write(root / "pyproject.toml", "pyproject.toml")
-        for source in sorted((root / "mai").rglob("*.py")):
-            archive.write(source, source.relative_to(root).as_posix())
+        sources = [root / "pyproject.toml", *sorted((root / "mai").rglob("*.py"))]
+        for source in sources:
+            # ZIP timestamps vary across checkout/copy operations. The bundle
+            # identity must reflect actual source bytes, not file mtimes.
+            name = source.relative_to(root).as_posix()
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.external_attr = 0o644 << 16
+            archive.writestr(entry, source.read_bytes())
     data = buffer.getvalue()
     return data, hashlib.sha256(data).hexdigest()
 

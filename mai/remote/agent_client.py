@@ -100,6 +100,7 @@ def main() -> int:
         with maintain_remote_worker_cache(
             Path(os.environ["MAI_REMOTE_CACHE_ROOT"]),
             os.environ["MAI_REMOTE_CACHE_DIGEST"],
+            environment_digest=os.environ["MAI_REMOTE_ENV_DIGEST"],
         ):
             asyncio.run(run_agent(
                 server=os.environ["MAI_REMOTE_SERVER"],

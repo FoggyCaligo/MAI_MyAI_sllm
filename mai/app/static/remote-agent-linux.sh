@@ -72,23 +72,39 @@ if [ "$ACTUAL" != "$DIGEST" ]; then
 fi
 
 TARGET="$BASE/$DIGEST"
-VENV_PYTHON="$TARGET/.venv/bin/python"
 INSTALL_READY="$TARGET/.installed-ok"
 
-# A created venv is not evidence of completed dependency/Chromium installation.
 if [ ! -f "$INSTALL_READY" ]; then
   mkdir -p "$TARGET"
   unzip -oq "$ZIP_PATH" -d "$TARGET"
-  python3 -m venv "$TARGET/.venv"
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input --upgrade "pip>=25.1"
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input --group "$TARGET/pyproject.toml:remote"
-  "$VENV_PYTHON" -m pip install --disable-pip-version-check --no-input -e "$TARGET" --no-deps
-  "$VENV_PYTHON" -m playwright install chromium
-  touch "$INSTALL_READY"
+fi
+# The bootstrap helper is stdlib-only and makes one reusable environment
+# per remote dependency/Python contract, rather than per MAI source ZIP.
+PYTHONPATH="$TARGET" python3 -m mai.remote.bootstrap_env --base "$BASE" --source "$TARGET"
+ENV_KEY_FILE="$TARGET/.shared-env-key"
+if [ ! -f "$ENV_KEY_FILE" ]; then
+  echo "Remote dependency environment identity is missing" >&2
+  exit 1
+fi
+ENV_DIGEST=$(cat "$ENV_KEY_FILE")
+case "$ENV_DIGEST" in
+  *[!0-9a-f]*|'')
+    echo "Remote dependency environment identity is invalid" >&2
+    exit 1 ;;
+esac
+if [ "${#ENV_DIGEST}" -ne 64 ]; then
+  echo "Remote dependency environment identity is invalid" >&2
+  exit 1
+fi
+VENV_PYTHON="$BASE/.shared-envs/$ENV_DIGEST/bin/python"
+if [ ! -f "$VENV_PYTHON" ]; then
+  echo "Remote dependency Python executable is missing: $VENV_PYTHON" >&2
+  exit 1
 fi
 
 export MAI_REMOTE_CACHE_ROOT="$BASE"
 export MAI_REMOTE_CACHE_DIGEST="$DIGEST"
+export MAI_REMOTE_ENV_DIGEST="$ENV_DIGEST"
 export PYTHONPATH="$TARGET"
 export MAI_REMOTE_SERVER="$SERVER"
 export MAI_REMOTE_SESSION="$SESSION"
