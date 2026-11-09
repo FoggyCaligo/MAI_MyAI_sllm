@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import getpass
 import json
 import os
+import shutil
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -36,12 +37,12 @@ def resolve_attachment(file_path: object) -> Path | None:
     return candidate
 
 
-def model_prompt(example: dict[str, object]) -> str:
+def model_prompt(example: dict[str, object], *, attachment_path: Path | None = None) -> str:
     question = example.get("Question")
     if not isinstance(question, str) or not question.strip():
         raise ValueError("GAIA Question must be a non-empty string")
     prompt = question
-    attachment = resolve_attachment(example.get("file_path"))
+    attachment = attachment_path if attachment_path is not None else resolve_attachment(example.get("file_path"))
     if attachment is not None:
         # The benchmark runner and MAI server MUST run on the same host.
         # Non-image attachments must be accessed through existing MAI file tools.
@@ -177,8 +178,18 @@ def main() -> None:
                 continue
             start_time = time.monotonic()
             try:
+                attachment = resolve_attachment(example.get("file_path"))
+                staged = None
+                if attachment is not None:
+                    # Do not reveal the answer-bearing dataset directory to MAI.
+                    # Staging is local only; run MAI under a restricted OS account
+                    # if its tools must not access dataset metadata at all.
+                    staged_dir = output / "inputs" / task_id
+                    staged_dir.mkdir(parents=True, exist_ok=True)
+                    staged = staged_dir / attachment.name
+                    shutil.copy2(attachment, staged)
                 payload = {
-                    "message": model_prompt(example),
+                    "message": model_prompt(example, attachment_path=staged),
                     "session_id": "gaia-" + uuid4().hex,
                     "verify": args.verify,
                 }
