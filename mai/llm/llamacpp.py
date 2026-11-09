@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import base64
-import asyncio
 from collections.abc import Mapping
 from typing import Any
 
