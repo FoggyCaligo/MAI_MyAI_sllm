@@ -401,6 +401,7 @@ class AgentLoop:
                         numeric_verification_retries,
                         coverage_verification_retries,
                     )
+                    verification_started = time.perf_counter()
                     if self.final_verifier is not None:
                         pending_verification_candidate = turn.content
                         verification = await self.final_verifier.verify(
@@ -507,10 +508,10 @@ class AgentLoop:
                             history.append({"role": "system", "content": feedback})
                             rejection_feedback_indices.append(len(history) - 1)
                             latest_verification_rejection = (rejected_final_indices[-1], len(history) - 1)
-                            _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=verification_retry", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
+                            _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=verification_retry verifier_elapsed_ms=%d", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms, int((time.perf_counter()-verification_started)*1000))
                             round_number += 1
                             continue
-                    _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=completed", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms)
+                    _LOG.info("MAI round timing round=%d total_elapsed_ms=%d model_elapsed_ms=%d tool_elapsed_ms=%d status=completed verifier_elapsed_ms=%d", round_number, int((time.perf_counter()-round_started)*1000), model_elapsed_ms, tool_elapsed_ms, int((time.perf_counter()-verification_started)*1000) if self.final_verifier is not None else 0)
                     _LOG.info("MAI final accepted round=%d", round_number)
                     for history_index in reversed(rejected_final_indices):
                         del history[history_index]
@@ -629,6 +630,7 @@ class AgentLoop:
         except AgentRunFailure:
             raise
         except Exception as exc:
+            _LOG.warning("MAI round timing round=%d total_elapsed_ms=%d status=failed error_type=%s", round_number, int((time.perf_counter()-round_started)*1000), type(exc).__name__)
             _LOG.exception("MAI agent run failed round=%d error_type=%s", round_number, type(exc).__name__)
             raise AgentRunFailure(
                 exc,
