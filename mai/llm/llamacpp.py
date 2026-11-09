@@ -43,24 +43,17 @@ class LlamaCppAdapter:
             else:
                 raise ValueError("Unsupported llama.cpp response format")
         async def send(client: httpx.AsyncClient) -> dict[str, Any]:
-            if request.on_timeout_diagnostic is not None:
-                return await stream_completion(
-                    client,
-                    self.config.host.rstrip("/") + "/v1/chat/completions",
-                    payload,
-                    timeout_seconds=self.config.request_timeout_seconds,
-                    on_timeout=request.on_timeout_diagnostic,
-                )
-            response = await client.post(
+            # Always stream from llama.cpp, even without an observer. Previously
+            # request-detached jobs used a blocking non-streaming POST, leaving
+            # no visibility into active GPU token generation until timeout.
+            return await stream_completion(
+                client,
                 self.config.host.rstrip("/") + "/v1/chat/completions",
-                json=payload,
-                timeout=self.config.request_timeout_seconds,
+                payload,
+                timeout_seconds=self.config.request_timeout_seconds,
+                on_timeout=request.on_timeout_diagnostic,
+                on_progress=request.on_stream_progress,
             )
-            response.raise_for_status()
-            obj = response.json()
-            if not isinstance(obj, dict):
-                raise ModelProtocolError("llama.cpp response must be an object")
-            return obj
         try:
             if self._client is None:
                 async with httpx.AsyncClient() as client:
