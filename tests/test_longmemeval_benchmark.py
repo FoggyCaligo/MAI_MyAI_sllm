@@ -79,3 +79,64 @@ def test_rejects_invalid_slicing(tmp_path):
         tuple(load_cases(path, start=1))
     with pytest.raises(ValueError, match="start"):
         tuple(load_cases(path, start=-1))
+
+
+def test_download_uses_official_get_user_agent_and_atomic_sha_verification(tmp_path, monkeypatch):
+    import importlib.util
+    import io
+    import hashlib
+    spec = importlib.util.spec_from_file_location(
+        "longmemeval_download", ADAPTER / "download.py"
+    )
+    assert spec is not None and spec.loader is not None
+    downloader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(downloader)
+    contents = b"verified longmemeval sample"
+    monkeypatch.setattr(downloader, "EXPECTED_BYTES", len(contents))
+    monkeypatch.setattr(
+        downloader, "EXPECTED_SHA256", hashlib.sha256(contents).hexdigest(),
+    )
+    observed = []
+
+    class Response(io.BytesIO):
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(request, timeout):
+        observed.append((request.full_url, request.get_header("User-agent"), timeout))
+        return Response(contents)
+
+    monkeypatch.setattr(downloader, "urlopen", fake_urlopen)
+    path = downloader.download(tmp_path / "longmemeval_s_cleaned.json")
+    assert path.read_bytes() == contents
+    assert observed == [(downloader.SOURCE_URL, downloader.USER_AGENT, 60)]
+    assert downloader.download(path) == path
+    assert len(observed) == 1
+
+
+def test_download_rejects_corrupt_content_without_publishing_file(tmp_path, monkeypatch):
+    import importlib.util
+    import io
+    spec = importlib.util.spec_from_file_location(
+        "longmemeval_download", ADAPTER / "download.py"
+    )
+    assert spec is not None and spec.loader is not None
+    downloader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(downloader)
+
+    class Response(io.BytesIO):
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            self.close()
+
+    monkeypatch.setattr(downloader, "urlopen", lambda *_args, **_kwargs: Response(b"wrong"))
+    final = tmp_path / downloader.FILE
+    with pytest.raises(ValueError, match="size mismatch"):
+        downloader.download(final)
+    assert not final.exists()
+    assert list(tmp_path.iterdir()) == []

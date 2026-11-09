@@ -30,7 +30,7 @@ LongMemEval은 GAIA와 달리 **질문에 앞서 주어진 과거 대화 전체�
 
 ### 1. 데이터 다운로드
 
-GAIA용 `adapter/.venv`를 이미 설치했다면 `huggingface_hub`을 재사용한다.
+공식 LongMemEval-S 파일을 HTTP GET으로 직접 스트리밍하여 다운로드한다. 이전 `huggingface_hub` 메타데이터 HEAD 요청은 사용자 환경에서 HTTP 400으로 실패했다. 이번 코드는 동일한 공식 URL에 프로젝트 식별 User-Agent를 보내며, 다운로드한 파일의 길이(277,383,467바이트)와 SHA-256을 검증한 뒤 최종 경로로 원자적 이동한다. **실제 사용자 환경에서 GET 성공은 아직 확인되지 않았다.** 실패 시 HTTP 예외가 그대로 표시되며, 잘못 받은 파일을 정상 데이터로 취급하지 않는다.
 
 ```powershell
 & ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" `
