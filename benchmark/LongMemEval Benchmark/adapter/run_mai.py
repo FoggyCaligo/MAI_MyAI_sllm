@@ -19,7 +19,8 @@ HERE = Path(__file__).resolve().parent
 PROJECT_ROOT = HERE.parents[2]
 GAIA_ADAPTER = PROJECT_ROOT / "benchmark" / "GAIA Benchmark" / "adapter"
 sys.path.insert(0, str(GAIA_ADAPTER))
-from resolve_main_model import main_model_from_settings
+sys.path.insert(0, str(PROJECT_ROOT))
+from resolve_main_model import resolve_main_model
 from dataset import dialogue_pairs, load_cases
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.app.chat_sessions import ChatSessionStore
@@ -121,7 +122,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.output_dir.exists():
         raise FileExistsError("A fresh output directory is required; existing memory must not be reused")
-    model = main_model_from_settings(PROJECT_ROOT)
+    model = resolve_main_model(PROJECT_ROOT)
     args.output_dir.mkdir(parents=True)
     (args.output_dir / "manifest.json").write_text(json.dumps({
         "benchmark": "LongMemEval", "agent": "MAI", "model": model,
