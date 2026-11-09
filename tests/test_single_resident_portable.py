@@ -23,10 +23,17 @@ def test_settings_uses_ornith_main_and_matching_projector():
     assert 'LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"' in content
     assert 'LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"' in content
 
-def test_windows_and_linux_router_default_to_128k_context():
+def test_windows_and_linux_router_take_64k_context_from_settings():
+    from portable.resolve_llamacpp_settings import read_config
+
     win = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
     linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
-    assert "[int]$ContextSize = 131072" in win
-    assert '"$root/portable/llamacpp_model_catalog.py"' in linux
     catalog = (ROOT / "portable/llamacpp_model_catalog.py").read_text(encoding="utf-8")
-    assert 'default=131072' in catalog
+    config = read_config(ROOT / "settings.yaml")
+
+    assert config["LLAMACPP_CONTEXT_SIZE"] == 65536
+    # Zero means no command-line override: use the YAML-sourced catalog value.
+    assert "[int]$ContextSize = 0" in win
+    assert "if ($ContextSize -ne 0)" in win
+    assert '"$root/portable/llamacpp_model_catalog.py"' in linux
+    assert '"context_size": int(config.get("LLAMACPP_CONTEXT_SIZE", 131072))' in catalog
