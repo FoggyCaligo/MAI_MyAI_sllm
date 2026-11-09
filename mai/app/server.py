@@ -668,6 +668,13 @@ async def chat(
             ]},
         )
 
+    def publish_round_timing(round_number: int, details: dict[str, object]) -> None:
+        audit.append(
+            run_id, "round_timing", "Agent round timing",
+            round_number=round_number, status=str(details["status"]),
+            details=details,
+        )
+
     def publish_timeout_diagnostic(round_number: int, partial: dict[str, object]) -> None:
         details = {
             "error_type": "ModelChatTimeoutError",
@@ -735,6 +742,7 @@ async def chat(
             **({"attachments": attachments} if attachments else {}),
             on_tool_execution=publish_tool,
             on_model_turn=publish_model_turn,
+            on_round_timing=publish_round_timing,
             on_model_timeout_diagnostic=publish_timeout_diagnostic,
             on_verification_rejection=publish_verification_rejection,
         )
