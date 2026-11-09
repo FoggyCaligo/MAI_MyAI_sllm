@@ -13,10 +13,17 @@ from typing import Any
 from .base import HostPlatform, Shell
 
 
+def linux_bash_executable() -> str:
+    executable = shutil.which("bash")
+    if executable is None:
+        raise FileNotFoundError("Bash is required on the Linux host")
+    return executable
+
+
 class LinuxPlatform(HostPlatform):
     @property
     def shell_description(self) -> str:
-        return shutil.which("bash") or (_ for _ in ()).throw(FileNotFoundError("Bash is required on the Linux host"))
+        return linux_bash_executable()
 
     @property
     def shell_family(self) -> str:
