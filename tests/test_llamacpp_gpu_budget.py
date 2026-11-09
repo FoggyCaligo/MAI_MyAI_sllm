@@ -1,7 +1,7 @@
 """Configurable free GPU VRAM and system RAM guards."""
 from __future__ import annotations
 
-from pathlib import Path
+import asyncio
 import httpx
 import pytest
 
@@ -28,27 +28,33 @@ def measurement(*, free_mib: int = 12000, model_mib: int = 8000,
     ]}}
 
 
-@pytest.mark.asyncio
-async def test_rejects_if_projected_free_vram_below_minimum():
-    router = SingleResidentRouter("http://127.0.0.1:8080", min_free_vram_mib=1024)
-    async with client_for(measurement(free_mib=11000)) as client:
-        with pytest.raises(RouterModelTransitionError, match="free memory safety margin"):
+def test_rejects_if_projected_free_vram_below_minimum():
+    async def _run():
+        router = SingleResidentRouter("http://127.0.0.1:8080", min_free_vram_mib=1024)
+        async with client_for(measurement(free_mib=11000)) as client:
+            with pytest.raises(RouterModelTransitionError, match="free memory safety margin"):
+                await router._verify_memory_budget(client, "test-model")
+
+    asyncio.run(_run())
+
+
+def test_accepts_gpu_estimate_when_sufficient_free():
+    async def _run():
+        router = SingleResidentRouter("http://127.0.0.1:8080", min_free_vram_mib=1024)
+        async with client_for(measurement(free_mib=13000)) as client:
             await router._verify_memory_budget(client, "test-model")
 
-
-@pytest.mark.asyncio
-async def test_accepts_gpu_estimate_when_sufficient_free():
-    router = SingleResidentRouter("http://127.0.0.1:8080", min_free_vram_mib=1024)
-    async with client_for(measurement(free_mib=13000)) as client:
-        await router._verify_memory_budget(client, "test-model")
+    asyncio.run(_run())
 
 
-@pytest.mark.asyncio
-async def test_rejects_missing_memory_measurement_without_loading():
-    router = SingleResidentRouter("http://127.0.0.1:8080", min_free_vram_mib=1024)
-    async with client_for({"status": "failed"}) as client:
-        with pytest.raises(RouterModelTransitionError, match="measurement failed"):
-            await router._verify_memory_budget(client, "test-model")
+def test_rejects_missing_memory_measurement_without_loading():
+    async def _run():
+        router = SingleResidentRouter("http://127.0.0.1:8080", min_free_vram_mib=1024)
+        async with client_for({"status": "failed"}) as client:
+            with pytest.raises(RouterModelTransitionError, match="measurement failed"):
+                await router._verify_memory_budget(client, "test-model")
+
+    asyncio.run(_run())
 
 
 def test_rejects_ram_below_minimum(monkeypatch):
