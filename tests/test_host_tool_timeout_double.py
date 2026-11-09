@@ -62,7 +62,7 @@ def test_remote_pc_limits_double_current_local(tmp_path):
     assert worker.get("terminal_run").timeout_seconds is None
 
 
-def test_local_terminal_handler_uses_240_second_execution_budget(tmp_path, monkeypatch):
+def test_local_terminal_handler_uses_120_second_execution_budget(tmp_path, monkeypatch):
     from mai.tools import terminal
 
     captured = []
@@ -72,7 +72,25 @@ def test_local_terminal_handler_uses_240_second_execution_budget(tmp_path, monke
 
     monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
     registry = ToolRegistry()
-    register_local_pc_tools(registry, cwd=tmp_path)
+    register_local_pc_tools(registry, cwd=tmp_path, terminal_timeout_seconds=120)
     result = asyncio.run(registry.get("terminal_run").invoke({"command": "echo hello"}))
     assert result == {"ok": True}
-    assert captured[0]["default_timeout_seconds"] == 240
+    assert captured[0]["default_timeout_seconds"] == 120
+
+
+def test_configured_terminal_timeout_reaches_host_and_remote(tmp_path, monkeypatch):
+    from mai.tools import terminal
+    captured = []
+
+    async def fake_terminal_run(**kwargs):
+        captured.append(kwargs["default_timeout_seconds"])
+        return {"ok": True}
+
+    monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
+    monkeypatch.setenv("TERMINAL_TIMEOUT_SECONDS", "73")
+    host = ToolRegistry()
+    register_routed_pc_tools(host, owner_id="owner", cwd=str(tmp_path))
+    asyncio.run(host.get("terminal_run").invoke({"command": "echo test"}))
+    remote = build_registry(cwd=tmp_path)
+    asyncio.run(remote.get("terminal_run").invoke({"command": "echo test"}))
+    assert captured == [73, 146]
