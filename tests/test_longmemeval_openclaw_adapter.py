@@ -64,7 +64,6 @@ def test_sanitized_transcript_preserves_original_roles_and_has_no_gold(tmp_path)
              ]},
         ],
     }
-    assert "Busan" not in json.dumps(history.get("answer", ""), ensure_ascii=False)
     assert "answer" not in history
     assert "answer_session_ids" not in history
 
@@ -76,7 +75,7 @@ def test_config_is_local_model_with_session_recall_and_no_remote_embeddings():
     assert config["memory"]["search"]["rememberAcrossConversations"] is True
     assert config["tools"]["sessions"]["visibility"] == "agent"
     assert set(config["models"]["providers"]) == {"mai-local"}
-    assert config["plugins"]["allow"] == ["longmemeval-replay"]
+    assert set(config["plugins"]["allow"]) == {"longmemeval-replay", "memory-core"}
 
 
 def test_import_confirmation_must_match_exact_counts(tmp_path):
