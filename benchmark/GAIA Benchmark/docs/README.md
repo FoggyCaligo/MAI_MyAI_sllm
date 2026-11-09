@@ -44,7 +44,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 
 위 명령은 새 PowerShell 프로세스에만 실행 정책 `Bypass`를 적용하며 시스템 전체 정책을 변경하지 않는다.
 
-스크립트는 `adapter/.venv`를 만들고 Python 패키지를 설치한 후 GAIA 데이터를 다운로드한다. 기존 MAI 모델 설치를 변경하지 않는다. 설치·인증 실패 시 명시적으로 중단한다.
+스크립트는 `adapter/.venv`를 만들고 Python 패키지(`python-dotenv` 포함)를 설치한 후 GAIA 데이터를 다운로드한다. 기존 MAI 모델 설치를 변경하지 않는다. 설치·인증 실패 시 명시적으로 중단한다.
 
 Ubuntu Linux에서는 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 데이터와 어댑터 가상환경을 준비할 수 있다. **현재 저장소에는 GAIA 평가 서버용 Linux 전용 시작 스크립트가 없다.** 아래 `start_benchmark_server.ps1`은 Windows PowerShell용이며, Linux에서 동일 격리 환경변수와 `MAIN_MODEL`을 준비하지 않은 채 그대로 명령을 변형해 실행하면 안 된다.
 
@@ -60,7 +60,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 
 이 서버는 `http://127.0.0.1:8010`에 바인딩하며 채팅·메모리·로그·문장 분리 DB를 `result/_runtime/`에 분리한다. **음성 프로필(`VOICE_PROFILE_DIR`), 업로드 디렉터리, 파일·터미널·네트워크 도구의 OS 접근 권한까지 분리하는 스크립트는 아니다.** 원격 공개 호스팅을 끈다. 메인 모델 ID는 Portable 실행기와 같은 GGUF 카탈로그를 읽어 자동으로 설정하며, 기본 GGUF 파일이 없거나 손상된 경우 명확히 실패한다. 일반 MAI용 `.env`의 비밀번호는 변경하지 않는다.
 
-로그인 계정은 MAI 서버의 기존 `OWNER_USERS` 환경 설정을 사용한다. `run_gaia.py`는 먼저 `GET /login/session`으로 사전 세션 토큰을 받고 `X-MAI-Preauth-Session` 헤더를 붙여 `POST /login`으로 로그인한다. 기존 사용자의 비밀번호를 벤치마크 명령 인수에 직접 넣지 않는다. **장기기억 데이터뿐 아니라 시험용 서버 프로세스 환경 및 브라우저 세션을 분리해야 오염 위험을 줄일 수 있다.**
+로그인 계정은 MAI 서버의 기존 `OWNER_USERS` 환경 설정을 사용한다. 평가 실행기 역시 루트 `.env`의 `OWNER_USERS`를 읽어 인증 정보를 자동 선택한다. 계정이 하나라면 ID와 비밀번호를 입력할 필요가 없고, 계정이 여러 개면 `MAI_BENCH_USER` 또는 `--user`로 사용할 Owner를 명시한다. `MAI_BENCH_PASSWORD` 환경변수가 설정된 경우 명시적 비밀번호를 우선 사용한다. 자격 증명은 결과 JSONL·manifest에 기록하지 않는다. `run_gaia.py`는 먼저 `GET /login/session`으로 사전 세션 토큰을 받고 `X-MAI-Preauth-Session` 헤더를 붙여 `POST /login`으로 로그인한다. 기존 사용자의 비밀번호를 벤치마크 명령 인수에 직접 넣지 않는다. **장기기억 데이터뿐 아니라 시험용 서버 프로세스 환경 및 브라우저 세션을 분리해야 오염 위험을 줄일 수 있다.**
 
 평가 작업 중 실제 파일·인터넷·셸 명령을 실행할 수 있으므로, 개인 파일·Git 작업 디렉터리가 아니라 별도 Windows 사용자 또는 VM에서 실행하는 것이 더 안전하다. 이 스크립트는 DB 경로 분리만 수행하며 OS 권한을 제한하거나 파일 작업을 샌드박싱하지는 않는다.
 
@@ -69,11 +69,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchm
 새 PowerShell에서:
 
 ```powershell
-$env:MAI_BENCH_USER = "본인의-MAI-로그인-ID"
+# OWNER_USERS가 여러 명일 때만 다음 줄 사용:
+# $env:MAI_BENCH_USER = "본인의-MAI-로그인-ID"
 & ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" ".\benchmark\GAIA Benchmark\adapter\run_gaia.py" --server http://127.0.0.1:8010 --split validation --level level1 --limit 10
 ```
 
-먼저 한 문제만 실행할 경우 `--limit 1`을 사용한다. 최초 실행 전에 `Invoke-RestMethod http://127.0.0.1:8080/v1/models`로 router 모델 목록, `Invoke-RestMethod http://127.0.0.1:8010/health`로 시험 서버 상태를 확인할 수 있다. MAI 로그인 비밀번호는 기본적으로 터미널의 숨김 입력으로 요청한다. 요청당 최대 실행 시간은 기본 1800초이며, `--timeout-seconds`로 변경할 수 있다. MAI 자체의 모델 호출 제한은 별도 적용된다.
+먼저 한 문제만 실행할 경우 `--limit 1`을 사용한다. 최초 실행 전에 `Invoke-RestMethod http://127.0.0.1:8080/v1/models`로 router 모델 목록, `Invoke-RestMethod http://127.0.0.1:8010/health`로 시험 서버 상태를 확인할 수 있다. MAI 로그인 비밀번호는 프로젝트 루트의 `.env`에서 자동으로 읽어오므로 별도 숨김 입력을 요구하지 않는다. `.env` 파일 또는 필요한 설정이 없으면 명시적으로 실패하며, 이전의 대화형 암호 입력 경로는 사용하지 않는다. 요청당 최대 실행 시간은 기본 1800초이며, `--timeout-seconds`로 변경할 수 있다. MAI 자체의 모델 호출 제한은 별도 적용된다.
 
 최초 10문제가 정상 완료되면:
 
