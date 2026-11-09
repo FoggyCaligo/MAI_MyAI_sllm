@@ -44,6 +44,34 @@ def test_catalog_discovers_models_excludes_explicit_projector_and_sets_default(t
     assert "[mai-verifier]" not in ini
 
 
+
+def test_catalog_skips_unconfigured_mmproj_files_but_keeps_models(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    main = gguf(folder / "Ornith.gguf")
+    secondary = gguf(folder / "gemma-4-12b.gguf")
+    ignored = gguf(folder / "mmproj-gemma-4-12b.gguf")
+    ignored_case = gguf(folder / "MMPROJ_Other.gguf")
+    catalog = discover(tmp_path, {
+        "LLAMACPP_MAIN_GGUF_PATH": str(main),
+        "LLAMACPP_GGUF_DIRECTORY": str(folder),
+    })
+    assert {model["label"] for model in catalog["models"]} == {main.name, secondary.name}
+    ini = render_ini(catalog, context_size=65536, gpu_layers=99)
+    assert str(ignored) not in ini
+    assert str(ignored_case) not in ini
+
+
+def test_catalog_rejects_mmproj_file_as_default_model(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    projector = gguf(folder / "mmproj-gemma.gguf")
+    with pytest.raises(ValueError, match="cannot be an mmproj projector"):
+        discover(tmp_path, {
+            "LLAMACPP_MAIN_GGUF_PATH": str(projector),
+            "LLAMACPP_GGUF_DIRECTORY": str(folder),
+        })
+
 def test_catalog_fails_on_bad_file_or_default_outside_directory(tmp_path):
     folder = tmp_path / "gguf"
     folder.mkdir()
