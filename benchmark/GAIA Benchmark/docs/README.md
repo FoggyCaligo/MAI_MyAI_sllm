@@ -41,7 +41,9 @@ benchmark/
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\benchmark\GAIA Benchmark\docs\setup.ps1"
 ```
 
-위 명령은 새 PowerShell 프로세스에만 실행 정책 `Bypass`를 적용하며 시스템 전체 정책을 변경하지 않는다.\n\n스크립트는 `adapter/.venv`를 만들고 Python 패키지를 설치한 후 GAIA 데이터를 다운로드한다. 기존 MAI 모델 설치를 변경하지 않는다. 설치·인증 실패 시 명시적으로 중단한다.
+위 명령은 새 PowerShell 프로세스에만 실행 정책 `Bypass`를 적용하며 시스템 전체 정책을 변경하지 않는다.
+
+스크립트는 `adapter/.venv`를 만들고 Python 패키지를 설치한 후 GAIA 데이터를 다운로드한다. 기존 MAI 모델 설치를 변경하지 않는다. 설치·인증 실패 시 명시적으로 중단한다.
 
 Linux/WSL은 `sh "benchmark/GAIA Benchmark/docs/setup.sh"`로 실행한다.
 
