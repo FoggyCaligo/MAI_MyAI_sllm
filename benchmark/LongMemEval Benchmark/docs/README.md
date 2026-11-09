@@ -30,7 +30,7 @@ LongMemEval은 GAIA와 달리 **질문에 앞서 주어진 과거 대화 전체�
 
 ### 1. 데이터 다운로드
 
-공식 LongMemEval-S 파일을 HTTP GET으로 직접 스트리밍하여 다운로드한다. 이전 `huggingface_hub` 메타데이터 HEAD 요청은 사용자 환경에서 HTTP 400으로 실패했다. 이번 코드는 동일한 공식 URL에 프로젝트 식별 User-Agent를 보내며, 다운로드한 파일의 길이(277,383,467바이트)와 SHA-256을 검증한 뒤 최종 경로로 원자적 이동한다. **실제 사용자 환경에서 GET 성공은 아직 확인되지 않았다.** 실패 시 HTTP 예외가 그대로 표시되며, 잘못 받은 파일을 정상 데이터로 취급하지 않는다.
+공식 LongMemEval-S 파일을 HTTP GET으로 직접 스트리밍하여 다운로드한다. 이전 `huggingface_hub` 메타데이터 HEAD 요청은 사용자 환경에서 HTTP 400으로 실패했다. 이번 코드는 동일한 공식 URL에 프로젝트 식별 User-Agent를 보내며, 다운로드한 파일의 길이(277,383,467바이트)와 SHA-256을 검증한 뒤 최종 경로로 원자적 이동한다. **2026-11-09 사용자 Windows 환경에서 GET 다운로드 성공을 확인했다.** 실패 시 HTTP 예외가 그대로 표시되며, 잘못 받은 파일을 정상 데이터로 취급하지 않는다.
 
 ```powershell
 & ".\benchmark\GAIA Benchmark\adapter\.venv\Scripts\python.exe" `
@@ -41,7 +41,22 @@ LongMemEval은 GAIA와 달리 **질문에 앞서 주어진 과거 대화 전체�
 
 ### 2. 원본 대화 재생과 1문항 평가
 
-현재 Portable 모델과 라우터가 준비된 상태에서:
+**먼저 Ornith 모델용 llama.cpp 라우터를 실행한다.** 저장소 루트의 첫 번째 PowerShell에서 아래 명령을 실행하고 해당 창을 열어 둔다. `-RouterOnly`는 MAI 웹 서버를 시작하지 않고 8080번 라우터만 실행한다. GPU와 모델 상주는 기존 Portable 설정을 따른다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\portable\\start-portable-llamacpp-router.ps1" -RouterOnly
+```
+
+두 번째 PowerShell에서 다음 명령으로 모델 등록 여부와 상태를 확인한다.
+
+```powershell
+(Invoke-RestMethod "http://127.0.0.1:8080/models").data |
+  Select-Object id, status
+```
+
+모델 목록이 조회되지 않으면 평가를 시작하지 않는다. 등록된 모델이 있어도 실제 적재에 실패할 수 있으므로 오류가 발생하면 **첫 번째 PowerShell의 llama.cpp 로그**에서 로딩 실패 원인을 확인해야 한다. `RouterModelTransitionError`는 모델 전환 실패를 뜻하며, 이것만으로 VRAM 부족·연결 실패 중 하나로 단정할 수 없다.
+
+이후 두 번째 PowerShell에서 평가를 실행한다:
 
 ```powershell
 & ".\portable\portable-runtimes\python\python.exe" `
