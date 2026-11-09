@@ -133,7 +133,7 @@ class AgentGuard:
             command = str(arguments.get("command", "")).strip().lower()
             # Strip common wrappers and use a command family, not entire
             # arguments; avoid claims about semantic equivalence.
-            executable = re.search(r"(?:^|[\\s|;&])([\\w.-]+(?:\\.exe)?)(?=\\s|$|[|;&])", command)
+            executable = re.search(r"(?:^|[\s|;&])([\w.-]+(?:\.exe)?)(?=\s|$|[|;&])", command)
             family = executable.group(1) if executable else ""
             family = {"cmd.exe": "cmd", "powershell.exe": "powershell"}.get(family, family)
             target += ":" + family
