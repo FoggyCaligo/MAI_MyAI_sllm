@@ -39,8 +39,9 @@ def test_poll_heartbeat_does_not_extend_ten_hour_activity(monkeypatch):
         session = await manager.create("owner")
         await manager.poll(session.session_id, session.secret)
         initial_activity = session.last_activity
-        for n in range(1, 11):
-            clock[0] = 1000.0 + n * 3599
+        # Keep the polling lease alive while approaching the 10-hour work-idle limit.
+        for n in range(1, 300):
+            clock[0] = 1000.0 + n * 120
             await manager.poll(session.session_id, session.secret)
             assert session.last_activity == initial_activity
         clock[0] = 1000.0 + 36000
