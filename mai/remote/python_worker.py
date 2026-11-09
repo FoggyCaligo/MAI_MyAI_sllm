@@ -36,8 +36,8 @@ def build_registry(*, cwd: str | Path | None = None,
         code_timeout_seconds=120,
         terminal_timeout_seconds=240 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
     )
-    register_time_tools(registry)
-    register_calculator_tools(registry)
+    register_time_tools(registry, timeout_seconds=20)
+    register_calculator_tools(registry, timeout_seconds=20)
     register_external_information_tools(
         registry, web_timeout_seconds=60, market_timeout_seconds=60,
     )
