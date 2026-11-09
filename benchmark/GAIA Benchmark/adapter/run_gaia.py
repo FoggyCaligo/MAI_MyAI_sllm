@@ -70,7 +70,16 @@ def extract_answer(response: str) -> str:
 
 
 def login(client: httpx.Client, user: str, password: str) -> dict[str, str]:
-    response = client.post("/login", json={"user_id": user, "user_pw": password})
+    preauth = client.get("/login/session")
+    preauth.raise_for_status()
+    session = preauth.json()
+    if not isinstance(session, dict) or not isinstance(session.get("session_token"), str) or not session["session_token"]:
+        raise RuntimeError("MAI pre-login response has no session_token")
+    response = client.post(
+        "/login",
+        headers={"X-MAI-Preauth-Session": session["session_token"]},
+        json={"user_id": user, "user_pw": password},
+    )
     response.raise_for_status()
     data = response.json()
     if not isinstance(data, dict) or not isinstance(data.get("token"), str):
