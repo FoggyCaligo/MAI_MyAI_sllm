@@ -71,6 +71,8 @@ def test_dependency_update_builds_replacement_before_pruning_old(tmp_path, monke
     )
     new = bootstrap_env.prepare_environment(tmp_path, source)
     assert old != new and old.is_file() and new.is_file()
+    old_marker = old.parents[1] / ".last-used"
+    os.utime(old_marker, ((datetime.now(timezone.utc) - timedelta(minutes=11)).timestamp(),) * 2)
     current_key = (source / ".shared-env-key").read_text().strip()
     with maintain_remote_worker_cache(tmp_path, source.name, environment_digest=current_key):
         assert new.is_file()
@@ -122,6 +124,9 @@ def test_shared_env_prune_does_not_remove_active_environment(tmp_path):
     for env in (active, other):
         env.mkdir()
         (env / ".installed-ok").touch()
+        (env / ".last-used").touch()
+    old_time = (datetime.now(timezone.utc) - timedelta(minutes=11)).timestamp()
+    os.utime(other / ".last-used", (old_time, old_time))
     removed = prune_replaced_dependency_envs(tmp_path, active.name)
     assert removed == [other]
     assert active.exists() and not other.exists()
