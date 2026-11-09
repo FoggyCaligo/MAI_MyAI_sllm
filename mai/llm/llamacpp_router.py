@@ -94,8 +94,8 @@ class SingleResidentRouter:
         while True:
             try:
                 response = await client.get(self.host + "/models", timeout=10.0)
-            response.raise_for_status()
-            payload = response.json()
+                response.raise_for_status()
+                payload = response.json()
             except (httpx.HTTPError, ValueError) as exc:
                 raise RouterModelTransitionError("Cannot query GPU memory estimates; load blocked") from exc
             entries = payload.get("data") if isinstance(payload, dict) else None
