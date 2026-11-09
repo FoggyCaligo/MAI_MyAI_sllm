@@ -42,11 +42,11 @@ export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
 export MAI_CWD="$root" MAI_UPLOAD_ROOT="$root/mai_uploads"
-export MEMORY_DB_PATH="$root/MAI_MyAI_sllm_Memory/memory.sqlite3"
-export CHAT_DB_PATH="$root/MAI_MyAI_sllm_Memory/chat.sqlite3"
-export LOG_DB_PATH="$root/MAI_MyAI_sllm_Memory/log.sqlite3"
-export VOICE_PROFILE_DIR="$root/MAI_MyAI_sllm_Memory/voice_profiles"
-export SENTENCE_BREAKER_DB_PATH="$root/MAI_MyAI_sllm_Memory/sentence_breaker.sqlite3"
+export MEMORY_DB_PATH="$root/MAI_MEMORY/memory.sqlite3"
+export CHAT_DB_PATH="$root/MAI_MEMORY/chat.sqlite3"
+export LOG_DB_PATH="$root/MAI_MEMORY/log.sqlite3"
+export VOICE_PROFILE_DIR="$root/MAI_MEMORY/voice_profiles"
+export SENTENCE_BREAKER_DB_PATH="$root/MAI_MEMORY/sentence_breaker.sqlite3"
 export LD_LIBRARY_PATH="$cache/llamacpp/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 command -v setsid >/dev/null || { echo "Missing setsid" >&2; exit 1; }
 setsid "$llama" --models-preset "$ini" --models-max "$models_max" --host 127.0.0.1 --port 8080 --jinja "$reasoning_preserve_flag" &

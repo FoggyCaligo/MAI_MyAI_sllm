@@ -11,7 +11,7 @@ from scripts.migrate_memory_data import migration_plan, migrate
 
 def _paths(tmp_path: Path):
     source = tmp_path / "data"
-    destination = tmp_path / "MAI_MyAI_sllm_Memory"
+    destination = tmp_path / "MAI_MEMORY"
     source.mkdir()
     destination.mkdir()
     (destination / ".git").mkdir()
@@ -55,7 +55,7 @@ def test_migration_requires_separate_git_repository(tmp_path: Path):
 
 def test_default_paths_use_memory_repo_in_config_and_launchers():
     root = Path(__file__).resolve().parents[1]
-    expected = "MAI_MyAI_sllm_Memory"
+    expected = "MAI_MEMORY"
     for path in (
         root / ".env.example",
         root / "mai" / "app" / "server.py",
@@ -65,4 +65,4 @@ def test_default_paths_use_memory_repo_in_config_and_launchers():
         root / "portable" / "start-portable-llamacpp-linux.sh",
     ):
         assert expected in path.read_text(encoding="utf-8")
-    assert "MAI_MyAI_sllm_Memory/" in (root / ".gitignore").read_text(encoding="utf-8")
+    assert "MAI_MEMORY/" in (root / ".gitignore").read_text(encoding="utf-8")
