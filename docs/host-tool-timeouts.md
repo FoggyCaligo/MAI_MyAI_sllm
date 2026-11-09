@@ -6,11 +6,11 @@
 |---|---|
 | Main/Verifier 등 llama.cpp 모델 API의 개별 요청 | 기본 **300초**. `settings.yaml: MODEL_REQUEST_TIMEOUT_SECONDS` 및 `mai/llm/models.py` |
 | 로컬 파일·코드·CSV·문서 도구 | 기본 **120초** |
-| 로컬 `terminal_run`의 실제 셸 프로세스 | 기본 **240초**. `mai/tools/terminal.py`의 내부 실행 제한 |
+| 로컬 `terminal_run`의 실제 셸 프로세스 | 기본 **120초**. `settings.yaml: TERMINAL_TIMEOUT_SECONDS`를 로드한 내부 실행 제한 |
 | 로컬 계산·시간 | 기본 **20초** |
 | 로컬 웹 검색·조회·시장 조회 | 기본 **60초** |
 | 원격 파일·코드 도구 | 현재 워커 구현은 **240초**. `mai/remote/python_worker.py`에서 120초 등록 뒤 2배 적용 |
-| 원격 `terminal_run`의 실제 셸 프로세스 | **480초**. 워커에서 `240 * 2` 지정. `terminal_run`의 등록 타임아웃은 `None`이며 별도의 내부 제한을 사용 |
+| 원격 `terminal_run`의 실제 셸 프로세스 | 기본 **240초**. 워커에서 설정된 `TERMINAL_TIMEOUT_SECONDS * 2` 적용. `terminal_run`의 등록 타임아웃은 `None`이며 별도의 내부 제한을 사용 |
 | Owner 로컬 `browser_open` | **120초**. `mai/remote/routing.py`가 브라우저 기본 60초에 배수 2 적용 |
 | 원격 `browser_open` | **240초**. 워커 초기 등록 배수 2와 원격 재등록 배수 2 적용 |
 | 원격 전송 결과 대기 | **600초**. `mai/remote/session.py` |
