@@ -169,7 +169,10 @@ class MAIRuntime:
         self._adapters: dict[str, LlamaCppAdapter] = {}
         self._fact_extractors: dict[str, ModelFactExtractor] = {}
         self._llamacpp_execution_lock = asyncio.Lock()
-        self._llamacpp_router = SingleResidentRouter(self.llamacpp_host)
+        self._llamacpp_router = SingleResidentRouter(
+            self.llamacpp_host,
+            gpu_memory_budget_mib=int(os.environ.get("LLAMACPP_GPU_MEMORY_BUDGET_MIB", "15360")),
+        )
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._memory_tasks_by_user: dict[str, asyncio.Task[None]] = {}
 

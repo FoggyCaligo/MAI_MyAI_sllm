@@ -19,6 +19,11 @@ LLAMACPP_MAIN_VISION: true
 # llama.cpp router와 자식 모델에 적용. 모델 버전을 교체해도 유지되는 런타임 설정.
 # 과거 추론의 보존만 끔. 현재 요청의 thinking 자체는 비활성화하지 않음.
 LLAMACPP_REASONING_PRESERVE: false
+# GPU 전용 메모리 사용량 예산(MiB). 15360 = 15 GiB. 초과 예상 시 로딩 거부.
+# 이는 전력 제한이나 드라이버 수준의 하드 메모리 상한이 아니다.
+LLAMACPP_GPU_MEMORY_BUDGET_MIB: 15360
+# 모델 컨텍스트 상한(토큰). 모델 로딩 시 KV 캐시 메모리에 반영된다.
+LLAMACPP_CONTEXT_SIZE: 131072
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
 # LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/vision.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"

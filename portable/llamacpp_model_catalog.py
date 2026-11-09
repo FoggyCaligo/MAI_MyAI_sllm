@@ -76,6 +76,8 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
         "projector": str(projector) if projector else None,
         "main_vision": bool(config.get("LLAMACPP_MAIN_VISION")),
         "reasoning_preserve": config.get("LLAMACPP_REASONING_PRESERVE", False),
+        "gpu_memory_budget_mib": int(config.get("LLAMACPP_GPU_MEMORY_BUDGET_MIB", 15360)),
+        "context_size": int(config.get("LLAMACPP_CONTEXT_SIZE", 131072)),
     }
 
 
@@ -86,7 +88,7 @@ def from_settings(root: Path) -> dict[str, object]:
 
 def render_ini(catalog: dict[str, object], *, context_size: int, gpu_layers: int) -> str:
     lines = ["version = 1", "[*]", f"ctx-size = {context_size}",
-             f"n-gpu-layers = {gpu_layers}", "parallel = 1"]
+             f"n-gpu-layers = {gpu_layers}", "parallel = 1", "fit = off"]
     for entry in catalog["models"]:
         lines.extend([f"[{entry['id']}]", f"model = {entry['path']}"])
         if entry["id"] == catalog["default"] and catalog["projector"]:
@@ -99,13 +101,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--ini", type=Path, required=True)
-    parser.add_argument("--context-size", type=int, default=131072)
+    parser.add_argument("--context-size", type=int, default=None)
     parser.add_argument("--gpu-layers", type=int, default=99)
     args = parser.parse_args()
-    if args.context_size < 512 or args.gpu_layers < 0:
-        raise ValueError("Invalid llama.cpp context/gpu layer settings")
+    if args.gpu_layers < 0:
+        raise ValueError("Invalid llama.cpp GPU layer settings")
     catalog = from_settings(args.root)
-    args.ini.write_text(render_ini(catalog, context_size=args.context_size,
+    context_size = args.context_size if args.context_size is not None else catalog["context_size"]
+    if not 512 <= context_size <= 262144:
+        raise ValueError("Invalid llama.cpp context setting")
+    args.ini.write_text(render_ini(catalog, context_size=context_size,
                                   gpu_layers=args.gpu_layers), encoding="utf-8")
     print(json.dumps(catalog, ensure_ascii=False))
 

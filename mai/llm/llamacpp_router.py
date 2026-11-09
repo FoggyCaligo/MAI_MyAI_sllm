@@ -24,9 +24,13 @@ class RouterModelTransitionError(RuntimeError):
 class SingleResidentRouter:
     def __init__(self, host: str, *, unload_timeout_seconds: float = 30.0,
                  poll_interval_seconds: float = 0.25,
-                 load_timeout_seconds: float = 180.0) -> None:
+                 load_timeout_seconds: float = 180.0,
+                 gpu_memory_budget_mib: int | None = None) -> None:
         if unload_timeout_seconds <= 0 or poll_interval_seconds <= 0 or load_timeout_seconds <= 0:
             raise ValueError("router transition timeouts must be positive")
+        if gpu_memory_budget_mib is not None and gpu_memory_budget_mib <= 0:
+            raise ValueError("gpu_memory_budget_mib must be positive")
+        self.gpu_memory_budget_mib = gpu_memory_budget_mib
         self.host = host.rstrip("/")
         self.unload_timeout_seconds = unload_timeout_seconds
         self.poll_interval_seconds = poll_interval_seconds
@@ -75,6 +79,76 @@ class SingleResidentRouter:
             if time.monotonic() >= deadline:
                 raise RouterModelTransitionError(f"Model unload confirmation timed out: {model} (state={state})")
             await asyncio.sleep(min(self.poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+
+
+    async def _verify_memory_budget(self, client: httpx.AsyncClient, model: str) -> None:
+        """Reject model load unless router metadata predicts GPU use within budget.
+
+        Uses llama.cpp's non-allocating measurement at the pinned context size.
+        A projector is not included in llama.cpp measurements; reserve 1 GiB for it.
+        This is a preflight guard, NOT a GPU allocation hard limit.
+        """
+        if self.gpu_memory_budget_mib is None:
+            return
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                response = await client.get(self.host + "/models", timeout=10.0)
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise RouterModelTransitionError("Cannot query GPU memory estimates; load blocked") from exc
+            entries = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(entries, list):
+                raise RouterModelTransitionError("Missing router model memory metadata; load blocked")
+            target = next((m for m in entries if isinstance(m, dict) and m.get("id") == model), None)
+            if not isinstance(target, dict):
+                raise RouterModelTransitionError(f"Missing memory estimate for {model}; load blocked")
+            memory = target.get("memory")
+            if isinstance(memory, dict) and memory.get("status") == "measured":
+                break
+            if isinstance(memory, dict) and memory.get("status") == "failed":
+                raise RouterModelTransitionError(f"Model memory measurement failed: {model}; load blocked")
+            if time.monotonic() >= deadline:
+                raise RouterModelTransitionError(f"Model memory measurement timed out: {model}; load blocked")
+            await asyncio.sleep(self.poll_interval_seconds)
+        entries = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(entries, list):
+            raise RouterModelTransitionError("Missing router model memory metadata; load blocked")
+        target = next((m for m in entries if isinstance(m, dict) and m.get("id") == model), None)
+        if not isinstance(target, dict):
+            raise RouterModelTransitionError(f"Missing memory estimate for {model}; load blocked")
+        memory = target.get("memory")
+        if not isinstance(memory, dict) or memory.get("status") != "measured":
+            raise RouterModelTransitionError(f"Model memory estimate is not ready for {model}; load blocked")
+        maximum = memory.get("max")
+        devices = maximum.get("devices") if isinstance(maximum, dict) else None
+        if not isinstance(devices, list) or not devices:
+            raise RouterModelTransitionError(f"Missing GPU memory estimate for {model}; load blocked")
+        gpu_total = 0
+        found_gpu = False
+        for device in devices:
+            if not isinstance(device, dict):
+                raise RouterModelTransitionError("Malformed GPU memory estimate; load blocked")
+            if device.get("kind") != "device":
+                continue
+            found_gpu = True
+            values = [device.get(part) for part in ("model", "context", "compute")]
+            if any(type(value) is not int or value < 0 for value in values):
+                raise RouterModelTransitionError("Incomplete GPU memory estimate; load blocked")
+            gpu_total += sum(values)
+        if not found_gpu:
+            raise RouterModelTransitionError("No GPU in router memory estimate; load blocked")
+        # llama.cpp's router measurements do not include multimodal projectors.
+        # Reserve 1 GiB for projector/other allocations regardless of model type.
+        conservative_bytes = gpu_total + 1024 * 1024 * 1024
+        budget_bytes = self.gpu_memory_budget_mib * 1024 * 1024
+        if conservative_bytes > budget_bytes:
+            raise RouterModelTransitionError(
+                f"GPU memory budget exceeded before model load: model={model} "
+                f"estimated_mib={conservative_bytes // (1024 * 1024)} "
+                f"budget_mib={self.gpu_memory_budget_mib}"
+            )
 
     async def _confirm_load(self, client: httpx.AsyncClient, model: str) -> None:
         """Explicitly load model and observe readiness before chat; no implicit autoload race."""
@@ -143,6 +217,7 @@ class SingleResidentRouter:
         if any(name != model and state != "unloaded" for name, state in confirmed.items()):
             raise RouterModelTransitionError("Other model is not confirmed unloaded")
         if confirmed.get(model) != "loaded":
+            await self._verify_memory_budget(client, model)
             await self._confirm_load(client, model)
 
     async def prepare(self, model: str, client: httpx.AsyncClient) -> None:
