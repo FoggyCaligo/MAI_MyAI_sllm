@@ -64,10 +64,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # Keep database path defaults in one place. Paths supplied by the
 # environment retain their existing semantics (relative to the process CWD).
 _DB_PATH_DEFAULTS = {
-    "MEMORY_DB_PATH": "./data/memory.sqlite3",
-    "SENTENCE_BREAKER_DB_PATH": "./data/sentence_breaker.sqlite3",
-    "CHAT_DB_PATH": "./data/chat.sqlite3",
-    "LOG_DB_PATH": "./data/log.sqlite3",
+    "MEMORY_DB_PATH": "./MAI_MyAI_sllm_Memory/memory.sqlite3",
+    "SENTENCE_BREAKER_DB_PATH": "./MAI_MyAI_sllm_Memory/sentence_breaker.sqlite3",
+    "CHAT_DB_PATH": "./MAI_MyAI_sllm_Memory/chat.sqlite3",
+    "LOG_DB_PATH": "./MAI_MyAI_sllm_Memory/log.sqlite3",
 }
 
 
