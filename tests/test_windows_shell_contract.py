@@ -85,6 +85,7 @@ def test_cmd_native_failure_does_not_become_success(tmp_path):
         asyncio.run(terminal_run(
             command="reg.exe query HKCU\\Software\\MAI_Nonexistent_Contract_Test",
             cwd=str(tmp_path),
+            shell="cmd",
         ))
     assert exc.value.result["returncode"] != 0
     assert exc.value.result["stderr"]
