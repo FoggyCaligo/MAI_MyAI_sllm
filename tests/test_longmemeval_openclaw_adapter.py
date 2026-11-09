@@ -110,3 +110,39 @@ def test_plugin_import_is_role_preserving_and_bypasses_neither_memory_store_nor_
     assert '"user" as const' in plugin
     assert 'insert into' not in plugin.lower()
     assert 'memory/' not in plugin
+
+
+def test_shared_official_judge_export_is_identical_for_mai_and_openclaw(tmp_path):
+    from prepare_official_scoring import export_hypotheses
+    case = fixture_cases(tmp_path)
+    outputs = []
+    for agent in ("mai", "openclaw"):
+        predictions = tmp_path / f"{agent}.jsonl"
+        predictions.write_text(json.dumps({
+            "question_id": case.question_id,
+            "question_type": case.question_type,
+            "model_answer": "Busan",
+            "status": "completed",
+        }) + "\n", encoding="utf-8")
+        destination = tmp_path / f"{agent}.judge.jsonl"
+        export_hypotheses(
+            tmp_path / "original.json", predictions, destination, start=0, limit=1,
+        )
+        outputs.append(destination.read_text(encoding="utf-8"))
+    assert outputs[0] == outputs[1]
+    assert json.loads(outputs[0]) == {"question_id": case.question_id, "hypothesis": "Busan"}
+
+
+def test_shared_official_judge_export_refuses_missing_or_failed_predictions(tmp_path):
+    from prepare_official_scoring import export_hypotheses
+    case = fixture_cases(tmp_path)
+    predictions = tmp_path / "failed.jsonl"
+    predictions.write_text(json.dumps({
+        "question_id": case.question_id, "model_answer": "", "status": "failed",
+    }) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="failed or empty"):
+        export_hypotheses(
+            tmp_path / "original.json", predictions, tmp_path / "judge.jsonl",
+            start=0, limit=1,
+        )
+    assert not (tmp_path / "judge.jsonl").exists()
