@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -14,6 +15,8 @@ from typing import Any, Callable
 import httpx
 
 from .errors import ModelProtocolError
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 @dataclass
@@ -132,6 +135,8 @@ async def stream_completion(
     partial = PartialCompletion()
     stream_payload = {**payload, "stream": True}
     last_progress_at = 0.0
+    stream_started = time.monotonic()
+    last_logged_at = stream_started
     try:
         # An absolute deadline is necessary: a model emitting tokens forever
         # must still time out even though each socket read succeeds.
@@ -162,6 +167,16 @@ async def stream_completion(
                             partial.consume("\n".join(pending_data))
                             pending_data.clear()
                             now = time.monotonic()
+                            if partial.chunks == 1 or now - last_logged_at >= 10.0 or partial.saw_done:
+                                _LOG.info(
+                                    "MAI llama.cpp stream progress chunks=%d elapsed_ms=%d "
+                                    "thinking_chars=%d content_chars=%d done=%s",
+                                    partial.chunks, int((now - stream_started) * 1000),
+                                    sum(map(len, partial.thinking_parts)),
+                                    sum(map(len, partial.content_parts)),
+                                    partial.saw_done,
+                                )
+                                last_logged_at = now
                             if on_progress is not None and (now - last_progress_at >= 0.5 or partial.saw_done):
                                 on_progress(partial.snapshot())
                                 last_progress_at = now
