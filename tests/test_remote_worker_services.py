@@ -163,7 +163,7 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
                     else definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER)
         assert remote.get(definition.name).timeout_seconds == expected
     assert remote.get("browser_open").timeout_seconds == 240
-    assert remote.get("calculator").timeout_seconds == 20
+    assert remote.get("calculator").timeout_seconds == 40
 
 
 def test_remote_transport_budget_covers_terminal_execution():
