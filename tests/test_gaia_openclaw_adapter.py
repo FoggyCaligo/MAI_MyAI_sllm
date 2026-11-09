@@ -103,3 +103,20 @@ def test_router_only_starts_no_mai_app_and_conflicts_with_gaia():
     assert "if ($RouterOnly)" in launcher
     assert "Wait-Process -Id $process.Id" in launcher
     assert "'--models-max', \"$ModelsMax\"" in launcher
+
+
+def test_windows_openclaw_npm_cmd_is_resolved_before_subprocess(monkeypatch):
+    seen = []
+    monkeypatch.setattr(mod.os, "name", "nt")
+    def which(name):
+        seen.append(name)
+        return r"C:\\Users\\tester\\AppData\\Roaming\\npm\\openclaw.cmd" if name == "openclaw.cmd" else None
+    monkeypatch.setattr(mod.shutil, "which", which)
+    assert mod.resolve_openclaw_executable("openclaw").endswith("openclaw.cmd")
+    assert seen == ["openclaw.cmd"]
+
+
+def test_missing_openclaw_reports_installation_problem(monkeypatch):
+    monkeypatch.setattr(mod.shutil, "which", lambda name: None)
+    with pytest.raises(FileNotFoundError, match="Get-Command openclaw"):
+        mod.resolve_openclaw_executable("openclaw")
