@@ -24,6 +24,7 @@ class ChatJob:
     tools: list[dict[str, Any]] = field(default_factory=list)
     thinking: str | None = None
     model_round: int | None = None
+    stream_progress: dict[str, Any] | None = None
     verification_rejections: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -65,6 +66,20 @@ class ChatJobStore:
         job = self._require(job_id)
         job.thinking = thinking
         job.model_round = model_round
+        job.updated_at = time.time()
+
+    def update_stream_progress(self, job_id: str, *, model_round: int, partial: dict[str, Any]) -> None:
+        job = self._require(job_id)
+        job.model_round = model_round
+        job.thinking = str(partial.get("thinking") or "") or None
+        job.stream_progress = {
+            "round": model_round,
+            "chunks": partial.get("chunks", 0),
+            "content": str(partial.get("content") or ""),
+            "finish_reason": partial.get("finish_reason"),
+            "complete": partial.get("complete", False),
+            "tool_call_fragments": len(partial.get("tool_fragments") or []),
+        }
         job.updated_at = time.time()
 
     def append_verification_rejection(self, job_id: str, *, model_round: int, feedback: str) -> None:
@@ -163,6 +178,7 @@ class ChatJobStore:
             "tools": [dict(tool) for tool in job.tools],
             "thinking": job.thinking,
             "model_round": job.model_round,
+            "stream_progress": dict(job.stream_progress) if job.stream_progress is not None else None,
             "verification_rejections": [dict(item) for item in job.verification_rejections],
         }
 
