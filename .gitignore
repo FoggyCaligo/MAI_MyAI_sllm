@@ -29,3 +29,6 @@ portable/portable-sources-linux.json
 build/
 dist/
 *.spec
+
+# Separate private Git repository for MAI user databases and voice profiles
+MAI_MyAI_sllm_Memory/
