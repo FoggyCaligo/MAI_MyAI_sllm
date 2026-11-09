@@ -147,4 +147,4 @@ def test_terminal_description_recommends_structured_counting(tmp_path):
     assert "Measure-Object" in description
     assert "ConvertTo-Json" in description
     assert "distinct entities" not in description or "unique-item count" in description
-    assert "row count, unique-item count and grouped counts" in description
+    assert "row count, unique-item count, and grouped counts" in description
