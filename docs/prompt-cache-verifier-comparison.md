@@ -1,28 +1,29 @@
-# 프롬프트 접두사 캐시·메시지 시각·Verifier 비교
+# 프롬프트 접두사 캐시·메시지 생성 시각·Verifier 비교
+
+이 문서는 현재 llama.cpp 백엔드의 **메모리 내 프롬프트 캐시**와 모델 입력에 보이는 메시지 시각, 검증 활성화 여부를 비교할 때의 계약을 설명한다. 디스크 KV 저장·복원 기능은 없다.
 
 ## 현재 동작
-- llama.cpp requests explicitly set `cache_prompt: true` (in-memory KV prefix reuse; **no KV disk save/restore**). The underlying llama-server must support the option; use a pinned compatible build.
-- MAI's core system contracts remain byte-stable and are assembled ahead of the conversation. The changing `current_time()` system block is removed from Main inputs; the final-answer Verifier retains its own authoritative clock source.
-- Every persisted Web chat message already has `created_at REAL`. `ChatSessionStore.messages(include_timestamps=True)` exposes it while the default return shape stays unchanged.
-- Prior user/assistant messages and the current user message receive a model-only `[Message created at <UTC ISO8601>]` header. Stored text remains untouched. Direct internal agent API calls that do not pass a timestamp continue to work, but the MAIRuntime web entrypoint generates a timestamp.
-- The Web UI displays locale-formatted timestamps, with ISO UTC hover text. Error messages and historical messages retain their own stored timestamps.
-- ChatRequest의 `verify` 기본값은 현재 서버에서 `MAI_VERIFIER_ENABLED` 설정을 따른다. 배포 `settings.yaml`은 `false`다. UI의 검증 체크박스로 **최종답변 Verifier**를 켜거나 끌 수 있다. Numeric/evidence Verifier review is skipped, but structural guards, tool execution, and background memory processing are not disabled.
+
+- llama.cpp 요청에는 `cache_prompt: true`를 명시한다. 캐시 재사용은 llama.cpp의 슬롯 상태와 프롬프트 접두사 일치 여부에 좌우되며 성능 향상을 보장하지 않는다.
+- 시스템 계약의 고정 접두사는 대화 전에 구성한다. 변경되는 `current_time()` 시스템 블록은 Main 입력에서 제거했고, 최종답변 Verifier는 별도의 기준 시각을 사용한다.
+- 영속 채팅의 `created_at`은 원래 존재하는 필드다. `ChatSessionStore.messages(include_timestamps=True)`는 시각을 반환하되, 기존 기본 응답 구조는 유지한다.
+- 과거 사용자·Assistant 메시지와 현재 사용자 입력에 생성 시각이 모델 전용 헤더 `[Message created at <UTC ISO8601>]`로 붙을 수 있다. SQLite에 저장된 대화 본문은 수정하지 않는다.
+- UI는 현지 시각을 표시하고 UTC ISO 문자열을 추가 정보로 제공한다. 내부 API에서 시각을 전달하지 않는 호출도 계속 사용할 수 있다.
+- **`ChatRequest.verify`의 서버 기본값은 `MAI_VERIFIER_ENABLED` 설정을 따른다.** 현재 `settings.yaml` 값은 `false`. UI에서 Verifier를 켜거나 끌 수 있으며 이 스위치는 도구 권한·프로세스 실행·비동기 기억 저장 기능을 중지시키는 보안 경계가 아니다.
 
 ## 비교 절차
-1. Start one compatible llama.cpp server and the same Ornith GGUF; keep GPU/ctx and tool permissions fixed.
-2. Verify that server `--cache-prompt` support is enabled (upstream default on modern builds). No `--slot-save-path` or KV persistence is needed.
-3. Run the same task in fresh sessions with UI 검증 ON and OFF; alternate run order and repeat.
-4. Record prompt evaluation timings, model rounds, tool execution counts, verifier events, total latency, evidence errors, and result correctness. Note background memory extraction can add post-answer compute.
-5. Confirm the full server-side prompt prefix is stable across requests. Tool schema changes on tool_manual activation, context truncation, and slots used by other requests can still reduce cache reuse.
 
-## 호환성
-- No chat SQLite migration is needed: created_at exists already.
-- `verify`를 생략한 기존 클라이언트는 서버의 `MAI_VERIFIER_ENABLED` 기본값을 사용하므로 현재 배포 설정에서는 검증이 꺼져 있다.
-- Historical DB values remain raw and readable by older code. New UI-only timestamp display does not rewrite content.
-- Previous tests that compare prior_messages exactly now need to account for the opt-in timestamp in model history.
-- A model-facing timestamp describes **message creation time**, not a guarantee that the wall clock is still current many minutes later. For current time use the native time tool.
+1. 동일 GGUF·llama.cpp 바이너리·GPU 계층·컨텍스트·도구 권한을 고정한다.
+2. 현재 서버의 캐시 지원 여부와 모델 슬롯 상태를 확인한다. 디스크 KV 저장 경로를 요구하지 않는다.
+3. 새 대화 세션에서 검증 ON/OFF를 번갈아 반복한다. 현재 배포 기본값이 OFF라는 사실을 기록한다.
+4. 프롬프트 평가 시간, 모델 라운드 수, 도구 호출 횟수, 검증 단계, 전체 응답 시간, 오류와 사실 정확도를 비교한다. 백그라운드 기억 추출은 최종답변 이후에도 계산 자원을 사용할 수 있다.
+5. `tool_manual` 도구 활성화에 따른 스키마 변경, 문맥 축약, 슬롯 교체는 캐시 적중률을 낮출 수 있으므로 함께 기록한다.
 
-## 보안과 정확성
-- Never rely on the UI checkbox for authorization; it controls answer review only.
-- Some external OpenAI-compatible gateways may not accept `cache_prompt`; this flag is intended for the project's llama.cpp backend.
-- Model KV reuse may vary depending on template, prompt matching, slots, and server eviction. These changes don't guarantee a speedup.
+## 호환성과 주의사항
+
+- 채팅 DB에 새 시각 컬럼 마이그레이션이 필요하지 않다.
+- `verify`를 생략하는 API 클라이언트는 서버 설정의 기본값을 사용한다. 현재는 `false`다.
+- 과거 대화 저장값은 시각 헤더가 추가되었다는 이유로 다시 쓰지 않는다.
+- 생성 시각 헤더는 메시지가 만들어진 때를 뜻하며 현재 시각을 보증하지 않는다. 최신 시각이 필요하면 시간 도구를 사용한다.
+- `cache_prompt`는 이 프로젝트의 llama.cpp 백엔드용이며 외부 호환 서버의 지원을 보증하지 않는다.
+- 검증 ON/OFF는 답변 검사 실험 변수이지 사용자 권한이나 파일 접근 권한을 변경하지 않는다.
