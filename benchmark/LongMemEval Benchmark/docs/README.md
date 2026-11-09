@@ -84,6 +84,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\\portable\\start-port
   --output-dir ".\\benchmark\\LongMemEval Benchmark\\result\\openclaw_trial_001"
 ```
 
+OpenClaw의 현재 설정 계약에서는 `agents.defaults.contextTokens`가 허용되지 않는다. 평가용 128K 입력 컨텍스트는 `models.providers.mai-local.models[].contextTokens`와 `contextWindow`에 설정한다. 이전 오류가 난 실행은 새 결과 폴더로 다시 실행하며, 기존 실패 로그는 보존한다.
+
 이 명령은 **원본 역할이 보존된 대화 기록을 OpenClaw의 네이티브 세션에 주입**하기 위한 벤치마크 전용 로컬 플러그인을 사용한다. `openclaw-plugin/index.ts`는 OpenClaw의 공식 Plugin SDK `createSessionEntry` / `withSessionTranscriptWrite` / `readVisibleSessionTranscriptMessageEntries` API를 사용한다. 설치된 OpenClaw 버전에서 플러그인 API가 달라지면 실패한다. 호출은 다음 순서다.
 
 1. 질문마다 새 `state/`, `workspace/` 디렉터리 및 해당 모델 전용 `openclaw.json`을 준비한다.
