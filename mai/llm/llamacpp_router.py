@@ -124,7 +124,7 @@ class SingleResidentRouter:
                 stream.write(json.dumps(
                     {"time_unix": time.time(), "event": event, **details},
                     ensure_ascii=False, default=str,
-                ) + "\\n")
+                ) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
         except OSError:
