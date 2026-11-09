@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -20,15 +21,30 @@ from mai.tools.browser import BrowserSessionManager, register_browser_tools
 from mai.tools.registry import ToolRegistry
 
 
+REMOTE_TOOL_TIMEOUT_MULTIPLIER = 2
+
+
 def build_registry(*, cwd: str | Path | None = None,
                    browser_manager: BrowserSessionManager | None = None) -> ToolRegistry:
     registry = ToolRegistry()
-    register_local_pc_tools(registry, cwd=cwd or os.getcwd())
+    register_local_pc_tools(
+        registry, cwd=cwd or os.getcwd(),
+        terminal_timeout_seconds=120 * REMOTE_TOOL_TIMEOUT_MULTIPLIER,
+    )
     register_time_tools(registry)
     register_calculator_tools(registry)
     register_external_information_tools(registry)
     register_browser_tools(registry, browser_manager or BrowserSessionManager())
-    return registry
+    remote_registry = ToolRegistry()
+    for definition in registry.definitions():
+        remote_registry.register(replace(
+            definition,
+            timeout_seconds=(
+                definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER
+                if definition.timeout_seconds is not None else None
+            ),
+        ))
+    return remote_registry
 
 
 class RemoteWorker:
