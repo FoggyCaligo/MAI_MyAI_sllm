@@ -60,8 +60,9 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
         # All possible model-triggering POSTs are guarded, including router
         # explicit loads, OpenAI-compatible endpoints, and native completions.
         # Only unloading a model is exempt; status GETs are read-only.
-        guarded = method in {"POST", "PUT", "PATCH"} and route != "/models/unload"
-        if guarded:
+        serialized = method in {"POST", "PUT", "PATCH"}
+        guarded = serialized and route != "/models/unload"
+        if serialized:
             await lock.acquire()
         sampler = None
         upstream_response = None
@@ -93,7 +94,7 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
                 if k.lower() not in _HOP_HEADERS
             }
 
-            async def stream(response=upstream_response, sampler_task=sampler, owns_lock=guarded):
+            async def stream(response=upstream_response, sampler_task=sampler, owns_lock=serialized):
                 try:
                     async for chunk in response.aiter_raw():
                         yield chunk
@@ -126,7 +127,7 @@ def create_app(*, upstream: str = "http://127.0.0.1:8081",
                 sampler.cancel()
                 await asyncio.gather(sampler, return_exceptions=True)
             # A streaming response owns the lock until response completion.
-            if guarded and not handed_off:
+            if serialized and not handed_off:
                 lock.release()
 
     return app
