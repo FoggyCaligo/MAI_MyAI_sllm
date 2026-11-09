@@ -204,8 +204,9 @@ def register_terminal_tools(
             "Write command text in the syntax of the selected shell only; the runner "
             "already invokes that shell. "
             
-            "With shell=powershell, provide PowerShell statements directly; do not "
-            "wrap them in another powershell -Command invocation. On Windows, "
+            "With shell=powershell, provide PowerShell statements directly; "
+            "do NOT wrap them in powershell -Command, powershell.exe -Command, "
+            "or another nested PowerShell invocation. On Windows, "
             "PowerShell uses UTF-16LE EncodedCommand and child-only ExecutionPolicy Bypass. "
             "Use PowerShell syntax with semicolons, variables, and native registry cmdlets. "
             "For multiple commands, check each required native exit status; a successful "
