@@ -30,7 +30,7 @@ MAI_MIN_AVAILABLE_RAM_MIB: 6144
 # 모델 컨텍스트 상한(토큰). 모델 로딩 시 KV 캐시 메모리에 반영된다.
 LLAMACPP_CONTEXT_SIZE: 65536
 # 별도 Vision GGUF를 사용하는 경우에만 주석 해제:
-LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
+# LLAMACPP_VISION_GGUF_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
 # LLAMACPP_VISION_MMPROJ_PATH: "portable/portable-models/gguf/vision-mmproj.gguf"
 
 
@@ -40,7 +40,7 @@ MAI_DEBUG_MODEL_INPUT: false
 
 ## 규칙 기반 재사용 및 진행 요약 (추가 LLM 호출 없음)
 AGENT_EVIDENCE_REUSE_ENABLED: false
-AGENT_PROGRESS_SUMMARY_ENABLED: false
+AGENT_PROGRESS_SUMMARY_ENABLED: true
 # 스트리밍 thinking의 반복/장시간 미완료 감지 (규칙 기반·추가 LLM 호출 없음, 자동 중단 없음)
 AGENT_REASONING_MONITOR_ENABLED: true
 AGENT_MAX_IDENTICAL_CALLS: 3
