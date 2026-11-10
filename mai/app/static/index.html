@@ -603,7 +603,26 @@
     return references;
   }
   $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`업로드 중: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||'업로드 실패');const reference=`업로드된 파일: ${data.path}`;if(file.type.startsWith('image/'))pendingUploadedImages.push(data.filename);$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`업로드 완료: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`업로드 오류: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
-  $form.addEventListener('submit',async event=>{event.preventDefault();let message=$input.value.trim();if(uploadingClipboardImages||switchingModel)return;if(!message && clipboardImages.length === 0){if(activeChat){const interrupted=activeChat;activeChat=null;interrupted.controller.abort();markInterrupted(interrupted.pending);syncSendButton();$input.focus();}return;}if(replacingChat)return;
+  $form.addEventListener('submit',async event=>{event.preventDefault();let message=$input.value.trim();if(uploadingClipboardImages||switchingModel)return;if(!message && clipboardImages.length === 0){
+    if(activeChat){
+      if(replacingChat)return;
+      replacingChat=true;
+      const interrupted=activeChat;
+      try{
+        const settle=window.maiSettlePreviousPresentation;
+        if(typeof settle==='function'){
+          interrupted.pending.finalized=Boolean(await settle(interrupted.pending));
+        }
+        if(activeChat===interrupted){
+          activeChat=null;
+          interrupted.controller.abort();
+          markInterrupted(interrupted.pending);
+        }
+      }finally{replacingChat=false;}
+      syncSendButton();$input.focus();
+    }
+    return;
+  }if(replacingChat)return;
   if(activeChat){
     replacingChat=true;
     const interrupted=activeChat;
