@@ -411,11 +411,15 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
     _, principal = _principal_from_authorization(authorization)
     if principal.role is not AccessRole.OWNER:
         raise HTTPException(403, "voice input is restricted to the owner")
-    voice = _voice()
+    provider = os.environ.get("VOICE_STT_PROVIDER", "local")
+    if provider not in {"local", "web_speech"}:
+        raise ValueError("VOICE_STT_PROVIDER must be local or web_speech")
+    voice = _voice() if provider == "local" else None
     return {
-        "silence_seconds": voice.silence_seconds,
-        "enrollment_min_speech_seconds": voice.enrollment_min_speech_seconds,
-        "enrolled": voice.enrolled(principal.db_id),
+        "stt_provider": provider,
+        "silence_seconds": voice.silence_seconds if voice else float(os.environ.get("VOICE_SILENCE_SECONDS", "5")),
+        "enrollment_min_speech_seconds": voice.enrollment_min_speech_seconds if voice else 3.0,
+        "enrolled": voice.enrolled(principal.db_id) if voice else False,
     }
 
 
