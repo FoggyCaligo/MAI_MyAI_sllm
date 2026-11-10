@@ -121,7 +121,7 @@
     #tts-toggle-btn.muted { color:var(--danger); }
     #tts-toggle-btn .mute-line { display:none; }
     #tts-toggle-btn.muted .mute-line { display:block; }
-    #tts-voice-select { width:112px; max-width:22vw; min-width:72px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:5px 4px; font-size:11px; outline:none; }
+    #tts-voice-select { width:112px; max-width:28vw; min-width:72px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:5px 4px; font-size:11px; outline:none; }
     #tts-voice-select:focus { border-color:var(--accent); }
     #tts-voice-select:disabled { opacity:.5; }
     #mic-btn.active { color:var(--danger); }
@@ -131,7 +131,7 @@
 
     @media (max-width:680px) {
       header { align-items:flex-start; flex-direction:column; padding:12px; }
-      .header-right { width:100%; flex-wrap:wrap; } #model-select { flex:1; min-width:0; max-width:none; }
+      .header-right { width:100%; flex-wrap:wrap; } #model-select { flex:1; min-width:0; max-width:none; } #tts-voice-select { flex:0 1 112px; max-width:34vw; }
       #messages { padding:16px 10px; } #input-area { padding:10px; } .content-wrap, .msg-row.mai .content-wrap { max-width:88%; }
     }
   </style>
@@ -152,6 +152,7 @@
     <div class="brand"><div class="logo">MAI</div><div class="subtitle">local personal agent</div></div>
     <div class="header-right">
       <select id="model-select" title="생성 모델 선택"><option value="">모델 로딩 중…</option></select>
+       <select id="tts-voice-select" aria-label="MAI 답변 목소리 선택" title="MAI 답변 목소리 선택"><option value="">기본 음성</option></select>
       <label class="verify-switch" title="끄면 답변 검증을 생략합니다. 속도 비교용입니다."><input type="checkbox" id="verify-toggle" /> 검증</label>
       <div class="identity" id="identity"></div><div class="identity" id="connection"></div>
       <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>
@@ -191,7 +192,7 @@
         <textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea>
         <button id="mic-btn" type="button" title="음성 입력 시작" aria-label="음성 입력 시작" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
         <button id="tts-toggle-btn" type="button" title="답변 음성 끄기" aria-label="답변 음성 끄기" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/><path class="mute-line" d="M3 3 21 21"/></svg></button>
-        <select id="tts-voice-select" aria-label="MAI 답변 목소리 선택" title="MAI 답변 목소리 선택"><option value="">기본 음성</option></select>
+        
         <button id="send-btn" type="submit">전송</button>
       </div>
     </form>
