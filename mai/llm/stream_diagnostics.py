@@ -182,7 +182,7 @@ async def stream_completion(
                                 )
                                 partial.reasoning_diagnostics = diagnostic
                                 if diagnostic["status"] != last_monitor_status and diagnostic["status"] in {
-                                    "repetition_suspected", "long_unresolved", "output_progress",
+                                    "repetition_suspected", "long_unresolved",
                                 }:
                                     _LOG.warning(
                                         "MAI reasoning diagnostic status=%s thinking_chars=%d repeat_checks=%d "
