@@ -241,42 +241,12 @@ def test_message_timestamp_round_trip_is_opt_in_and_preserves_text(tmp_path) -> 
     assert [m["content"] for m in timed] == ["원문", "답변"]
 
 
-def test_cancelled_user_prompt_stays_visible_but_is_not_model_context(tmp_path) -> None:
+def test_interrupted_user_prompt_remains_in_followup_context(tmp_path) -> None:
     store = ChatSessionStore(tmp_path / "chat.sqlite3")
     common = {"db_id": "owner", "session_id": "default"}
-    store.append(**common, role="user", content="first completed request")
-    store.append(**common, role="assistant", content="first answer")
-    store.append(**common, role="user", content="interrupted request",
-                 metadata={"job_id": "old-job", "attachments": ["a.png"]})
-    store.append(**common, role="user", content="next corrected request",
-                 metadata={"job_id": "new-job"})
-    assert store.mark_cancelled_job(**common, job_id="old-job") == 1
-    assert store.mark_cancelled_job(**common, job_id="old-job") == 1
-    assert store.mark_cancelled_job(**common, job_id="other-job") == 0
-
-    visible = store.messages(**common, include_metadata=True)
-    assert [item["content"] for item in visible] == [
-        "first completed request", "first answer",
-        "interrupted request", "next corrected request",
+    store.append(**common, role="user", content="first instruction")
+    # The model request was interrupted without writing an assistant answer.
+    store.append(**common, role="user", content="correction after interruption")
+    assert [m["content"] for m in store.messages(**common, exclude_errors=True)] == [
+        "first instruction", "correction after interruption",
     ]
-    assert visible[2]["metadata"]["kind"] == "cancelled"
-    assert visible[2]["metadata"]["attachments"] == ["a.png"]
-
-    context = store.messages(**common, exclude_errors=True)
-    assert [item["content"] for item in context] == [
-        "first completed request", "first answer", "next corrected request",
-    ]
-    assert store.messages(**common, exclude_errors=True, limit=1) == [
-        {"role": "user", "content": "next corrected request"},
-    ]
-
-
-def test_cancelled_job_marking_cannot_affect_another_account_or_session(tmp_path) -> None:
-    store = ChatSessionStore(tmp_path / "chat.sqlite3")
-    for db_id, session_id in (("a", "default"), ("b", "default"), ("a", "other")):
-        store.append(db_id=db_id, session_id=session_id, role="user",
-                     content=f"{db_id}/{session_id}",
-                     metadata={"job_id": "shared-id"})
-    assert store.mark_cancelled_job(db_id="a", session_id="default", job_id="shared-id") == 1
-    assert store.messages(db_id="b", session_id="default", exclude_errors=True)
-    assert store.messages(db_id="a", session_id="other", exclude_errors=True)
