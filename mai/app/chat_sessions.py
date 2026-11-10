@@ -146,27 +146,6 @@ class ChatSessionStore:
             )
             return int(cursor.lastrowid)
 
-    def mark_cancelled_job(self, *, db_id: str, session_id: str, job_id: str) -> int:
-        """Hide an interrupted prompt from future model context, not the UI.
-
-        Only rows tagged with this exact job ID are changed. A later user
-        correction therefore does not inherit an unfulfilled instruction.
-        """
-        if not db_id or not session_id or not job_id:
-            raise ValueError("db_id, session_id and job_id are required")
-        with self._connect() as connection:
-            cursor = connection.execute(
-                f"""
-                UPDATE {WEB_CHAT_TABLE}
-                SET metadata_json = json_set(metadata_json, '$.kind', 'cancelled')
-                WHERE db_id = ? AND session_id = ? AND role = 'user'
-                  AND json_valid(metadata_json)
-                  AND json_extract(metadata_json, '$.job_id') = ?
-                """,
-                (db_id, session_id, job_id),
-            )
-            return int(cursor.rowcount)
-
     def messages(
         self,
         *,
@@ -181,11 +160,9 @@ class ChatSessionStore:
             raise ValueError("limit must be non-negative or None")
         if limit == 0:
             return []
-        # Exclude failed assistant replies and cancelled user prompts from
-        # the model context, while preserving the visible UI audit history.
+        # Exclude error replies, not user requests whose execution was interrupted.
         error_clause = (
-            "AND (metadata_json IS NULL OR "
-            "coalesce(json_extract(metadata_json, '$.kind'), '') NOT IN ('error','cancelled'))"
+            "AND (metadata_json IS NULL OR json_extract(metadata_json, '$.kind') IS NOT 'error')"
             if exclude_errors else ""
         )
         with self._connect() as connection:
