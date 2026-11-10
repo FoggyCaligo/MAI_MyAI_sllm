@@ -320,6 +320,17 @@
   }
 
   async function submitDetachedChat(init) {
+    // A replaced prompt must not race with the cancelled request's model
+    // stream and the single-resident llama.cpp gateway. Wait for the old
+    // task to release its server-side locks before posting the new one.
+    const precedingJobId = currentSubmissionJobId;
+    if (precedingJobId) {
+      const cancelled = await cancelJob(precedingJobId);
+      if (!cancelled) {
+        return jsonResponse({detail: '이전 작업의 취소를 확인하지 못했습니다. 새 요청을 시작하지 않았습니다.'}, 503);
+      }
+      if (currentSubmissionJobId === precedingJobId) setCurrentJob(null);
+    }
     const submit = await nativeFetch('/chat/jobs', init);
     if (!submit.ok) return submit;
     const data = await submit.json();
@@ -493,12 +504,8 @@
 
   const chatForm = document.getElementById('chat-form');
   const messageInput = document.getElementById('msg-input');
-  if (chatForm) {
-    chatForm.addEventListener('submit', () => {
-      const jobId = currentSubmissionJobId;
-      if (jobId) void cancelJob(jobId);
-    });
-  }
+  // Cancellation is awaited in submitDetachedChat, not fired-and-forgotten
+  // from a form event listener. This keeps replacement requests ordered.
   if (messageInput) {
     messageInput.addEventListener('input', syncSingleSendControl);
   }
