@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,6 +21,30 @@ class TerminalRunInput(BaseModel):
     command: str = Field(min_length=1)
     cwd: str | None = None
     shell: Literal['bash', 'cmd', 'powershell'] = 'bash'
+
+
+class TerminalShellContractError(ValueError):
+    """Unambiguous nested-shell invocation; no process was started."""
+
+
+# The runner already launches PowerShell. Another top-level PowerShell -Command
+# wrapper commonly loses quoting and automatic variable references ($_.Path).
+# Limit rejection to an unmistakable entrypoint, not legitimate subprocesses
+# called later in a script.
+_NESTED_POWERSHELL = re.compile(
+    r"^\\s*(?:&\\s*)?(?:powershell|powershell\\.exe|pwsh|pwsh\\.exe)\\s+"
+    r"(?:(?:-(?:NoProfile|NonInteractive|ExecutionPolicy)\\s+\\S+|"
+    r"-(?:NoLogo|NoExit))\\s+)*-(?:Command|EncodedCommand|c|enc)\\b",
+    re.IGNORECASE,
+)
+
+
+def _validate_shell_contract(command: str, shell: str) -> None:
+    if shell == "powershell" and _NESTED_POWERSHELL.match(command):
+        raise TerminalShellContractError(
+            "shell=powershell already invokes PowerShell; pass the commands "
+            "directly without powershell.exe -Command or pwsh -Command."
+        )
 
 
 class TerminalRunError(RuntimeError):
@@ -193,6 +218,7 @@ async def terminal_run(
     default_timeout_seconds: float | None = None,
     shell: Literal["bash", "cmd", "powershell"] = "bash",
 ) -> dict[str, Any]:
+    _validate_shell_contract(command, shell)
     base = cwd if cwd is not None else default_cwd
     resolved_cwd = Path(base or os.getcwd()).expanduser().resolve(strict=False)
     if not resolved_cwd.exists():
@@ -250,7 +276,8 @@ def register_terminal_tools(
             "CMD does not use semicolons as command separators, backslashes to escape quotes, "
             "or POSIX 'for ... do ... done' syntax. In CMD scripts use %%V in FOR loops. "
             "Write command text in the syntax of the selected shell only; the runner "
-            "already invokes that shell. "
+            "already invokes that shell. Obvious nested PowerShell -Command entrypoints "
+            "are rejected before any process starts. "
             
             "With shell=powershell, provide PowerShell statements directly; "
             "do NOT wrap them in powershell -Command, powershell.exe -Command, "
