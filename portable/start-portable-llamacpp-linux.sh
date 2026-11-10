@@ -39,6 +39,7 @@ catalog_json="$("$python" "$root/portable/llamacpp_model_catalog.py" --root "$ro
 default_model="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["default"])')"
 main_vision="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; c=json.load(sys.stdin); print("true" if c["main_vision"] or c["projector"] else "false")')"
 reasoning_preserve="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print("true" if json.load(sys.stdin)["reasoning_preserve"] else "false")')"
+cache_ram_mib="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["cache_ram_mib"])')"
 min_free_vram_mib="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["min_free_vram_mib"])')"
 guard_enabled="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print("true" if json.load(sys.stdin)["memory_guard_enabled"] else "false")')"
 min_available_ram_mib="$(printf '%s' "$catalog_json" | "$python" -c 'import json,sys; print(json.load(sys.stdin)["min_available_ram_mib"])')"
@@ -48,6 +49,7 @@ if [[ "$guard_enabled" == true ]]; then router_port=8081; fi
 export LLAMACPP_MIN_FREE_VRAM_MIB="$min_free_vram_mib"
 export MAI_MIN_AVAILABLE_RAM_MIB="$min_available_ram_mib"
 export LLAMA_ARG_REASONING_PRESERVE="$reasoning_preserve"
+export LLAMA_ARG_CACHE_RAM="$cache_ram_mib"
 reasoning_preserve_flag="--no-reasoning-preserve"
 if [[ "$reasoning_preserve" == true ]]; then reasoning_preserve_flag="--reasoning-preserve"; fi
 export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model"
