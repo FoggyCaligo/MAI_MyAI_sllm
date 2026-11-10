@@ -121,7 +121,7 @@ def register_routed_service_tools(
     register_time_tools(local, timeout_seconds=20)
     register_calculator_tools(local, timeout_seconds=20)
     register_external_information_tools(
-        local, web_timeout_seconds=60, market_timeout_seconds=60,
+        local, web_timeout_seconds=180, market_timeout_seconds=60,
     )
     register_browser_tools(local, browser_manager, timeout_multiplier=2)
     _add_routed_definitions(
