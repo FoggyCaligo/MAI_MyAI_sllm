@@ -23,15 +23,15 @@ def _character_units(text: str) -> list[str]:
     joining = False
     for char in normalized:
         category = unicodedata.category(char)
-        if char.isspace() or category.startswith(("P", "Z", "C")) and char != "\\u200d":
+        if char.isspace() or (category.startswith(("P", "Z", "C")) and char != chr(0x200D)):
             joining = False
             continue
-        is_mark = category.startswith("M") or char in {"\\ufe0e", "\\ufe0f"}
-        if units and (is_mark or joining or char == "\\u200d"):
+        is_mark = category.startswith("M") or char in {chr(0xFE0E), chr(0xFE0F)}
+        if units and (is_mark or joining or char == chr(0x200D)):
             units[-1] += char
-        elif char != "\\u200d":
+        elif char != chr(0x200D):
             units.append(char)
-        joining = char == "\\u200d"
+        joining = char == chr(0x200D)
     return units
 
 
