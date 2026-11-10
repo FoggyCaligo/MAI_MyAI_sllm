@@ -46,14 +46,22 @@
     liveProgressWrap = null;
   }
 
-  function renderLiveThinking(thinking) {
+  function renderLiveThinking(thinking, verificationRejections = []) {
     if (!liveProgressWrap) return;
     const bubble = liveProgressWrap.querySelector('.bubble');
     if (!bubble) return;
 
     let placeholder = bubble.querySelector('[data-live-thinking="true"]');
     const text = typeof thinking === 'string' ? thinking.trim() : '';
-    if (!text) {
+    const feedback = Array.isArray(verificationRejections)
+      ? verificationRejections.map(item => {
+          const message = typeof item?.feedback === 'string' ? item.feedback.trim() : '';
+          if (!message) return '';
+          const round = Number.isInteger(item?.model_round) ? ` · round ${item.model_round}` : '';
+          return `REJECTED${round}\n${message}`;
+        }).filter(Boolean) : [];
+    const thinkingText = [text, ...feedback].filter(Boolean).join('\n\n');
+    if (!thinkingText) {
       placeholder?.remove();
       return;
     }
@@ -78,7 +86,7 @@
     }
     // Only the dedicated thinking field is visible before completion.
     // Streamed content and provisional model turns are never answers.
-    placeholder.querySelector('[data-thinking-body="true"]').textContent = text;
+    placeholder.querySelector('[data-thinking-body="true"]').textContent = thinkingText;
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
@@ -333,7 +341,7 @@
         return jsonResponse({detail: '요청이 새 메시지로 대체되었습니다.'}, 499);
       }
       if (data.status === 'pending' || data.status === 'running' || data.status === 'cancelling') {
-        renderLiveThinking(data.thinking);
+        renderLiveThinking(data.thinking, data.verification_rejections);
         renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
       }
       if (data.status === 'completed') {
