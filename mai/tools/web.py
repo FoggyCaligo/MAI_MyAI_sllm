@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
-from ddgs.exceptions import DDGSException
+from ddgs.exceptions import DDGSException, TimeoutException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .registry import ToolRegistry
@@ -84,6 +84,18 @@ def _compact_search_text(value: object, *, max_chars: int) -> str | None:
     return text[: max_chars - 1] + "…"
 
 
+def _is_search_timeout(exc: BaseException) -> bool:
+    """Recognize timeout by structured exception type, never message text."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (TimeoutException, TimeoutError, httpx.TimeoutException)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dict[str, object]:
     clean_query = query.strip()
     if not clean_query:
@@ -98,17 +110,43 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
     page: int | None = None
     completed_pages = 0
     stopped_on_empty_page: int | None = None
+    fallback_pages: list[int] = []
     try:
         with DDGS(timeout=60) as ddgs:
             for page in range(1, WEB_SEARCH_PAGE_COUNT + 1):
                 try:
-                    raw_results = list(ddgs.text(
-                        clean_query,
-                        max_results=results_per_page,
-                        page=page,
-                        region="kr-ko",
-                        safesearch="moderate",
-                    ))
+                    try:
+                        raw_results = list(ddgs.text(
+                            clean_query,
+                            max_results=results_per_page,
+                            page=page,
+                            region="kr-ko",
+                            safesearch="moderate",
+                        ))
+                    except Exception as initial_exc:
+                        if not _is_search_timeout(initial_exc):
+                            raise
+                        _LOG.warning(
+                            "MAI web_search primary timeout provider=ddgs page=%d "
+                            "cause_type=%s; retrying backend=google once",
+                            page, type(initial_exc).__name__,
+                        )
+                        # A timeout must remain visible even if Google succeeds.
+                        # Any Google failure is reported by the outer error boundary.
+                        raw_results = list(ddgs.text(
+                            clean_query,
+                            max_results=results_per_page,
+                            page=page,
+                            region="kr-ko",
+                            safesearch="moderate",
+                            backend="google",
+                        ))
+                        fallback_pages.append(page)
+                        _LOG.info(
+                            "MAI web_search fallback succeeded provider=ddgs "
+                            "backend=google page=%d unique_results_before_page=%d",
+                            page, len(merged),
+                        )
                 except DDGSException as exc:
                     # DDGS has no dedicated no-results type. Recognize only its
                     # exact empty-result sentinel at this provider boundary;
@@ -162,6 +200,8 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
         "query": clean_query,
         "provider": "ddgs",
         "provider_pages": completed_pages,
+        "fallback_backend": "google" if fallback_pages else None,
+        "fallback_pages": fallback_pages,
         "stopped_on_empty_page": stopped_on_empty_page,
         "results": results,
         "status": "results" if results else "no_results",

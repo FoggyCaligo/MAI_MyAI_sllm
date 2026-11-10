@@ -167,3 +167,87 @@ def test_filtered_out_provider_records_are_no_results(monkeypatch):
     assert result["status"] == "no_results"
     assert result["message"] == "결과없음"
 
+
+
+def test_timeout_falls_back_once_to_google_and_reports_backend(monkeypatch, caplog):
+    requests = []
+
+    class TimeoutThenGoogle(FakeDDGS):
+        def text(self, query, *, page, backend=None, **kwargs):
+            requests.append((page, backend))
+            if page == 2 and backend is None:
+                raise TimeoutException("provider timed out")
+            return [{"href": f"https://example.org/{page}",
+                     "title": f"Result {page}", "body": "Evidence"}]
+
+    monkeypatch.setattr(web_module, "DDGS", TimeoutThenGoogle)
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    result = web_module.web_search("test news")
+    assert requests == [(1, None), (2, None), (2, "google"), (3, None)]
+    assert result["provider_pages"] == 3
+    assert result["fallback_backend"] == "google"
+    assert result["fallback_pages"] == [2]
+    assert [row["url"] for row in result["results"]] == [
+        "https://example.org/1", "https://example.org/2", "https://example.org/3"
+    ]
+    assert "primary timeout" in caplog.text
+    assert "fallback succeeded" in caplog.text
+
+
+def test_wrapped_structural_timeout_triggers_google(monkeypatch):
+    requests = []
+
+    class WrappedTimeout(FakeDDGS):
+        def text(self, query, *, page, backend=None, **kwargs):
+            requests.append((page, backend))
+            if backend is None:
+                try:
+                    raise TimeoutError("low-level socket timed out")
+                except TimeoutError as cause:
+                    raise DDGSException("upstream unavailable") from cause
+            return [{"href": "https://example.org/google", "title": "Google result"}]
+
+    monkeypatch.setattr(web_module, "DDGS", WrappedTimeout)
+    result = web_module.web_search("test news")
+    assert requests == [(1, None), (1, "google"), (2, None), (2, "google"),
+                        (3, None), (3, "google")]
+    assert result["fallback_pages"] == [1, 2, 3]
+    assert len(result["results"]) == 1
+
+
+@pytest.mark.parametrize("original", [
+    DDGSException("error sending request > os error 10060"),
+    DDGSException("No results found."),
+    RatelimitException("search rate limited"),
+])
+def test_untyped_provider_errors_do_not_trigger_fallback(monkeypatch, original):
+    backends = []
+
+    class UntypedFailure(FakeDDGS):
+        def text(self, query, *, backend=None, **kwargs):
+            backends.append(backend)
+            raise original
+
+    monkeypatch.setattr(web_module, "DDGS", UntypedFailure)
+    with pytest.raises(web_module.WebSearchError) as caught:
+        web_module.web_search("test news")
+    assert backends == [None]
+    assert caught.value.__cause__ is original
+
+
+def test_google_fallback_failure_propagates_explicitly(monkeypatch):
+    requests = []
+    fallback_error = DDGSException("Google unavailable")
+
+    class BothFail(FakeDDGS):
+        def text(self, query, *, backend=None, **kwargs):
+            requests.append(backend)
+            if backend is None:
+                raise TimeoutException("primary timeout")
+            raise fallback_error
+
+    monkeypatch.setattr(web_module, "DDGS", BothFail)
+    with pytest.raises(web_module.WebSearchError) as caught:
+        web_module.web_search("test news")
+    assert requests == [None, "google"]
+    assert caught.value.__cause__ is fallback_error
