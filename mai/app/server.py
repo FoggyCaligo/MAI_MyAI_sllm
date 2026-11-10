@@ -505,16 +505,15 @@ async def select_model(
     if principal.role is not AccessRole.OWNER:
         raise HTTPException(status_code=403, detail="model switching is restricted to the owner")
     runtime = _get_runtime()
-    if runtime.llm_backend != "llamacpp":
-        raise HTTPException(status_code=409, detail="explicit switching is available only for llama.cpp")
+    # Cloud choices are explicit allowlisted model ids, not alternate llama.cpp backends.
     try:
         model = await runtime.select_model(request.model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("llama.cpp model selection failed model=%s", request.model)
+        logger.exception("model selection failed model=%s", request.model)
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
-    return {"model": model, "status": "loaded"}
+    return {"model": model, "status": "selected" if ":" in model else "loaded"}
 
 
 @app.get("/download/{token}")
