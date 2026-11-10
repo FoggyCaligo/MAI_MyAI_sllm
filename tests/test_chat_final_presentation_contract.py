@@ -10,9 +10,9 @@ RESUMABLE = (ROOT / "mai/app/static/resumable-chat.js").read_text(encoding="utf-
 def test_streamed_content_is_not_rendered_as_an_answer():
     # The stream can carry provisional content alongside native tool calls,
     # but the UI reads only the dedicated thinking field while running.
-    assert "renderLiveThinking(data.thinking);" in RESUMABLE
-    assert "renderLiveThinking(data.thinking, data.verification_rejections)" not in RESUMABLE
-    assert "placeholder.textContent = text;" in RESUMABLE
+    assert "renderLiveThinking(data.thinking, data.verification_rejections);" in RESUMABLE
+    assert "const thinkingText = [text, ...feedback].filter(Boolean).join(" in RESUMABLE
+    assert "textContent = thinkingText;" in RESUMABLE
     assert "data.stream_progress.content" not in RESUMABLE
     assert "data.status === 'completed'" in RESUMABLE
     assert "return jsonResponse(data.response || {}, 200);" in RESUMABLE
