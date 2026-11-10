@@ -168,3 +168,63 @@ def test_round_timing_audit_is_backward_compatible(tmp_path):
         assert row == (1, "tools", 1400, 1000, 400, 0)
         assert conn.execute("SELECT count(*) FROM steps").fetchone()[0] == 1
     store.finish("run", status="completed")
+
+
+def test_permanent_failure_detection_is_conservative():
+    from mai.agent.loop import ToolExecution, _permanent_read_failure
+    def failure(name, kind, message):
+        return ToolExecution(
+            name=name, arguments={}, ok=False, content=message,
+            error_type=kind, handler_started=True, source_content=message,
+        )
+    assert _permanent_read_failure(
+        "web_fetch", failure("web_fetch", "WebFetchError", "HTTP 404 Not Found")
+    )
+    assert _permanent_read_failure(
+        "file_read", failure("file_read", "FileNotFoundError", "absent")
+    )
+    assert not _permanent_read_failure(
+        "web_fetch", failure("web_fetch", "WebFetchError", "HTTP 429 rate limited")
+    )
+    assert not _permanent_read_failure(
+        "web_fetch", failure("web_fetch", "WebFetchError", "HTTP 503 temporarily down")
+    )
+    assert not _permanent_read_failure(
+        "terminal_run", failure("terminal_run", "TerminalCommandError", "404")
+    )
+
+
+def test_permanent_fetch_failure_reuses_exact_error_without_extra_llm_calls(monkeypatch):
+    monkeypatch.setenv("AGENT_EVIDENCE_REUSE_ENABLED", "false")
+    monkeypatch.setenv("AGENT_PROGRESS_SUMMARY_ENABLED", "false")
+    calls = []
+    registry = ToolRegistry()
+
+    def handler(path):
+        calls.append(path)
+        raise RuntimeError("HTTP 404 Not Found")
+
+    # Exercise a real native tool registration with a deterministic exception.
+    from mai.tools.web import WebFetchError
+
+    def fetch(path):
+        calls.append(path)
+        raise WebFetchError("web fetch failed: 404 Not Found")
+
+    registry.add(name="web_fetch", description="Fetch page", input_model=_Input, handler=fetch)
+    a = ("web_fetch", {"path": "https://example.invalid/absent"})
+    b = ("web_fetch", {"path": "https://example.invalid/other"})
+    adapter = _Adapter([
+        _turn(("tool_manual", {"tools": ["web_fetch"]})),
+        _turn(a), _turn(b), _turn(a), _turn(content="finished"),
+    ])
+    runtime = AgentRuntime(adapter, registry)
+    result = asyncio.run(runtime.run_user_message("Check pages"))
+    assert result.content == "finished"
+    assert calls == [a[1]["path"], b[1]["path"]]
+    assert len(adapter.requests) == 5
+    failed = [execution for execution in result.tool_executions if execution.name == "web_fetch"]
+    assert len(failed) == 3
+    assert failed[-1].ok is False
+    assert failed[-1].reused is True
+    assert failed[-1].handler_started is False
