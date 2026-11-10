@@ -18,6 +18,26 @@ def test_web_and_browser_tools_are_host_only_without_remote_flag():
     ):
         assert registry.has(name)
         assert "is_remote" not in registry.get(name).input_model.model_fields
+        # Existing model hallucinations must fail validation, not dispatch
+        # a remote worker request or quietly ignore the unsupported flag.
+        from mai.tools.registry import ToolArgumentsError
+        import pytest
+        definition = registry.get(name)
+        sample = {
+            "web_search": {"query": "test"},
+            "web_fetch": {"url": "https://example.com"},
+            "browser_open": {"url": "https://example.com"},
+        }.get(name, {"session_id": "b1"})
+        if name == "browser_click":
+            sample["element_ref"] = "g1e1"
+        elif name == "browser_input_text":
+            sample.update({"element_ref": "g1e1", "text": "test"})
+        elif name == "browser_press_key":
+            sample["key"] = "Enter"
+        elif name == "browser_scroll":
+            sample["pixels"] = 100
+        with pytest.raises(ToolArgumentsError):
+            definition.validate_arguments({**sample, "is_remote": True})
 
     # Other routed services retain remote capability.
     for name in ("current_time", "calculator"):
