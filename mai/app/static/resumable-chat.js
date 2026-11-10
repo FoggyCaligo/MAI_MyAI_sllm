@@ -58,20 +58,27 @@
       return;
     }
     if (!placeholder) {
-      placeholder = document.createElement('div');
+      placeholder = document.createElement('details');
       placeholder.dataset.liveThinking = 'true';
+      placeholder.open = true;
       placeholder.style.marginTop = '8px';
       placeholder.style.color = 'var(--text-dim)';
       placeholder.style.opacity = '0.78';
       placeholder.style.fontSize = '13px';
-      placeholder.style.lineHeight = '1.55';
-      placeholder.style.whiteSpace = 'pre-wrap';
-      placeholder.style.overflowWrap = 'anywhere';
+      const heading = document.createElement('summary');
+      heading.textContent = 'thinking · 생성 중';
+      const body = document.createElement('div');
+      body.dataset.thinkingBody = 'true';
+      body.style.marginTop = '8px';
+      body.style.lineHeight = '1.55';
+      body.style.whiteSpace = 'pre-wrap';
+      body.style.overflowWrap = 'anywhere';
+      placeholder.append(heading, body);
       bubble.appendChild(placeholder);
     }
     // Only the dedicated thinking field is visible before completion.
     // Streamed content and provisional model turns are never answers.
-    placeholder.textContent = text;
+    placeholder.querySelector('[data-thinking-body="true"]').textContent = text;
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
 
