@@ -11,10 +11,10 @@ from mai.llm.stream_diagnostics import stream_completion
 
 
 def test_repeated_reasoning_detected_without_interruption():
-    monitor = ReasoningMonitor(minimum_check_chars=500, window_words=60)
-    phrase = " ".join(f"step_{i}" for i in range(60)) + " "
+    monitor = ReasoningMonitor(minimum_check_chars=30, window_chars=40)
+    phrase = "ตรวจสอบข้อมูลอีกครั้งและเปรียบเทียบผลลัพธ์"
     status = None
-    for n in range(1, 10):
+    for n in range(1, 15):
         status = monitor.observe(phrase * n)
     assert status is not None
     assert status["status"] == "repetition_suspected"
@@ -24,17 +24,18 @@ def test_repeated_reasoning_detected_without_interruption():
 
 
 def test_varied_reasoning_not_marked_as_repetition():
-    monitor = ReasoningMonitor(minimum_check_chars=300, window_words=50)
+    monitor = ReasoningMonitor(minimum_check_chars=100, window_chars=80)
+    import hashlib
     status = None
     for n in range(1, 10):
-        text = " ".join(f"unique_{i}" for i in range(n * 75))
+        text = "".join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(n * 15))
         status = monitor.observe(text)
     assert status is not None
     assert status["status"] not in {"repetition_suspected", "long_unresolved"}
 
 
 def test_long_unresolved_is_warning_not_claim_of_invalidity():
-    monitor = ReasoningMonitor(minimum_check_chars=100, window_words=40, long_unresolved_chars=1500)
+    monitor = ReasoningMonitor(minimum_check_chars=100, window_chars=40, long_unresolved_chars=1500)
     thought = " ".join(f"distinct_{i}" for i in range(280))
     result = monitor.observe(thought)
     assert result["status"] == "long_unresolved"
@@ -42,15 +43,40 @@ def test_long_unresolved_is_warning_not_claim_of_invalidity():
 
 
 def test_actual_answer_or_tool_fragment_counts_as_progress():
-    monitor = ReasoningMonitor(minimum_check_chars=100, window_words=40)
-    phrase = " ".join(f"term_{i}" for i in range(40))
-    for n in range(1, 10):
+    monitor = ReasoningMonitor(minimum_check_chars=30, window_chars=40)
+    phrase = "ตรวจสอบข้อมูลและเปรียบเทียบผลลัพธ์"
+    for n in range(1, 15):
         monitor.observe(phrase * n)
-    progressed = monitor.observe(phrase * 10, tool_fragment_count=1)
+    progressed = monitor.observe(phrase * 15, tool_fragment_count=1)
     assert progressed["status"] == "output_progress"
     assert progressed["repeat_checks"] == 0
-    progressed = monitor.observe(phrase * 11, content_chars=5)
+    progressed = monitor.observe(phrase * 16, content_chars=5)
     assert progressed["status"] == "output_progress"
+
+
+def test_non_space_languages_repetition_is_detectable():
+    samples = [
+        "ตรวจสอบข้อมูลอีกครั้งและเปรียบเทียบผลลัพธ์",
+        "最新情報を調べて確認し直す必要がある",
+        "再次检查资料并且验证这个结论是否正确",
+        "근거를 다시 확인하고 결과를 검증해야 한다",
+    ]
+    for phrase in samples:
+        monitor = ReasoningMonitor(minimum_check_chars=30, window_chars=40)
+        for n in range(1, 18):
+            result = monitor.observe(phrase * n)
+        assert result["status"] == "repetition_suspected", phrase
+
+
+def test_unicode_combining_forms_compare_the_same():
+    from mai.llm.reasoning_monitor import _character_units
+    import unicodedata
+    phrase = "한글 카페 ภาษาไทย"
+    decomposed = unicodedata.normalize("NFD", phrase)
+    assert _character_units(decomposed) == _character_units(phrase)
+    # The Thai combining vowel mark stays attached to its base unit.
+    units = _character_units("กิ")
+    assert units == ["กิ"]
 
 
 def test_stream_progress_carries_diagnostics_without_extra_request(monkeypatch):
