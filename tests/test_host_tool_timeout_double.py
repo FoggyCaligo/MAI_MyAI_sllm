@@ -94,3 +94,18 @@ def test_configured_terminal_timeout_reaches_host_and_remote(tmp_path, monkeypat
     remote = build_registry(cwd=tmp_path)
     asyncio.run(remote.get("terminal_run").invoke({"command": "echo test"}))
     assert captured == [73, 146]
+
+
+def test_owner_web_search_has_independent_180_second_timeout():
+    from mai.remote.routing import register_routed_service_tools
+    from mai.tools.browser import BrowserSessionManager
+    from mai.tools.registry import ToolRegistry
+
+    owner = ToolRegistry()
+    register_routed_service_tools(
+        owner, owner_id="owner", browser_manager=BrowserSessionManager(),
+    )
+    # The routed wrapper's timeout is delegated to the inner registry.
+    assert owner.has("web_search")
+    assert owner.get("web_search").timeout_seconds is None
+    assert owner.has("web_fetch")
