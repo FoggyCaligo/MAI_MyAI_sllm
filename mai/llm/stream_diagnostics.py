@@ -151,6 +151,11 @@ async def stream_completion(
             async with client.stream(
                 "POST", url, json=stream_payload, timeout=timeout_seconds,
             ) as response:
+                # HTTP errors can arrive as unread streams. Buffer only the
+                # error response so the adapter can report its status and body
+                # without masking the original failure with ResponseNotRead.
+                if response.is_error:
+                    await response.aread()
                 response.raise_for_status()
                 # Older llama.cpp adapters and controlled test doubles can
                 # return an ordinary JSON completion despite stream=true.
