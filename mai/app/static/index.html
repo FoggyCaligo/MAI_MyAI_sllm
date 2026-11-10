@@ -342,7 +342,7 @@
     return cells;
   }
   function renderMarkdown(source) {
-    const lines=String(source??'').replace(/\r\n/g,'\n').split('\n'), out=[]; let inCode=false, codeLines=[], listType=null, paragraph=[];
+    // Model context includes UTC creation timestamps; avoid echoing their\n    // technical prefix in the visible answer. Preserve the UI timestamp below.\n    const displaySource=String(source??'').replace(/^(?:\[Message created at \d{4}-\d{2}-\d{2}T[^\]\r\n]+\]\s*\r?\n)+/, '');\n    const lines=displaySource.replace(/\r\n/g,'\n').split('\n'), out=[]; let inCode=false, codeLines=[], listType=null, paragraph=[];
     const flush=()=>{if(paragraph.length){out.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`);paragraph=[];}}; const closeList=()=>{if(listType){out.push(`</${listType}>`);listType=null;}};
     for(let i=0;i<lines.length;i++){
       const line=lines[i];
