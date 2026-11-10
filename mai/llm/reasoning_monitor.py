@@ -6,15 +6,37 @@ Never cancels generation or treats partial output as a successful answer.
 """
 from __future__ import annotations
 
-import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
-_WORD = re.compile(r"\w+", re.UNICODE)
+
+def _character_units(text: str) -> list[str]:
+    """Unicode-normalized extended-character approximation, not words.
+
+    Keep combining marks, variation selectors and joined glyphs with their
+    preceding base character. This is intentionally stdlib-only and works
+    with Thai and CJK without dictionaries or language detection.
+    """
+    normalized = unicodedata.normalize("NFC", text).casefold()
+    units: list[str] = []
+    joining = False
+    for char in normalized:
+        category = unicodedata.category(char)
+        if char.isspace() or category.startswith(("P", "Z", "C")) and char != "\\u200d":
+            joining = False
+            continue
+        is_mark = category.startswith("M") or char in {"\\ufe0e", "\\ufe0f"}
+        if units and (is_mark or joining or char == "\\u200d"):
+            units[-1] += char
+        elif char != "\\u200d":
+            units.append(char)
+        joining = char == "\\u200d"
+    return units
 
 
-def _shingles(words: list[str], size: int = 5) -> set[tuple[str, ...]]:
-    return {tuple(words[i:i + size]) for i in range(max(0, len(words) - size + 1))}
+def _shingles(units: list[str], size: int = 5) -> set[tuple[str, ...]]:
+    return {tuple(units[i:i + size]) for i in range(max(0, len(units) - size + 1))}
 
 
 def _similarity(a: set[tuple[str, ...]], b: set[tuple[str, ...]]) -> float:
@@ -26,14 +48,13 @@ class ReasoningMonitor:
     """Constant-size tail analysis; no model calls, no semantic claims."""
 
     minimum_check_chars: int = 1200
-    window_words: int = 120
+    window_chars: int = 240
     high_similarity: float = 0.78
     long_unresolved_chars: int = 12000
     _last_checked_chars: int = field(default=0, init=False)
     _repeat_checks: int = field(default=0, init=False)
     _status: str = field(default="insufficient_data", init=False)
     _similarity: float = field(default=0.0, init=False)
-    _last_content_chars: int = field(default=0, init=False)
 
     def observe(
         self, thinking: str, *, content_chars: int = 0,
@@ -41,7 +62,7 @@ class ReasoningMonitor:
     ) -> dict[str, Any]:
         """Assess visible generation, not whether any claim is true.
 
-        Each full check uses at most the last 480 words. Repeated windows
+        Each full check uses at most the last 720 Unicode character units. Repeated windows
         must match on two successive checks before signaling suspicion.
         """
         chars = len(thinking)
@@ -57,14 +78,14 @@ class ReasoningMonitor:
             self._similarity = 0.0
             return self.snapshot(chars, content_chars, tool_fragment_count)
 
-        # Keep a bounded tail of words. Whitespace, casing, punctuation and
-        # chunk boundaries do not change the comparison.
-        words = [m.group(0).casefold() for m in _WORD.finditer(thinking[-8000:])]
-        width = self.window_words
-        if len(words) >= width * 3:
-            latest = _shingles(words[-width:])
-            prev = _shingles(words[-2 * width:-width])
-            older = _shingles(words[-3 * width:-2 * width])
+        # Compare Unicode character units, independent of word spacing.
+        # Normalize and bound work to the recent stream tail only.
+        units = _character_units(thinking[-8000:])
+        width = self.window_chars
+        if len(units) >= width * 3:
+            latest = _shingles(units[-width:])
+            prev = _shingles(units[-2 * width:-width])
+            older = _shingles(units[-3 * width:-2 * width])
             self._similarity = min(_similarity(latest, prev), _similarity(latest, older))
             if self._similarity >= self.high_similarity:
                 self._repeat_checks += 1
