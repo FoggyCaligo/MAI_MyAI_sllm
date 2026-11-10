@@ -38,6 +38,7 @@ async def _execute_chat(
     on_model_timeout_diagnostic=None,
     on_verification_rejection=None,
     on_verification_audit=None,
+    job_id: str | None = None,
 ) -> tuple[int, dict[str, object]]:
     runtime = server._get_runtime()
     try:
@@ -57,7 +58,10 @@ async def _execute_chat(
     user_created_at = time.time()
     server._append_session_message(
         principal, request.session_id, role="user", content=request.message,
-        metadata={"attachments": attachments} if attachments else None,
+        metadata=(
+            {"job_id": job_id, **({"attachments": attachments} if attachments else {})}
+            if job_id is not None else ({"attachments": attachments} if attachments else None)
+        ),
         created_at=user_created_at,
     )
     active_model = selected_model or runtime.model
@@ -219,6 +223,7 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 on_model_timeout_diagnostic=publish_timeout_diagnostic,
                 on_verification_rejection=publish_verification_rejection,
                 on_verification_audit=publish_verification_audit,
+                job_id=job_id,
             )
         if status_code == 200:
             if request.verify:
@@ -244,8 +249,15 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
             payload = {**payload, "status_code": status_code}
             chat_job_store.fail(job_id, error=detail, response=payload)
     except asyncio.CancelledError:
-        if audit is not None:
-            audit.finish(job_id, status="cancelled")
+        # The user may immediately replace this unfinished instruction.
+        # Do not feed the interrupted user message into the next run.
+        try:
+            server._get_chat_session_store().mark_cancelled_job(
+                db_id=principal.db_id, session_id=request.session_id, job_id=job_id,
+            )
+        finally:
+            if audit is not None:
+                audit.finish(job_id, status="cancelled")
         raise
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
