@@ -8,6 +8,11 @@ mai_uploads/
 .coverage
 htmlcov/
 data/log.sqlite3*
+# Do not add runtime databases or their SQLite journals to new commits.
+# Already-tracked files must separately be removed from the Git index/history.
+data/*.sqlite3*
+data/*.sqlite*
+data/*.db
 MAI_MEMORY/
 MAI_MyAI_sllm/*
 
