@@ -2,6 +2,44 @@
   const mic = document.getElementById('mic-btn');
   const enroll = document.getElementById('voice-enroll-btn');
   const speaker = document.getElementById('tts-toggle-btn');
+  const voiceSelect = document.getElementById('tts-voice-select');
+  const voiceStorageKey = 'mai.tts.voiceURI';
+  let selectedVoiceURI = '';
+  try { selectedVoiceURI = localStorage.getItem(voiceStorageKey) || ''; } catch (_) { /* Storage may be disabled. */ }
+
+  function refreshVoices() {
+    if (!voiceSelect) return;
+    const synth = window.speechSynthesis;
+    if (!synth || typeof synth.getVoices !== 'function') {
+      voiceSelect.disabled = true;
+      return;
+    }
+    const allVoices = synth.getVoices();
+    const koreanVoices = allVoices.filter(voice => /^ko(?:-|$)/i.test(voice.lang));
+    const voices = koreanVoices.length ? koreanVoices : allVoices;
+    voiceSelect.replaceChildren(new Option('기본 음성', ''));
+    for (const voice of voices) {
+      voiceSelect.add(new Option(voice.name + ' (' + voice.lang + ')', voice.voiceURI));
+    }
+    // Keep the saved preference even if the browser loads voices asynchronously.
+    voiceSelect.value = voices.some(voice => voice.voiceURI === selectedVoiceURI) ? selectedVoiceURI : '';
+    voiceSelect.disabled = voices.length === 0;
+    voiceSelect.title = voices.length ? 'MAI 답변 목소리 선택' : '이 브라우저에서 사용할 수 있는 음성이 없어.';
+  }
+
+  if (voiceSelect) {
+    voiceSelect.addEventListener('change', () => {
+      selectedVoiceURI = voiceSelect.value;
+      try {
+        if (selectedVoiceURI) localStorage.setItem(voiceStorageKey, selectedVoiceURI);
+        else localStorage.removeItem(voiceStorageKey);
+      } catch (_) { /* Selection still applies for this page. */ }
+    });
+    refreshVoices();
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.addEventListener?.('voiceschanged', refreshVoices);
+    }
+  }
   const status = document.getElementById('upload-status');
   const input = document.getElementById('msg-input');
   let active = null;
@@ -72,6 +110,13 @@
     currentUtterance = utterance;
     utterance.lang = 'ko-KR';
     utterance.rate = 1;
+    if (selectedVoiceURI) {
+      const selectedVoice = window.speechSynthesis.getVoices().find(voice => voice.voiceURI === selectedVoiceURI);
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      }
+    }
     utterance.onend = () => {
       if (currentUtterance !== utterance) return;
       currentUtterance = null;
