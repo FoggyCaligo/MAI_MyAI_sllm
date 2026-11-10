@@ -32,12 +32,12 @@ class TerminalShellContractError(ValueError):
 # Limit rejection to an unmistakable entrypoint, not legitimate subprocesses
 # called later in a script.
 _NESTED_POWERSHELL = re.compile(
-    r"^\s*(?:&\s*)?(?:powershell|powershell\.exe|pwsh|pwsh\.exe)\s+"
-    r"(?:(?:-(?:NoProfile|NonInteractive|ExecutionPolicy)\s+\S+|"
-    r"-(?:NoLogo|NoExit))\s+)*-(?:Command|EncodedCommand|c|enc)\b",
+    r"^\s*(?:&\s*)?(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)\s+"
+    r"(?:(?:-(?:NoProfile|NonInteractive|NoLogo|NoExit)\s+)|"
+    r"(?:-ExecutionPolicy\s+\S+\s+))*"
+    r"-(?:Command|EncodedCommand|c|enc)\b",
     re.IGNORECASE,
 )
-
 
 def _validate_shell_contract(command: str, shell: str) -> None:
     if shell == "powershell" and _NESTED_POWERSHELL.match(command):
