@@ -308,6 +308,12 @@ def install() -> None:
         html = html.replace(chat_form_marker, '<form id="chat-form" novalidate>', 1)
         resumable_digest = hashlib.sha256(resumable_script.read_bytes()).hexdigest()[:16]
         new_chat_digest = hashlib.sha256(new_chat_script.read_bytes()).hexdigest()[:16]
+        voice_script = Path(server._STATIC_DIR) / "voice-input.js"
+        voice_digest = hashlib.sha256(voice_script.read_bytes()).hexdigest()[:16]
+        voice_marker = '<script src="/static/voice-input.js"></script>'
+        if voice_marker not in html:
+            raise RuntimeError("MAI voice script marker is missing from index.html")
+        html = html.replace(voice_marker, f'<script src="/static/voice-input.js?v={voice_digest}"></script>', 1)
         assets = (
             f'  <script src="/static/resumable-chat.js?v={resumable_digest}"></script>\n'
             f'  <script src="/static/new-chat.js?v={new_chat_digest}"></script>\n'
