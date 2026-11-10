@@ -321,10 +321,15 @@ def install() -> None:
         authorization: str | None = Header(default=None),
     ) -> dict[str, object]:
         _, principal = server._principal_from_authorization(authorization)
-        job = chat_job_store.create(auth_user_id=principal.user_id)
-        task = asyncio.create_task(_run_job(job_id=job.job_id, request=request, principal=principal))
-        chat_job_store.attach_task(job.job_id, task)
-        return {"job_id": job.job_id, "status": job.status}
+        # Even if the browser reloads or misses a cancel event, a newer
+        # message supersedes ongoing inference for this account. Joining the
+        # old task releases the user/model locks before the new task starts.
+        async with chat_job_store.submission_lock_for(principal.user_id):
+            await chat_job_store.cancel_active_for(auth_user_id=principal.user_id)
+            job = chat_job_store.create(auth_user_id=principal.user_id)
+            task = asyncio.create_task(_run_job(job_id=job.job_id, request=request, principal=principal))
+            chat_job_store.attach_task(job.job_id, task)
+            return {"job_id": job.job_id, "status": job.status}
 
     @app.get("/chat/jobs/active")
     async def active_chat_jobs(
