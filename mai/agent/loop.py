@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Sequence
@@ -29,6 +30,23 @@ _TOOL_ARGS_LOG_LIMIT = 800
 _MAX_NUMERIC_VERIFICATION_RETRIES = 2
 _MAX_COVERAGE_VERIFICATION_RETRIES = 2
 _MAX_EVIDENCE_VERIFICATION_RETRIES = 5
+
+# Only deterministic, target-specific failures are reusable within one run.
+# Transient timeouts, rate limits and server failures must always remain retryable.
+_MISSING_RESOURCE_RE = re.compile(r"(?<!\\d)404(?!\\d)|not found|does not exist", re.IGNORECASE)
+
+
+def _permanent_read_failure(name: str, execution: "ToolExecution") -> bool:
+    if execution.ok or not execution.handler_started:
+        return False
+    if name == "web_fetch" and execution.error_type in {
+        "WebFetchError", "HTTPStatusError", "WebFetchHTTPError",
+    }:
+        return bool(_MISSING_RESOURCE_RE.search(execution.audit_content))
+    if name in {"file_read", "code_read"}:
+        return execution.error_type in {"FileNotFoundError", "NotADirectoryError"}
+    return False
+
 
 
 class ToolManualInput(BaseModel):
@@ -243,6 +261,7 @@ class AgentLoop:
         reuse_enabled = os.environ.get("AGENT_EVIDENCE_REUSE_ENABLED", "true").lower() in {"true", "1", "yes"}
         progress_enabled = os.environ.get("AGENT_PROGRESS_SUMMARY_ENABLED", "true").lower() in {"true", "1", "yes"}
         read_cache: dict[str, ToolExecution] = {}
+        permanent_failure_cache: dict[str, ToolExecution] = {}
         reuse_count = 0
         round_number = 1
         semantic_verification_retries = 0
@@ -573,10 +592,15 @@ class AgentLoop:
                         )
                     else:
                         cacheable = call.name in {"web_search", "web_fetch", "file_read", "code_read"}
+                        cached_failure = permanent_failure_cache.get(call_fp)
                         cached = read_cache.get(call_fp) if reuse_enabled and cacheable else None
-                        if cached is not None:
-                            # Read-only output reuse within this run. Never cache
-                            # mutations or calls that previously failed.
+                        if cached_failure is not None:
+                            # Exact failed target, known permanent result. Preserve
+                            # the original error while avoiding the repeated I/O.
+                            execution = replace(cached_failure, reused=True, handler_started=False)
+                            _LOG.info("MAI permanent failure cache hit round=%d name=%s", round_number, call.name)
+                        elif cached is not None:
+                            # Read-only success reuse is separately opt-in.
                             execution = replace(cached, reused=True, handler_started=False)
                             reuse_count += 1
                             _LOG.info("MAI read cache hit round=%d name=%s", round_number, call.name)
@@ -586,11 +610,17 @@ class AgentLoop:
                                 available_tool_names=active_tool_names,
                                 activated_tool_names=activated_tool_names,
                             )
+                            if _permanent_read_failure(call.name, execution):
+                                permanent_failure_cache[call_fp] = execution
                             if reuse_enabled and cacheable and execution.ok and execution.handler_started:
                                 read_cache[call_fp] = execution
                             if call.name in {"file_write", "document_edit", "terminal_run", "code_write"}:
-                                # An arbitrary shell command can modify files.
+                                # An arbitrary shell command can modify local files.
                                 read_cache.clear()
+                                # Local paths may now exist. Web 404s are independent.
+                                for fingerprint, failure in list(permanent_failure_cache.items()):
+                                    if failure.name in {"file_read", "code_read"}:
+                                        del permanent_failure_cache[fingerprint]
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     tool_elapsed_ms += elapsed_ms
                     executions.append(execution)
