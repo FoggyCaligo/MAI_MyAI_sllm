@@ -233,4 +233,19 @@ def test_live_stream_progress_visible_during_running_job() -> None:
     assert snapshot["stream_progress"]["chunks"] == 8
     assert snapshot["stream_progress"]["complete"] is False
     assert snapshot["stream_progress"]["tool_call_fragments"] == 1
+    store.update_stream_progress(
+        job.job_id, model_round=3,
+        partial={
+            "thinking": "reasoning continues", "content": "",
+            "chunks": 42, "finish_reason": None, "complete": False,
+            "tool_fragments": [],
+            "reasoning_diagnostics": {
+                "status": "repetition_suspected", "thinking_chars": 8200,
+                "semantic_validity": "not_assessed", "action": "diagnostic_only",
+            },
+        },
+    )
+    snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
+    assert snapshot["stream_progress"]["reasoning_diagnostics"]["status"] == "repetition_suspected"
+
     assert store.snapshot_for(job_id=job.job_id, auth_user_id="other") is None
