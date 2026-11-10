@@ -35,6 +35,7 @@ class ChatJobStore:
         self._retention_seconds = max(300, retention_seconds)
         self._jobs: dict[str, ChatJob] = {}
         self._user_locks: dict[str, asyncio.Lock] = {}
+        self._submission_locks: dict[str, asyncio.Lock] = {}
 
     def create(self, *, auth_user_id: str) -> ChatJob:
         self._cleanup()
@@ -142,6 +143,20 @@ class ChatJobStore:
         if job is None or job.auth_user_id != auth_user_id:
             return None
         return self._snapshot(job)
+
+    def submission_lock_for(self, auth_user_id: str) -> asyncio.Lock:
+        """Serialize replacement submissions without holding the inference lock."""
+        return self._submission_locks.setdefault(auth_user_id, asyncio.Lock())
+
+    async def cancel_active_for(self, *, auth_user_id: str) -> None:
+        """Wait for earlier tasks to unwind before scheduling a replacement."""
+        self._cleanup()
+        jobs = [
+            job.job_id for job in self._jobs.values()
+            if job.auth_user_id == auth_user_id and job.status in _ACTIVE_STATUSES
+        ]
+        for job_id in jobs:
+            await self.cancel_for(job_id=job_id, auth_user_id=auth_user_id)
 
     def lock_for(self, auth_user_id: str) -> asyncio.Lock:
         lock = self._user_locks.get(auth_user_id)
