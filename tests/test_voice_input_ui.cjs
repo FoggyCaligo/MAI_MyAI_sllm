@@ -34,7 +34,7 @@ async function run(mode) {
     async fetch(path) {
       calls.push(path);
       const data = path === '/voice/config'
-        ? {enrolled: mode === 'transcribe', silence_seconds: 5, enrollment_min_speech_seconds: 3, min_speech_seconds: 0.5}
+        ? {stt_provider: 'local', enrolled: mode === 'transcribe', silence_seconds: 5, enrollment_min_speech_seconds: 3, min_speech_seconds: 0.5}
         : path === '/voice/activity' ? {speech_end_seconds: 0.1} : {text: '응'};
       return {ok: true, status: 200, headers: {get() {return 'application/json';}}, async json() {return data;}};
     }

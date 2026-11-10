@@ -24,7 +24,7 @@ _ALLOWED_KEYS = frozenset((
     "MAX_INLINE_TOOL_RESULT_CHARS", "MEMORY_RECALL_INCLUDE_UTTERANCES",
     "SESSION_HISTORY_MESSAGES", "MAI_ANSWER_QUALITY_REVIEW", "MAI_VERIFIER_ENABLED",
     "REMOTE_HOSTING_PROVIDER", "VOICE_SILENCE_SECONDS",
-    "VOICE_MATCH_THRESHOLD", "VOICE_WHISPER_MODEL",
+    "VOICE_MATCH_THRESHOLD", "VOICE_WHISPER_MODEL", "VOICE_STT_PROVIDER",
 ))
 
 
@@ -68,6 +68,8 @@ def load_settings(path: Path, *, environ: dict[str, str] | None = None) -> dict[
             raise TypeError(f"settings.yaml {key} must be a string, number, or boolean")
         if not encoded.strip():
             raise ValueError(f"settings.yaml {key} must not be blank")
+        if key == "VOICE_STT_PROVIDER" and encoded not in {"local", "web_speech"}:
+            raise ValueError("VOICE_STT_PROVIDER must be local or web_speech")
         result[key] = encoded
     target = os.environ if environ is None else environ
     for key, value in result.items():

@@ -48,6 +48,7 @@
   let currentUtterance = null;
   let starting = false;
   let modeRevision = 0;
+  let webRecognition = null;
 
   function stopTts() {
     currentUtterance = null;
@@ -60,7 +61,18 @@
     mic.setAttribute('aria-pressed', String(enabled));
     mic.title = enabled ? '음성 모드 끄기' : '음성 입력 시작';
     mic.setAttribute('aria-label', mic.title);
-    if (!enabled) { modeRevision += 1; stopTts(); }
+    if (!enabled) {
+      modeRevision += 1;
+      stopTts();
+      if (webRecognition) {
+        const recognition = webRecognition;
+        webRecognition = null;
+        recognition.onresult = null;
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.abort();
+      }
+    }
   }
 
   function spokenText(markdown) {
@@ -79,8 +91,95 @@
       .trim();
   }
 
+
+  function submitRecognizedText(recognized) {
+    if (!recognized.trim()) throw new Error('음성 인식 결과가 비어 있어.');
+    const form = document.getElementById('chat-form');
+    const send = document.getElementById('send-btn');
+    if (!voiceMode || input.value.trim() || send.classList.contains('stop-mode')) {
+      setStatus('자동 전송을 건너뛰었어. 음성모드가 꺼졌거나 작성 중인 메시지 또는 진행 중인 대화가 있어.', true);
+      return false;
+    }
+    input.value = recognized.trim();
+    input.dispatchEvent(new Event('input'));
+    if (send.disabled) throw new Error('전송 버튼이 비활성화되어 자동 전송할 수 없어.');
+    form.requestSubmit();
+    setStatus('인식된 메시지 전송을 요청했어.');
+    return true;
+  }
+
+  function startWebSpeech(config, revision) {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) throw new Error('이 브라우저는 Web Speech API 음성 인식을 지원하지 않아.');
+    if (!Number.isFinite(config.silence_seconds) || config.silence_seconds < 1 || config.silence_seconds > 120) {
+      throw new Error('VOICE_SILENCE_SECONDS 설정이 유효하지 않아.');
+    }
+    const recognition = new Recognition();
+    recognition.lang = 'ko-KR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    let finalText = '';
+    let silenceTimer = null;
+    let recognitionError = null;
+    const isCurrent = () => voiceMode && revision === modeRevision && webRecognition === recognition;
+    const clearSilence = () => {
+      if (silenceTimer !== null) clearTimeout(silenceTimer);
+      silenceTimer = null;
+    };
+    recognition.onresult = event => {
+      if (!isCurrent()) return;
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const text = result[0]?.transcript || '';
+        if (result.isFinal) finalText += text + ' ';
+        else interim += text;
+      }
+      setStatus(interim ? '인식 중: ' + interim : '듣고 있어. 발화 종료를 기다리는 중…');
+      clearSilence();
+      if (finalText.trim()) {
+        silenceTimer = setTimeout(() => {
+          if (isCurrent()) recognition.stop();
+        }, config.silence_seconds * 1000);
+      }
+    };
+    recognition.onerror = event => {
+      if (!isCurrent()) return;
+      recognitionError = event.error;
+      if (event.error !== 'no-speech') {
+        clearSilence();
+        setStatus('브라우저 음성 인식 오류: ' + event.error, true);
+        setVoiceMode(false);
+      }
+    };
+    recognition.onend = () => {
+      clearSilence();
+      if (webRecognition === recognition) webRecognition = null;
+      if (!voiceMode || revision !== modeRevision) return;
+      if (recognitionError && recognitionError !== 'no-speech') return;
+      if (!finalText.trim()) {
+        void start('transcribe');
+        return;
+      }
+      try {
+        submitRecognizedText(finalText);
+      } catch (error) {
+        setStatus('브라우저 음성 처리 실패: ' + error.message, true);
+        setVoiceMode(false);
+      }
+    };
+    webRecognition = recognition;
+    try {
+      recognition.start();
+    } catch (error) {
+      webRecognition = null;
+      throw error;
+    }
+    setStatus('브라우저에서 듣고 있어. 마지막 발화 뒤 설정된 시간이 지나면 전송해.');
+  }
+
   function resumeAfterAnswer() {
-    if (!voiceMode || active || starting || currentUtterance) return;
+    if (!voiceMode || active || webRecognition || starting || currentUtterance) return;
     void start('transcribe');
   }
 
@@ -239,19 +338,7 @@
         enroll.hidden = true;
         setStatus('목소리 등록 완료. 마이크 버튼으로 음성 입력할 수 있어.');
       } else {
-        const recognized = result.text.trim();
-        if (!recognized) throw new Error('음성 인식 결과가 비어 있어.');
-        const form = document.getElementById('chat-form');
-        const send = document.getElementById('send-btn');
-        if (!voiceMode || input.value.trim() || send.classList.contains('stop-mode')) {
-          setStatus('자동 전송을 건너뛰었어. 음성모드가 꺼졌거나 작성 중인 메시지 또는 진행 중인 대화가 있어.', true);
-          return;
-        }
-        input.value = recognized;
-        input.dispatchEvent(new Event('input'));
-        if (send.disabled) throw new Error('전송 버튼이 비활성화되어 자동 전송할 수 없어.');
-        form.requestSubmit();
-        setStatus('인식된 메시지 전송을 요청했어.');
+        submitRecognizedText(result.text);
       }
     } catch (error) {
       setStatus(`음성 처리 실패: ${error.message}`, true);
@@ -268,11 +355,19 @@
   }
 
   async function start(mode) {
-    if (starting || active || (mode === 'transcribe' && !voiceMode)) return;
+    if (starting || active || webRecognition || (mode === 'transcribe' && !voiceMode)) return;
     const revision = modeRevision;
     starting = true;
     try {
       const config = await request('/voice/config');
+      if (!['local', 'web_speech'].includes(config.stt_provider)) {
+        throw new Error('서버의 STT 제공자 설정 계약이 유효하지 않아.');
+      }
+      if (mode === 'transcribe' && config.stt_provider === 'web_speech') {
+        enroll.hidden = true;
+        if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
+        return;
+      }
       if (mode === 'transcribe' && !config.enrolled) {
         enroll.hidden = false;
         setStatus('먼저 목소리 등록 버튼으로 본인 음성을 등록해 줘.', true);
