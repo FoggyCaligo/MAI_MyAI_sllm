@@ -21,6 +21,7 @@ from ..agent.tool_results import ToolResultStore, register_tool_result_tools
 from ..agent.verification import FinalGroundingVerifier
 from ..llm.models import ModelConfig, model_generation_limit
 from ..llm.llamacpp import LlamaCppAdapter
+from ..llm.cloud_api import CloudAPIAdapter, configured_models
 from ..llm.llamacpp_router import SingleResidentRouter
 from ..memory.admission import (
     should_skip_recall_without_new_facts,
@@ -106,6 +107,11 @@ def _timestamped_message(message: Mapping[str, Any]) -> dict[str, Any]:
     return copied
 
 
+@asynccontextmanager
+async def _no_model_scope():
+    yield
+
+
 @dataclass(slots=True)
 class MAIRunResult:
     answer: str
@@ -166,7 +172,7 @@ class MAIRuntime:
             self.recall,
             now=lambda: datetime.now(timezone.utc),
         )
-        self._adapters: dict[str, LlamaCppAdapter] = {}
+        self._adapters: dict[str, Any] = {}
         self._fact_extractors: dict[str, ModelFactExtractor] = {}
         self._llamacpp_execution_lock = asyncio.Lock()
         # Memory admission and monitoring belong to the shared gateway on port 8080.
@@ -181,20 +187,32 @@ class MAIRuntime:
             yield
 
     async def _postprocess_memory_with_model_scope(self, **kwargs):
-        async with self._llamacpp_model_scope():
+        adapter = getattr(kwargs.get("fact_extractor"), "adapter", None)
+        if isinstance(adapter, CloudAPIAdapter):
             await self._postprocess_memory(**kwargs)
+        else:
+            async with self._llamacpp_model_scope():
+                await self._postprocess_memory(**kwargs)
 
-    def _adapter_for(self, model: str) -> LlamaCppAdapter:
+    def _adapter_for(self, model: str) -> Any:
         clean_model = model.strip()
         if not clean_model:
             raise ValueError("model must be non-empty")
         adapter = self._adapters.get(clean_model)
         if adapter is None:
-            adapter = LlamaCppAdapter(
-                ModelConfig(model=clean_model, host=self.llamacpp_host, think=True,
-                            max_output_tokens=model_generation_limit("MODEL_MAX_OUTPUT_TOKENS", 32768)),
-                router=self._llamacpp_router,
-            )
+            if clean_model in configured_models():
+                provider, raw_model = clean_model.split(":", 1)
+                adapter = CloudAPIAdapter(
+                    provider, ModelConfig(model=raw_model, think=True,
+                        max_output_tokens=model_generation_limit("CLOUD_MAX_OUTPUT_TOKENS", 8192)))
+            elif ":" in clean_model:
+                raise ValueError("Cloud model not allowlisted in .env")
+            else:
+                adapter = LlamaCppAdapter(
+                    ModelConfig(model=clean_model, host=self.llamacpp_host, think=True,
+                                max_output_tokens=model_generation_limit("MODEL_MAX_OUTPUT_TOKENS", 32768)),
+                    router=self._llamacpp_router,
+                )
             self._adapters[clean_model] = adapter
         return adapter
 
@@ -204,10 +222,13 @@ class MAIRuntime:
             raise ValueError("model must be non-empty")
         extractor = self._fact_extractors.get(clean_model)
         if extractor is None:
-            adapter = LlamaCppAdapter(
-                ModelConfig(model=clean_model, host=self.llamacpp_host, think=False),
-                router=self._llamacpp_router,
-            )
+            if clean_model in configured_models():
+                adapter = self._adapter_for(clean_model)
+            else:
+                adapter = LlamaCppAdapter(
+                    ModelConfig(model=clean_model, host=self.llamacpp_host, think=False),
+                    router=self._llamacpp_router,
+                )
             extractor = ModelFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
@@ -224,14 +245,16 @@ class MAIRuntime:
             if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
                 raise RuntimeError("llama.cpp model entry is missing id")
             names.append(entry["id"])
-        return tuple(names)
+        return tuple(names) + configured_models()
 
     def model_labels(self) -> dict[str, str]:
         """UI labels for exact configured GGUF identities, not inferred aliases."""
         from portable.llamacpp_model_catalog import from_settings
         root = Path(__file__).resolve().parents[2]
         catalog = from_settings(root)
-        return {entry["id"]: entry["label"] for entry in catalog["models"]}
+        labels = {entry["id"]: entry["label"] for entry in catalog["models"]}
+        labels.update({name: name for name in configured_models()})
+        return labels
 
     async def select_model(self, model: str) -> str:
         """User-driven, confirmed one-resident model transition.
@@ -240,6 +263,9 @@ class MAIRuntime:
         and background memory inference; the router lock protects each
         individual model transaction.
         """
+        if model in configured_models():
+            self.selected_model = model
+            return model
         if self.llm_backend != "llamacpp" or self._llamacpp_router is None:
             raise RuntimeError("Explicit model preload requires llama.cpp router mode")
         if model not in await self.list_models():
@@ -320,8 +346,8 @@ class MAIRuntime:
         previous_assistant_message = _previous_assistant_message(prior_messages)
 
         selected_model = self.model if model is None else model.strip()
-        if self.llm_backend == "llamacpp" and selected_model not in await self.list_models():
-            raise ValueError(f"Requested GGUF model is not registered: {selected_model}")
+        if selected_model not in await self.list_models():
+            raise ValueError(f"Requested model is not registered: {selected_model}")
         model_prompt, inline_images = await prepare_main_image_input(
             prompt=prompt, attachments=attachments, principal=principal,
             upload_root=self.upload_root, model=selected_model,
@@ -362,7 +388,8 @@ class MAIRuntime:
         model_prompt = _timestamped_message({"role": "user", "content": model_prompt,
                                              "created_at": model_created_at})["content"]
         try:
-            async with self._llamacpp_model_scope():
+            scope = self._llamacpp_model_scope() if selected_model not in configured_models() else _no_model_scope()
+            async with scope:
                 result = await agent.run_user_message(
                     model_prompt,
                     prior_messages=messages,

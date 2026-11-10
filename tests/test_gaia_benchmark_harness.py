@@ -194,3 +194,21 @@ def test_gaia_readme_includes_hf_token_and_server_launch_contract():
     assert "start_benchmark_server.ps1" in document
     assert "일반 MAI" in document
     assert "8080" in document and "8010" in document
+
+
+def test_gaia_downloader_loads_root_dotenv_without_overwriting_process_env(monkeypatch):
+    """HF credentials must come from the repo root, not benchmark subfolders."""
+    import runpy
+    import dotenv
+
+    root = Path(__file__).resolve().parents[1]
+    script = root / "benchmark" / "GAIA Benchmark" / "adapter" / "download_gaia.py"
+    called = []
+
+    def fake_load_dotenv(path, *, override=False):
+        called.append((Path(path), override))
+        return True
+
+    monkeypatch.setattr(dotenv, "load_dotenv", fake_load_dotenv)
+    runpy.run_path(str(script), run_name="offline_test")
+    assert called == [(root / ".env", False)]

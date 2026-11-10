@@ -5,6 +5,13 @@ import argparse
 import json
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Repo-local credentials are loaded before importing huggingface_hub.
+# Existing environment variables take precedence over .env values.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
 DATASET_ID = "gaia-benchmark/GAIA"
 DATA_DIR = Path(__file__).resolve().parent / "data" / "gaia"
 

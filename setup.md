@@ -50,7 +50,39 @@ git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 
 저장소 이름 변경 이전의 개인 `.env`에는 `data/` 또는 `MAI_MyAI_sllm_Memory/` 경로가 남아 있을 수 있으므로 [데이터 이전 안내](docs/memory-repository.md)를 참고해 경로를 직접 확인한다.
 
-## 2. 모델 추가 다운받는 방법
+## 2. 외부 API 및 Hugging Face 인증 설정 (선택)
+
+로컬 GGUF 모델만 사용한다면 외부 API 토큰이 필요하지 않다. OpenAI, Claude(Anthropic), OpenRouter API를 사용하거나 Hugging Face에서 접근 제한 데이터셋(GAIA 등)을 다운로드하려면 **프로젝트 루트의 `.env`에 각 서비스의 토큰을 직접 설정**한다. `./mai.sh setup`으로 만들어진 기존 `.env`에 필요한 항목만 추가하면 된다.
+
+```dotenv
+# OpenAI API (유료 사용량이 발생할 수 있음)
+OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+MAI_OPENAI_MODELS=gpt-4.1
+
+# Anthropic Claude API
+ANTHROPIC_API_KEY=YOUR_ANTHROPIC_API_KEY
+MAI_ANTHROPIC_MODELS=claude-sonnet-4-5
+
+# OpenRouter API
+OPENROUTER_API_KEY=YOUR_OPENROUTER_API_KEY
+MAI_OPENROUTER_MODELS=openai/gpt-4.1
+
+# Hugging Face: GAIA 등 접근 제한 데이터 다운로드용 읽기 토큰
+HF_TOKEN=YOUR_HUGGING_FACE_READ_TOKEN
+
+# 외부 API 출력 토큰 제한
+CLOUD_MAX_OUTPUT_TOKENS=8192
+```
+
+위의 모델 ID는 **예시**이며, 실제로 사용 가능한 정확한 모델 ID로 변경한다. API 모델은 해당 API 키와 `MAI_<PROVIDER>_MODELS` 허용 목록을 모두 지정해야 모델 선택 목록에 나타난다. 외부 API를 사용할 때는 모델이 질문·도구 결과·첨부 이미지를 해당 서비스로 전송할 수 있으며 이용 요금이 발생할 수 있다. 로컬 llama.cpp가 기본값이며 오류 발생 시 외부 API로 자동 전환하지 않는다.
+
+Hugging Face에서는 [Access Tokens](https://huggingface.co/settings/tokens)에서 읽기 권한의 토큰을 발급한다. GAIA 데이터셋은 [접근 조건](https://huggingface.co/datasets/gaia-benchmark/GAIA)에 별도로 동의해야 한다. `benchmark/GAIA Benchmark/adapter/download_gaia.py`가 루트 `.env`의 `HF_TOKEN`을 자동으로 읽으므로 별도의 터미널 토큰 입력은 필요하지 않다. 일반 공개 GGUF 파일 다운로드에는 보통 HF 토큰이 필요하지 않다.
+
+**보안:** 실토큰을 `settings.yaml`, `.env.example`, 소스코드, 로그, Git 커밋에 저장하지 않는다. `.env`는 Git 추적에서 제외한다. 설정 우선순위는 **프로세스 환경변수 → `.env` → `settings.yaml`의 비밀값이 아닌 기본설정**이다. `.env` 변경 후에는 MAI 서버를 재시작한다.
+
+세부 사항: [외부 모델 Provider](docs/cloud-model-providers.md), [GAIA 설치](benchmark/GAIA%20Benchmark/docs/README.md).
+
+## 3. 모델 추가 다운받는 방법
 기본 다운로드 모델 출처: https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main
 
 1. 허깅페이스에서, llama.cpp이 지원하는 모델 중, 본인의 컴퓨터에서 가동 가능한 모델을 찾는다. 링크 : https://huggingface.co/models?apps=llama.cpp
@@ -60,7 +92,7 @@ git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 5. 다운로드한 모델 파일을 MAI 프로젝트의 다음 폴더에 넣는다. ./portable/portable-models/gguf/
 6. Git Bash에서 프로젝트 폴더로 이동 후, " **./mai.sh check** " 를 복사/붙여넣기/엔터 입력하여 모델 인식 상태를 확인한다.
 
-## 3. 실행시키는 방법
+## 4. 실행시키는 방법
 ```bash
 ./mai.sh check
 ./mai.sh start
@@ -76,7 +108,7 @@ git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 
 루트의 `mai/`는 Python 패키지 디렉터리이므로 `./mai` 실행 파일은 없다. Ollama 전용 시작기와 별도 prepare 스크립트는 현재 코드에서 제거됐다. 모델·GPU·Verifier·도구 연동은 실행 후 별도로 확인한다.
 
-## 4. llama.cpp 업데이트 방법
+## 5. llama.cpp 업데이트 방법
 
 - 먼저 MAI 종료. Windows Git Bash / Linux Bash에서 실행:
 ```bash
@@ -88,10 +120,10 @@ git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
 - **자동 처리:** 최신 호환 공식 릴리스 조회 → 다운로드(로컬 압축파일 우선) → 게시자 SHA-256 검증 → 실행 확인 → 기존 런타임·매니페스트 백업 후 교체.
 - **다운로드 실패 시:** [llama.cpp 공식 릴리스](https://github.com/ggml-org/llama.cpp/releases)에서 오류 메시지에 나온 **정확한 파일명**의 압축파일을 받아 `portable/portable-downloads/`에 놓고 `./mai.sh update` 재실행. 해시 불일치 파일은 사용하지 않음.
 
-## 5. 고급설정
+## 6. 고급설정
 ### 1. 설정파일
 - `settings.yaml` : 모델 최적화용 옵션 설정
-- `.env` : 계정 아이디/비번 및 토큰 등의 개인정보.
+- `.env` : 계정 ID·비밀번호, OpenAI/Anthropic/OpenRouter API 키 및 Hugging Face의 `HF_TOKEN` 등 인증정보
 - 우선순위 :  **프로세스 환경변수 → `.env` → `settings.yaml`**
 
 | 설정 | 기능 |
