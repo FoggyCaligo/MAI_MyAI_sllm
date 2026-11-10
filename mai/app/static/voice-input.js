@@ -370,7 +370,7 @@
       }
       if (mode === 'transcribe' && !config.enrolled) {
         enroll.hidden = false;
-        setStatus('먼저 목소리 등록 버튼으로 본인 음성을 등록해 줘.', true);
+        setStatus('등록된 음성 프로필을 찾지 못했어. 서버의 VOICE_PROFILE_DIR 및 로그인 계정 db_id를 확인해 줘.', true);
         return;
       }
       if (mode === 'enroll' && config.enrolled) {
