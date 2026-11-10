@@ -67,3 +67,12 @@ DDGS가 빈 목록 대신 내보내는 정확한 `DDGSException("No results foun
 `web_fetch`는 `User-Agent: MAI/0.1 (https://github.com/FoggyCaligo/MAI_MyAI_sllm) httpx`를 보낸다. 이 값은 **프로그램 이름·버전·공개 프로젝트 주소**만 포함하며 사용자 이름, 전화번호, 전자우편 주소 등 개인 연락처는 포함하지 않는다. 2026-11-09 사용자 환경에서 동일한 User-Agent를 가진 Portable Python `httpx` 요청이 Wikipedia의 HTTP 200 응답을 받은 반면, 기본 `httpx` 식별 요청은 HTTP 403이었다. 이것이 모든 외부 사이트의 접근을 보장하는 것은 아니다.
 
 공개 프로젝트 URL은 저장소 소유자를 찾아볼 수 있는 연결점이다. User-Agent는 요청자를 인증하는 정보가 아니므로 **이 문자열만으로 저장소 소유자가 직접 요청했다고 판단할 수 없고**, 제3자가 해당 소스를 사용하거나 User-Agent를 복제할 수 있다. 외부 서버는 자신의 접속 로그에 IP 주소 등 별도 정보를 기록할 수 있다. 배포용 코드에 개인 식별·연락 정보를 넣지 않는다.
+
+
+## DDGS 시간초과 시 Google 재시도
+
+`web_search`는 DDGS 기본 백엔드로 각 결과 페이지를 조회한다. **시간초과 예외 타입**(`ddgs.exceptions.TimeoutException`, Python `TimeoutError`, `httpx.TimeoutException`) 또는 예외 원인 체인에 해당 타입이 있는 경우에만 동일 페이지를 `backend="google"`로 한 번 재시도한다. 이는 검색 공급자를 DDGS에서 교체하는 것이 아니다.
+
+재시도가 성공해도 초기 시간초과를 경고 로그로 남기고, 반환값의 `fallback_backend`와 `fallback_pages`에 실제 사용 사실을 기록한다. 페이지 결과 병합·URL 중복 제거·페이지별 종료 규칙은 유지한다. Google에서도 실패하면 실패를 숨기지 않고 기존 `WebSearchError`를 발생시킨다.
+
+**예외 메시지 문자열을 보고 오류 의미를 추측하지 않는다.** DDGS가 Windows 네트워크 타임아웃 `10060`을 원인 체인 없는 일반 `DDGSException`으로 변환하는 경우에는 자동 Google 재시도가 실행되지 않는다. 이 경우 DDGS의 구조화된 원인 전달을 별도로 개선해야 한다.
