@@ -60,3 +60,24 @@ def test_memory_guard_routes_all_clients_through_local_gateway():
         assert "memory_guard_enabled" in launcher
     assert "if ($guardEnabled)" in win
     assert 'if [[ "$guard_enabled" == true ]]' in linux
+
+
+def test_portable_ram_prompt_cache_is_disabled_on_both_platforms():
+    from portable.resolve_llamacpp_settings import read_config
+
+    config = read_config(ROOT / "settings.yaml")
+    assert config["LLAMACPP_CACHE_RAM_MIB"] == 0
+
+    win = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
+    linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
+    catalog = (ROOT / "portable/llamacpp_model_catalog.py").read_text(encoding="utf-8")
+    assert "$env:LLAMA_ARG_CACHE_RAM = [string]$catalog.cache_ram_mib" in win
+    assert 'export LLAMA_ARG_CACHE_RAM="$cache_ram_mib"' in linux
+    assert '"cache_ram_mib": int(config.get("LLAMACPP_CACHE_RAM_MIB", 8192))' in catalog
+
+
+def test_session_history_limit_is_sixteen():
+    from mai.app.settings import load_settings
+
+    values = load_settings(ROOT / "settings.yaml", environ={})
+    assert values["SESSION_HISTORY_MESSAGES"] == "16"

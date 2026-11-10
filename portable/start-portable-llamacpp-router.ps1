@@ -33,6 +33,8 @@ $mainProjector = [string]$catalog.projector
 # processes. Keep the policy in settings.yaml, not in the downloaded binary.
 $preserveReasoning = [bool]$catalog.reasoning_preserve
 $env:LLAMA_ARG_REASONING_PRESERVE = if ($preserveReasoning) { 'true' } else { 'false' }
+# Applied to the router and its spawned llama.cpp model process.
+$env:LLAMA_ARG_CACHE_RAM = [string]$catalog.cache_ram_mib
 foreach ($port in @(8080, 8081)) {
     if (Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
         throw "Port $port occupied; refusing to connect to another router."

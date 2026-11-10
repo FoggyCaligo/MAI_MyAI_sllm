@@ -12,7 +12,7 @@ class FakeDDGS:
     pages: list[int] = []
 
     def __init__(self, timeout):
-        assert timeout == 10
+        assert timeout == 60
 
     def __enter__(self):
         type(self).pages = []

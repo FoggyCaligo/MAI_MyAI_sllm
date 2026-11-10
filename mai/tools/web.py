@@ -99,7 +99,7 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
     completed_pages = 0
     stopped_on_empty_page: int | None = None
     try:
-        with DDGS(timeout=10) as ddgs:
+        with DDGS(timeout=60) as ddgs:
             for page in range(1, WEB_SEARCH_PAGE_COUNT + 1):
                 try:
                     raw_results = list(ddgs.text(

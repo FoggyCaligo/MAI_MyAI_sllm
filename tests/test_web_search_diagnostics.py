@@ -11,7 +11,7 @@ from mai.tools import web as web_module
 
 class FakeDDGS:
     def __init__(self, *, timeout: int):
-        assert timeout == 10
+        assert timeout == 60
 
     def __enter__(self):
         return self

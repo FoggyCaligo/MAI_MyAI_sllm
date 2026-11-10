@@ -20,6 +20,7 @@ KEYS = (
     "LLAMACPP_MAIN_MMPROJ_PATH",
     "LLAMACPP_MAIN_VISION",
     "LLAMACPP_REASONING_PRESERVE",
+    "LLAMACPP_CACHE_RAM_MIB",
     "LLAMACPP_MEMORY_GUARD_ENABLED",
     "LLAMACPP_MIN_FREE_VRAM_MIB",
     "MAI_MIN_AVAILABLE_RAM_MIB",
@@ -51,6 +52,7 @@ def read_config(path: Path) -> dict[str, str | bool | None]:
         ("LLAMACPP_MIN_FREE_VRAM_MIB", 1024, 128, 65536),
         ("MAI_MIN_AVAILABLE_RAM_MIB", 6144, 512, 262144),
         ("LLAMACPP_CONTEXT_SIZE", 131072, 512, 262144),
+        ("LLAMACPP_CACHE_RAM_MIB", 8192, 0, 262144),
     ):
         value = data.get(key, str(default))
         try:
