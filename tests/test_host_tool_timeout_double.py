@@ -96,15 +96,24 @@ def test_configured_terminal_timeout_reaches_host_and_remote(tmp_path, monkeypat
     assert captured == [73, 146]
 
 
-def test_owner_web_search_has_independent_180_second_timeout():
-    from mai.remote.routing import register_routed_service_tools
+def test_owner_web_search_has_independent_180_second_timeout(monkeypatch):
+    from mai.remote import routing
     from mai.tools.browser import BrowserSessionManager
     from mai.tools.registry import ToolRegistry
+    from mai.tools.external import register_external_information_tools
 
+    registered = []
+
+    def capture_external_tools(registry, **kwargs):
+        registered.append(kwargs)
+        register_external_information_tools(registry, **kwargs)
+
+    monkeypatch.setattr(routing, "register_external_information_tools", capture_external_tools)
     owner = ToolRegistry()
-    register_routed_service_tools(
+    routing.register_routed_service_tools(
         owner, owner_id="owner", browser_manager=BrowserSessionManager(),
     )
+    assert registered == [{"web_timeout_seconds": 180, "market_timeout_seconds": 60}]
     # The routed wrapper's timeout is delegated to the inner registry.
     assert owner.has("web_search")
     assert owner.get("web_search").timeout_seconds is None
