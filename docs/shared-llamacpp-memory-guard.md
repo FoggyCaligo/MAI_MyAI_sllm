@@ -48,3 +48,12 @@ Important limits:
 
 To verify after startup: query `http://127.0.0.1:8080/models` and inspect
 `MAI_MEMORY/gpu_ram_safety.jsonl` after a short inference.
+
+
+## 게이트웨이 POST 잠금 및 오류 진단
+
+- 모델 요청과 모델 해제 요청은 공통 잠금으로 직렬화한다. **잠금 획득 대기시간 기본값은 30초**이며, 초과하면 HTTP 503과 `Gateway model request lock wait timed out` 오류를 반환한다. 이미 실행 중인 요청의 잠금을 강제로 해제하거나 다른 모델을 로딩하지 않는다.
+- 잠금을 획득했을 때는 `Gateway model request lock acquired`, 반환했을 때는 `Gateway model request lock released` 로그가 기록된다. 각각 대기시간과 보유시간을 초 단위로 표시한다.
+- 스트리밍 요청의 자원 정리는 응답 전송 전체의 생명주기에 연결한다. 클라이언트 연결이 끊기거나 스트리밍 시작 전 전송에 실패하더라도 상위 HTTP 응답 종료·메모리 감시 작업 취소·잠금 해제를 수행한다.
+- 기본 잠금 대기시간 변경 시 게이트웨이 실행 명령에 `--lock-wait-timeout-seconds <초>` 옵션을 지정할 수 있다. 값은 0보다 커야 한다.
+- 응답이 없는 원인을 분석할 때는 8080 게이트웨이의 잠금 획득·해제 로그를 우선 비교하고, 필요할 때만 8081 Router와 모델 자식 프로세스의 상태를 분리해서 진단한다. 8081 직접 호출은 공통 메모리 보호를 우회하므로 운영용으로 사용하지 않는다.
