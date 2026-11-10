@@ -420,6 +420,8 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
         "silence_seconds": voice.silence_seconds if voice else float(os.environ.get("VOICE_SILENCE_SECONDS", "5")),
         "enrollment_min_speech_seconds": voice.enrollment_min_speech_seconds if voice else 3.0,
         "enrolled": voice.enrolled(principal.db_id) if voice else False,
+        "profile_directory": str(voice.root) if voice else None,
+        "profile_path": str(voice._profile_path(principal.db_id)) if voice else None,
     }
 
 
