@@ -85,6 +85,7 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
         "projector": str(projector) if projector else None,
         "main_vision": bool(config.get("LLAMACPP_MAIN_VISION")),
         "reasoning_preserve": config.get("LLAMACPP_REASONING_PRESERVE", False),
+        "cache_ram_mib": int(config.get("LLAMACPP_CACHE_RAM_MIB", 8192)),
         "memory_guard_enabled": config.get("LLAMACPP_MEMORY_GUARD_ENABLED", True),
         "min_free_vram_mib": int(config.get("LLAMACPP_MIN_FREE_VRAM_MIB", 1024)),
         "min_available_ram_mib": int(config.get("MAI_MIN_AVAILABLE_RAM_MIB", 6144)),
