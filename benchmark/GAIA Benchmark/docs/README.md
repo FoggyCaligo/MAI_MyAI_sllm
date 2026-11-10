@@ -30,24 +30,15 @@ GAIA 원본 문제·정답·첨부파일은 접근 승인이 필요한 데이터
 1. [Hugging Face](https://huggingface.co/)에서 로그인한다.
 2. [GAIA 데이터셋](https://huggingface.co/datasets/gaia-benchmark/GAIA)에 접속해 이용 조건에 동의하고 접근 권한을 확인한다.
 3. [Access Tokens](https://huggingface.co/settings/tokens)에서 본인에게 적절한 읽기 권한의 토큰을 만든다. 가능한 경우 GAIA 데이터셋 접근만 허용한다.
-4. 아래의 방법으로 **데이터 다운로드를 실행하는 PowerShell 프로세스**에 `HF_TOKEN`을 제공한다. 실제 토큰을 Git, 대화·스크린샷, 명령줄 인수, 일반 문서에 적지 않는다.
+4. 프로젝트 루트의 Git 추적 제외 파일 `.env`에 `HF_TOKEN`을 추가한다. **실제 토큰 값을 Git, 스크린샷, 채팅 또는 일반 문서에 공개하지 않는다.**
 
-PowerShell에서 토큰을 화면에 표시하지 않고 입력하려면 다음을 사용한다.
-
-```powershell
-$secret = Read-Host "HF 읽기 토큰" -AsSecureString
-$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
-try {
-    $env:HF_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
-} finally {
-    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-    Remove-Variable secret, pointer -ErrorAction SilentlyContinue
-}
+```dotenv
+HF_TOKEN=YOUR_HUGGING_FACE_READ_TOKEN
 ```
 
-`HF_TOKEN`은 **현재 PowerShell 세션**과 그 자식 프로세스에서만 사용한다. 영구 환경변수나 MAI `.env`에 저장할 필요가 없다. 이미 Hugging Face CLI에 로그인되어 있다면 해당 인증을 사용해도 된다. 토큰은 학습 데이터 다운로드에만 필요하며, 이미 로컬에 내려받은 GAIA 데이터를 실행하거나 채점할 때 재입력할 필요는 없다.
+`adapter/download_gaia.py`는 프로젝트 루트 `.env`를 자동으로 읽으며, 이미 프로세스 환경변수로 설정한 `HF_TOKEN`을 덮어쓰지 않는다. 따라서 Windows PowerShell과 Linux에서 별도로 토큰을 입력하거나 `hf auth login`을 실행할 필요가 없다. 다운로드용 토큰은 로컬 GAIA 데이터를 실행하거나 채점할 때 필요하지 않다. 기존 Hugging Face CLI 로그인도 계속 사용할 수 있다.
 
-데이터 다운로드에 성공한 뒤 현재 PowerShell에서만 토큰을 지우려면 `Remove-Item Env:HF_TOKEN`을 실행한다. 사용자의 Hugging Face 계정 및 토큰은 MAI 서버 로그인에 사용되지 않는다.
+**인증 정보 보호:** `.env`는 `.gitignore`에 포함되어 있지만, 공개 저장소에 강제로 추가하지 않는다. 유출된 토큰은 Hugging Face에서 즉시 폐기·재발급한다. GAIA 데이터에 접근할 수 있는 권한이 없는 토큰은 다운로드에 실패한다.
 
 **데이터 주의:** GAIA 원본 및 정답·첨부파일을 본체나 Memory Git 저장소에 커밋하지 않는다. 메타데이터 필드는 현재 어댑터가 사용하는 `task_id`, `Question`, `Level`, `Final answer`, `file_path`를 따른다.
 
