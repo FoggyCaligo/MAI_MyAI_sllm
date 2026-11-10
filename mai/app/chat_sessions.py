@@ -185,7 +185,7 @@ class ChatSessionStore:
         # the model context, while preserving the visible UI audit history.
         error_clause = (
             "AND (metadata_json IS NULL OR "
-            "json_extract(metadata_json, '$.kind') NOT IN ('error','cancelled'))"
+            "coalesce(json_extract(metadata_json, '$.kind'), '') NOT IN ('error','cancelled'))"
             if exclude_errors else ""
         )
         with self._connect() as connection:
