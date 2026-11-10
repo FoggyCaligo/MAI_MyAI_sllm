@@ -13,3 +13,9 @@ def test_main_prompt_requires_tool_evidence_when_user_evidence_is_insufficient()
 def test_main_prompt_omits_search_deterrents() -> None:
     assert "search further when justified" not in AGENT_SYSTEM_PROMPT
     assert "Do not repeat a lookup when evidence is already sufficient" not in AGENT_SYSTEM_PROMPT
+
+
+def test_main_prompt_prefers_concise_answers_without_losing_required_detail() -> None:
+    assert "Keep final answers concise and focused on the essential points" in AGENT_SYSTEM_PROMPT
+    assert "Provide more detail when the user explicitly requests it" in AGENT_SYSTEM_PROMPT
+    assert "Brevity never permits omitting material failures" in AGENT_SYSTEM_PROMPT
