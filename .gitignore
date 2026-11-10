@@ -7,12 +7,15 @@ mai_uploads/
 .pytest_cache/
 .coverage
 htmlcov/
-data/log.sqlite3*
-# Do not add runtime databases or their SQLite journals to new commits.
-# Already-tracked files must separately be removed from the Git index/history.
-data/*.sqlite3*
-data/*.sqlite*
+# Private runtime databases and SQLite sidecars must never be published.
+**/chat.sqlite3*
+**/memory.sqlite3*
+**/log.sqlite3*
+**/*.sqlite3-wal
+**/*.sqlite3-shm
 data/*.db
+# Quality dataset intentionally remains in Git.
+!data/sentence_breaker.sqlite3
 MAI_MEMORY/
 MAI_MyAI_sllm/*
 
