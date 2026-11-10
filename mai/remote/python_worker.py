@@ -1,7 +1,7 @@
 """Persistent, account-bound worker registry shared by Windows and Linux agents.
 
-The process owns browser sessions until the remote session closes. It does not
-store MAI host memory or account databases on a remote computer.
+Web search, fetch and browser tools are intentionally host-only. The remote
+worker does not store MAI host memory or account databases.
 """
 from __future__ import annotations
 
@@ -16,16 +16,14 @@ from typing import Any
 from mai.tools.local import register_local_pc_tools
 from mai.tools.time import register_time_tools
 from mai.tools.calculator import register_calculator_tools
-from mai.tools.external import register_external_information_tools
-from mai.tools.browser import BrowserSessionManager, register_browser_tools
+from mai.tools.market import register_market_tools
 from mai.tools.registry import ToolRegistry
 
 
 REMOTE_TOOL_TIMEOUT_MULTIPLIER = 2
 
 
-def build_registry(*, cwd: str | Path | None = None,
-                   browser_manager: BrowserSessionManager | None = None) -> ToolRegistry:
+def build_registry(*, cwd: str | Path | None = None) -> ToolRegistry:
     registry = ToolRegistry()
     # The terminal tool enforces its execution deadline inside terminal_run;
     # other registered tools enforce it through their registry definitions.
@@ -38,13 +36,7 @@ def build_registry(*, cwd: str | Path | None = None,
     )
     register_time_tools(registry, timeout_seconds=20)
     register_calculator_tools(registry, timeout_seconds=20)
-    register_external_information_tools(
-        registry, web_timeout_seconds=60, market_timeout_seconds=60,
-    )
-    register_browser_tools(
-        registry, browser_manager or BrowserSessionManager(),
-        timeout_multiplier=2,
-    )
+    register_market_tools(registry, timeout_seconds=60)
     remote_registry = ToolRegistry()
     for definition in registry.definitions():
         remote_registry.register(replace(
@@ -58,11 +50,10 @@ def build_registry(*, cwd: str | Path | None = None,
 
 
 class RemoteWorker:
-    """One registry and browser manager per authenticated remote session."""
+    """One registry per authenticated remote session, without web/browser tools."""
 
     def __init__(self, *, cwd: str | Path | None = None) -> None:
-        self.browser_manager = BrowserSessionManager()
-        self.registry = build_registry(cwd=cwd, browser_manager=self.browser_manager)
+        self.registry = build_registry(cwd=cwd)
 
     async def execute_native(self, name: str, arguments: dict[str, Any]) -> Any:
         if not isinstance(name, str) or not isinstance(arguments, dict):
@@ -70,7 +61,8 @@ class RemoteWorker:
         return await self.registry.get(name).invoke(arguments)
 
     async def close(self) -> None:
-        await self.browser_manager.close_all()
+        # Session lifecycle hook retained for remote-agent compatibility.
+        return None
 
 
 async def execute_native(name: str, arguments: dict[str, Any],
