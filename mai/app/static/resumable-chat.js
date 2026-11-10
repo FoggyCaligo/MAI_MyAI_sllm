@@ -300,6 +300,11 @@
       if (!res.ok) return res;
 
       const data = await res.json();
+      // A cancelled job's slow polling response must not overwrite the newer
+      // prompt's thinking/tool log or clear the newer job from localStorage.
+      if (currentSubmissionJobId && currentSubmissionJobId !== jobId) {
+        return jsonResponse({detail: '요청이 새 메시지로 대체되었습니다.'}, 499);
+      }
       renderLiveThinking(data.thinking, data.verification_rejections);
       renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
       if (data.status === 'completed') {
