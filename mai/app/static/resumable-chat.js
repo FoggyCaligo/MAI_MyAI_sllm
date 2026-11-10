@@ -46,30 +46,17 @@
     liveProgressWrap = null;
   }
 
-  function renderLiveThinking(thinking, verificationRejections = []) {
+  function renderLiveThinking(thinking) {
     if (!liveProgressWrap) return;
     const bubble = liveProgressWrap.querySelector('.bubble');
     if (!bubble) return;
 
     let placeholder = bubble.querySelector('[data-live-thinking="true"]');
-    const sections = [];
     const text = typeof thinking === 'string' ? thinking.trim() : '';
-    if (text) sections.push(text);
-
-    if (Array.isArray(verificationRejections)) {
-      verificationRejections.forEach(rejection => {
-        const feedback = typeof rejection?.feedback === 'string' ? rejection.feedback.trim() : '';
-        if (!feedback) return;
-        const round = Number.isInteger(rejection?.model_round) ? ` · round ${rejection.model_round}` : '';
-        sections.push(`REJECTED${round}\n${feedback}`);
-      });
-    }
-
-    if (!sections.length) {
+    if (!text) {
       placeholder?.remove();
       return;
     }
-
     if (!placeholder) {
       placeholder = document.createElement('div');
       placeholder.dataset.liveThinking = 'true';
@@ -82,9 +69,42 @@
       placeholder.style.overflowWrap = 'anywhere';
       bubble.appendChild(placeholder);
     }
-    placeholder.textContent = sections.join('\n\n');
+    // Only the dedicated thinking field is visible before completion.
+    // Streamed content and provisional model turns are never answers.
+    placeholder.textContent = text;
     if (typeof scrollToBottom === 'function') scrollToBottom();
   }
+
+  async function settlePreviousPresentation(pending) {
+    // A final answer may have reached the server before the UI's next poll.
+    // Check the authoritative job status before labelling it interrupted.
+    const jobId = currentSubmissionJobId;
+    if (!jobId || !pending) return false;
+    try {
+      const response = await nativeFetch(`/chat/jobs/${encodeURIComponent(jobId)}`, {
+        headers: headersWithAuth(), cache: 'no-store',
+      });
+      if (!response.ok) return false;
+      const job = await response.json();
+      if (job.status !== 'completed' || typeof job.response?.answer !== 'string') {
+        return false;
+      }
+      const result = job.response;
+      clearLiveProgress();
+      pending.bubble.innerHTML = typeof renderMarkdown === 'function'
+        ? renderMarkdown(result.answer) : result.answer;
+      if (typeof setMessageTime === 'function') setMessageTime(pending);
+      if (typeof renderToolLog === 'function') {
+        renderToolLog(pending.wrap, result.tools || [], result.model_rounds || 0, result.model || 'unknown');
+      }
+      localStorage.removeItem(storageKey);
+      return true;
+    } catch (_) {
+      // If the authoritative status is unavailable, never fake completion.
+      return false;
+    }
+  }
+  window.maiSettlePreviousPresentation = settlePreviousPresentation;
 
   function renderLiveToolProgress(tools) {
     if (!liveProgressWrap || !Array.isArray(tools) || !tools.length) return;
@@ -305,8 +325,10 @@
       if (currentSubmissionJobId && currentSubmissionJobId !== jobId) {
         return jsonResponse({detail: '요청이 새 메시지로 대체되었습니다.'}, 499);
       }
-      renderLiveThinking(data.thinking, data.verification_rejections);
-      renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
+      if (data.status === 'pending' || data.status === 'running' || data.status === 'cancelling') {
+        renderLiveThinking(data.thinking);
+        renderLiveToolProgress(Array.isArray(data.tools) ? data.tools : []);
+      }
       if (data.status === 'completed') {
         localStorage.removeItem(storageKey);
         return jsonResponse(data.response || {}, 200);
