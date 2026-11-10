@@ -13,11 +13,13 @@ from mai.tools.registry import ToolRegistry
 def test_worker_exposes_all_worker_portable_services():
     worker = build_registry()
     assert {
-        "current_time", "calculator", "web_search", "web_fetch",
-        "market_data", "browser_open", "browser_snapshot", "browser_click",
-        "browser_input_text", "browser_scroll", "browser_press_key", "browser_close",
+        "current_time", "calculator", "market_data",
         "file_read", "file_write", "terminal_run", "code_search", "document_edit",
     }.issubset(worker.names())
+    for name in ("web_search", "web_fetch", "browser_open", "browser_snapshot",
+                 "browser_click", "browser_input_text", "browser_scroll",
+                 "browser_press_key", "browser_close"):
+        assert not worker.has(name)
 
 
 def test_host_and_worker_service_schemas_are_exact_except_is_remote():
@@ -28,8 +30,12 @@ def test_host_and_worker_service_schemas_are_exact_except_is_remote():
     worker = build_registry()
     for definition in host.definitions():
         remote_fields = set(definition.input_model.model_fields)
-        worker_fields = set(worker.get(definition.name).input_model.model_fields)
-        assert remote_fields == worker_fields | {"is_remote"}
+        if definition.category == "web":
+            assert "is_remote" not in remote_fields
+            assert not worker.has(definition.name)
+        else:
+            worker_fields = set(worker.get(definition.name).input_model.model_fields)
+            assert remote_fields == worker_fields | {"is_remote"}
 
 
 def test_remote_service_without_connection_fails_and_does_not_run_locally():
@@ -51,41 +57,21 @@ def test_remote_service_without_connection_fails_and_does_not_run_locally():
     asyncio.run(exercise())
 
 
-def test_worker_keeps_browser_state_across_native_calls(monkeypatch):
-    events = []
-
-    async def fake_open(self, url):
-        events.append(("open", url))
-        return {"session_id": "session-one"}
-
-    async def fake_snapshot(self, session_id):
-        events.append(("snapshot", session_id))
-        return {"session_id": session_id, "title": "alive"}
-
-    async def fake_close_all(self):
-        events.append(("close", None))
-
-    # ToolRegistry stores bound handlers when the worker is constructed;
-    # patch the class *before* registration, not the instance afterwards.
-    monkeypatch.setattr(BrowserSessionManager, "open", fake_open)
-    monkeypatch.setattr(BrowserSessionManager, "snapshot", fake_snapshot)
-    monkeypatch.setattr(BrowserSessionManager, "close_all", fake_close_all)
+def test_remote_worker_rejects_web_and_browser_calls():
+    from mai.tools.registry import UnknownToolError
 
     async def exercise():
         worker = RemoteWorker()
-        first = await worker.execute_native(
-            "browser_open", {"url": "https://example.org"}
-        )
-        second = await worker.execute_native(
-            "browser_snapshot", {"session_id": first["session_id"]}
-        )
-        assert second["title"] == "alive"
-        await worker.close()
-        assert events == [
-            ("open", "https://example.org"),
-            ("snapshot", "session-one"),
-            ("close", None),
-        ]
+        try:
+            for name, args in (
+                ("web_search", {"query": "test"}),
+                ("web_fetch", {"url": "https://example.org"}),
+                ("browser_open", {"url": "https://example.org"}),
+            ):
+                with pytest.raises(UnknownToolError):
+                    await worker.execute_native(name, args)
+        finally:
+            await worker.close()
     asyncio.run(exercise())
 
 
@@ -162,7 +148,7 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
         expected = (None if definition.timeout_seconds is None
                     else definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER)
         assert remote.get(definition.name).timeout_seconds == expected
-    assert remote.get("browser_open").timeout_seconds == 240
+    assert not remote.has("browser_open")
     assert remote.get("calculator").timeout_seconds == 40
 
 
