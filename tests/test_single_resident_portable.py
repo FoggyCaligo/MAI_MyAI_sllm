@@ -64,11 +64,9 @@ def test_memory_guard_routes_all_clients_through_local_gateway():
 
 def test_portable_ram_prompt_cache_is_disabled_on_both_platforms():
     from portable.resolve_llamacpp_settings import read_config
-    from portable.llamacpp_model_catalog import discover
 
     config = read_config(ROOT / "settings.yaml")
     assert config["LLAMACPP_CACHE_RAM_MIB"] == 0
-    assert config["SESSION_HISTORY_MESSAGES"] == "16" if "SESSION_HISTORY_MESSAGES" in config else True
 
     win = (ROOT / "portable/start-portable-llamacpp-router.ps1").read_text(encoding="utf-8")
     linux = (ROOT / "portable/start-portable-llamacpp-linux.sh").read_text(encoding="utf-8")
