@@ -31,3 +31,13 @@ def test_server_only_finalizes_after_agent_returns():
     backend = (ROOT / "mai/app/resumable_chat.py").read_text(encoding="utf-8")
     assert "status_code, payload = await _execute_chat(" in backend
     assert 'chat_job_store.complete(job_id, payload)' in backend
+
+
+def test_markdown_timestamp_filter_is_executable_not_comment_text():
+    marker = "  function renderMarkdown(source) {"
+    source = UI.split(marker, 1)[1].split("    const flush=", 1)[0]
+    assert "    // Model context includes UTC creation timestamps;" in source
+    assert "\\n    const displaySource" not in source
+    assert "\\n    const lines" not in source
+    assert "\n    const displaySource=" in source
+    assert "\n    const lines=displaySource" in source
