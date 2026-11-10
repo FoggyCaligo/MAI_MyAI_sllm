@@ -32,43 +32,14 @@ Invoke-Git @('-C', $clean, 'filter-repo', '--force', '--invert-paths', '--path-r
 
 # Verify that no reachable branch or tag exposes the excluded filenames.
 $remaining = @(& git -C $clean rev-list --objects --all |
-    Select-String -Pattern '(^|[ /])(chat|memory|log)\.sqlite3(?:-(?:wal|shm))?
+    Select-String -Pattern '(^|[ /])(chat|memory|log)\.sqlite3(?:-(?:wal|shm))?$')
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect rewritten objects' }
 if ($remaining.Count -gt 0) {
     throw "Verification failed: $($remaining.Count) private database paths remain"
 }
 
 foreach ($branch in @('main', 'dev')) {
-    & git -C $clean cat-file -e "refs/heads/${branch}:data/sentence_breaker.sqlite3"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Expected sentence_breaker database is missing from $branch"
-    }
-}
-
-Write-Host "Rewritten history verified. Original backup: $backup"
-Write-Host "Clean mirror ready: $clean"
-if (-not $Push) {
-    Write-Host 'Dry-run only. Run again with -Push to publish rewritten branches/tags.'
-    exit 0
-}
-
-# git-filter-repo deliberately removes the remote; add it explicitly.
-Invoke-Git @('-C', $clean, 'remote', 'add', 'origin', $repoUrl)
-Invoke-Git @('-C', $clean, 'push', '--force', 'origin', 'refs/heads/*:refs/heads/*')
-$tags = @(& git -C $clean for-each-ref --format='%(refname)' refs/tags)
-if ($tags.Count -gt 0) {
-    Invoke-Git @('-C', $clean, 'push', '--force', 'origin', 'refs/tags/*:refs/tags/*')
-}
-Write-Host 'Rewritten branch and tag refs pushed. Other clones must be re-cloned.'
-Write-Host 'GitHub cached/unreachable objects, PR refs and forks may require separate remediation.'
-)
-if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect rewritten objects' }
-if ($remaining.Count -gt 0) {
-    throw "Verification failed: $($remaining.Count) private database paths remain"
-}
-
-foreach ($branch in @('main', 'dev')) {
-    & git -C $clean cat-file -e "refs/heads/${branch}:data/sentence_breaker.sqlite3"
+    & git -C $clean cat-file -e "refs/heads/$($branch):data/sentence_breaker.sqlite3"
     if ($LASTEXITCODE -ne 0) {
         throw "Expected sentence_breaker database is missing from $branch"
     }
