@@ -14,9 +14,15 @@ MAI는 로컬 llama.cpp 추론 서버에 연결해 대화, 도구 실행, 장기
 
 Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 start`, CMD에서는 `mai.cmd`를 사용할 수 있다. 저장소 안의 `mai/`는 Python 패키지 디렉터리이므로 `./mai` 실행 파일은 존재하지 않는다.
 
-`setup`은 공식 배포자 SHA-256으로 고정한 Python·uv·llama.cpp 런타임을 준비하고 `pyproject.toml`의 본체·개발 의존성을 설치한다. 첫 설치 시 Owner 로그인 정보를 요청해 `.env`를 만들며 기존 파일은 덮어쓰지 않는다. 지속 DB의 기본 경로는 별도 비공개 Git 체크아웃 `MAI_MEMORY/`다. 설치 후 데이터 저장소를 별도로 준비하고 기존 `.env` 경로를 확인해야 한다. Linux 실행 파일과 Python 환경은 Linux 호스트 캐시에 설치된다. **GGUF 모델 파일과 일치하는 projector는 사용자가 별도로 확보해야 한다.**
+`setup`은 공식 배포자 SHA-256으로 고정한 Python·uv·llama.cpp 런타임을 준비하고 `pyproject.toml`의 본체·개발 의존성을 설치한다. 첫 설치 시 Owner 로그인 정보를 요청해 `.env`를 만들며 기존 파일은 덮어쓰지 않는다. 지속 DB의 기본 경로는 `./MAI_MEMORY/`이며, 폴더나 DB가 없으면 최초 실행 시 자동 생성된다. 기존 `.env`에서 DB 경로를 변경했다면 설정값을 확인한다. Linux 실행 파일과 Python 환경은 Linux 호스트 캐시에 설치된다. **GGUF 모델 파일과 일치하는 projector는 사용자가 별도로 확보해야 한다.**
 
 `check`는 필수 파일과 GGUF 카탈로그를 확인하지만 GPU 추론 성공을 보장하지 않는다. `start`는 llama.cpp의 단일 상주 모델 라우터를 실행한 뒤 MAI 웹 서버를 시작한다. 기본 웹 주소는 `http://127.0.0.1:8000`이다.
+
+## 기억·대화 데이터 백업
+
+에이전트의 장기기억과 대화 기록은 기본적으로 저장소 루트의 `MAI_MEMORY/` 폴더에 **SQLite (`.sqlite3`) 파일**로 보관된다. 기억을 백업하거나 다른 컴퓨터로 옮기려면 **MAI를 완전히 종료한 뒤 `MAI_MEMORY/` 폴더 전체를 복사**하면 된다. `memory.sqlite3`는 장기기억, `chat.sqlite3`는 대화 기록, `log.sqlite3`는 실행 로그를 저장한다. `sentence_breaker.sqlite3`는 문장 분리용 데이터다.
+
+실행 중에는 SQLite의 `-wal`·`-shm` 파일이 존재할 수 있으므로 안전한 파일 백업을 위해 종료 후 복사하는 것을 권장한다. 환경변수로 DB 경로를 변경했다면 `MAI_MEMORY/` 대신 해당 경로의 파일도 백업해야 한다. **개인 기억·대화 DB는 공개 Git 저장소에 커밋하지 않는다.**
 
 ## 핵심 구성
 
