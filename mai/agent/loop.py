@@ -33,7 +33,7 @@ _MAX_EVIDENCE_VERIFICATION_RETRIES = 5
 
 # Only deterministic, target-specific failures are reusable within one run.
 # Transient timeouts, rate limits and server failures must always remain retryable.
-_MISSING_RESOURCE_RE = re.compile(r"(?<!\d)404(?!\d)|not found|does not exist", re.IGNORECASE)
+_MISSING_RESOURCE_RE = re.compile(r"(?<!\d)404(?!\d)", re.IGNORECASE)
 
 
 def _permanent_read_failure(name: str, execution: "ToolExecution") -> bool:
