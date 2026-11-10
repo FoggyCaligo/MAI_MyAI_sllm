@@ -249,3 +249,51 @@ def test_live_stream_progress_visible_during_running_job() -> None:
     assert snapshot["stream_progress"]["reasoning_diagnostics"]["status"] == "repetition_suspected"
 
     assert store.snapshot_for(job_id=job.job_id, auth_user_id="other") is None
+
+
+def test_replacement_waits_for_cancel_and_allows_new_job_to_start() -> None:
+    async def scenario():
+        store = ChatJobStore()
+        old = store.create(auth_user_id="owner")
+        entered = asyncio.Event()
+        unwound = asyncio.Event()
+
+        async def old_generation():
+            store.mark_running(old.job_id)
+            try:
+                entered.set()
+                await asyncio.Future()
+            finally:
+                unwound.set()
+
+        task = asyncio.create_task(old_generation())
+        store.attach_task(old.job_id, task)
+        await entered.wait()
+
+        async with store.submission_lock_for("owner"):
+            await store.cancel_active_for(auth_user_id="owner")
+            assert unwound.is_set()
+            assert task.cancelled()
+            new = store.create(auth_user_id="owner")
+            new_task = asyncio.create_task(asyncio.sleep(0))
+            store.attach_task(new.job_id, new_task)
+            store.mark_running(new.job_id)
+        await new_task
+        assert store.snapshot_for(job_id=old.job_id, auth_user_id="owner")["status"] == "cancelled"
+        assert store.snapshot_for(job_id=new.job_id, auth_user_id="owner")["status"] == "running"
+
+    run(scenario())
+
+
+def test_replacement_does_not_cancel_other_account() -> None:
+    async def scenario():
+        store = ChatJobStore()
+        a = store.create(auth_user_id="owner")
+        b = store.create(auth_user_id="other")
+        store.mark_running(a.job_id)
+        store.mark_running(b.job_id)
+        await store.cancel_active_for(auth_user_id="owner")
+        assert store.snapshot_for(job_id=a.job_id, auth_user_id="owner")["status"] == "cancelled"
+        assert store.snapshot_for(job_id=b.job_id, auth_user_id="other")["status"] == "running"
+
+    run(scenario())
