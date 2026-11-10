@@ -23,7 +23,7 @@ not yet evaluated), or contains:
   `repetition_suspected`, `long_unresolved`, or `output_progress`.
 - `thinking_chars`: observed reasoning text characters, not token counts.
 - `recent_similarity`: conservative overlap score on three bounded
-  successive word-shingle windows, 0.0 to 1.0.
+  successive Unicode character 5-gram windows, 0.0 to 1.0.
 - `repeat_checks`: consecutive similar-window checks (two required to
   flag suspicion).
 - `content_chars` and `tool_fragment_count`: output progress signals.
@@ -37,7 +37,15 @@ truncates thoughts, or executes incomplete native-tool arguments.
 The existing 500-second absolute model-request timeout still applies.
 
 The monitor checks at most once per second while SSE is arriving, and
-analyzes only the last ~8,000 characters with bounded windows. It logs a
+analyzes only the last ~8,000 characters with bounded windows. Text is
+normalized with Unicode NFC and case-folding, then compared using 5-unit
+character n-grams across three consecutive 240-character windows. Combining
+marks and joined glyphs are grouped with their preceding character; spaces
+and punctuation do not determine word boundaries. This allows the same
+rules to operate on Thai, Chinese, Japanese, Korean and English without
+language detection, additional model calls or tokenizers. Unicode grouping
+is approximate, and language-independent pattern overlap does not imply
+semantic equivalence. It logs a
 warning when a suspicious status first appears and does **not** log
 private thought content. If a timeout occurs, the audit's existing
 `timeout_partial` entry includes diagnostic metadata.
