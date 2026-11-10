@@ -23,8 +23,22 @@ from mai.tools.registry import ToolRegistry
 
 def _add_routed_definitions(
     registry: ToolRegistry, definitions: ToolRegistry, *, owner_id: str,
+    host_only_categories: frozenset[str] = frozenset(),
 ) -> None:
     for definition in definitions.definitions():
+        if definition.category in host_only_categories:
+            # External search and browser sessions always belong to the MAI
+            # host. Do not expose or accept is_remote for these tools.
+            registry.add(
+                name=definition.name,
+                description=definition.description,
+                input_model=definition.input_model,
+                handler=definition.handler,
+                timeout_seconds=definition.timeout_seconds,
+                category=definition.category,
+                metadata=dict(definition.metadata),
+            )
+            continue
         routed_model = create_model(
             f"Routed{definition.input_model.__name__}",
             __base__=definition.input_model,
@@ -77,7 +91,7 @@ def _add_remote_context(registry: ToolRegistry, names: tuple[str, ...], key: str
                 "is_remote=true executes on the connected owner-authorized Windows or Linux worker. "
                 "The terminal_run shell defaults to Bash (Git Bash on Windows, Bash on Linux); "
                 "select shell=cmd or shell=powershell explicitly for Windows-specific commands. "
-                "A remote browser session ID is owned by that connected worker until it disconnects."
+                "Web search, web fetch and browser navigation always run on the MAI host and do not accept is_remote."
             ),
             "session_selection": (
                 "The host resolves the authenticated account's session; "
@@ -110,7 +124,14 @@ def register_routed_service_tools(
         local, web_timeout_seconds=60, market_timeout_seconds=60,
     )
     register_browser_tools(local, browser_manager, timeout_multiplier=2)
-    _add_routed_definitions(registry, local, owner_id=owner_id)
-    _add_remote_context(registry, local.names(), "remote_service_execution_target")
+    _add_routed_definitions(
+        registry, local, owner_id=owner_id,
+        host_only_categories=frozenset({"web"}),
+    )
+    remote_names = tuple(
+        name for name in local.names()
+        if local.get(name).category != "web"
+    )
+    _add_remote_context(registry, remote_names, "remote_service_execution_target")
 
 
