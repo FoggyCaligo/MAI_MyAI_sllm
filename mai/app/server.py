@@ -469,7 +469,12 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
     runtime = _get_runtime()
     if principal.role is AccessRole.TRIAL:
         visible = _visible_models_for_principal(principal, runtime_model=runtime.model)
-        return {"models": visible, "current": runtime.model, "locked": True}
+        labels = runtime.model_labels()
+        return {
+            "models": visible, "current": runtime.model, "locked": True,
+            "labels": {name: labels[name] for name in visible if name in labels},
+            "backend": runtime.llm_backend,
+        }
     try:
         installed = await runtime.list_models()
     except Exception as exc:
