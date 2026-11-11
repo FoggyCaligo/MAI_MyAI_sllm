@@ -18,6 +18,7 @@ DATA = ROOT / "MAI_MEMORY"
 IDENTITY = DATA / "server-process.json"
 LOG = DATA / "restart.log"
 LOCK = DATA / "restart.lock"
+PENDING = DATA / "restart.pending"
 PORTS = (8000, 8080, 8081)
 
 def process_identity(pid: int) -> str | None:
@@ -161,17 +162,25 @@ def coordinate(*, update: bool, request_id: str | None = None) -> None:
         print("MAI restart successful", flush=True)
     finally:
         LOCK.unlink(missing_ok=True)
+        PENDING.unlink(missing_ok=True)
 
 def detach(*, update: bool, await_handoff: bool = False) -> dict[str, object]:
     DATA.mkdir(parents=True, exist_ok=True)
     request_id = str(uuid.uuid4()) if await_handoff else None
-    with LOG.open("ab", buffering=0) as output:
-        output.write(b"\n--- Restart requested ---\n")
-        flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
-        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate", "--update" if update else "--no-update", * (["--request-id", request_id] if request_id else [])],
-                                   cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output,
-                                   stderr=subprocess.STDOUT, close_fds=True, creationflags=flags,
-                                   start_new_session=sys.platform != "win32")
+    fd = os.open(PENDING, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as pending:
+            pending.write(json.dumps({"request_id": request_id, "update": update}))
+        with LOG.open("ab", buffering=0) as output:
+            output.write(b"\n--- Restart requested ---\n")
+            flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
+            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate", "--update" if update else "--no-update", *(["--request-id", request_id] if request_id else [])],
+                                       cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output,
+                                       stderr=subprocess.STDOUT, close_fds=True, creationflags=flags,
+                                       start_new_session=sys.platform != "win32")
+    except BaseException:
+        PENDING.unlink(missing_ok=True)
+        raise
     return {"status": "accepted", "request_id": request_id, "coordinator_pid": process.pid, "update": update, "log_path": str(LOG), "result_confirmed": False}
 
 if __name__ == "__main__":
