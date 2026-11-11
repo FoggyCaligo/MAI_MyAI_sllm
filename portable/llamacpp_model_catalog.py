@@ -87,6 +87,35 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
         valid_gguf(projector_path)
         return projector_path
 
+    # Explicit associations are the authority when quantization labels differ.
+    raw_map = config.get("LLAMACPP_MODEL_MMPROJ_MAP")
+    if raw_map is None:
+        configured_pairs = {}
+    elif isinstance(raw_map, str):
+        configured_pairs = json.loads(raw_map)
+    else:
+        raise TypeError("LLAMACPP_MODEL_MMPROJ_MAP must be a JSON object string")
+    if not isinstance(configured_pairs, dict):
+        raise ValueError("LLAMACPP_MODEL_MMPROJ_MAP must be a JSON object")
+    explicit_pairs: dict[Path, Path] = {}
+    for model_name, projector_name in configured_pairs.items():
+        if not isinstance(model_name, str) or not isinstance(projector_name, str):
+            raise ValueError("LLAMACPP_MODEL_MMPROJ_MAP keys and values must be filenames")
+        for filename in (model_name, projector_name):
+            if not filename or Path(filename).name != filename or filename in {".", ".."}:
+                raise ValueError("LLAMACPP_MODEL_MMPROJ_MAP requires local GGUF filenames")
+        model_file = directory / model_name
+        projector_file = directory / projector_name
+        valid_gguf(model_file)
+        valid_gguf(projector_file)
+        if is_mmproj_filename(model_file) or not is_mmproj_filename(projector_file):
+            raise ValueError("LLAMACPP_MODEL_MMPROJ_MAP must map model GGUF to mmproj GGUF")
+        explicit_pairs[model_file.resolve(strict=True)] = projector_file.resolve(strict=True)
+    if default_path in explicit_pairs and explicit_projector is not None:
+        if explicit_pairs[default_path] != explicit_projector:
+            raise ValueError("Conflicting projector assignments for default model")
+    excluded.update(explicit_pairs.values())
+
     entries: list[dict[str, str | None]] = []
     ids: set[str] = set()
     for path in sorted(directory.glob("*.gguf")):
@@ -100,7 +129,8 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
             raise ValueError(f"Duplicate GGUF identity: {resolved}")
         ids.add(model_id)
         projector_path = (
-            explicit_projector if resolved == default_path and explicit_projector is not None
+            explicit_pairs[resolved] if resolved in explicit_pairs
+            else explicit_projector if resolved == default_path and explicit_projector is not None
             else companion_projector(resolved)
         )
         entries.append({
