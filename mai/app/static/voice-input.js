@@ -99,10 +99,13 @@
       setStatus('Auto-send skipped: voice mode off, draft in progress, or chat busy.', true);
       return false;
     }
+    // Speech recognition only fills the normal text composer. It never
+    // creates a chat job or loading bubble itself: the same form submit
+    // handler used by the Send button owns the entire chat lifecycle.
     input.value = recognized.trim();
     input.dispatchEvent(new Event('input'));
     if (send.disabled) throw new Error('Send is disabled; cannot auto-submit.');
-    form.requestSubmit();
+    form.requestSubmit(send);
     setStatus('Sending recognized message…');
     return true;
   }
