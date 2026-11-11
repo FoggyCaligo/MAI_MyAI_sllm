@@ -257,6 +257,18 @@ class MAIRuntime:
         labels.update({name: name for name in configured_models()})
         return labels
 
+    def model_supports_projector_vision(self, model: str) -> bool:
+        """Use the exact GGUF preset's projector mapping, never a global flag."""
+        from portable.llamacpp_model_catalog import from_settings
+        root = Path(__file__).resolve().parents[2]
+        catalog = from_settings(root)
+        for entry in catalog["models"]:
+            if entry["id"] == model:
+                return entry["projector"] is not None
+        if model in configured_models():
+            return False
+        raise ValueError(f"Selected model is absent from GGUF catalog: {model}")
+
     async def select_model(self, model: str) -> str:
         """User-driven, confirmed one-resident model transition.
 
@@ -353,6 +365,7 @@ class MAIRuntime:
         model_prompt, inline_images = await prepare_main_image_input(
             prompt=prompt, attachments=attachments, principal=principal,
             upload_root=self.upload_root, model=selected_model,
+            supports_vision=self.model_supports_projector_vision(selected_model),
         )
         adapter = self._adapter_for(selected_model)
         # The selected GGUF is shared by Main, Verifier, and memory extraction.
