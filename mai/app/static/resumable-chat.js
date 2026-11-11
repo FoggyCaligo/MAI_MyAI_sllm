@@ -74,7 +74,7 @@
       placeholder.style.opacity = '0.78';
       placeholder.style.fontSize = '13px';
       const heading = document.createElement('summary');
-      heading.textContent = 'thinking · 생성 중';
+      heading.textContent = 'Thinking · generating';
       const body = document.createElement('div');
       body.dataset.thinkingBody = 'true';
       body.style.marginTop = '8px';
@@ -189,7 +189,7 @@
     }
 
     const hasMessage = Boolean(input.value.trim()) || Boolean(document.getElementById('clipboard-previews')?.children.length);
-    sendButton.textContent = hasMessage ? '전송' : '중단';
+    if (typeof setMaiIconButton === 'function') setMaiIconButton(sendButton, hasMessage ? 'send' : 'square', hasMessage ? 'Send' : 'Stop');
     sendButton.classList.toggle('stop-mode', !hasMessage);
     sendButton.disabled = false;
   }
@@ -220,7 +220,7 @@
     big.className = 'big';
     big.textContent = 'MAI';
     const hint = document.createElement('div');
-    hint.textContent = '메시지를 입력하세요.';
+    hint.textContent = 'Start a conversation';
     empty.append(big, hint);
     host.appendChild(empty);
     renderedHistorySignature = null;
@@ -242,7 +242,7 @@
       big.className = 'big';
       big.textContent = 'MAI';
       const hint = document.createElement('div');
-      hint.textContent = '메시지를 입력하세요.';
+      hint.textContent = 'Start a conversation';
       empty.append(big, hint);
       host.appendChild(empty);
     } else {
