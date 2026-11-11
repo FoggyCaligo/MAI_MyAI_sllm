@@ -98,17 +98,23 @@ Hugging Face에서는 [Access Tokens](https://huggingface.co/settings/tokens)에
 
 ```bash
 mkdir -p portable/portable-models/gguf/{Ornith-1.5-9B,Gemma-4-E4B-Q4,Gemma-4-E4B-Q8,Gemma-4-12B,LFM2.5-2.6B}
-mv portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf portable/portable-models/gguf/Ornith-1.5-9B/
-mv portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf portable/portable-models/gguf/Ornith-1.5-9B/
-mv portable/portable-models/gguf/gemma-4-E4B-it-Q4_K_M.gguf portable/portable-models/gguf/Gemma-4-E4B-Q4/
-mv portable/portable-models/gguf/mmproj-gemma-4-E4B-it-BF16.gguf portable/portable-models/gguf/Gemma-4-E4B-Q4/
-mv portable/portable-models/gguf/gemma-4-E4B-it-Q8_0.gguf portable/portable-models/gguf/Gemma-4-E4B-Q8/
-mv portable/portable-models/gguf/mmproj-gemma-4-E4B-it-Q8_0.gguf portable/portable-models/gguf/Gemma-4-E4B-Q8/
-mv portable/portable-models/gguf/gemma-4-12b-it-qat-q4_0.gguf portable/portable-models/gguf/Gemma-4-12B/
-mv portable/portable-models/gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf portable/portable-models/gguf/Gemma-4-12B/
-mv portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf portable/portable-models/gguf/LFM2.5-2.6B/
+move_gguf() {
+  local source="$1" destination="$2" target="$2/${1##*/}"
+  if [[ ! -f "$source" ]]; then echo "파일 없음: $source" >&2; return 1; fi
+  if [[ -e "$target" ]]; then echo "이미 존재함(덮어쓰기 거부): $target" >&2; return 1; fi
+  mv -- "$source" "$destination/"
+}
+move_gguf "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf" "portable/portable-models/gguf/Ornith-1.5-9B/"
+move_gguf "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf" "portable/portable-models/gguf/Ornith-1.5-9B/"
+move_gguf "portable/portable-models/gguf/gemma-4-E4B-it-Q4_K_M.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q4/"
+move_gguf "portable/portable-models/gguf/mmproj-gemma-4-E4B-it-BF16.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q4/"
+move_gguf "portable/portable-models/gguf/gemma-4-E4B-it-Q8_0.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q8/"
+move_gguf "portable/portable-models/gguf/mmproj-gemma-4-E4B-it-Q8_0.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q8/"
+move_gguf "portable/portable-models/gguf/gemma-4-12b-it-qat-q4_0.gguf" "portable/portable-models/gguf/Gemma-4-12B/"
+move_gguf "portable/portable-models/gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf" "portable/portable-models/gguf/Gemma-4-12B/"
+move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/portable-models/gguf/LFM2.5-2.6B/
 ```
-
+"
 `active.gguf` 및 `.cache/`는 모델 폴더로 옮기지 않는다. 기본 모델의 새 경로는 `settings.yaml`에 반영되어 있다. 수동 이동을 완료하지 않고 시작하면 기본 모델을 찾지 못하므로 명시적으로 실패한다. `./mai.sh check`로 먼저 점검하고 재시작한다.
 
 ## 4. 실행시키는 방법
