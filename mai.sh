@@ -27,7 +27,7 @@ case "$command" in
     cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
     python="$cache/python/bin/python3"
     [[ -x "$python" ]] || { echo "Portable Python missing; run ./mai.sh setup first" >&2; exit 1; }
-    exec "$python" "$root/portable/restart_mai.py" --detach
+    exec "$python" "$root/portable/restart_mai.py" --detach --update
     ;;
   update)
     id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
