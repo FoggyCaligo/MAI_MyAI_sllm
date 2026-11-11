@@ -4,6 +4,15 @@
   const pollDelayMs = 1500;
   let currentSubmissionJobId = null;
   let recovering = false;
+  // A foreground form submission owns its loading row before the server
+  // has returned a job_id. Track every overlapping submission separately.
+  let foregroundSubmissions = 0;
+  let foregroundSubmissionEpoch = 0;
+
+  function hasForegroundChat() {
+    return foregroundSubmissions > 0 ||
+      (typeof activeChat !== 'undefined' && Boolean(activeChat));
+  }
   let liveProgressWrap = null;
   let historySyncing = false;
   let historyEpoch = 0;
@@ -277,7 +286,7 @@
   }
 
   async function syncPersistentHistory() {
-    if (historySyncing || resettingConversation || currentSubmissionJobId || !state?.token) return;
+    if (historySyncing || resettingConversation || currentSubmissionJobId || hasForegroundChat() || !state?.token) return;
     historySyncing = true;
     const epoch = historyEpoch;
     try {
@@ -291,7 +300,10 @@
       }
       if (!response.ok) return;
       const data = await response.json().catch(() => ({}));
-      if (epoch !== historyEpoch || resettingConversation) return;
+      // The history request might have started before the user submitted
+      // text/voice. Never replace a foreground loading row with stale history.
+      if (epoch !== historyEpoch || resettingConversation ||
+          currentSubmissionJobId || hasForegroundChat()) return;
       renderPersistentHistory(Array.isArray(data.messages) ? data.messages : []);
     } finally {
       historySyncing = false;
@@ -411,7 +423,17 @@
   window.fetch = function(input, init = {}) {
     const url = typeof input === 'string' ? input : input?.url;
     const method = String(init?.method || 'GET').toUpperCase();
-    if (url === '/chat' && method === 'POST') return submitDetachedChat(init);
+    if (url === '/chat' && method === 'POST') {
+      // Voice recognition uses chat-form.requestSubmit(), just like text:
+      // both create one foreground loading row in the form handler.
+      // Suppress recovery from the instant submission begins, including
+      // the period before POST /chat/jobs returns its ID.
+      foregroundSubmissionEpoch += 1;
+      foregroundSubmissions += 1;
+      return submitDetachedChat(init).finally(() => {
+        foregroundSubmissions -= 1;
+      });
+    }
     if (url === '/login' && method === 'POST') {
       return nativeFetch(input, init).then(response => {
         if (response.ok) {
@@ -464,10 +486,15 @@
   }
 
   async function recoverPendingJob() {
-    if (recovering || resettingConversation || currentSubmissionJobId) return;
+    if (recovering || resettingConversation || currentSubmissionJobId || hasForegroundChat()) return;
 
     recovering = true;
     const recoveryEpoch = historyEpoch;
+    const recoverySubmissionEpoch = foregroundSubmissionEpoch;
+    const foregroundStarted = () => (
+      resettingConversation || recoveryEpoch !== historyEpoch ||
+      recoverySubmissionEpoch !== foregroundSubmissionEpoch || hasForegroundChat()
+    );
     let pending = null;
     let recoveredJobId = null;
     try {
@@ -477,10 +504,10 @@
         showExpiredLogin();
         return;
       }
-      if (!auth.ok) return;
+      if (!auth.ok || foregroundStarted()) return;
 
       await syncPersistentHistory();
-      if (resettingConversation) return;
+      if (foregroundStarted()) return;
 
       let saved = null;
       const raw = localStorage.getItem(storageKey);
@@ -493,10 +520,20 @@
       }
 
       recoveredJobId = await resolveRecoveryJobId(saved);
-      if (!recoveredJobId) return;
+      if (!recoveredJobId || foregroundStarted() || currentSubmissionJobId) return;
 
+      // Reuse the single visible pending MAI row, if one already exists.
+      // This is a presentation guard; the normal foreground submit path
+      // always owns its row and never enters recovery.
+      const loadingRow = Array.from(document.querySelectorAll('.msg-row.mai'))
+        .find(row => row.querySelector('.loader') && row.isConnected);
+      if (loadingRow) {
+        const wrap = loadingRow.querySelector('.content-wrap');
+        const bubble = wrap?.querySelector('.bubble');
+        if (wrap && bubble) pending = {row: loadingRow, wrap, bubble};
+      }
+      if (!pending && typeof addThinking === 'function') pending = addThinking();
       setCurrentJob(recoveredJobId);
-      if (typeof addThinking === 'function') pending = addThinking();
       setLiveProgressWrap(pending?.wrap || latestMaiWrap());
       const response = await pollJob(recoveredJobId);
       const data = await response.json().catch(() => ({}));
@@ -507,7 +544,7 @@
         return;
       }
 
-      if (resettingConversation || recoveryEpoch !== historyEpoch) return;
+      if (foregroundStarted() || currentSubmissionJobId !== recoveredJobId) return;
       if (response.ok) {
         if (pending) {
           pending.bubble.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(data.answer) : String(data.answer || '');
@@ -531,7 +568,7 @@
     } finally {
       if (recoveredJobId && currentSubmissionJobId === recoveredJobId) setCurrentJob(null);
       recovering = false;
-      if (!resettingConversation && recoveryEpoch === historyEpoch && !currentSubmissionJobId) void syncPersistentHistory();
+      if (!foregroundStarted() && !currentSubmissionJobId) void syncPersistentHistory();
       if (typeof scrollToBottom === 'function') scrollToBottom();
     }
   }
