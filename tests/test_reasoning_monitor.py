@@ -123,3 +123,88 @@ def test_monitor_can_be_disabled_without_requiring_model_calls(monkeypatch):
             )
     asyncio.run(run())
     assert emitted and emitted[-1]["reasoning_diagnostics"] is None
+
+
+def test_repeated_stream_interrupts_current_request_and_closes_stream(monkeypatch):
+    from mai.llm.errors import ReasoningLoopDetected
+
+    monkeypatch.setenv("AGENT_REASONING_MONITOR_ENABLED", "true")
+    states = {"closed": False, "delivered": 0}
+    phrase = "origin branches have to be recounted one by one. " * 40
+
+    class RepeatedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for number in range(3):
+                await asyncio.sleep(1.05)
+                states["delivered"] += 1
+                yield ("data: " + json.dumps({
+                    "choices": [{
+                        "index": 0, "delta": {"reasoning_content": phrase},
+                        "finish_reason": None,
+                    }],
+                }) + "\\n\\n").encode()
+            raise AssertionError("stuck stream should have been interrupted")
+
+        async def aclose(self):
+            states["closed"] = True
+
+    progress = []
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, stream=RepeatedStream(),
+                headers={"content-type": "text/event-stream"},
+            )
+        )) as client:
+            return await stream_completion(
+                client, "http://test/v1/chat/completions",
+                {"model": "test", "messages": []},
+                timeout_seconds=15, on_progress=progress.append,
+            )
+
+    with pytest.raises(ReasoningLoopDetected) as caught:
+        asyncio.run(run())
+    assert caught.value.diagnostics["status"] == "repetition_suspected"
+    assert caught.value.diagnostics["action"] == "interrupt_and_retry"
+    assert caught.value.diagnostics["tool_fragment_count"] == 0
+    assert states["closed"]
+    assert states["delivered"] <= 3
+    assert not any(p.get("complete") for p in progress)
+
+
+def test_thinking_with_answer_progress_is_not_interrupted(monkeypatch):
+    monkeypatch.setenv("AGENT_REASONING_MONITOR_ENABLED", "true")
+    phrase = "recheck the result " * 240
+
+    class ProgressStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(1.05)
+            yield ("data: " + json.dumps({
+                "choices": [{"index": 0, "delta": {
+                    "reasoning_content": phrase, "content": "Answer started"
+                }, "finish_reason": None}],
+            }) + "\\n\\n").encode()
+            await asyncio.sleep(1.05)
+            yield ("data: " + json.dumps({
+                "choices": [{"index": 0, "delta": {
+                    "reasoning_content": phrase, "content": " and finished"
+                }, "finish_reason": "stop"}],
+            }) + "\\n\\n").encode()
+            yield b"data: [DONE]\\n\\n"
+
+        async def aclose(self):
+            pass
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, stream=ProgressStream(),
+                headers={"content-type": "text/event-stream"},
+            )
+        )) as client:
+            return await stream_completion(
+                client, "http://test/v1/chat/completions",
+                {"model": "test", "messages": []}, timeout_seconds=15,
+            )
+    result = asyncio.run(run())
+    assert result["choices"][0]["message"]["content"] == "Answer started and finished"
