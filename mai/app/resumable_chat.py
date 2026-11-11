@@ -298,7 +298,7 @@ def install() -> None:
         if remote_marker not in html:
             raise RuntimeError("remote connection button marker is missing from index.html")
         new_chat_html = (
-            '<button id="new-chat-btn" type="button" title="최근 대화 문맥만 지우고 장기기억은 유지합니다.">새 채팅</button>'
+            '<button id="new-chat-btn" type="button" data-mai-icon="message-plus" data-mai-label="New chat" title="New chat (keeps long-term memory)"></button>'
         )
         html = html.replace(remote_marker, new_chat_html + remote_marker, 1)
 
