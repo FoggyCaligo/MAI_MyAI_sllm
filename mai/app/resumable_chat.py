@@ -290,11 +290,11 @@ def install() -> None:
         # Login input markup is owned by index.html. Do not rewrite it at runtime.
         login_style = (
             '<style>#new-chat-btn{background:none;border:1px solid var(--border);color:var(--text-dim);'
-            'border-radius:20px;padding:6px 10px;cursor:pointer;white-space:nowrap}'
+            'border-radius:9px;min-width:34px;min-height:34px;padding:7px;cursor:pointer;display:inline-grid;place-items:center;white-space:nowrap}'
             '#new-chat-btn:hover{border-color:var(--accent);color:var(--text)}</style>\n'
         )
         html = html.replace("</head>", login_style + "</head>", 1)
-        remote_marker = '<button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>'
+        remote_marker = '<button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel" data-mai-icon="monitor" data-mai-label="Remote connection"></button>'
         if remote_marker not in html:
             raise RuntimeError("remote connection button marker is missing from index.html")
         new_chat_html = (
