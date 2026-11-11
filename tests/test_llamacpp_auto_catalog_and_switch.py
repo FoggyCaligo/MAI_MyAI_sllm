@@ -90,6 +90,37 @@ def test_catalog_connects_exact_projector_per_selected_model(tmp_path):
     assert len(entries) == 3
 
 
+def test_explicit_projector_map_supports_different_quantization_names(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    main = gguf(folder / "Ornith.gguf")
+    gemma = gguf(folder / "gemma-4-E4B-it-Q4_K_M.gguf")
+    projector = gguf(folder / "mmproj-gemma-4-E4B-it-BF16.gguf")
+    catalog = discover(tmp_path, {
+        "LLAMACPP_MAIN_GGUF_PATH": str(main),
+        "LLAMACPP_GGUF_DIRECTORY": str(folder),
+        "LLAMACPP_MODEL_MMPROJ_MAP": json.dumps({gemma.name: projector.name}),
+    })
+    gemma_entry = next(entry for entry in catalog["models"] if entry["label"] == gemma.name)
+    assert gemma_entry["projector"] == str(projector)
+    ini = render_ini(catalog, context_size=65536, gpu_layers=99)
+    assert f"mmproj = {projector}" in ini
+    assert len(catalog["models"]) == 2
+
+
+def test_projector_map_rejects_undefined_projector(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    main = gguf(folder / "Ornith.gguf")
+    gemma = gguf(folder / "gemma-Q4.gguf")
+    with pytest.raises(ValueError, match="Not a GGUF file"):
+        discover(tmp_path, {
+            "LLAMACPP_MAIN_GGUF_PATH": str(main),
+            "LLAMACPP_GGUF_DIRECTORY": str(folder),
+            "LLAMACPP_MODEL_MMPROJ_MAP": json.dumps({gemma.name: "mmproj-missing.gguf"}),
+        })
+
+
 def test_catalog_rejects_ambiguous_matching_projectors(tmp_path):
     folder = tmp_path / "gguf"
     folder.mkdir()
