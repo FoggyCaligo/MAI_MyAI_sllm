@@ -16,7 +16,7 @@ from typing import Any, Callable
 import httpx
 
 from .reasoning_monitor import ReasoningMonitor
-from .errors import ModelProtocolError
+from .errors import ModelProtocolError, ReasoningLoopDetected
 
 _LOG = logging.getLogger("uvicorn.error")
 
@@ -197,6 +197,28 @@ async def stream_completion(
                                     )
                                 last_monitor_status = diagnostic["status"]
                                 last_monitor_at = now
+                                # Interrupt only confirmed repeated phrasing with no answer
+                                # or tool-call fragments. Long, varied thought is advisory.
+                                # Never interrupt a completed stream.
+                                if (
+                                    not partial.saw_done
+                                    and diagnostic["status"] == "repetition_suspected"
+                                    and diagnostic["repeat_checks"] >= 2
+                                    and diagnostic["thinking_chars"] >= 2400
+                                    and diagnostic["content_chars"] == 0
+                                    and diagnostic["tool_fragment_count"] == 0
+                                ):
+                                    diagnostic["action"] = "interrupt_and_retry"
+                                    _LOG.warning(
+                                        "MAI reasoning loop interrupted thinking_chars=%d "
+                                        "repeat_checks=%d similarity=%.3f",
+                                        diagnostic["thinking_chars"],
+                                        diagnostic["repeat_checks"],
+                                        diagnostic["recent_similarity"],
+                                    )
+                                    # Exiting client.stream closes only this request.
+                                    # Incomplete output/tool fragments are never replayed.
+                                    raise ReasoningLoopDetected(diagnostic)
                             if partial.chunks == 1 or now - last_logged_at >= 10.0 or partial.saw_done:
                                 _LOG.info(
                                     "MAI llama.cpp stream progress chunks=%d elapsed_ms=%d "
