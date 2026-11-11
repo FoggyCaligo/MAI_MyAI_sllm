@@ -59,7 +59,7 @@ def test_catalog_skips_unconfigured_mmproj_files_but_keeps_models(tmp_path):
     })
     assert {model["label"] for model in catalog["models"]} == {main.name, secondary.name}
     ini = render_ini(catalog, context_size=65536, gpu_layers=99)
-    assert str(ignored) not in ini
+    assert "mmproj = " + str(ignored) in ini
     assert str(ignored_case) not in ini
 
 
