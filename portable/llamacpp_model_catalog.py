@@ -62,7 +62,31 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
             excluded.add(path)
     if default_path in excluded:
         raise ValueError("Main model cannot also be a projector")
-    entries: list[dict[str, str]] = []
+    # A projector is associated only by an explicit default-model setting
+    # or by the exact documented companion-file naming convention.
+    # Never infer multimodal capability from the model family or architecture.
+    explicit_projector_raw = config.get("LLAMACPP_MAIN_MMPROJ_PATH")
+    explicit_projector = (
+        resolve_path(root, explicit_projector_raw)
+        if isinstance(explicit_projector_raw, str) and explicit_projector_raw.strip()
+        else None
+    )
+
+    def companion_projector(model_path: Path) -> Path | None:
+        candidates = [
+            model_path.with_name(prefix + model_path.name)
+            for prefix in ("mmproj-", "mmproj_")
+        ]
+        present = [candidate for candidate in candidates if candidate.is_file()]
+        if len(present) > 1:
+            raise ValueError(f"Ambiguous mmproj companions for {model_path}: {present}")
+        if not present:
+            return None
+        projector_path = present[0].resolve(strict=True)
+        valid_gguf(projector_path)
+        return projector_path
+
+    entries: list[dict[str, str | None]] = []
     ids: set[str] = set()
     for path in sorted(directory.glob("*.gguf")):
         resolved = path.resolve(strict=True)
@@ -74,7 +98,14 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
         if model_id in ids:
             raise ValueError(f"Duplicate GGUF identity: {resolved}")
         ids.add(model_id)
-        entries.append({"id": model_id, "label": resolved.name, "path": str(resolved)})
+        projector_path = (
+            explicit_projector if resolved == default_path and explicit_projector is not None
+            else companion_projector(resolved)
+        )
+        entries.append({
+            "id": model_id, "label": resolved.name, "path": str(resolved),
+            "projector": str(projector_path) if projector_path else None,
+        })
     default = next((entry["id"] for entry in entries if Path(entry["path"]) == default_path), None)
     if default is None:
         raise ValueError("Default main GGUF was not discovered")
@@ -103,8 +134,8 @@ def render_ini(catalog: dict[str, object], *, context_size: int, gpu_layers: int
              f"n-gpu-layers = {gpu_layers}", "parallel = 1", "fit = off"]
     for entry in catalog["models"]:
         lines.extend([f"[{entry['id']}]", f"model = {entry['path']}"])
-        if entry["id"] == catalog["default"] and catalog["projector"]:
-            lines.append(f"mmproj = {catalog['projector']}")
+        if entry["projector"]:
+            lines.append(f"mmproj = {entry['projector']}")
     return "\n".join(lines) + "\n"
 
 
