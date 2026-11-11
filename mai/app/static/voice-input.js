@@ -16,14 +16,14 @@
     const allVoices = synth.getVoices();
     const koreanVoices = allVoices.filter(voice => /^ko(?:-|$)/i.test(voice.lang));
     const voices = koreanVoices.length ? koreanVoices : allVoices;
-    voiceSelect.replaceChildren(new Option('기본 음성', ''));
+    voiceSelect.replaceChildren(new Option('Default', ''));
     for (const voice of voices) {
       voiceSelect.add(new Option(voice.name + ' (' + voice.lang + ')', voice.voiceURI));
     }
     // Keep the saved preference even if the browser loads voices asynchronously.
     voiceSelect.value = voices.some(voice => voice.voiceURI === selectedVoiceURI) ? selectedVoiceURI : '';
     voiceSelect.disabled = voices.length === 0;
-    voiceSelect.title = voices.length ? 'MAI 답변 목소리 선택' : '이 브라우저에서 사용할 수 있는 음성이 없어.';
+    voiceSelect.title = voices.length ? 'Voice' : 'No available voice';
   }
 
   if (voiceSelect) {
@@ -58,7 +58,7 @@
     voiceMode = enabled;
     mic.classList.toggle('active', enabled);
     mic.setAttribute('aria-pressed', String(enabled));
-    mic.title = enabled ? '음성 모드 끄기' : '음성 입력 시작';
+    mic.title = enabled ? 'Stop listening' : 'Start listening';
     mic.setAttribute('aria-label', mic.title);
     if (!enabled) {
       modeRevision += 1;
@@ -92,26 +92,26 @@
 
 
   function submitRecognizedText(recognized) {
-    if (!recognized.trim()) throw new Error('음성 인식 결과가 비어 있어.');
+    if (!recognized.trim()) throw new Error('Empty speech recognition result.');
     const form = document.getElementById('chat-form');
     const send = document.getElementById('send-btn');
     if (!voiceMode || input.value.trim() || send.classList.contains('stop-mode')) {
-      setStatus('자동 전송을 건너뛰었어. 음성모드가 꺼졌거나 작성 중인 메시지 또는 진행 중인 대화가 있어.', true);
+      setStatus('Auto-send skipped: voice mode off, draft in progress, or chat busy.', true);
       return false;
     }
     input.value = recognized.trim();
     input.dispatchEvent(new Event('input'));
-    if (send.disabled) throw new Error('전송 버튼이 비활성화되어 자동 전송할 수 없어.');
+    if (send.disabled) throw new Error('Send is disabled; cannot auto-submit.');
     form.requestSubmit();
-    setStatus('인식된 메시지 전송을 요청했어.');
+    setStatus('Sending recognized message…');
     return true;
   }
 
   function startWebSpeech(config, revision) {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) throw new Error('이 브라우저는 Web Speech API 음성 인식을 지원하지 않아.');
+    if (!Recognition) throw new Error('Web Speech is unavailable in this browser.');
     if (!Number.isFinite(config.silence_seconds) || config.silence_seconds < 1 || config.silence_seconds > 120) {
-      throw new Error('VOICE_SILENCE_SECONDS 설정이 유효하지 않아.');
+      throw new Error('Invalid VOICE_SILENCE_SECONDS setting.');
     }
     const recognition = new Recognition();
     recognition.lang = 'ko-KR';
@@ -134,7 +134,7 @@
         if (result.isFinal) finalText += text + ' ';
         else interim += text;
       }
-      setStatus(interim ? '인식 중: ' + interim : '듣고 있어. 발화 종료를 기다리는 중…');
+      setStatus(interim ? 'Recognizing: ' + interim : 'Listening · waiting for pause…');
       clearSilence();
       if (finalText.trim()) {
         silenceTimer = setTimeout(() => {
@@ -147,7 +147,7 @@
       recognitionError = event.error;
       if (event.error !== 'no-speech') {
         clearSilence();
-        setStatus('브라우저 음성 인식 오류: ' + event.error, true);
+        setStatus('Browser speech error: ' + event.error, true);
         setVoiceMode(false);
       }
     };
@@ -163,7 +163,7 @@
       try {
         submitRecognizedText(finalText);
       } catch (error) {
-        setStatus('브라우저 음성 처리 실패: ' + error.message, true);
+        setStatus('Browser speech failed: ' + error.message, true);
         setVoiceMode(false);
       }
     };
@@ -174,7 +174,7 @@
       webRecognition = null;
       throw error;
     }
-    setStatus('브라우저에서 듣고 있어. 마지막 발화 뒤 설정된 시간이 지나면 전송해.');
+    setStatus('Listening · sends after the configured pause');
   }
 
   function resumeAfterAnswer() {
@@ -186,7 +186,7 @@
     ttsEnabled = !ttsEnabled;
     speaker.classList.toggle('muted', !ttsEnabled);
     speaker.setAttribute('aria-pressed', String(ttsEnabled));
-    speaker.title = ttsEnabled ? '답변 음성 끄기' : '답변 음성 켜기';
+    speaker.title = ttsEnabled ? 'Mute voice output' : 'Enable voice output';
     speaker.setAttribute('aria-label', speaker.title);
     if (!ttsEnabled && currentUtterance) {
       stopTts();
@@ -198,7 +198,7 @@
     if (!voiceMode) return;
     if (!ttsEnabled || !event.detail?.text) { resumeAfterAnswer(); return; }
     if (!('speechSynthesis' in window)) {
-      setStatus('이 브라우저는 음성 합성(TTS)을 지원하지 않아.', true);
+      setStatus('Speech synthesis unavailable in this browser.', true);
       return;
     }
     const message = spokenText(event.detail.text);
@@ -223,7 +223,7 @@
     utterance.onerror = eventError => {
       if (currentUtterance !== utterance) return;
       currentUtterance = null;
-      if (eventError.error !== 'canceled') setStatus('TTS 재생 오류: ' + eventError.error, true);
+      if (eventError.error !== 'canceled') setStatus('TTS error: ' + eventError.error, true);
     };
     window.speechSynthesis.speak(utterance);
   });
@@ -299,7 +299,7 @@
     } catch (error) {
       if (active === capture) {
         void finish(true);
-        setStatus('발화 구간 검사 오류: ' + error.message, true);
+        setStatus('Voice activity error: ' + error.message, true);
       }
     } finally {
       capture.checking = false;
@@ -316,7 +316,7 @@
     await capture.context.close();
     if (discard || !voiceMode) return;
     if (!capture.chunks.length) {
-      setStatus('녹음 데이터가 없어 다시 듣는 중…', true);
+      setStatus('No audio captured · listening again…', true);
       if (voiceMode) await start();
       return;
     }
@@ -327,18 +327,18 @@
     body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
     let retryAfterRecoverableVoiceFailure = false;
     try {
-      setStatus('음성 인식 중…');
+      setStatus('Transcribing…');
       const result = await request('/voice/transcribe', {method: 'POST', body});
       submitRecognizedText(result.text);
     } catch (error) {
-      setStatus(`음성 처리 실패: ${error.message}`, true);
+      setStatus(`Speech processing failed: ${error.message}`, true);
       retryAfterRecoverableVoiceFailure =
         error.status === 422 && error.code === 'insufficient_speech';
     } finally {
       mic.disabled = false;
     }
     if (retryAfterRecoverableVoiceFailure && voiceMode) {
-      setStatus('이번 음성은 처리하지 않았어. 다시 듣는 중…', true);
+      setStatus('Speech not processed · listening again…', true);
       await start();
     }
   }
@@ -350,7 +350,7 @@
     try {
       const config = await request('/voice/config');
       if (!['local', 'web_speech'].includes(config.stt_provider)) {
-        throw new Error('서버의 STT 제공자 설정 계약이 유효하지 않아.');
+        throw new Error('Invalid server STT provider.');
       }
       if (config.stt_provider === 'web_speech') {
         if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
@@ -389,9 +389,9 @@
           void checkSpeechEnd(capture);
         }
       };
-      setStatus('브라우저에서 듣고 있어. 마지막 발화 뒤 설정된 시간이 지나면 전송해.');
+      setStatus('Listening · sends after the configured pause');
     } catch (error) {
-      setStatus(`마이크 시작 실패: ${error.message}`, true);
+      setStatus(`Microphone failed: ${error.message}`, true);
     } finally {
       starting = false;
     }
@@ -410,6 +410,6 @@
   });
   if (!navigator.mediaDevices?.getUserMedia) {
     mic.disabled = true;
-    setStatus('이 브라우저에서는 HTTPS 또는 localhost 환경의 마이크가 필요해.', true);
+    setStatus('Microphone requires HTTPS or localhost.', true);
   }
 })();

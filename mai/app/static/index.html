@@ -23,6 +23,7 @@
     #login-id:focus, #login-password:focus { border-color:var(--accent); }
     .primary-btn { border:0; border-radius:10px; background:var(--accent); color:#fff; padding:10px 15px; font-weight:600; cursor:pointer; }
     .primary-btn:disabled { opacity:.45; cursor:wait; }
+    #login-btn { background:var(--accent); color:#fff; border-color:transparent; }
     #login-error { min-height:18px; margin-top:10px; color:var(--danger); font-size:12px; }
 
     header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; border-bottom:1px solid var(--border); background:var(--bg); flex-shrink:0; }
@@ -77,6 +78,16 @@
     @keyframes bounce { 0%,80%,100% { transform:translateY(0); } 40% { transform:translateY(-6px); background:var(--accent); } }
 
     .message-timestamp { margin-top:5px; font-size:11px; color:var(--meta); }
+    .mai-action-icon { width:18px; height:18px; display:block; flex-shrink:0; }
+    button[data-mai-icon], .icon-button { min-width:34px; min-height:34px; display:inline-grid; place-items:center; padding:7px; border:1px solid var(--border); border-radius:9px; background:transparent; color:var(--text-dim); cursor:pointer; }
+    button[data-mai-icon][hidden] { display:none; }
+    button[data-mai-icon]:hover,.icon-button:hover { color:var(--text); border-color:var(--accent-dim); }
+    button[data-mai-icon]:focus-visible,.icon-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .verify-switch .mai-action-icon { width:18px; height:18px; }
+    .verify-switch:has(input:checked) { color:var(--accent); }
+    #remote-btn.connected { color:var(--accent); border-color:var(--accent); }
+    #send-btn { width:36px; height:34px; min-width:36px; padding:7px; display:grid; place-items:center; }
+    #send-btn .mai-action-icon { width:19px; height:19px; }
     .verify-switch { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:4px; white-space:nowrap; }
     .diagnostics { margin-top:7px; font-size:11px; color:var(--meta); }
     details.tool-log { margin-top:8px; border-top:1px solid var(--border); padding-top:7px; }
@@ -140,9 +151,9 @@
 <div id="login-screen">
   <form class="login-card" id="login-form">
     <div class="login-logo">MAI</div>
-    <div class="login-sub">등록된 ID로 접속하세요.</div>
-    <div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /></div>
-    <div class="login-row" style="margin-top:8px"><input id="login-password" type="password" autocomplete="current-password" placeholder="비밀번호" required /><button class="primary-btn" id="login-btn" type="submit">접속</button></div>
+    <div class="login-sub">Sign in to MAI</div>
+    <div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" aria-label="User ID" required /></div>
+    <div class="login-row" style="margin-top:8px"><input id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required /><button class="primary-btn icon-button" id="login-btn" type="submit" data-mai-icon="log-in" data-mai-label="Sign in"></button></div>
     <div id="login-error"></div>
   </form>
 </div>
@@ -151,53 +162,84 @@
   <header>
     <div class="brand"><div class="logo">MAI</div><div class="subtitle">local personal agent</div></div>
     <div class="header-right">
-      <select id="model-select" title="생성 모델 선택"><option value="">모델 로딩 중…</option></select>
-       <select id="tts-voice-select" aria-label="MAI 답변 목소리 선택" title="MAI 답변 목소리 선택"><option value="">기본 음성</option></select>
-      <label class="verify-switch" title="끄면 답변 검증을 생략합니다. 속도 비교용입니다."><input type="checkbox" id="verify-toggle" /> 검증</label>
+      <select id="model-select" aria-label="Model" title="Model"><option value="">Loading models…</option></select>
+       <select id="tts-voice-select" aria-label="Voice" title="Voice"><option value="">Default</option></select>
+      <label class="verify-switch" title="Verify answers"><input type="checkbox" id="verify-toggle" aria-label="Verify answers" /><svg class="mai-action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg></label>
       <div class="identity" id="identity"></div><div class="identity" id="connection"></div>
-      <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>
-      <button id="logout-btn" type="button">로그아웃</button>
+      <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel" data-mai-icon="monitor" data-mai-label="Remote connection"></button>
+      <button id="logout-btn" type="button" data-mai-icon="log-out" data-mai-label="Sign out"></button>
     </div>
   </header>
-  <section id="remote-panel" hidden role="dialog" aria-label="원격 PC 연결 안내">
-    <h2 id="remote-title">명령이 복사되었습니다</h2>
-    <p id="remote-instruction">원격 OS에 맞는 명령을 복사해 해당 셸에서 실행해주세요.</p>
+  <section id="remote-panel" hidden role="dialog" aria-label="Remote connection">
+    <h2 id="remote-title">Remote connection</h2>
+    <p id="remote-instruction">Run the command on your remote device.</p>
     <div>
-      <label for="remote-platform" style="font-size:12px;color:var(--text-dim)">원격 OS</label>
+      <label for="remote-platform" style="font-size:12px;color:var(--text-dim)">Remote OS</label>
       <select id="remote-platform" style="margin-left:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 7px">
         <option value="windows">Windows PowerShell</option>
         <option value="linux">Linux shell</option>
       </select>
     </div>
-    <div id="remote-status" role="status">연결 대기</div>
+    <div id="remote-status" role="status">Waiting</div>
     <div id="remote-details" hidden>
-      <p>클립보드 복사가 차단됐습니다. 아래 명령을 직접 선택하여 복사해주세요. 명령에는 일회용 연결 키가 포함되므로 공유하지 마세요.</p>
+      <p>Copy the command manually. It contains a one-time secret; do not share it.</p>
       <div class="remote-secret"><code id="remote-command"></code></div>
     </div>
     <div id="remote-error" role="alert"></div>
     <div class="remote-actions">
-      <button id="remote-create" type="button" hidden>연결 명령 발급</button>
-      <button id="remote-close" type="button">연결 해제</button>
-      <button id="remote-hide" type="button">닫기</button>
+      <button id="remote-create" type="button" hidden data-mai-icon="copy" data-mai-label="Copy connection command"></button>
+      <button id="remote-close" type="button" data-mai-icon="unlink" data-mai-label="Disconnect"></button>
+      <button id="remote-hide" type="button" data-mai-icon="x" data-mai-label="Close"></button>
     </div>
   </section>
-  <div id="messages"><div id="empty-state"><div class="big">MAI</div><div>메시지를 입력하세요.</div></div></div>
+  <div id="messages"><div id="empty-state"><div class="big">MAI</div><div>Start a conversation</div></div></div>
   <div id="input-area">
     <form id="chat-form">
-      <div id="upload-status"></div>
-      <div id="clipboard-previews" aria-label="첨부 이미지 미리보기"></div>
+      <div id="upload-status" role="status" aria-live="polite"></div>
+      <div id="clipboard-previews" aria-label="Attachment previews"></div>
       <div id="input-row">
-        <label id="upload-btn" title="파일 업로드">＋<input id="file-input" type="file" /></label>
-        <textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea>
-        <button id="mic-btn" type="button" title="음성 입력 시작" aria-label="음성 입력 시작" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
-        <button id="tts-toggle-btn" type="button" title="답변 음성 끄기" aria-label="답변 음성 끄기" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/><path class="mute-line" d="M3 3 21 21"/></svg></button>
+        <label id="upload-btn" title="Attach file" aria-label="Attach file"><svg class="mai-action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><input id="file-input" type="file" aria-label="Attach file" /></label>
+        <textarea id="msg-input" rows="1" placeholder="Message..." aria-label="Message" required></textarea>
+        <button id="mic-btn" type="button" title="Start listening" aria-label="Start listening" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
+        <button id="tts-toggle-btn" type="button" title="Mute voice output" aria-label="Mute voice output" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/><path class="mute-line" d="M3 3 21 21"/></svg></button>
         
-        <button id="send-btn" type="submit">전송</button>
+        <button id="send-btn" type="submit" aria-label="Send" title="Send"><svg class="mai-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
       </div>
     </form>
   </div>
 </div>
 
+<script>
+  // Local SVG icon set: no CDN, external font, or runtime dependency.
+  const MAI_ICONS = Object.freeze({
+    'log-in':'<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/>',
+    'log-out':'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    'monitor':'<rect x="2" y="3" width="20" height="15" rx="2"/><path d="M8 22h8m-4-4v4"/>',
+    'shield-check':'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/>',
+    'plus':'<path d="M12 5v14M5 12h14"/>',
+    'send':'<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    'square':'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
+    'x':'<path d="M18 6 6 18M6 6l12 12"/>',
+    'link':'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    'unlink':'<path d="M10 13a5 5 0 0 0 7.54.54l1-1M14 11a5 5 0 0 0-7.54-.54l-1 1M2 2l20 20"/>',
+    'copy':'<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
+    'message-plus':'<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3H14M19 2v8m-4-4h8"/>',
+    'check':'<path d="m5 12 4 4L19 6"/>'
+  });
+  function maiIconMarkup(name) {
+    const paths=MAI_ICONS[name] || MAI_ICONS['plus'];
+    return '<svg class="mai-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+paths+'</svg>';
+  }
+  function setMaiIconButton(button, name, label) {
+    if(!button) return;
+    button.innerHTML=maiIconMarkup(name);
+    button.setAttribute('aria-label',label);
+    button.title=label;
+  }
+  document.querySelectorAll('[data-mai-icon]').forEach(button=>{
+    setMaiIconButton(button,button.dataset.maiIcon,button.dataset.maiLabel||button.title||'Action');
+  });
+</script>
 <script>
   const state = { token: sessionStorage.getItem('MAI:auth-token'), userId:null, role:null, sessionId:crypto.randomUUID() };
   const $loginPassword=document.getElementById('login-password');
@@ -209,25 +251,25 @@
     const response=await fetch(path,{method,headers:authHeaders()});
     const contentType=response.headers.get('content-type')||'';
     if(!contentType.toLowerCase().includes('application/json')){
-      throw new Error('원격 API 응답 오류 (HTTP '+response.status+', Content-Type: '+(contentType||'없음')+')');
+      throw new Error('Remote API error (HTTP '+response.status+', Content-Type: '+(contentType||'none')+')');
     }
     const data=await response.json();
-    if(!response.ok)throw new Error(data.detail||'원격 세션 요청 실패 (HTTP '+response.status+')');
+    if(!response.ok)throw new Error(data.detail||'Remote session failed (HTTP '+response.status+')');
     return data;
   }
   function remoteReset(){
     if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
-    remoteSession=null;remoteCommandText='';remoteCredentials=null;$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
+    remoteSession=null;remoteCommandText='';remoteCredentials=null;$remoteStatus.textContent='Disconnected';$remoteError.textContent='';
     $remoteDetails.hidden=true;$remoteClose.hidden=true;$remoteCreate.hidden=true;
-    $remoteBtn.classList.remove('connected');$remoteBtn.textContent='원격 연결';
+    $remoteBtn.classList.remove('connected');setMaiIconButton($remoteBtn,'monitor','Remote connection');
   }
   async function refreshRemoteStatus(){
     if(!remoteSession)return;
     try{
       const data=await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id));
-      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'원격 에이전트 연결 대기';
+      $remoteStatus.textContent=data.connected?'Connected — remote tools ready':'Waiting for remote agent';
       $remoteBtn.classList.toggle('connected',data.connected);
-      $remoteBtn.textContent=data.connected?'원격 연결됨':'원격 연결';
+      setMaiIconButton($remoteBtn,data.connected?'link':'monitor',data.connected?'Remote connected':'Remote connection');
       if(data.connected)$remoteCreate.hidden=true;
     }catch(err){remoteReset();$remoteError.textContent=err.message;}
   }
@@ -235,7 +277,7 @@
     $remotePanel.hidden=false;$remoteBtn.setAttribute('aria-expanded','true');
   }
   function buildRemoteCommand(data){
-    if(location.protocol!=='https:')throw new Error('원격 연결은 HTTPS에서만 허용됩니다.');
+    if(location.protocol!=='https:')throw new Error('Remote connection requires HTTPS.');
     if($remotePlatform.value==='linux'){
       const uri=new URL('/static/remote-agent-linux.sh',location.origin).href;
       return `curl -fsSL '${uri}' | sh -s -- --server '${location.origin}' --session '${data.session_id}' --key '${data.agent_secret}'`;
@@ -245,13 +287,13 @@
   }
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
-      document.getElementById('remote-title').textContent='선택한 OS용 명령이 복사되었습니다';
+      document.getElementById('remote-title').textContent='Command copied';
       $remoteDetails.hidden=true;$remoteCreate.hidden=false;
     }catch(err){
-      document.getElementById('remote-title').textContent='명령을 직접 복사해주세요';
+      document.getElementById('remote-title').textContent='Copy command manually';
       document.getElementById('remote-command').textContent=remoteCommandText;
       $remoteDetails.hidden=false;$remoteCreate.hidden=false;
-      $remoteError.textContent='클립보드 복사 실패: '+err.message;
+      $remoteError.textContent='Clipboard copy failed: '+err.message;
     }
   }
   async function beginRemoteConnection(){
@@ -262,7 +304,7 @@
       remoteCredentials=data;
       remoteCommandText=buildRemoteCommand(data);
       $remoteClose.hidden=false;
-      $remoteCreate.textContent='다시 복사';
+      setMaiIconButton($remoteCreate,'copy','Copy command');
       if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
       showRemoteDialog();
       await copyRemoteCommand();
@@ -286,7 +328,7 @@
     if(remoteCredentials){
       remoteCommandText=buildRemoteCommand(remoteCredentials);
       document.getElementById('remote-command').textContent=remoteCommandText;
-      document.getElementById('remote-title').textContent='선택한 OS용 명령을 복사해주세요';
+      document.getElementById('remote-title').textContent='Copy the command for your OS';
       $remoteDetails.hidden=false;
     }
   });
@@ -310,7 +352,7 @@
     remoteCommandText='';
     $remoteClose.hidden=false;
     $remoteCreate.hidden=false;
-    $remoteCreate.textContent='연결 명령 발급';
+    setMaiIconButton($remoteCreate,'copy','Get connection command');
     await refreshRemoteStatus();
     if(remotePollTimer!==null)clearInterval(remotePollTimer);
     remotePollTimer=setInterval(refreshRemoteStatus,5000);
@@ -324,7 +366,7 @@
   function isNearBottom(){return $messages.scrollHeight-$messages.scrollTop-$messages.clientHeight<=64;}
   $messages.addEventListener('scroll',()=>{stickToBottom=isNearBottom();},{passive:true});
   function scrollToBottom(behavior='smooth',force=false){if(!force&&!stickToBottom)return;if(force)stickToBottom=true;requestAnimationFrame(()=>{$messages.scrollTo({top:$messages.scrollHeight,behavior});});}
-  function syncSendButton(){const hasMessage=Boolean($input.value.trim()) || clipboardImages.length > 0;const stopping=Boolean(activeChat&&!hasMessage);$send.textContent=stopping?'중단':'전송';$send.classList.toggle('stop-mode',stopping);$send.disabled=!activeChat&&!hasMessage;}
+  function syncSendButton(){const hasMessage=Boolean($input.value.trim()) || clipboardImages.length > 0;const stopping=Boolean(activeChat&&!hasMessage);setMaiIconButton($send,stopping?'square':'send',stopping?'Stop':'Send');$send.classList.toggle('stop-mode',stopping);$send.disabled=!activeChat&&!hasMessage;}
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
   function renderInline(value) {
     let text=escapeHtml(value); text=text.replace(/`([^`]+)`/g,'<code>$1</code>'); text=text.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>'); text=text.replace(/\*([^*]+)\*/g,'<em>$1</em>'); text=text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'); return text;
@@ -386,7 +428,7 @@
       const response = await fetch('/uploads/image/' + encodeURIComponent(filename), {headers:authHeaders(), cache:'no-store'});
       if (!response.ok) {
         const error = document.createElement('span');
-        error.textContent = '이미지 조회 실패 (' + response.status + '): ' + filename;
+        error.textContent = 'Image unavailable (' + response.status + '): ' + filename;
         gallery.appendChild(error);
         continue;
       }
@@ -396,7 +438,7 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'message-image';
-      button.setAttribute('aria-label', '이미지 확대: ' + filename);
+      button.setAttribute('aria-label', 'Expand image: ' + filename);
       const image = document.createElement('img');
       image.src = url;
       image.alt = filename;
@@ -405,7 +447,7 @@
         const dialog = document.createElement('dialog');
         dialog.className = 'image-preview-dialog';
         const close = document.createElement('button');
-        close.textContent = '닫기';
+        setMaiIconButton(close,'x','Close');
         close.addEventListener('click', () => dialog.close());
         const full = document.createElement('img');
         full.src = url;
@@ -438,7 +480,7 @@
       bubble.textContent=text;
       if(attachments.length) void appendMessageImages(bubble,attachments).catch(error => {
         const failure=document.createElement('div');
-        failure.textContent='이미지 미리보기 오류: '+error.message;
+        failure.textContent='Image preview failed: '+error.message;
         bubble.appendChild(failure);
       });
     } else bubble.innerHTML=renderMarkdown(text);
@@ -450,7 +492,7 @@
     bubble.classList.add('error');
     bubble.replaceChildren();
     const title = document.createElement('div');
-    title.textContent = '검증 미통과 · 임시답변 (확정된 결과가 아님)';
+    title.textContent = 'Unverified draft · not final';
     title.style.fontWeight = '700';
     title.style.marginBottom = '10px';
 
@@ -467,7 +509,7 @@
       report.open = true;
       report.style.marginTop = '16px';
       const heading = document.createElement('summary');
-      heading.textContent = hasFeedback ? 'Verifier 마지막 거절 사유' : '검증 오류 정보';
+      heading.textContent = hasFeedback ? 'Verifier feedback' : 'Verification details';
       const feedback = document.createElement('div');
       feedback.style.whiteSpace = 'pre-wrap';
       feedback.style.marginTop = '8px';
@@ -476,8 +518,8 @@
       bubble.appendChild(report);
     }
   }
-  function addThinking(){const pending=addMessage('mai','');pending.bubble.innerHTML='<div class="loader" aria-label="생각 중"><span></span><span></span><span></span></div>';scrollToBottom();return pending;}
-  function markInterrupted(pending){if(!pending||pending.finalized)return;pending.bubble.classList.remove('error');pending.bubble.innerHTML='<div class="interrupted">중단됨 · 새 메시지로 전환</div>';}
+  function addThinking(){const pending=addMessage('mai','');pending.bubble.innerHTML='<div class="loader" aria-label="Thinking"><span></span><span></span><span></span></div>';scrollToBottom();return pending;}
+  function markInterrupted(pending){if(!pending||pending.finalized)return;pending.bubble.classList.remove('error');pending.bubble.innerHTML='<div class="interrupted">Interrupted · switched to new message</div>';}
   function renderToolLog(wrap,tools,rounds,model){const diag=document.createElement('div');diag.className='diagnostics';diag.dataset.modelId=String(model||'unknown');diag.dataset.modelRounds=String(rounds);diag.textContent=`${modelDisplayName(model)} · rounds: ${rounds}`;wrap.appendChild(diag);if(!tools.length)return;const details=document.createElement('details');details.className='tool-log';const summary=document.createElement('summary');summary.textContent=`tool log · ${tools.length} call${tools.length===1?'':'s'}`;details.appendChild(summary);const entries=document.createElement('div');entries.className='tool-log-entries';tools.forEach(tool=>{const entry=document.createElement('details');entry.className='tool-entry';entry.name='mai-tool-log-exclusive';const head=document.createElement('summary');head.className='tool-head';const name=document.createElement('span');name.textContent=tool.name;const status=document.createElement('span');status.textContent=tool.ok?'ok':(tool.error_type||'failed');if(!tool.ok)status.className='tool-failed';head.append(name,status);const args=document.createElement('div');args.className='tool-args';args.textContent=JSON.stringify(tool.arguments,null,2);entry.append(head,args);if(tool.result){const result=document.createElement('div');result.className='tool-result';result.textContent=tool.result;entry.appendChild(result);}entries.appendChild(entry);});details.appendChild(entries);wrap.appendChild(details);scrollToBottom();}
 
   function renderVerificationRejections(wrap, rejections) {
@@ -494,12 +536,12 @@
       head.className = 'tool-head';
       head.textContent = `REJECTED · round ${rejection.model_round}`;
       const candidateLabel = document.createElement('div');
-      candidateLabel.textContent = '거절된 답변 원문';
+      candidateLabel.textContent = 'Rejected answer';
       const candidate = document.createElement('div');
       candidate.className = 'tool-result';
       candidate.textContent = rejection.candidate;
       const feedbackLabel = document.createElement('div');
-      feedbackLabel.textContent = 'Verifier 피드백';
+      feedbackLabel.textContent = 'Verifier feedback';
       const feedback = document.createElement('div');
       feedback.className = 'tool-result';
       feedback.textContent = rejection.feedback;
@@ -508,7 +550,7 @@
     }
     wrap.appendChild(details);
   }
-  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'health 실패');document.getElementById('verify-toggle').checked=data.verifier_default_enabled;$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
+  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'Health check failed');document.getElementById('verify-toggle').checked=data.verifier_default_enabled;$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
   const modelLabels = Object.create(null);
   function modelDisplayName(model){
     const id=String(model||'unknown');
@@ -523,7 +565,7 @@
   async function loadModels(){
     const res=await fetch('/models',{headers:authHeaders()});
     const data=await res.json();
-    if(!res.ok)throw new Error(data.detail||'모델 목록 조회 실패');
+    if(!res.ok)throw new Error(data.detail||'Model list failed');
     modelBackend=data.backend||'ollama';
     Object.keys(modelLabels).forEach(name=>delete modelLabels[name]);
     Object.assign(modelLabels,data.labels||{});
@@ -535,7 +577,7 @@
       option.selected=name===data.current;
       $model.appendChild(option);
     });
-    if(!data.models.length)$model.innerHTML='<option value="">설치된 모델 없음</option>';
+    if(!data.models.length)$model.innerHTML='<option value="">No models installed</option>';
     loadedModel=$model.value;
     $model.disabled=Boolean(data.locked);
     refreshModelDiagnostics();
@@ -543,36 +585,36 @@
   $model.addEventListener('change',async()=>{
     if(modelBackend!=='llamacpp'){loadedModel=$model.value;return;}
     const requested=$model.value, previous=loadedModel;
-    if(activeChat){$model.value=previous;$uploadStatus.classList.add('failed');$uploadStatus.textContent='진행 중인 대화가 끝난 후 모델을 변경할 수 있습니다.';return;}
+    if(activeChat){$model.value=previous;$uploadStatus.classList.add('failed');$uploadStatus.textContent='Finish the current chat before switching models.';return;}
     if(switchingModel||requested===previous)return;
     switchingModel=true;
     $model.disabled=true;
     $uploadStatus.classList.remove('failed');
-    $uploadStatus.textContent='모델 전환 중: 기존 모델 언로드 → 선택 모델 로드';
+    $uploadStatus.textContent='Switching model…';
     try{
       const res=await fetch('/models/select',{
         method:'POST',headers:authHeaders({'Content-Type':'application/json'}),
         body:JSON.stringify({model:requested}),
       });
       const data=await res.json();
-      if(!res.ok)throw new Error(data.detail||'llama.cpp 모델 전환 실패');
-      if(data.model!==requested||data.status!=='loaded')throw new Error('모델 전환 응답 계약 위반');
+      if(!res.ok)throw new Error(data.detail||'Model switch failed');
+      if(data.model!==requested||data.status!=='loaded')throw new Error('Invalid model switch response');
       loadedModel=requested;
-      $uploadStatus.textContent='모델 전환 완료';
+      $uploadStatus.textContent='Model loaded';
     }catch(err){
       $model.value=previous;
       $uploadStatus.classList.add('failed');
-      $uploadStatus.textContent='모델 전환 실패: '+err.message;
+      $uploadStatus.textContent='Model switch failed: '+err.message;
     }finally{
       switchingModel=false;
       $model.disabled=false;
     }
   });
-  function showApp(){ $remoteBtn.hidden=state.role!=='owner'; $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='연결 실패';$connection.title=err.message;}); syncSendButton(); recoverRemoteSession().catch(err=>{$remoteError.textContent=err.message;}); $input.focus(); }
+  function showApp(){ $remoteBtn.hidden=state.role!=='owner'; $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='Connection failed';$connection.title=err.message;}); syncSendButton(); recoverRemoteSession().catch(err=>{$remoteError.textContent=err.message;}); $input.focus(); }
   function showLogin(message=''){remoteReset();$remoteBtn.hidden=true;$remotePanel.hidden=true;if(activeChat){activeChat.controller.abort();activeChat=null;}syncSendButton();state.token=null;state.userId=null;state.role=null;sessionStorage.removeItem('MAI:auth-token');$app.style.display='none';$loginScreen.style.display='grid';$loginError.textContent=message;$loginId.focus();}
-  async function restoreSession(){if(!state.token){showLogin();return;}try{const res=await fetch('/me',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'세션 만료');state.userId=data.user_id;state.role=data.role;showApp();}catch(err){showLogin(err.message);}}
+  async function restoreSession(){if(!state.token){showLogin();return;}try{const res=await fetch('/me',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'Session expired');state.userId=data.user_id;state.role=data.role;showApp();}catch(err){showLogin(err.message);}}
 
-  $loginForm.addEventListener('submit',async event=>{event.preventDefault();$loginBtn.disabled=true;$loginError.textContent='';try{let preauth=sessionStorage.getItem('MAI:preauth-session');if(!preauth){const bootstrap=await fetch('/login/session');if(!bootstrap.ok)throw new Error('로그인 세션 생성 실패');const bootstrapData=await bootstrap.json();preauth=bootstrapData.session_token;if(!preauth)throw new Error('로그인 세션 토큰이 없습니다');sessionStorage.setItem('MAI:preauth-session',preauth);}const res=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json','X-MAI-Preauth-Session':preauth},body:JSON.stringify({user_id:$loginId.value,user_pw:$loginPassword.value})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'접속 거부');$loginPassword.value='';state.token=data.token;state.userId=data.user_id;state.role=data.role;sessionStorage.setItem('MAI:auth-token',state.token);showApp();}catch(err){$loginError.textContent=err.message;}finally{$loginBtn.disabled=false;}});
+  $loginForm.addEventListener('submit',async event=>{event.preventDefault();$loginBtn.disabled=true;$loginError.textContent='';try{let preauth=sessionStorage.getItem('MAI:preauth-session');if(!preauth){const bootstrap=await fetch('/login/session');if(!bootstrap.ok)throw new Error('Sign-in session failed');const bootstrapData=await bootstrap.json();preauth=bootstrapData.session_token;if(!preauth)throw new Error('Sign-in session token missing');sessionStorage.setItem('MAI:preauth-session',preauth);}const res=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json','X-MAI-Preauth-Session':preauth},body:JSON.stringify({user_id:$loginId.value,user_pw:$loginPassword.value})});const data=await res.json();if(!res.ok)throw new Error(data.detail||'Access denied');$loginPassword.value='';state.token=data.token;state.userId=data.user_id;state.role=data.role;sessionStorage.setItem('MAI:auth-token',state.token);showApp();}catch(err){$loginError.textContent=err.message;}finally{$loginBtn.disabled=false;}});
   $logout.addEventListener('click',async()=>{try{await fetch('/logout',{method:'POST',headers:authHeaders()});}finally{showLogin();}});
   const $clipboardPreviews = document.getElementById('clipboard-previews');
   const clipboardImages = [];
@@ -589,7 +631,7 @@
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.textContent = '×';
-      remove.setAttribute('aria-label', '첨부 이미지 삭제');
+      remove.setAttribute('aria-label', 'Remove attached image');
       remove.addEventListener('click', () => {
         URL.revokeObjectURL(item.url);
         clipboardImages.splice(index, 1);
@@ -611,18 +653,18 @@
     const references = [];
     for (const item of clipboardImages) {
       const extension = item.file.type.split('/')[1];
-      if (!extension) throw new Error('이미지 파일 형식이 없습니다.');
+      if (!extension) throw new Error('Unknown image format.');
       const name = `clipboard-${crypto.randomUUID()}.${extension}`;
       const body = new FormData();
       body.append('file', item.file, name);
       const response = await fetch('/upload', {method:'POST',headers:authHeaders(),body});
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || '이미지 업로드 실패');
-      references.push({reference:`업로드된 파일: ${data.path}`, filename:data.filename});
+      if (!response.ok) throw new Error(data.detail || 'Image upload failed');
+      references.push({reference:`Uploaded file: ${data.path}`, filename:data.filename});
     }
     return references;
   }
-  $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`업로드 중: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok)throw new Error(data.detail||'업로드 실패');const reference=`업로드된 파일: ${data.path}`;if(file.type.startsWith('image/'))pendingUploadedImages.push(data.filename);$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`업로드 완료: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`업로드 오류: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
+  $fileInput.addEventListener('change',async()=>{const file=$fileInput.files?.[0];if(!file)return;$uploadBtn.classList.add('busy');$uploadStatus.classList.remove('failed');$uploadStatus.textContent=`Uploading: ${file.name}`;try{const body=new FormData();body.append('file',file,file.name);const res=await fetch('/upload',{method:'POST',headers:authHeaders(),body});const data=await res.json();if(res.status===401){showLogin(data.detail||'Session expired');return;}if(!res.ok)throw new Error(data.detail||'Upload failed');const reference=`Uploaded file: ${data.path}`;if(file.type.startsWith('image/'))pendingUploadedImages.push(data.filename);$input.value=$input.value.trim()?`${$input.value.trim()}\n${reference}`:reference;$input.dispatchEvent(new Event('input'));$uploadStatus.textContent=`Uploaded: ${data.filename} (${data.bytes} bytes)`;$input.focus();}catch(err){$uploadStatus.classList.add('failed');$uploadStatus.textContent=`Upload failed: ${err.message}`;}finally{$fileInput.value='';$uploadBtn.classList.remove('busy');}});
   $form.addEventListener('submit',async event=>{event.preventDefault();let message=$input.value.trim();if(uploadingClipboardImages||switchingModel)return;if(!message && clipboardImages.length === 0){
     if(activeChat){
       if(replacingChat)return;
@@ -671,13 +713,13 @@
       refreshClipboardPreviews();
     } catch (err) {
       $uploadStatus.classList.add('failed');
-      $uploadStatus.textContent = `이미지 업로드 오류: ${err.message}`;
+      $uploadStatus.textContent = `Image upload failed: ${err.message}`;
       return;
     } finally {
       uploadingClipboardImages = false;
     }
   }
-  const attachments=pendingUploadedImages.splice(0);addMessage('user',message,attachments);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null,remote_session_id:remoteSession?.id||null,attachments,verify:document.getElementById('verify-toggle').checked}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'세션 만료');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`오류: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);pending.finalized=true;setMessageTime(pending);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){if(!pending.finalized)markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`오류: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
+  const attachments=pendingUploadedImages.splice(0);addMessage('user',message,attachments);$input.value='';$input.style.height='auto';$uploadStatus.textContent='';$uploadStatus.classList.remove('failed');const pending=addThinking();const controller=new AbortController();const runId=++chatRunSerial;activeChat={id:runId,controller,pending};syncSendButton();try{const res=await fetch('/chat',{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({message,session_id:state.sessionId,model:$model.value||null,remote_session_id:remoteSession?.id||null,attachments,verify:document.getElementById('verify-toggle').checked}),signal:controller.signal});const data=await res.json();if(activeChat?.id!==runId)return;if(res.status===401){showLogin(data.detail||'Session expired');return;}if(!res.ok){pending.bubble.classList.add('error');const prefix=data.error_type?`${data.error_type}: `:'';if (typeof data.unverified_answer === 'string') renderUnverifiedAnswer(pending.bubble, data); else pending.bubble.textContent=`Error: ${prefix}${data.detail||JSON.stringify(data)}`;renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,Array.isArray(data.tools)?data.tools:[],data.model_rounds??0,data.model||$model.value||'unknown');scrollToBottom();return;}pending.bubble.innerHTML=renderMarkdown(data.answer);pending.finalized=true;setMessageTime(pending);document.dispatchEvent(new CustomEvent('mai:answer-complete',{detail:{text:data.answer}}));renderVerificationRejections(pending.wrap,data.verification_rejections);renderToolLog(pending.wrap,data.tools,data.model_rounds,data.model);scrollToBottom();}catch(err){if(err.name==='AbortError'){if(!pending.finalized)markInterrupted(pending);return;}if(activeChat?.id!==runId)return;pending.bubble.classList.add('error');pending.bubble.textContent=`Error: ${err.message}`;scrollToBottom();}finally{if(activeChat?.id===runId)activeChat=null;syncSendButton();$input.focus();}});
   $input.addEventListener('input',()=>{$input.style.height='auto';$input.style.height=`${Math.min($input.scrollHeight,150)}px`;syncSendButton();});
   $input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$form.requestSubmit();}});
   syncSendButton();

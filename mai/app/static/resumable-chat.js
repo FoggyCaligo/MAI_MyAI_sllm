@@ -74,7 +74,7 @@
       placeholder.style.opacity = '0.78';
       placeholder.style.fontSize = '13px';
       const heading = document.createElement('summary');
-      heading.textContent = 'thinking · 생성 중';
+      heading.textContent = 'Thinking · generating';
       const body = document.createElement('div');
       body.dataset.thinkingBody = 'true';
       body.style.marginTop = '8px';
@@ -189,7 +189,7 @@
     }
 
     const hasMessage = Boolean(input.value.trim()) || Boolean(document.getElementById('clipboard-previews')?.children.length);
-    sendButton.textContent = hasMessage ? '전송' : '중단';
+    if (typeof setMaiIconButton === 'function') setMaiIconButton(sendButton, hasMessage ? 'send' : 'square', hasMessage ? 'Send' : 'Stop');
     sendButton.classList.toggle('stop-mode', !hasMessage);
     sendButton.disabled = false;
   }
@@ -205,7 +205,7 @@
     if (typeof state === 'object' && state) state.token = null;
     renderedHistorySignature = null;
     if (typeof showLogin === 'function') {
-      showLogin('다른 기기에서 새로 로그인했거나 세션이 만료되었습니다. 다시 로그인해주세요.');
+      showLogin('Session expired or signed in elsewhere. Please sign in again.');
     }
   }
 
@@ -220,7 +220,7 @@
     big.className = 'big';
     big.textContent = 'MAI';
     const hint = document.createElement('div');
-    hint.textContent = '메시지를 입력하세요.';
+    hint.textContent = 'Start a conversation';
     empty.append(big, hint);
     host.appendChild(empty);
     renderedHistorySignature = null;
@@ -242,7 +242,7 @@
       big.className = 'big';
       big.textContent = 'MAI';
       const hint = document.createElement('div');
-      hint.textContent = '메시지를 입력하세요.';
+      hint.textContent = 'Start a conversation';
       empty.append(big, hint);
       host.appendChild(empty);
     } else {
@@ -258,7 +258,7 @@
             if (typeof metadata?.unverified_answer === 'string' && typeof renderUnverifiedAnswer === 'function') {
               renderUnverifiedAnswer(rendered.bubble, metadata);
             } else {
-              rendered.bubble.textContent = `오류: ${prefix}${String(message.content || '')}`;
+              rendered.bubble.textContent = `Error: ${prefix}${String(message.content || '')}`;
             }
           }
           if (metadata && typeof renderToolLog === 'function') {
@@ -323,14 +323,14 @@
         const detail = error instanceof Error ? error.message : String(error);
         return jsonResponse({
           error_type: error instanceof Error ? error.name : 'NetworkError',
-          detail: detail || '대화 작업 상태 조회 중 연결이 끊겼습니다.',
+          detail: detail || 'Connection lost while checking chat status.',
         }, 503);
       }
 
       if (res.status === 401) return res;
       if (res.status === 404) {
         localStorage.removeItem(storageKey);
-        return jsonResponse({detail: '저장된 대화 작업을 찾을 수 없습니다.'}, 410);
+        return jsonResponse({detail: 'Chat job not found.'}, 410);
       }
       if (!res.ok) return res;
 
@@ -338,7 +338,7 @@
       // A cancelled job's slow polling response must not overwrite the newer
       // prompt's thinking/tool log or clear the newer job from localStorage.
       if (currentSubmissionJobId && currentSubmissionJobId !== jobId) {
-        return jsonResponse({detail: '요청이 새 메시지로 대체되었습니다.'}, 499);
+        return jsonResponse({detail: 'Request replaced by a new message.'}, 499);
       }
       if (data.status === 'pending' || data.status === 'running' || data.status === 'cancelling') {
         renderLiveThinking(data.thinking, data.verification_rejections);
@@ -350,12 +350,12 @@
       }
       if (data.status === 'failed') {
         localStorage.removeItem(storageKey);
-        const payload = data.response || {detail: data.error || '대화 작업 실패'};
+        const payload = data.response || {detail: data.error || 'Chat job failed'};
         return jsonResponse(payload, Number(payload.status_code) || 500);
       }
       if (data.status === 'cancelled') {
         localStorage.removeItem(storageKey);
-        return jsonResponse(data.response || {detail: '요청이 취소되었습니다.'}, 499);
+        return jsonResponse(data.response || {detail: 'Request cancelled.'}, 499);
       }
       await sleep(pollDelayMs);
     }
@@ -369,14 +369,14 @@
     if (precedingJobId) {
       const cancelled = await cancelJob(precedingJobId);
       if (!cancelled) {
-        return jsonResponse({detail: '이전 작업의 취소를 확인하지 못했습니다. 새 요청을 시작하지 않았습니다.'}, 503);
+        return jsonResponse({detail: 'Could not confirm cancellation. New request not started.'}, 503);
       }
       if (currentSubmissionJobId === precedingJobId) setCurrentJob(null);
     }
     const submit = await nativeFetch('/chat/jobs', init);
     if (!submit.ok) return submit;
     const data = await submit.json();
-    if (!data.job_id) return jsonResponse({detail: 'chat job id가 반환되지 않았습니다.'}, 500);
+    if (!data.job_id) return jsonResponse({detail: 'Missing chat job ID.'}, 500);
 
     const jobId = data.job_id;
     setLiveProgressWrap(latestMaiWrap());
@@ -505,7 +505,7 @@
         if (typeof data.unverified_answer === 'string' && typeof renderUnverifiedAnswer === 'function') {
           renderUnverifiedAnswer(pending.bubble, data);
         } else {
-          pending.bubble.textContent = `오류: ${prefix}${data.detail || '대화 작업을 복구하지 못했습니다.'}`;
+          pending.bubble.textContent = `Error: ${prefix}${data.detail || 'Could not recover chat job.'}`;
         }
         if (typeof renderToolLog === 'function') renderToolLog(pending.wrap, data.tools || [], data.model_rounds || 0, data.model || 'unknown');
       }
@@ -518,25 +518,25 @@
   }
 
   window.maiResetConversation = async function() {
-    if (resettingConversation) throw new Error('이미 대화 초기화가 진행 중입니다.');
+    if (resettingConversation) throw new Error('Chat reset already in progress.');
     resettingConversation = true;
     historyEpoch += 1;
     try {
       const activeResponse = await nativeFetch('/chat/jobs/active', {
         headers: headersWithAuth(), cache: 'no-store',
       });
-      if (!activeResponse.ok) throw new Error('진행 중인 대화 확인 실패');
+      if (!activeResponse.ok) throw new Error('Could not check active chat.');
       const active = await activeResponse.json();
       for (const job of active.jobs) {
         const cancelled = await nativeFetch(`/chat/jobs/${encodeURIComponent(job.job_id)}`, {
           method: 'DELETE', headers: headersWithAuth(),
         });
-        if (!cancelled.ok) throw new Error('진행 중인 작업 취소 실패');
+        if (!cancelled.ok) throw new Error('Failed to cancel active job.');
       }
       const result = await nativeFetch(`/session/${encodeURIComponent(state.sessionId || 'default')}`, {
         method: 'DELETE', headers: headersWithAuth(),
       });
-      if (!result.ok) throw new Error('대화 기록 초기화 실패');
+      if (!result.ok) throw new Error('Failed to reset chat history.');
       localStorage.removeItem(storageKey);
       clearVisibleConversation();
     } finally {

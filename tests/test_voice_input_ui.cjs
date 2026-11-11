@@ -43,7 +43,7 @@ async function run() {
   const flush = async () => {for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve));};
   element('mic-btn').handlers.click();
   await flush();
-  assert.equal(element('upload-status').textContent, '브라우저에서 듣고 있어. 마지막 발화 뒤 설정된 시간이 지나면 전송해.');
+  assert.equal(element('upload-status').textContent, 'Listening · sends after the configured pause');
   context.currentTime = 0.1;
   processor.onaudioprocess({inputBuffer: {getChannelData() {return new Float32Array(1600).fill(0.2);}}});
   context.currentTime = 6;
