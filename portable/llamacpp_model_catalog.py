@@ -3,8 +3,9 @@
 The only discovery criterion is a regular GGUF file in the configured model
 directory, excluding explicitly configured multimodal projector paths and
 files conventionally named mmproj-*.gguf or mmproj_*.gguf.
-No model capability is inferred from a filename; the mmproj rule excludes a
-known auxiliary-file naming convention.
+Only an explicit default projector or an exact mmproj- / mmproj_ companion
+filename associates a projector with a model; never infer a model family's
+vision capability from its name.
 """
 from __future__ import annotations
 
