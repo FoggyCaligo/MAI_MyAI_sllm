@@ -113,3 +113,47 @@ def test_restart_description_does_not_conflate_restart_with_permanent_shutdown()
     assert "git pull --ff-only origin dev" in tool.description
     assert "launches MAI and the model runtime again" in tool.description
     assert "in-flight" in tool.description
+
+
+def test_update_preflight_failure_does_not_stop_running_mai(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev\\n")
+    monkeypatch.setattr(module, "preflight_update", lambda: (_ for _ in ()).throw(
+        RuntimeError("Cannot safely update dev")
+    ))
+    monkeypatch.setattr(module, "stop_registered_server", lambda: pytest.fail(
+        "MAI must remain alive when preflight fails"
+    ))
+    with pytest.raises(RuntimeError, match="Cannot safely update dev"):
+        module.coordinate(update=True)
+    assert not module.LOCK.exists()
+
+
+def test_restart_without_update_skips_git_preflight(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev\\n")
+    monkeypatch.setattr(module, "preflight_update", lambda: pytest.fail("Unexpected git update"))
+    monkeypatch.setattr(module, "stop_registered_server", lambda: None)
+    monkeypatch.setattr(module, "wait_ports", lambda starting, seconds: None)
+    started = []
+    class Process:
+        pid = 3456
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: started.append(args) or Process())
+    module.coordinate(update=False)
+    assert started
+
+
+def test_update_preflight_rejects_remote_divergence(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(subprocess, "check_output", lambda args, **kwargs: (
+        "remote-commit\\n" if args[-1] == "FETCH_HEAD" else "local-commit\\n"
+    ))
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        if "merge-base" in args:
+            raise subprocess.CalledProcessError(1, args)
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(subprocess.CalledProcessError):
+        module.preflight_update()
+    assert any("merge-base" in args for args in calls)
