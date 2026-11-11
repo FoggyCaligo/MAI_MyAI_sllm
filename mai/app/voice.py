@@ -149,6 +149,25 @@ class VoiceService:
                 raise HTTPException(409, "voice profile already exists; replacement is not enabled")
             self._save_profile(path, embedding, embedding, 1)
 
+
+    def transcribe(self, recording: bytes) -> str:
+        """Transcribe VAD-detected speech without speaker enrollment or verification."""
+        with self._lock:
+            speech = self._waveform(recording, minimum_seconds=0.0)
+            if self._transcriber is None:
+                from faster_whisper import WhisperModel
+                self._transcriber = WhisperModel(
+                    os.environ.get("VOICE_WHISPER_MODEL", "small"),
+                    device="cpu",
+                    compute_type="int8",
+                )
+            # Silero VAD has already selected speech; do not filter it again.
+            segments, _ = self._transcriber.transcribe(speech, vad_filter=False)
+            text = " ".join(segment.text.strip() for segment in segments).strip()
+            if not text:
+                raise HTTPException(422, "no speech recognized")
+            return text
+
     def transcribe_verified(self, db_id: str, recording: bytes) -> str:
         import numpy as np
         with self._lock:
