@@ -13,6 +13,7 @@ def configure_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(restart, "DATA", tmp_path / "MAI_MEMORY")
     monkeypatch.setattr(restart, "IDENTITY", tmp_path / "MAI_MEMORY" / "server-process.json")
     monkeypatch.setattr(restart, "LOCK", tmp_path / "MAI_MEMORY" / "restart.lock")
+    monkeypatch.setattr(restart, "PENDING", tmp_path / "MAI_MEMORY" / "restart.pending")
     monkeypatch.setattr(restart, "LOG", tmp_path / "MAI_MEMORY" / "restart.log")
     restart.DATA.mkdir()
     return restart
@@ -92,3 +93,11 @@ def test_failed_handoff_blocks_shutdown(monkeypatch, tmp_path):
     module.signal_handoff(request_id, completed=False)
     with pytest.raises(RuntimeError, match="handoff failed"):
         module.wait_for_handoff(request_id)
+
+
+def test_duplicate_restart_rejected_before_spawn(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    module.PENDING.write_text("already requested")
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("No new coordinator"))
+    with pytest.raises(FileExistsError):
+        module.detach(update=True, await_handoff=True)
