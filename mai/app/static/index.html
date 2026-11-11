@@ -77,6 +77,15 @@
     @keyframes bounce { 0%,80%,100% { transform:translateY(0); } 40% { transform:translateY(-6px); background:var(--accent); } }
 
     .message-timestamp { margin-top:5px; font-size:11px; color:var(--meta); }
+    .mai-action-icon { width:18px; height:18px; display:block; flex-shrink:0; }
+    button[data-mai-icon], .icon-button { min-width:34px; min-height:34px; display:inline-grid; place-items:center; padding:7px; border:1px solid var(--border); border-radius:9px; background:transparent; color:var(--text-dim); cursor:pointer; }
+    button[data-mai-icon]:hover,.icon-button:hover { color:var(--text); border-color:var(--accent-dim); }
+    button[data-mai-icon]:focus-visible,.icon-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .verify-switch .mai-action-icon { width:18px; height:18px; }
+    .verify-switch:has(input:checked) { color:var(--accent); }
+    #remote-btn.connected { color:var(--accent); border-color:var(--accent); }
+    #send-btn { width:36px; height:34px; min-width:36px; padding:7px; display:grid; place-items:center; }
+    #send-btn .mai-action-icon { width:19px; height:19px; }
     .verify-switch { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:4px; white-space:nowrap; }
     .diagnostics { margin-top:7px; font-size:11px; color:var(--meta); }
     details.tool-log { margin-top:8px; border-top:1px solid var(--border); padding-top:7px; }
@@ -140,9 +149,9 @@
 <div id="login-screen">
   <form class="login-card" id="login-form">
     <div class="login-logo">MAI</div>
-    <div class="login-sub">등록된 ID로 접속하세요.</div>
-    <div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" required /></div>
-    <div class="login-row" style="margin-top:8px"><input id="login-password" type="password" autocomplete="current-password" placeholder="비밀번호" required /><button class="primary-btn" id="login-btn" type="submit">접속</button></div>
+    <div class="login-sub">Sign in to MAI</div>
+    <div class="login-row"><input id="login-id" autocomplete="username" placeholder="ID" aria-label="User ID" required /></div>
+    <div class="login-row" style="margin-top:8px"><input id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required /><button class="primary-btn icon-button" id="login-btn" type="submit" data-mai-icon="log-in" data-mai-label="Sign in"></button></div>
     <div id="login-error"></div>
   </form>
 </div>
@@ -151,53 +160,84 @@
   <header>
     <div class="brand"><div class="logo">MAI</div><div class="subtitle">local personal agent</div></div>
     <div class="header-right">
-      <select id="model-select" title="생성 모델 선택"><option value="">모델 로딩 중…</option></select>
-       <select id="tts-voice-select" aria-label="MAI 답변 목소리 선택" title="MAI 답변 목소리 선택"><option value="">기본 음성</option></select>
-      <label class="verify-switch" title="끄면 답변 검증을 생략합니다. 속도 비교용입니다."><input type="checkbox" id="verify-toggle" /> 검증</label>
+      <select id="model-select" aria-label="Model" title="Model"><option value="">Loading models…</option></select>
+       <select id="tts-voice-select" aria-label="Voice" title="Voice"><option value="">Default</option></select>
+      <label class="verify-switch" title="Verify answers"><input type="checkbox" id="verify-toggle" aria-label="Verify answers" /><svg class="mai-action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg></label>
       <div class="identity" id="identity"></div><div class="identity" id="connection"></div>
-      <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel">원격 연결</button>
-      <button id="logout-btn" type="button">로그아웃</button>
+      <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel" data-mai-icon="monitor" data-mai-label="Remote connection"></button>
+      <button id="logout-btn" type="button" data-mai-icon="log-out" data-mai-label="Sign out"></button>
     </div>
   </header>
-  <section id="remote-panel" hidden role="dialog" aria-label="원격 PC 연결 안내">
-    <h2 id="remote-title">명령이 복사되었습니다</h2>
-    <p id="remote-instruction">원격 OS에 맞는 명령을 복사해 해당 셸에서 실행해주세요.</p>
+  <section id="remote-panel" hidden role="dialog" aria-label="Remote connection">
+    <h2 id="remote-title">Remote connection</h2>
+    <p id="remote-instruction">Run the command on your remote device.</p>
     <div>
-      <label for="remote-platform" style="font-size:12px;color:var(--text-dim)">원격 OS</label>
+      <label for="remote-platform" style="font-size:12px;color:var(--text-dim)">Remote OS</label>
       <select id="remote-platform" style="margin-left:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:5px 7px">
         <option value="windows">Windows PowerShell</option>
         <option value="linux">Linux shell</option>
       </select>
     </div>
-    <div id="remote-status" role="status">연결 대기</div>
+    <div id="remote-status" role="status">Waiting</div>
     <div id="remote-details" hidden>
-      <p>클립보드 복사가 차단됐습니다. 아래 명령을 직접 선택하여 복사해주세요. 명령에는 일회용 연결 키가 포함되므로 공유하지 마세요.</p>
+      <p>Copy the command manually. It contains a one-time secret; do not share it.</p>
       <div class="remote-secret"><code id="remote-command"></code></div>
     </div>
     <div id="remote-error" role="alert"></div>
     <div class="remote-actions">
-      <button id="remote-create" type="button" hidden>연결 명령 발급</button>
-      <button id="remote-close" type="button">연결 해제</button>
-      <button id="remote-hide" type="button">닫기</button>
+      <button id="remote-create" type="button" hidden data-mai-icon="copy" data-mai-label="Copy connection command"></button>
+      <button id="remote-close" type="button" data-mai-icon="unlink" data-mai-label="Disconnect"></button>
+      <button id="remote-hide" type="button" data-mai-icon="x" data-mai-label="Close"></button>
     </div>
   </section>
-  <div id="messages"><div id="empty-state"><div class="big">MAI</div><div>메시지를 입력하세요.</div></div></div>
+  <div id="messages"><div id="empty-state"><div class="big">MAI</div><div>Start a conversation</div></div></div>
   <div id="input-area">
     <form id="chat-form">
-      <div id="upload-status"></div>
-      <div id="clipboard-previews" aria-label="첨부 이미지 미리보기"></div>
+      <div id="upload-status" role="status" aria-live="polite"></div>
+      <div id="clipboard-previews" aria-label="Attachment previews"></div>
       <div id="input-row">
-        <label id="upload-btn" title="파일 업로드">＋<input id="file-input" type="file" /></label>
-        <textarea id="msg-input" rows="1" placeholder="메시지를 입력하세요..." required></textarea>
+        <label id="upload-btn" title="Attach file" aria-label="Attach file"><svg class="mai-action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><input id="file-input" type="file" aria-label="Attach file" /></label>
+        <textarea id="msg-input" rows="1" placeholder="Message..." aria-label="Message" required></textarea>
         <button id="mic-btn" type="button" title="음성 입력 시작" aria-label="음성 입력 시작" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
         <button id="tts-toggle-btn" type="button" title="답변 음성 끄기" aria-label="답변 음성 끄기" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/><path class="mute-line" d="M3 3 21 21"/></svg></button>
         
-        <button id="send-btn" type="submit">전송</button>
+        <button id="send-btn" type="submit" aria-label="Send" title="Send"><svg class="mai-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
       </div>
     </form>
   </div>
 </div>
 
+<script>
+  // Local SVG icon set: no CDN, external font, or runtime dependency.
+  const MAI_ICONS = Object.freeze({
+    'log-in':'<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/>',
+    'log-out':'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    'monitor':'<rect x="2" y="3" width="20" height="15" rx="2"/><path d="M8 22h8m-4-4v4"/>',
+    'shield-check':'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/>',
+    'plus':'<path d="M12 5v14M5 12h14"/>',
+    'send':'<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    'square':'<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none"/>',
+    'x':'<path d="M18 6 6 18M6 6l12 12"/>',
+    'link':'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    'unlink':'<path d="M10 13a5 5 0 0 0 7.54.54l1-1M14 11a5 5 0 0 0-7.54-.54l-1 1M2 2l20 20"/>',
+    'copy':'<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
+    'message-plus':'<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3H14M19 2v8m-4-4h8"/>',
+    'check':'<path d="m5 12 4 4L19 6"/>'
+  });
+  function maiIconMarkup(name) {
+    const paths=MAI_ICONS[name] || MAI_ICONS['plus'];
+    return '<svg class="mai-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+paths+'</svg>';
+  }
+  function setMaiIconButton(button, name, label) {
+    if(!button) return;
+    button.innerHTML=maiIconMarkup(name);
+    button.setAttribute('aria-label',label);
+    button.title=label;
+  }
+  document.querySelectorAll('[data-mai-icon]').forEach(button=>{
+    setMaiIconButton(button,button.dataset.maiIcon,button.dataset.maiLabel||button.title||'Action');
+  });
+</script>
 <script>
   const state = { token: sessionStorage.getItem('MAI:auth-token'), userId:null, role:null, sessionId:crypto.randomUUID() };
   const $loginPassword=document.getElementById('login-password');
@@ -217,17 +257,17 @@
   }
   function remoteReset(){
     if(remotePollTimer!==null){clearInterval(remotePollTimer);remotePollTimer=null;}
-    remoteSession=null;remoteCommandText='';remoteCredentials=null;$remoteStatus.textContent='연결 없음';$remoteError.textContent='';
+    remoteSession=null;remoteCommandText='';remoteCredentials=null;$remoteStatus.textContent='Disconnected';$remoteError.textContent='';
     $remoteDetails.hidden=true;$remoteClose.hidden=true;$remoteCreate.hidden=true;
-    $remoteBtn.classList.remove('connected');$remoteBtn.textContent='원격 연결';
+    $remoteBtn.classList.remove('connected');setMaiIconButton($remoteBtn,'monitor','Remote connection');
   }
   async function refreshRemoteStatus(){
     if(!remoteSession)return;
     try{
       const data=await remoteApi('/remote/sessions/'+encodeURIComponent(remoteSession.id));
-      $remoteStatus.textContent=data.connected?'연결됨 — 원격 PC 작업 가능':'원격 에이전트 연결 대기';
+      $remoteStatus.textContent=data.connected?'Connected — remote tools ready':'Waiting for remote agent';
       $remoteBtn.classList.toggle('connected',data.connected);
-      $remoteBtn.textContent=data.connected?'원격 연결됨':'원격 연결';
+      setMaiIconButton($remoteBtn,data.connected?'link':'monitor',data.connected?'Remote connected':'Remote connection');
       if(data.connected)$remoteCreate.hidden=true;
     }catch(err){remoteReset();$remoteError.textContent=err.message;}
   }
@@ -245,10 +285,10 @@
   }
   async function copyRemoteCommand(){
     try{await navigator.clipboard.writeText(remoteCommandText);
-      document.getElementById('remote-title').textContent='선택한 OS용 명령이 복사되었습니다';
+      document.getElementById('remote-title').textContent='Command copied';
       $remoteDetails.hidden=true;$remoteCreate.hidden=false;
     }catch(err){
-      document.getElementById('remote-title').textContent='명령을 직접 복사해주세요';
+      document.getElementById('remote-title').textContent='Copy command manually';
       document.getElementById('remote-command').textContent=remoteCommandText;
       $remoteDetails.hidden=false;$remoteCreate.hidden=false;
       $remoteError.textContent='클립보드 복사 실패: '+err.message;
@@ -324,7 +364,7 @@
   function isNearBottom(){return $messages.scrollHeight-$messages.scrollTop-$messages.clientHeight<=64;}
   $messages.addEventListener('scroll',()=>{stickToBottom=isNearBottom();},{passive:true});
   function scrollToBottom(behavior='smooth',force=false){if(!force&&!stickToBottom)return;if(force)stickToBottom=true;requestAnimationFrame(()=>{$messages.scrollTo({top:$messages.scrollHeight,behavior});});}
-  function syncSendButton(){const hasMessage=Boolean($input.value.trim()) || clipboardImages.length > 0;const stopping=Boolean(activeChat&&!hasMessage);$send.textContent=stopping?'중단':'전송';$send.classList.toggle('stop-mode',stopping);$send.disabled=!activeChat&&!hasMessage;}
+  function syncSendButton(){const hasMessage=Boolean($input.value.trim()) || clipboardImages.length > 0;const stopping=Boolean(activeChat&&!hasMessage);setMaiIconButton($send,stopping?'square':'send',stopping?'Stop':'Send');$send.classList.toggle('stop-mode',stopping);$send.disabled=!activeChat&&!hasMessage;}
   function escapeHtml(value) { return String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
   function renderInline(value) {
     let text=escapeHtml(value); text=text.replace(/`([^`]+)`/g,'<code>$1</code>'); text=text.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>'); text=text.replace(/\*([^*]+)\*/g,'<em>$1</em>'); text=text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'); return text;
