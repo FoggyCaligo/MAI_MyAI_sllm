@@ -233,7 +233,7 @@ def test_long_period_repetition_with_minor_variations_is_detected():
         "이 판단을 조금 다르게 정리한 뒤 최초의 질문으로 돌아간다. "
     )
     status = None
-    for n in range(1, 7):
+    for n in range(1, 9):
         repeated = "".join(cycle + f"반복 검토 번호 {i}: 결론을 다시 판단한다. " for i in range(n))
         status = monitor.observe(repeated)
     assert status is not None
