@@ -133,10 +133,49 @@ def signal_handoff(request_id: str, *, completed: bool) -> None:
     temporary.replace(target)
 
 
+def preflight_update() -> str:
+    """Verify dev can update safely *before* terminating the running service.
+
+    Only fetching the remote ref happens here, which leaves the working tree
+    and running Python files unchanged. Applying the fast-forward is deferred
+    until MAI and its launcher have stopped.
+    """
+    subprocess.run(["git", "-C", str(ROOT), "fetch", "origin", "dev"], check=True)
+    remote = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "FETCH_HEAD"], text=True,
+    ).strip()
+    local = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True,
+    ).strip()
+    subprocess.run(
+        ["git", "-C", str(ROOT), "merge-base", "--is-ancestor", local, remote],
+        check=True,
+    )
+    # git diff only considers tracked files; include staged and unstaged changes.
+    subprocess.run(["git", "-C", str(ROOT), "diff", "--quiet"], check=True)
+    subprocess.run(["git", "-C", str(ROOT), "diff", "--cached", "--quiet"], check=True)
+
+    if local != remote:
+        # A newly tracked upstream path must not overwrite an untracked local file.
+        incoming_paths = set(subprocess.check_output(
+            ["git", "-C", str(ROOT), "ls-tree", "-r", "--name-only", "-z", remote],
+        ).decode("utf-8").split("\\0"))
+        local_untracked = set(subprocess.check_output(
+            ["git", "-C", str(ROOT), "ls-files", "--others", "--exclude-standard", "-z"],
+        ).decode("utf-8").split("\\0"))
+        collisions = sorted((incoming_paths & local_untracked) - {""})
+        if collisions:
+            raise RuntimeError(
+                f"Untracked local files would be overwritten by dev: {collisions}"
+            )
+    return remote
+
+
 def coordinate(*, update: bool, request_id: str | None = None) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
+        print(f"Restart manager starting pid={os.getpid()} update={update}", flush=True)
         with os.fdopen(descriptor, "w") as f:
             f.write(str(os.getpid()))
         if request_id is not None:
@@ -145,9 +184,14 @@ def coordinate(*, update: bool, request_id: str | None = None) -> None:
         branch = subprocess.check_output(["git", "-C", str(ROOT), "branch", "--show-current"], text=True).strip()
         if branch != "dev":
             raise RuntimeError(f"Only dev may be updated by restart (current: {branch!r})")
+        target_revision = preflight_update() if update else None
+        print(f"Restart preflight complete target={target_revision or 'no-update'}", flush=True)
         stop_registered_server()
-        if update:
-            subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only", "origin", "dev"], check=True)
+        if target_revision is not None:
+            subprocess.run(
+                ["git", "-C", str(ROOT), "merge", "--ff-only", target_revision],
+                check=True,
+            )
         command = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                     "-File", str(ROOT / "mai.ps1"), "start"] if sys.platform == "win32"
                    else ["bash", str(ROOT / "mai.sh"), "start"])
@@ -159,7 +203,7 @@ def coordinate(*, update: bool, request_id: str | None = None) -> None:
                                        creationflags=flags, start_new_session=sys.platform != "win32")
             output.write(f"Launcher pid={process.pid}\n".encode())
         wait_ports(True, 150)
-        print("MAI restart successful", flush=True)
+        print("MAI startup ports ready (not an application health check)", flush=True)
     finally:
         LOCK.unlink(missing_ok=True)
         PENDING.unlink(missing_ok=True)
