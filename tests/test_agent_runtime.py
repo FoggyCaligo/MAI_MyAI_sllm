@@ -396,3 +396,78 @@ def test_verifier_receives_tool_arguments_in_original_execution_order() -> None:
     ])
     result = run(AgentRuntime(adapter, registry, final_verifier=CapturingVerifier()).run_user_message("Check echo"))
     assert result.content == "done"
+
+
+def test_reasoning_loop_recovers_to_next_model_turn_without_partial_replay():
+    from mai.llm.errors import ReasoningLoopDetected
+
+    class RepeatingAdapter(FakeAdapter):
+        async def chat(self, request):
+            self.requests.append(deepcopy(request))
+            if len(self.requests) <= 3:
+                raise ReasoningLoopDetected({
+                    "status": "repetition_suspected",
+                    "thinking_chars": 6000,
+                    "repeat_checks": 2,
+                    "recent_similarity": 0.98,
+                    "content_chars": 0,
+                    "tool_fragment_count": 0,
+                    "action": "interrupt_and_retry",
+                })
+            return assistant_turn(content="Recovered final answer")
+
+    adapter = RepeatingAdapter([])
+    progress = []
+    timings = []
+    result = run(AgentRuntime(adapter, ToolRegistry()).run_user_message(
+        "check", on_model_stream_progress=lambda n, p: progress.append((n, p)),
+        on_round_timing=lambda n, p: timings.append((n, p)),
+    ))
+    assert result.content == "Recovered final answer"
+    assert result.model_rounds == 4
+    assert len(adapter.requests) == 4
+    for index in range(1, 4):
+        messages = adapter.requests[index].messages
+        assert sum(
+            m.get("role") == "system" and "[REASONING_LOOP_DETECTED]" in m.get("content", "")
+            for m in messages
+        ) == 1
+        assert "6000" not in str(messages)  # diagnostic data must not become model context
+        assert not any(m.get("role") == "assistant" and m.get("thinking") for m in messages)
+    assert [n for n, p in progress if p.get("recovery_event")] == [1, 2, 3]
+    assert len([p for _, p in timings if p["status"] == "reasoning_loop_recovered"]) == 3
+
+
+def test_recovery_preserves_completed_tool_outcome_without_reexecuting():
+    from mai.llm.errors import ReasoningLoopDetected
+
+    class InterruptedAdapter(FakeAdapter):
+        async def chat(self, request):
+            self.requests.append(deepcopy(request))
+            if len(self.requests) == 3:
+                raise ReasoningLoopDetected({
+                    "status": "repetition_suspected", "thinking_chars": 2400,
+                    "repeat_checks": 2, "recent_similarity": 0.99,
+                })
+            if not self.turns:
+                raise AssertionError("unexpected model round")
+            return self.turns.pop(0)
+
+    calls = []
+    registry = ToolRegistry()
+    registry.add(
+        name="echo", description="Echo text.", input_model=EchoInput,
+        handler=lambda text: calls.append(text) or {"echo": text},
+    )
+    adapter = InterruptedAdapter([
+        activate("echo"),
+        assistant_turn(calls=(NativeToolCall(name="echo", arguments={"text": "once"}),)),
+        assistant_turn(content="Completed"),
+    ])
+    result = run(AgentRuntime(adapter, registry).run_user_message("test"))
+    assert result.content == "Completed"
+    assert calls == ["once"]
+    assert len([t for t in result.tool_executions if t.name == "echo"]) == 1
+    messages = adapter.requests[-1].messages
+    assert any(m.get("role") == "tool" and '"echo":"once"' in m.get("content", "") for m in messages)
+    assert any("[REASONING_LOOP_DETECTED]" in m.get("content", "") for m in messages)

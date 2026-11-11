@@ -2,7 +2,8 @@
 
 This does NOT score logical validity. It identifies repeated phrasing patterns
 and long generations with no user-visible answer or executable tool call.
-Never cancels generation or treats partial output as a successful answer.
+The monitor only classifies; the stream layer may interrupt confirmed repetition.
+Partial output is never a successful answer.
 """
 from __future__ import annotations
 

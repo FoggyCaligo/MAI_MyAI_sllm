@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
+from ..llm.errors import ReasoningLoopDetected
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
 from .guards import (
     AgentGuard,
@@ -387,20 +388,79 @@ class AgentLoop:
                 active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
                 active_tool_names = frozenset({"tool_manual", *activated_order})
                 model_started = time.perf_counter()
-                turn = await self.adapter.chat(ChatRequest(
-                    messages=model_history,
-                    tools=active_tools,
-                    think=think,
-                    options=options,
-                    on_timeout_diagnostic=(
-                        (lambda partial: on_model_timeout_diagnostic(round_number, partial))
-                        if on_model_timeout_diagnostic is not None else None
-                    ),
-                    on_stream_progress=(
-                        (lambda partial: on_model_stream_progress(round_number, partial))
-                        if on_model_stream_progress is not None else None
-                    ),
-                ))
+                try:
+                    turn = await self.adapter.chat(ChatRequest(
+                        messages=model_history,
+                        tools=active_tools,
+                        think=think,
+                        options=options,
+                        on_timeout_diagnostic=(
+                            (lambda partial: on_model_timeout_diagnostic(round_number, partial))
+                            if on_model_timeout_diagnostic is not None else None
+                        ),
+                        on_stream_progress=(
+                            (lambda partial: on_model_stream_progress(round_number, partial))
+                            if on_model_stream_progress is not None else None
+                        ),
+                    ))
+                except ReasoningLoopDetected as exc:
+                    # The streaming adapter already closed this single model
+                    # request. Discard its entire partial assistant message,
+                    # including potentially incomplete native tool-call JSON.
+                    # Earlier completed tool results and conversation remain.
+                    diagnostic = dict(exc.diagnostics)
+                    _LOG.warning(
+                        "MAI agent recovering from reasoning loop round=%d "
+                        "thinking_chars=%s repeat_checks=%s",
+                        round_number, diagnostic.get("thinking_chars"),
+                        diagnostic.get("repeat_checks"),
+                    )
+                    if on_model_stream_progress is not None:
+                        # Clear the live thinking preview and notify the audit
+                        # sink without replaying any partial reasoning text.
+                        on_model_stream_progress(round_number, {
+                            "thinking": "", "content": "", "tool_fragments": [],
+                            "chunks": 0, "finish_reason": None, "complete": False,
+                            "reasoning_diagnostics": diagnostic,
+                            "recovery_event": "reasoning_loop_interrupted",
+                        })
+                    # Keep only the most recent recovery instruction in model
+                    # context. Repeated recoveries have no count limit but
+                    # must not accumulate identical system prompts forever.
+                    recovery_indices = [
+                        index for index, item in enumerate(history)
+                        if item.get("role") == "system"
+                        and str(item.get("content", "")).startswith("[REASONING_LOOP_DETECTED]")
+                    ]
+                    if recovery_indices:
+                        removed = set(recovery_indices)
+                        history[:] = [
+                            item for index, item in enumerate(history) if index not in removed
+                        ]
+                        # Pending tool-result compactions use indices into
+                        # history; removing a prior notice must rebase them.
+                        pending_history_compactions = {
+                            index - sum(old < index for old in recovery_indices): content
+                            for index, content in pending_history_compactions.items()
+                            if index not in removed
+                        }
+                    history.append({
+                        "role": "system",
+                        "content": (
+                            "[REASONING_LOOP_DETECTED] 이전 모델 턴에서 사고무한반복이 확인됨. "
+                            "해당 모델 호출만 중지되었고 미완성 사고 및 도구 호출은 폐기되었습니다. "
+                            "완료된 도구 결과는 유지됩니다. 이전의 가정이나 결론을 검증 없이 "
+                            "사실로 취급하지 마세요. 이미 확보한 증거로 해결할 수 있으면 "
+                            "최종 답변을 작성하고, 아니면 한계를 명시하세요. "
+                            "동일한 추론을 반복하지 마세요."
+                        ),
+                    })
+                    record_timing(
+                        round_number, "reasoning_loop_recovered",
+                        model_ms=int((time.perf_counter() - model_started) * 1000),
+                    )
+                    round_number += 1
+                    continue
                 model_elapsed_ms = int((time.perf_counter() - model_started) * 1000)
                 _LOG.info("MAI model timing round=%d model_elapsed_ms=%d", round_number, model_elapsed_ms)
                 for history_index, compact_content in pending_history_compactions.items():
