@@ -36,3 +36,21 @@ def test_job_owned_loading_row_and_terminal_job_deduplication():
     assert "row.dataset.chatJobId === recoveredJobId" in CHAT
     assert "if (createdRecoveryPending) pending?.row?.remove();" in CHAT
     assert "['completed', 'failed', 'cancelled'].includes(snapshot.status)" in CHAT
+
+
+def test_voice_auto_send_after_silence_and_resume_after_answer_unchanged():
+    # Both local VAD and Web Speech use the configured silence duration;
+    # recognition text goes through the normal form submit, not a second chat API.
+    assert "elapsed - capture.lastSpeechEnd >= capture.silenceSeconds" in VOICE
+    assert "silenceSeconds: config.silence_seconds" in VOICE
+    assert "config.silence_seconds * 1000" in VOICE
+    assert "form.requestSubmit(send);" in VOICE
+
+    # MAI reply completion resumes listening, immediately without TTS or
+    # after TTS completes. No parallel voice-specific loading bubble is made.
+    assert "document.addEventListener('mai:answer-complete', event => {" in VOICE
+    assert "function resumeAfterAnswer()" in VOICE
+    assert "if (!ttsEnabled || !event.detail?.text) { resumeAfterAnswer(); return; }" in VOICE
+    assert "utterance.onend = () => {" in VOICE
+    assert "resumeAfterAnswer();" in VOICE
+    assert "function addThinking()" not in VOICE
