@@ -71,7 +71,7 @@ Linux 실행기는 `portable/start-portable-llamacpp-linux.sh`. 모델 카탈로
 | 기능 | 현재 구현 | 추가 검증 |
 |---|---|---|
 | 원격 Linux 도구 | `mai/app/static/remote-agent-linux.sh`, `mai/remote/python_worker.py` | Linux 대상 PC에서 실제 연결·명령 실행 |
-| 원격 실행 | `mai/remote/routing.py`, `is_remote=true` | 원격/로컬 경로 구분, 실패 시 로컬 대체 없음 |
+| 원격 실행 | `mai/remote/routing.py`, `at_remote_pc=true` | 원격/로컬 경로 구분, 실패 시 로컬 대체 없음 |
 | 원격 웹 공개 | Tailscale Funnel / Cloudflare | 호스트 설치·로그인·실제 외부 HTTPS 접속 |
 
 연결 절차: [원격 도구 연결](remote-tool-connection.md). 웹 공개와 원격 Native 워커는 서로 다른 기능.
