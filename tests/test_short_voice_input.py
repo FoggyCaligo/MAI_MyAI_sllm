@@ -144,3 +144,61 @@ def test_voice_config_exposes_only_the_enrollment_minimum(tmp_path, monkeypatch)
     config = asyncio.run(server.voice_config(authorization="Bearer token"))
     assert config["enrollment_min_speech_seconds"] == 3.0
     assert "min_speech_seconds" not in config
+
+def test_local_transcribe_requires_no_profile_or_speaker_embedding(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOICE_PROFILE_DIR", str(tmp_path))
+    voice = VoiceService()
+    voice._vad = SpeechVAD()
+    voice._transcriber = Transcriber("정상 입력")
+    def no_embedding(_):
+        raise AssertionError("speaker embedding must not be called")
+    monkeypatch.setattr(voice, "_embedding", no_embedding)
+    assert voice.transcribe(wav(0.1)) == "정상 입력"
+    assert voice._transcriber.calls == [(1600, False)]
+    assert not voice.enrolled("owner")
+
+
+def test_local_transcribe_rejects_silence_without_speaker_check(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOICE_PROFILE_DIR", str(tmp_path))
+    voice = VoiceService()
+    voice._vad = type("SilentVAD", (), {"get_speech_segments": lambda self, *args, **kwargs: []})()
+    voice._transcriber = Transcriber()
+    with pytest.raises(HTTPException) as exc:
+        voice.transcribe(wav(0.1))
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "insufficient_speech"
+    assert voice._transcriber.calls == []
+
+
+def test_voice_config_does_not_require_speaker_verification(tmp_path, monkeypatch):
+    from mai.app import server
+    from mai.app.access import AccessPrincipal, AccessRole
+    voice = VoiceService()
+    monkeypatch.setattr(server, "_voice_service", voice)
+    monkeypatch.setenv("VOICE_STT_PROVIDER", "local")
+    principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
+    monkeypatch.setattr(server, "_auth_sessions", {"token": principal})
+    config = asyncio.run(server.voice_config(authorization="Bearer token"))
+    assert config["speaker_verification_required"] is False
+
+def test_voice_transcribe_route_uses_unverified_whisper(tmp_path, monkeypatch):
+    from mai.app import server
+    from mai.app.access import AccessPrincipal, AccessRole
+    from starlette.datastructures import UploadFile
+
+    voice = VoiceService()
+    voice._vad = SpeechVAD()
+    voice._transcriber = Transcriber("정상 입력")
+    monkeypatch.setattr(server, "_voice_service", voice)
+    monkeypatch.setattr(server, "_auth_sessions", {
+        "owner-token": AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER),
+        "trial-token": AccessPrincipal(user_id="trial", db_id="trial", role=AccessRole.TRIAL),
+    })
+    file = UploadFile(filename="voice.wav", file=io.BytesIO(wav(0.1)))
+    result = asyncio.run(server.voice_transcribe(file=file, authorization="Bearer owner-token"))
+    assert result == {"text": "정상 입력"}
+    assert voice._transcriber.calls == [(1600, False)]
+    rejected = UploadFile(filename="voice.wav", file=io.BytesIO(wav(0.1)))
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(server.voice_transcribe(file=rejected, authorization="Bearer trial-token"))
+    assert exc.value.status_code == 403
