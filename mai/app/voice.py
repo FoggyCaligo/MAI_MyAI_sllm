@@ -7,12 +7,16 @@ a hosted speech service.
 from __future__ import annotations
 
 import io
+import logging
 import os
 from pathlib import Path
 from threading import Lock
 import wave
 
 from fastapi import HTTPException
+
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 class VoiceService:
@@ -191,6 +195,8 @@ class VoiceService:
             selected = []
             verified = []
             embeddings = []
+            dropped_count = 0
+            ambiguous_count = 0
             for window in self._speaker_windows(speech_segments):
                 actual = self._embedding(window)
                 original_similarity = float(np.dot(original, actual))
@@ -206,12 +212,20 @@ class VoiceService:
                     and adapted_similarity < self.match_threshold - self.speaker_ambiguity_margin
                 )
                 if clearly_other:
+                    dropped_count += 1
                     continue
                 selected.append(window)
                 if is_match:
                     verified.append(window)
                     embeddings.append(actual)
+                else:
+                    ambiguous_count += 1
 
+            _LOG.info(
+                "MAI voice segment verification matched=%d ambiguous_included=%d "
+                "clearly_other_dropped=%d",
+                len(verified), ambiguous_count, dropped_count,
+            )
             # Unknown/ambiguous audio alone must not authorize transcription.
             if not verified:
                 raise HTTPException(403, {"code": "speaker_mismatch", "message": "speaker verification failed"})
