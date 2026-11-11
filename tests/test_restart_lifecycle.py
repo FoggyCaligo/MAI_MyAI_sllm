@@ -15,6 +15,7 @@ def configure_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(restart, "LOCK", tmp_path / "MAI_MEMORY" / "restart.lock")
     monkeypatch.setattr(restart, "PENDING", tmp_path / "MAI_MEMORY" / "restart.pending")
     monkeypatch.setattr(restart, "LOG", tmp_path / "MAI_MEMORY" / "restart.log")
+    monkeypatch.setattr(restart, "LAUNCH_LOG", tmp_path / "MAI_MEMORY" / "restart-launcher.log")
     restart.DATA.mkdir()
     return restart
 
@@ -134,7 +135,7 @@ def test_restart_without_update_skips_git_preflight(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev\\n")
     monkeypatch.setattr(module, "preflight_update", lambda: pytest.fail("Unexpected git update"))
     monkeypatch.setattr(module, "stop_registered_server", lambda: None)
-    monkeypatch.setattr(module, "wait_ports", lambda starting, seconds: None)
+    monkeypatch.setattr(module, "wait_for_launcher", lambda process, seconds: None)
     started = []
     class Process:
         pid = 3456
@@ -157,3 +158,34 @@ def test_update_preflight_rejects_remote_divergence(monkeypatch, tmp_path):
     with pytest.raises(subprocess.CalledProcessError):
         module.preflight_update()
     assert any("merge-base" in args for args in calls)
+
+
+def test_launcher_exit_is_reported_without_waiting_for_timeout(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    class ExitedLauncher:
+        pid = 9988
+        def poll(self):
+            return 1
+    with pytest.raises(RuntimeError, match="exit_code=1"):
+        module.wait_for_launcher(ExitedLauncher(), 150)
+
+
+def test_running_launcher_with_ready_ports_passes(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    class RunningLauncher:
+        pid = 9988
+        def poll(self):
+            return None
+    monkeypatch.setattr(module, "listening", lambda port: port != 8081)
+    module.wait_for_launcher(RunningLauncher(), 1)
+
+
+def test_unready_running_launcher_does_not_claim_success(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    class RunningLauncher:
+        pid = 9988
+        def poll(self):
+            return None
+    monkeypatch.setattr(module, "listening", lambda port: False)
+    with pytest.raises(TimeoutError, match="port_states"):
+        module.wait_for_launcher(RunningLauncher(), 0)
