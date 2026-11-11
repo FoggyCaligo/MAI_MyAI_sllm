@@ -225,7 +225,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
 switch ($Command) {
     'restart' {
         Require-File $python 'Portable Python'
-        & $python (Join-Path $portable 'restart_mai.py') --detach
+        & $python (Join-Path $portable 'restart_mai.py') --detach --update
         if ($LASTEXITCODE -ne 0) { throw "MAI restart coordinator failed with exit code $LASTEXITCODE" }
     }
     'update' {
