@@ -76,6 +76,13 @@ def wait_ports(starting: bool, seconds: int) -> None:
         time.sleep(0.5)
     raise TimeoutError(f"Port readiness failure: {dict(zip(PORTS, states))}")
 
+def launcher_creation_flags(platform: str) -> int:
+    """Provide a hidden, usable Windows console to the nested PowerShell launcher."""
+    if platform == "win32":
+        return subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    return 0
+
+
 def wait_for_launcher(process: subprocess.Popen, seconds: int) -> None:
     """Distinguish a failed launcher from a hung startup."""
     deadline = time.monotonic() + seconds
@@ -224,7 +231,7 @@ def coordinate(*, update: bool, request_id: str | None = None) -> None:
             # DETACHED_PROCESS leaves that console contract unavailable and can
             # make PowerShell exit 0 before either service is started.
             # CREATE_NO_WINDOW retains a usable hidden console for child processes.
-            flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
+            flags = launcher_creation_flags(sys.platform)
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=subprocess.STDOUT, close_fds=True,
                                        creationflags=flags, start_new_session=sys.platform != "win32")
