@@ -64,6 +64,8 @@ def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
     entries: list[dict[str, str | None]] = []
     ids: set[str] = set()
     for folder in sorted(directory.iterdir()):
+        if folder.name.startswith("."):
+            continue  # Ignore cache/metadata folders, not model installations.
         if not folder.is_dir():
             continue
         if folder.is_symlink() or folder.resolve() != folder:
