@@ -46,7 +46,7 @@
   let active = null;
   let finishingCapture = null;
   let voiceMode = false;
-  let ttsEnabled = true;
+  let ttsEnabled = false;
   let currentUtterance = null;
   let ttsError = '';
   let starting = false;
@@ -68,8 +68,6 @@
       modeRevision += 1;
       finishingCapture?.controller.abort();
       finishingCapture = null;
-      ttsError = '';
-      stopTts();
       if (webRecognition) {
         const recognition = webRecognition;
         webRecognition = null;
@@ -212,7 +210,6 @@
   });
 
   document.addEventListener('mai:answer-complete', event => {
-    if (!voiceMode) return;
     if (!ttsEnabled || !event.detail?.text) { resumeAfterAnswer(); return; }
     try {
       const synth = window.speechSynthesis;
