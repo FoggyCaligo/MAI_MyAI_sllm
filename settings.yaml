@@ -62,7 +62,7 @@ VOICE_SILENCE_SECONDS: 5
 VOICE_MATCH_THRESHOLD: 0.65
 VOICE_WHISPER_MODEL: small
 # 음성 인식: local(Whisper + 등록 화자 검증) / web_speech(브라우저 인식, 화자 검증 미지원)
-VOICE_STT_PROVIDER: web_speech
+VOICE_STT_PROVIDER: local
 
 # 원격 웹 호스팅 선택: none / tailscale / cloudflare. 비밀 토큰은 .env에만 저장.
 REMOTE_HOSTING_PROVIDER: tailscale
