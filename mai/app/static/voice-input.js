@@ -45,6 +45,7 @@
   let voiceMode = false;
   let ttsEnabled = true;
   let currentUtterance = null;
+  let ttsError = '';
   let starting = false;
   let modeRevision = 0;
   let webRecognition = null;
@@ -62,6 +63,7 @@
     mic.setAttribute('aria-label', mic.title);
     if (!enabled) {
       modeRevision += 1;
+      ttsError = '';
       stopTts();
       if (webRecognition) {
         const recognition = webRecognition;
@@ -185,6 +187,13 @@
     void start();
   }
 
+  function finishTts(error = '') {
+    currentUtterance = null;
+    ttsError = error;
+    if (error) setStatus('');
+    resumeAfterAnswer();
+  }
+
   speaker.addEventListener('click', () => {
     ttsEnabled = !ttsEnabled;
     speaker.classList.toggle('muted', !ttsEnabled);
@@ -200,40 +209,43 @@
   document.addEventListener('mai:answer-complete', event => {
     if (!voiceMode) return;
     if (!ttsEnabled || !event.detail?.text) { resumeAfterAnswer(); return; }
-    if (!('speechSynthesis' in window)) {
-      setStatus('Speech synthesis unavailable in this browser.', true);
-      return;
-    }
-    const message = spokenText(event.detail.text);
-    if (!message) { resumeAfterAnswer(); return; }
-    stopTts();
-    const utterance = new SpeechSynthesisUtterance(message);
-    currentUtterance = utterance;
-    utterance.lang = 'ko-KR';
-    utterance.rate = 1;
-    if (selectedVoiceURI) {
-      const selectedVoice = window.speechSynthesis.getVoices().find(voice => voice.voiceURI === selectedVoiceURI);
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-        utterance.lang = selectedVoice.lang;
+    try {
+      const synth = window.speechSynthesis;
+      if (typeof synth?.speak !== 'function') {
+        finishTts('Speech synthesis unavailable in this browser.');
+        return;
       }
+      const message = spokenText(event.detail.text);
+      if (!message) { resumeAfterAnswer(); return; }
+      stopTts();
+      const utterance = new SpeechSynthesisUtterance(message);
+      currentUtterance = utterance;
+      utterance.lang = 'ko-KR';
+      utterance.rate = 1;
+      if (selectedVoiceURI) {
+        const selectedVoice = synth.getVoices().find(voice => voice.voiceURI === selectedVoiceURI);
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+          utterance.lang = selectedVoice.lang;
+        }
+      }
+      utterance.onend = () => {
+        if (currentUtterance === utterance) finishTts();
+      };
+      utterance.onerror = eventError => {
+        if (currentUtterance === utterance) {
+          finishTts(eventError.error === 'canceled' ? '' : eventError.error);
+        }
+      };
+      synth.speak(utterance);
+    } catch (error) {
+      finishTts(error.message);
     }
-    utterance.onend = () => {
-      if (currentUtterance !== utterance) return;
-      currentUtterance = null;
-      resumeAfterAnswer();
-    };
-    utterance.onerror = eventError => {
-      if (currentUtterance !== utterance) return;
-      currentUtterance = null;
-      if (eventError.error !== 'canceled') setStatus('TTS error: ' + eventError.error, true);
-    };
-    window.speechSynthesis.speak(utterance);
   });
 
   function setStatus(message, failed = false) {
-    status.textContent = message;
-    status.classList.toggle('failed', failed);
+    status.textContent = [message, ttsError && 'TTS error: ' + ttsError].filter(Boolean).join(' · ');
+    status.classList.toggle('failed', failed || Boolean(ttsError));
   }
 
   async function request(path, options = {}) {
