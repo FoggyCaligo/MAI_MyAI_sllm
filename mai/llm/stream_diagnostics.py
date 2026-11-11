@@ -198,8 +198,6 @@ async def stream_completion(
                                     "".join(partial.thinking_parts),
                                     content_chars=sum(map(len, partial.content_parts)),
                                     tool_fragment_count=len(partial.tool_fragments),
-                tool_call_ready_count=partial.ready_tool_call_count(),
-                        tool_call_ready_count=partial.ready_tool_call_count(),
                                     tool_call_ready_count=partial.ready_tool_call_count(),
                                 )
                                 partial.reasoning_diagnostics = diagnostic
@@ -262,6 +260,7 @@ async def stream_completion(
                         "".join(partial.thinking_parts),
                         content_chars=sum(map(len, partial.content_parts)),
                         tool_fragment_count=len(partial.tool_fragments),
+                        tool_call_ready_count=partial.ready_tool_call_count(),
                     )
                 if on_progress is not None:
                     on_progress(partial.snapshot())
@@ -272,6 +271,7 @@ async def stream_completion(
                 "".join(partial.thinking_parts),
                 content_chars=sum(map(len, partial.content_parts)),
                 tool_fragment_count=len(partial.tool_fragments),
+                tool_call_ready_count=partial.ready_tool_call_count(),
             )
         if on_timeout is not None:
             on_timeout(partial.snapshot())
