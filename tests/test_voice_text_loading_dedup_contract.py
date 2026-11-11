@@ -41,8 +41,8 @@ def test_job_owned_loading_row_and_terminal_job_deduplication():
 def test_voice_auto_send_after_silence_and_resume_after_answer_unchanged():
     # Both local VAD and Web Speech use the configured silence duration;
     # recognition text goes through the normal form submit, not a second chat API.
-    assert "elapsed - capture.lastSpeechEnd >= capture.silenceSeconds" in VOICE
-    assert "silenceSeconds: config.silence_seconds" in VOICE
+    assert "windowEnd - capture.lastSpeechEnd >= capture.silenceSamples" in VOICE
+    assert "silenceSamples: context.sampleRate * config.silence_seconds" in VOICE
     assert "config.silence_seconds * 1000" in VOICE
     assert "form.requestSubmit(send);" in VOICE
 

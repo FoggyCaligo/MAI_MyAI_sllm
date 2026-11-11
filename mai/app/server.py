@@ -30,7 +30,7 @@ from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
 from ..hosting import HostingError, create_hosting
 from .uploads import principal_upload_directory
-from .voice import VoiceService
+from .voice import MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, VoiceService
 
 
 logger = logging.getLogger(__name__)
@@ -415,10 +415,13 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
     if provider not in {"local", "web_speech"}:
         raise ValueError("VOICE_STT_PROVIDER must be local or web_speech")
     voice = _voice() if provider == "local" else None
-    return {
+    config = {
         "stt_provider": provider,
         "silence_seconds": voice.silence_seconds if voice else float(os.environ.get("VOICE_SILENCE_SECONDS", "5")),
     }
+    if voice is not None:
+        config.update(max_recording_seconds=MAX_RECORDING_SECONDS, max_recording_bytes=MAX_RECORDING_BYTES)
+    return config
 
 
 @app.post("/voice/activity")
@@ -433,7 +436,8 @@ async def voice_activity(
     if len(recording) > 2 * 1024 * 1024:
         raise HTTPException(413, "voice activity window exceeds 2 MB")
     from starlette.concurrency import run_in_threadpool
-    return {"speech_end_seconds": await run_in_threadpool(_voice().last_speech_end, recording)}
+    start, end = await run_in_threadpool(_voice().speech_bounds, recording)
+    return {"speech_start_seconds": start, "speech_end_seconds": end}
 
 
 @app.post("/voice/transcribe")
@@ -444,8 +448,8 @@ async def voice_transcribe(
     _, principal = _principal_from_authorization(authorization)
     if principal.role is not AccessRole.OWNER:
         raise HTTPException(403, "voice input is restricted to the owner")
-    recording = await file.read(20 * 1024 * 1024 + 1)
-    if len(recording) > 20 * 1024 * 1024:
+    recording = await file.read(MAX_RECORDING_BYTES + 1)
+    if len(recording) > MAX_RECORDING_BYTES:
         raise HTTPException(413, "voice recording exceeds 20 MB")
     from starlette.concurrency import run_in_threadpool
     return {"text": await run_in_threadpool(_voice().transcribe, recording)}

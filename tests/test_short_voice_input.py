@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import io
+from threading import Event
 from types import SimpleNamespace
 import wave
 
@@ -10,7 +12,7 @@ import numpy as np
 import pytest
 from fastapi import HTTPException
 
-from mai.app.voice import VoiceService
+from mai.app.voice import MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, VoiceService
 
 
 def wav(seconds):
@@ -88,9 +90,38 @@ def test_silence_is_insufficient_speech():
     assert exc.value.detail["code"] == "insufficient_speech"
 
 
-def test_activity_detects_short_speech():
+def test_activity_returns_first_and_last_speech_boundaries():
+    class SegmentedVAD:
+        def get_speech_segments(self, audio, **kwargs):
+            return [SimpleNamespace(start=0.02, end=0.04), SimpleNamespace(start=0.08, end=0.1)]
+
     voice = service()
-    assert voice.last_speech_end(wav(0.1)) == pytest.approx(0.1)
+    voice._vad = SegmentedVAD()
+    assert voice.speech_bounds(wav(0.1)) == pytest.approx((0.02, 0.1))
+
+
+def test_activity_can_run_during_transcription():
+    started = Event()
+    release = Event()
+
+    class BlockingTranscriber(Transcriber):
+        def transcribe(self, speech, *, vad_filter):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("Test did not release transcription")
+            return super().transcribe(speech, vad_filter=vad_filter)
+
+    voice = service()
+    voice._transcriber = BlockingTranscriber()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        transcription = executor.submit(voice.transcribe, wav(0.1))
+        try:
+            assert started.wait(timeout=5)
+            activity = executor.submit(voice.speech_bounds, wav(0.1))
+            assert activity.result(timeout=2) == pytest.approx((0, 0.1))
+        finally:
+            release.set()
+        assert transcription.result(timeout=5) == "응"
 
 
 def test_voice_config_has_no_speaker_fields(monkeypatch):
@@ -103,6 +134,8 @@ def test_voice_config_has_no_speaker_fields(monkeypatch):
     monkeypatch.setenv("VOICE_STT_PROVIDER", "local")
     config = asyncio.run(server.voice_config(authorization="Bearer owner-token"))
     assert config["stt_provider"] == "local"
+    assert config["max_recording_seconds"] == MAX_RECORDING_SECONDS
+    assert config["max_recording_bytes"] == MAX_RECORDING_BYTES
     for key in ("enrolled", "profile_path", "profile_directory", "speaker_verification_required", "enrollment_min_speech_seconds"):
         assert key not in config
 
@@ -120,6 +153,9 @@ def test_transcribe_endpoint_keeps_owner_auth(monkeypatch):
     file = UploadFile(filename="voice.wav", file=io.BytesIO(wav(0.1)))
     result = asyncio.run(server.voice_transcribe(file=file, authorization="Bearer owner-token"))
     assert result == {"text": "응"}
+    activity_file = UploadFile(filename="activity.wav", file=io.BytesIO(wav(0.1)))
+    activity = asyncio.run(server.voice_activity(file=activity_file, authorization="Bearer owner-token"))
+    assert activity == {"speech_start_seconds": 0.0, "speech_end_seconds": 0.1}
     rejected = UploadFile(filename="voice.wav", file=io.BytesIO(wav(0.1)))
     with pytest.raises(HTTPException) as exc:
         asyncio.run(server.voice_transcribe(file=rejected, authorization="Bearer trial-token"))
