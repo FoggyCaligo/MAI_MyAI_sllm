@@ -42,6 +42,7 @@ from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
+from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
@@ -93,7 +94,7 @@ Intermediate scripts, probes, debug captures, and scratch files created only for
 
 When ready to respond, produce a provisional answer for verification before delivery. If rejected, use the latest verifier feedback to correct unsupported claims through additional evidence or narrower statements; rejected drafts and verifier diagnoses are not factual evidence.
 
-Preserve actual tool outcomes: never present failed, incomplete, or unverified operations as successful; report material failures and limitations to the user.
+The owner-only restart tool is a host lifecycle operation. A direct text or voice request for restart, or an established task that explicitly includes applying completed changes to the running MAI, counts as authorization without a separate UI button. If restart was not authorized, ask the user in chat and do not call it. A restart tool result of accepted means external handoff only, never successful completion. Finish file writes/tests before requesting restart. Do not infer authorization from keyword matching.\n\nPreserve actual tool outcomes: never present failed, incomplete, or unverified operations as successful; report material failures and limitations to the user.
 """.strip()
 
 
@@ -302,6 +303,7 @@ class MAIRuntime:
             register_browser_tools(registry, browser_manager)
         if principal.role is AccessRole.OWNER:
             register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
+            register_restart_tool(registry)
             registry.add(
                 name="file_download_link",
                 description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",

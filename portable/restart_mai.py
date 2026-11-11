@@ -1,0 +1,199 @@
+"""Detached OS-neutral MAI restart coordinator. Never kill processes by name matching."""
+from __future__ import annotations
+import argparse
+import ctypes
+from ctypes import wintypes
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import time
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+DATA = ROOT / "MAI_MEMORY"
+IDENTITY = DATA / "server-process.json"
+LOG = DATA / "restart.log"
+LOCK = DATA / "restart.lock"
+PENDING = DATA / "restart.pending"
+PORTS = (8000, 8080, 8081)
+
+def process_identity(pid: int) -> str | None:
+    if sys.platform == "win32":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.c_void_p,) * 4
+        kernel.GetProcessTimes.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            times = [ctypes.c_ulonglong() for _ in range(4)]
+            if not kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                raise OSError(ctypes.get_last_error(), "GetProcessTimes failed")
+            return str(times[0].value)
+        finally:
+            kernel.CloseHandle(handle)
+    if sys.platform.startswith("linux"):
+        try:
+            data = Path(f"/proc/{pid}/stat").read_text()
+        except FileNotFoundError:
+            return None
+        return data.rsplit(")", 1)[1].split()[19]
+    raise RuntimeError(f"Unsupported OS: {sys.platform}")
+
+def register_server() -> None:
+    DATA.mkdir(parents=True, exist_ok=True)
+    item = {"schema": 1, "pid": os.getpid(), "identity": process_identity(os.getpid()),
+            "root": str(ROOT.resolve())}
+    temp = IDENTITY.with_suffix(f".{os.getpid()}.tmp")
+    temp.write_text(json.dumps(item), encoding="utf-8")
+    temp.replace(IDENTITY)
+
+def unregister_server() -> None:
+    if IDENTITY.exists():
+        item = json.loads(IDENTITY.read_text(encoding="utf-8"))
+        if item.get("pid") == os.getpid() and item.get("identity") == process_identity(os.getpid()):
+            IDENTITY.unlink()
+
+def listening(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+def wait_ports(starting: bool, seconds: int) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        states = [listening(p) for p in PORTS]
+        if (states[0] and states[1]) if starting else not any(states):
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"Port readiness failure: {dict(zip(PORTS, states))}")
+
+def stop_registered_server() -> None:
+    if not IDENTITY.exists():
+        if any(map(listening, PORTS)):
+            raise RuntimeError("MAI running without process registration; manually restart once before automatic restart")
+        return
+    item = json.loads(IDENTITY.read_text(encoding="utf-8"))
+    if item.get("schema") != 1 or item.get("root") != str(ROOT.resolve()):
+        raise RuntimeError("Invalid server process registration")
+    pid = item.get("pid")
+    if not isinstance(pid, int) or pid < 1:
+        raise RuntimeError("Invalid registered PID")
+    identity = process_identity(pid)
+    if identity is None:
+        if any(map(listening, PORTS)):
+            raise RuntimeError("Stale process registration with occupied ports")
+        IDENTITY.unlink()
+        return
+    if identity != item.get("identity"):
+        raise RuntimeError("PID reused; refusing to kill unrelated process")
+    if not listening(8000):
+        raise RuntimeError("Registered MAI server is not listening on port 8000")
+    # Never kill a process tree: the detached coordinator must survive.
+    os.kill(pid, signal.SIGTERM)
+    wait_ports(False, 60)
+    if IDENTITY.exists():
+        current = json.loads(IDENTITY.read_text(encoding="utf-8"))
+        if current != item:
+            raise RuntimeError("Process registration changed during shutdown")
+        IDENTITY.unlink()
+
+def wait_for_handoff(request_id: str) -> None:
+    signal_path = DATA / f"restart-handoff-{request_id}.json"
+    deadline = time.monotonic() + 1800
+    while time.monotonic() < deadline:
+        if signal_path.exists():
+            data = json.loads(signal_path.read_text(encoding="utf-8"))
+            if data != {"request_id": request_id, "status": "completed"}:
+                raise RuntimeError(f"Restart handoff failed: {data}")
+            signal_path.unlink()
+            return
+        time.sleep(0.25)
+    raise TimeoutError(f"Restart handoff not completed: {request_id}")
+
+
+def signal_handoff(request_id: str, *, completed: bool) -> None:
+    uuid.UUID(request_id)
+    DATA.mkdir(parents=True, exist_ok=True)
+    target = DATA / f"restart-handoff-{request_id}.json"
+    if target.exists():
+        raise FileExistsError(target)
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "request_id": request_id,
+        "status": "completed" if completed else "failed",
+    }), encoding="utf-8")
+    temporary.replace(target)
+
+
+def coordinate(*, update: bool, request_id: str | None = None) -> None:
+    DATA.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as f:
+            f.write(str(os.getpid()))
+        if request_id is not None:
+            wait_for_handoff(request_id)
+        # Avoid pulling onto a non-dev branch, even when restarting an offline instance.
+        branch = subprocess.check_output(["git", "-C", str(ROOT), "branch", "--show-current"], text=True).strip()
+        if branch != "dev":
+            raise RuntimeError(f"Only dev may be updated by restart (current: {branch!r})")
+        stop_registered_server()
+        if update:
+            subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only", "origin", "dev"], check=True)
+        command = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", str(ROOT / "mai.ps1"), "start"] if sys.platform == "win32"
+                   else ["bash", str(ROOT / "mai.sh"), "start"])
+        with LOG.open("ab", buffering=0) as output:
+            output.write(b"\n--- Starting MAI ---\n")
+            flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
+            process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                       stdout=output, stderr=subprocess.STDOUT, close_fds=True,
+                                       creationflags=flags, start_new_session=sys.platform != "win32")
+            output.write(f"Launcher pid={process.pid}\n".encode())
+        wait_ports(True, 150)
+        print("MAI restart successful", flush=True)
+    finally:
+        LOCK.unlink(missing_ok=True)
+        PENDING.unlink(missing_ok=True)
+
+def detach(*, update: bool, await_handoff: bool = False) -> dict[str, object]:
+    DATA.mkdir(parents=True, exist_ok=True)
+    request_id = str(uuid.uuid4()) if await_handoff else None
+    fd = os.open(PENDING, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as pending:
+            pending.write(json.dumps({"request_id": request_id, "update": update}))
+        with LOG.open("ab", buffering=0) as output:
+            output.write(b"\n--- Restart requested ---\n")
+            flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
+            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate", "--update" if update else "--no-update", *(["--request-id", request_id] if request_id else [])],
+                                       cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output,
+                                       stderr=subprocess.STDOUT, close_fds=True, creationflags=flags,
+                                       start_new_session=sys.platform != "win32")
+    except BaseException:
+        PENDING.unlink(missing_ok=True)
+        raise
+    return {"status": "accepted", "request_id": request_id, "coordinator_pid": process.pid, "update": update, "log_path": str(LOG), "result_confirmed": False}
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--detach", action="store_true")
+    mode.add_argument("--coordinate", action="store_true")
+    options = parser.add_mutually_exclusive_group(required=True)
+    options.add_argument("--update", action="store_true")
+    options.add_argument("--no-update", action="store_true")
+    parser.add_argument("--request-id", type=str, default=None)
+    args = parser.parse_args()
+    if args.detach:
+        print(json.dumps(detach(update=args.update)))
+    else:
+        coordinate(update=args.update, request_id=args.request_id)

@@ -22,6 +22,13 @@ if [[ "$command" == setup && "${1:-}" == "--install-vulkan" ]]; then
 fi
 if (( $# > 0 )); then echo "Unexpected arguments for $command: $*" >&2; exit 2; fi
 case "$command" in
+  restart)
+    id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
+    cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
+    python="$cache/python/bin/python3"
+    [[ -x "$python" ]] || { echo "Portable Python missing; run ./mai.sh setup first" >&2; exit 1; }
+    exec "$python" "$root/portable/restart_mai.py" --detach --update
+    ;;
   update)
     id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
     cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
@@ -221,6 +228,6 @@ PY
     mai_linux_setup
     ;;
   *)
-    echo "Usage: ./mai.sh [start|setup|check|update]" >&2; exit 2
+    echo "Usage: ./mai.sh [start|restart|setup|check|update]" >&2; exit 2
     ;;
 esac

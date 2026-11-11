@@ -1,7 +1,7 @@
 # One entry point for the Windows Portable runtime. No alternate providers or silent fallbacks.
 param(
     [Parameter(Position=0)]
-    [ValidateSet('start', 'setup', 'check', 'update', 'update-python')]
+    [ValidateSet('start', 'restart', 'setup', 'check', 'update', 'update-python')]
     [string]$Command = 'start',
     [switch]$PreserveAndReinstallExisting,
     [ValidatePattern('^3\.11\.[0-9]+$')][string]$PythonVersion = '3.11.9'
@@ -223,6 +223,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
 }
 
 switch ($Command) {
+    'restart' {
+        Require-File $python 'Portable Python'
+        & $python (Join-Path $portable 'restart_mai.py') --detach --update
+        if ($LASTEXITCODE -ne 0) { throw "MAI restart coordinator failed with exit code $LASTEXITCODE" }
+    }
     'update' {
         Require-File $python 'Portable Python'
         & $python (Join-Path $portable 'update_llamacpp.py') --root $root
