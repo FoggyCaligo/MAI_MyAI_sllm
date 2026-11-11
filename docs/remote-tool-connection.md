@@ -26,7 +26,7 @@ MAI가 **다른 컴퓨터의 도구**를 실행하는 기능. 원격 웹 공개(
 4. 화면에 생성된 **일회용 연결 명령** 복사.
 5. **대상 PC**의 PowerShell(Windows) 또는 터미널(Linux)에서 실행.
 6. UI에 **원격 연결됨** 표시 확인.
-7. MAI에 원격 PC 작업 요청. 필요한 Native 도구는 `tool_manual`로 활성화한 다음 `is_remote=true`로 호출.
+7. MAI에 원격 PC 작업 요청. 필요한 Native 도구는 `tool_manual`로 활성화한 다음 `at_remote_pc=true`로 호출.
 
 **연결 명령 직접 작성 금지:** 서버 주소, 세션 ID, 임시 인증 키가 포함되므로 UI에서 발급한 명령 그대로 사용한다. 재사용·공유 금지.
 
@@ -70,13 +70,13 @@ MAI 웹 UI (Owner)
 
 | 인수 | 실행 위치 |
 |---|---|
-| `is_remote=false` 또는 생략 | MAI 서버 컴퓨터 |
-| `is_remote=true` | Owner가 연결한 원격 Windows/Linux 워커 |
+| `at_remote_pc=false` 또는 생략 | MAI 서버 컴퓨터 |
+| `at_remote_pc=true` | Owner가 연결한 원격 Windows/Linux 워커 |
 
 예시 — Linux 원격 PC의 파일 읽기(`file_read` 활성화 후):
 
 ```json
-{"path":"/home/user/notes.txt","is_remote":true}
+{"path":"/home/user/notes.txt","at_remote_pc":true}
 ```
 
 - **지원:** 파일·코드·CSV·문서 작업, `terminal_run`, 계산·시간·웹·시장 정보, 브라우저 등 원격 워커 등록 Native 도구.
