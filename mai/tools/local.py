@@ -41,7 +41,6 @@ def register_local_pc_tools(
     cwd: str | Path | None = None,
     filesystem_timeout_seconds: float | None = 120,
     code_timeout_seconds: float | None = 120,
-    terminal_timeout_seconds: float | None = 240,
 ) -> None:
     """Register all currently implemented PC-wide tools into one registry."""
     register_filesystem_tools(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
@@ -49,4 +48,4 @@ def register_local_pc_tools(
     register_code_tools(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
     register_code_edit_tool(registry, cwd=cwd, timeout_seconds=code_timeout_seconds)
     register_document_edit_tool(registry, cwd=cwd, timeout_seconds=filesystem_timeout_seconds)
-    register_terminal_tools(registry, cwd=cwd, timeout_seconds=terminal_timeout_seconds)
+    register_terminal_tools(registry, cwd=cwd)
