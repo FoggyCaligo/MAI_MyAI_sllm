@@ -428,7 +428,10 @@ def test_reasoning_loop_recovers_to_next_model_turn_without_partial_replay():
     assert len(adapter.requests) == 4
     for index in range(1, 4):
         messages = adapter.requests[index].messages
-        assert any(m.get("role") == "system" and "[REASONING_LOOP_DETECTED]" in m.get("content", "") for m in messages)
+        assert sum(
+            m.get("role") == "system" and "[REASONING_LOOP_DETECTED]" in m.get("content", "")
+            for m in messages
+        ) == 1
         assert "6000" not in str(messages)  # diagnostic data must not become model context
         assert not any(m.get("role") == "assistant" and m.get("thinking") for m in messages)
     assert [n for n, p in progress if p.get("recovery_event")] == [1, 2, 3]
