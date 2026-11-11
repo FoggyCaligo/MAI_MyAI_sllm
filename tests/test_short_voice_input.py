@@ -144,3 +144,12 @@ def test_voice_config_exposes_only_the_enrollment_minimum(tmp_path, monkeypatch)
     config = asyncio.run(server.voice_config(authorization="Bearer token"))
     assert config["enrollment_min_speech_seconds"] == 3.0
     assert "min_speech_seconds" not in config
+
+
+def test_default_voice_provider_uses_local_speaker_verification():
+    from pathlib import Path
+    from mai.app.settings import load_settings
+
+    root = Path(__file__).resolve().parents[1]
+    config = load_settings(root / "settings.yaml", environ={})
+    assert config["VOICE_STT_PROVIDER"] == "local"
