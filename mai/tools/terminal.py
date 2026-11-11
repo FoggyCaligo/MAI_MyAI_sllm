@@ -147,7 +147,7 @@ def _decode_terminal_output(payload: bytes) -> tuple[str, str]:
     ) from failures[-1]
 
 
-async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
+async def _run_command(command: str, cwd: Path,
                        shell: Literal["bash", "cmd", "powershell"] = "bash") -> dict[str, Any]:
     platform = current_platform()
     with platform.script_workspace(shell) as workspace:
@@ -156,37 +156,9 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
         max_output_bytes = int(os.environ.get("TERMINAL_MAX_OUTPUT_BYTES", "1048576"))
         if max_output_bytes < 1:
             raise ValueError("TERMINAL_MAX_OUTPUT_BYTES must be positive")
-        timed_out = False
         collector = asyncio.create_task(_communicate_bounded(process, limit_bytes=max_output_bytes))
         try:
-            if timeout_seconds is None:
-                stdout_bytes, stderr_bytes = await collector
-            else:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    asyncio.shield(collector), timeout=timeout_seconds
-                )
-        except asyncio.TimeoutError:
-            timed_out = True
-            # Never start a second pipe reader; the original collector owns
-            # stdout/stderr. Bound cleanup after terminating the process tree.
-            try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(platform.terminate_process_tree, process.pid),
-                    timeout=5.0,
-                )
-            except (asyncio.TimeoutError, OSError):
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    asyncio.shield(collector), timeout=5.0
-                )
-            except asyncio.TimeoutError:
-                collector.cancel()
-                await asyncio.gather(collector, return_exceptions=True)
-                stdout_bytes, stderr_bytes = b"", b""
+            stdout_bytes, stderr_bytes = await collector
         except BaseException:
             if not collector.done():
                 collector.cancel()
@@ -206,7 +178,7 @@ async def _run_command(command: str, cwd: Path, timeout_seconds: float | None,
         "stdout_encoding": stdout_encoding,
         "stderr_encoding": stderr_encoding,
         "returncode": process.returncode,
-        "timed_out": timed_out,
+        "timed_out": False,
     }
 
 
@@ -215,7 +187,6 @@ async def terminal_run(
     command: str,
     cwd: str | None = None,
     default_cwd: str | Path | None = None,
-    default_timeout_seconds: float | None = None,
     shell: Literal["bash", "cmd", "powershell"] = "bash",
 ) -> dict[str, Any]:
     _validate_shell_contract(command, shell)
@@ -226,9 +197,7 @@ async def terminal_run(
     if not resolved_cwd.is_dir():
         raise NotADirectoryError(str(resolved_cwd))
 
-    result = await _run_command(command, resolved_cwd, default_timeout_seconds, shell=shell)
-    if result["timed_out"]:
-        raise TerminalTimeoutError("terminal command timed out", result)
+    result = await _run_command(command, resolved_cwd, shell=shell)
     if result["returncode"] != 0:
         raise TerminalCommandError("terminal command exited with a non-zero return code", result)
     return result
@@ -239,10 +208,8 @@ def register_terminal_tools(
     registry: ToolRegistry,
     *,
     cwd: str | Path | None = None,
-    timeout_seconds: float | None = 120,
 ) -> None:
     register_default_cwd = Path(cwd or os.getcwd()).expanduser().resolve(strict=False)
-    register_default_timeout = timeout_seconds
 
     async def handler(
         command: str,
@@ -254,7 +221,6 @@ def register_terminal_tools(
             cwd=cwd,
             shell=shell,
             default_cwd=register_default_cwd,
-            default_timeout_seconds=register_default_timeout,
         )
 
     shell_description = _shell_description()
@@ -298,7 +264,7 @@ def register_terminal_tools(
             "For independent queries do not chain expected no-matches using &&; "
             "inspect their specific results and preserve unexpected errors and their nonzero exit codes. "
             "Do not globally coerce return codes to zero or hide stderr. "
-            "Nonzero exits, timeouts and output limit violations fail visibly. "
+            "Nonzero exits and output limit violations fail visibly. "
             "Windows terminal output is decoded as UTF-8 strictly; stderr contents "
             "are not used as a heuristic to determine success."
         ),
