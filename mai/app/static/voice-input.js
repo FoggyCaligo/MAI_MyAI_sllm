@@ -246,7 +246,11 @@
     if (!response.ok) {
       const error = new Error(`Voice API HTTP ${response.status}: ${JSON.stringify(payload)}`);
       error.status = response.status;
-      error.code = payload?.detail?.code ?? null;
+      // Older MAI servers returned a plain string for empty Whisper
+      // output. Treat that exact legacy response as recoverable too.
+      error.code = payload?.detail?.code ??
+        (response.status === 422 && payload?.detail === 'no speech recognized'
+          ? 'insufficient_speech' : null);
       throw error;
     }
     return payload;
