@@ -48,10 +48,13 @@ def test_actual_answer_or_tool_fragment_counts_as_progress():
     phrase = "ตรวจสอบข้อมูลและเปรียบเทียบผลลัพธ์"
     for n in range(1, 15):
         monitor.observe(phrase * n)
-    progressed = monitor.observe(phrase * 15, tool_fragment_count=1)
+    assembling = monitor.observe(phrase * 15, tool_fragment_count=1)
+    assert assembling["status"] == "tool_assembly"
+    assert assembling["repeat_checks"] == 0
+    progressed = monitor.observe(phrase * 15, tool_fragment_count=1, tool_call_ready_count=1)
     assert progressed["status"] == "output_progress"
-    assert progressed["repeat_checks"] == 0
-    progressed = monitor.observe(phrase * 16, content_chars=5)
+    assert progressed["tool_call_ready_count"] == 1
+    progressed = monitor.observe(phrase * 16, content_chars=5, tool_fragment_count=1, tool_call_ready_count=1)
     assert progressed["status"] == "output_progress"
 
 
@@ -209,3 +212,58 @@ def test_thinking_with_answer_progress_is_not_interrupted(monkeypatch):
             )
     result = asyncio.run(run())
     assert result["choices"][0]["message"]["content"] == "Answer started and finished"
+
+
+def test_long_period_repetition_with_minor_variations_is_detected():
+    """A 1k+ character thinking cycle, unlike adjacent repeated 240-character spans."""
+    monitor = ReasoningMonitor(
+        minimum_check_chars=150,
+        window_chars=100,
+        long_cycle_window_chars=320,
+        long_cycle_similarity=0.80,
+    )
+    # Each iteration follows the same reasoning route but changes surface details.
+    cycle = (
+        "사용자의 요청을 검토한다. 자동 재시작 도구가 존재하는지 확인해야 한다. "
+        "프로세스를 종료하면 현재 실행 세션도 끝난다. "
+        "하지만 재시작을 관리하는 외부 프로세스가 있을 수도 있다. "
+        "다시 사용자 의도를 검토해 보자. "
+        "모델의 권한과 도구 목록을 확인하려는 판단을 반복한다. "
+        "사용자가 실제로 요구한 것은 시스템을 업데이트한 다음 다시 실행하는 것이다. "
+        "이 판단을 조금 다르게 정리한 뒤 최초의 질문으로 돌아간다. "
+    )
+    status = None
+    for n in range(1, 9):
+        repeated = "".join(cycle + f"반복 검토 번호 {i}: 결론을 다시 판단한다. " for i in range(n))
+        status = monitor.observe(repeated)
+    assert status is not None
+    assert status["status"] == "repetition_suspected"
+    assert status["repetition_mode"] == "long_cycle"
+
+
+def test_long_distinct_reasoning_with_shared_vocabulary_does_not_trip_long_cycle():
+    monitor = ReasoningMonitor(minimum_check_chars=180, window_chars=100)
+    import hashlib
+    history = ""
+    for i in range(18):
+        details = hashlib.sha256(str(i).encode()).hexdigest() * 5
+        history += f"근거를 검토하고 다음 단계로 진행한다: {details}. 다른 작업 {i}. "
+        result = monitor.observe(history)
+    assert result["status"] != "repetition_suspected"
+
+
+def test_no_new_answer_chars_is_not_new_output_progress():
+    monitor = ReasoningMonitor(minimum_check_chars=100, window_chars=80)
+    first = monitor.observe("검토 " * 35, content_chars=12)
+    assert first["status"] == "output_progress"
+    stalled = monitor.observe("검토 " * 80, content_chars=12)
+    assert stalled["status"] != "output_progress"
+
+
+def test_incomplete_tool_fragment_is_not_executable_progress():
+    from mai.llm.stream_diagnostics import PartialCompletion
+    partial = PartialCompletion()
+    partial.tool_fragments[0] = {"id": "tool-1", "name": "restart", "arguments": "{\"update\":"}
+    assert partial.ready_tool_call_count() == 0
+    partial.tool_fragments[0]["arguments"] += "true}"
+    assert partial.ready_tool_call_count() == 1
