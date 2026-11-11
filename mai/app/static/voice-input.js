@@ -301,8 +301,10 @@
       }
     } catch (error) {
       if (active === capture) {
-        void finish(true);
-        setStatus('Voice activity error: ' + error.message, true);
+        // A transient VAD/API error is not a user request to exit voice
+        // mode. Keep collecting audio, and let the 120-second rotation
+        // restart the recorder if no speech boundary can be resolved.
+        setStatus('Voice activity unavailable · still listening…', true);
       }
     } finally {
       capture.checking = false;
@@ -312,15 +314,16 @@
   async function finish(discard = false) {
     if (!active) return;
     const capture = active;
+    const revision = modeRevision;
     active = null;
     capture.processor.disconnect();
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
-    if (discard || !voiceMode) return;
+    if (discard || !voiceMode || revision !== modeRevision) return;
     if (!capture.chunks.length) {
       setStatus('No audio captured · listening again…', true);
-      if (voiceMode) await start();
+      if (voiceMode && revision === modeRevision) await start();
       return;
     }
     const data = new Float32Array(capture.chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -332,16 +335,22 @@
     try {
       setStatus('Transcribing…');
       const result = await request('/voice/transcribe', {method: 'POST', body});
-      submitRecognizedText(result.text);
+      if (voiceMode && revision === modeRevision) submitRecognizedText(result.text);
     } catch (error) {
-      setStatus(`Speech processing failed: ${error.message}`, true);
       retryAfterRecoverableVoiceFailure =
         error.status === 422 && error.code === 'insufficient_speech';
+      if (voiceMode && revision === modeRevision) {
+        setStatus(
+          retryAfterRecoverableVoiceFailure
+            ? 'No speech recognized · listening again…'
+            : `Speech processing failed: ${error.message}`,
+          !retryAfterRecoverableVoiceFailure,
+        );
+      }
     } finally {
       mic.disabled = false;
     }
-    if (retryAfterRecoverableVoiceFailure && voiceMode) {
-      setStatus('Speech not processed · listening again…', true);
+    if (retryAfterRecoverableVoiceFailure && voiceMode && revision === modeRevision) {
       await start();
     }
   }
@@ -386,7 +395,15 @@
         capture.chunks.push(chunk);
         const now = context.currentTime;
         if (now - capture.began >= 120) {
-          void finish();
+          // A long quiet period is not a voice-mode stop. Rotate the
+          // recording rather than uploading 120 seconds of silence to STT.
+          if (capture.lastSpeechEnd === null) {
+            void finish(true).then(() => {
+              if (voiceMode && revision === modeRevision) void start();
+            });
+          } else {
+            void finish();
+          }
         } else if (now - capture.lastCheck >= 1 && !capture.checking) {
           capture.lastCheck = now;
           void checkSpeechEnd(capture);
