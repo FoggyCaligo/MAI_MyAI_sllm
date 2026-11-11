@@ -11,7 +11,7 @@ MAI의 음성 입력(STT, 음성을 텍스트로 변환)은 `settings.yaml`의 `
 | 텍스트 변환 | 브라우저의 `SpeechRecognition` 또는 `webkitSpeechRecognition` | MAI 서버의 `faster-whisper`(Whisper) |
 | 음성 처리 위치 | 브라우저/브라우저 제공자의 구현에 따름. 원격 서비스로 음성이 전송될 수 있음 | MAI 서버에서 처리. MAI 음성 기능이 호스팅 STT 서비스로 녹음을 보내지 않음 |
 | 입력에 필요한 브라우저 기능 | Web Speech Recognition API, 마이크 접근 | 마이크 녹음(`getUserMedia`) 및 Web Audio |
-| 목소리 등록·화자 검증 | 사용하지 않음 | 필요 없음. 기존 등록 데이터는 보존하되 입력에 사용하지 않음 |
+| 목소리 등록·화자 검증 | 사용하지 않음 | 사용하지 않음 |
 | 서버 STT 모델 연산 | 필요 없음 | CPU `int8` Whisper, ONNX VAD 사용 |
 | 외부 연결 | 브라우저 제공자의 동작에 따라 필요할 수 있음 | 최초 모델/의존성 확보에는 인터넷이 필요할 수 있으나, 모델 확보 후 STT 추론은 로컬 |
 | 주요 제약 | API 지원 및 브라우저 음성인식 서비스의 가용성 | 서버 CPU·RAM, 모델 파일, 배경음·화자 혼합 시 인식 정확도 |
@@ -42,8 +42,6 @@ VOICE_STT_PROVIDER: local
 |---|---|---|
 | `VOICE_SILENCE_SECONDS` | 마지막 발화 뒤 입력을 마치는 대기 시간(1~120초) | `5` |
 | `VOICE_WHISPER_MODEL` | 로컬 STT에 사용할 Whisper 모델 | `small` |
-| `VOICE_MATCH_THRESHOLD` | 이전 화자 검증용 설정(현재 일반 STT 입력에서는 사용하지 않음) | `0.65` |
-| `VOICE_PROFILE_DIR` | 계정별 등록된 화자 프로필 폴더 | `./MAI_MEMORY/voice_profiles` (별도 환경변수) |
 
 로컬 STT에서 화자 검증은 수행하지 않지만, **MAI Owner 로그인 인증은 계속 필요**하다.
 
@@ -55,16 +53,16 @@ VOICE_STT_PROVIDER: local
 4. 인식된 최종 발화 뒤 지정된 무음 시간이 지나면 MAI가 메시지 자동 전송을 시도한다. 답변 후 음성 모드가 켜져 있으면 다시 듣는다.
 5. 마이크 버튼을 다시 누르면 음성 모드를 끈다.
 
-Web Speech 방식에서는 **목소리 등록 버튼을 사용하지 않는다.** 브라우저가 해당 API를 제공하지 않거나 인식 서비스가 동작하지 않으면 오류가 표시될 수 있다. `SpeechRecognition` 객체의 존재만으로 실제 변환 성공까지 보장되지는 않는다. MAI 서버는 Web Speech 방식의 녹음 내용을 Whisper에 보내지 않는다.
+브라우저가 해당 API를 제공하지 않거나 인식 서비스가 동작하지 않으면 오류가 표시될 수 있다. `SpeechRecognition` 객체의 존재만으로 실제 변환 성공까지 보장되지는 않는다. MAI 서버는 Web Speech 방식의 녹음 내용을 Whisper에 보내지 않는다.
 
 ## 로컬 STT 사용 방법
 
 1. `VOICE_STT_PROVIDER: local`로 설정하고 MAI 서버를 재시작한다.
 2. Owner 계정으로 로그인한 뒤 마이크 버튼을 누른다. **목소리 등록은 필요하지 않다.**
 3. 브라우저 WAV 녹음은 기존 Silero VAD에서 발화 종료 후 설정된 5초에 자동 종료된다.
-4. 서버에서 VAD로 음성 구간을 추출한 뒤 `faster-whisper` CPU `int8`로 텍스트 변환하고, 기존 자동 전송 흐름을 이용한다. 기존 프로필 파일은 삭제하거나 갱신하지 않는다.
+4. 서버에서 VAD로 음성 구간을 추출한 뒤 `faster-whisper` CPU `int8`로 텍스트 변환하고, 기존 자동 전송 흐름을 이용한다. 기존 프로필 파일은 자동 삭제하지 않으며, 현재 STT에서는 읽거나 갱신하지 않는다.
 
-로컬 음성 입력은 `/voice/activity`(발화 종료 감지) 및 `/voice/transcribe`(Whisper 변환)를 사용한다. 기존 `/voice/enroll`은 호환성 때문에 남아 있지만 일반 음성 입력에서는 호출하지 않는다.
+로컬 음성 입력은 `/voice/activity`(발화 종료 감지) 및 `/voice/transcribe`(Whisper 변환)를 사용한다. 화자 등록용 `/voice/enroll` API는 제거되었다.
 
 Whisper는 서버 CPU와 RAM을 사용하며, 이미 감지한 발화를 Whisper VAD로 중복 필터링하지 않는다. Python 의존성 중 일반 인식에 필요한 구성은 `faster-whisper`, `vadonnx`, `numpy`, `scipy` 등이다.
 
@@ -77,7 +75,6 @@ Whisper는 서버 CPU와 RAM을 사용하며, 이미 감지한 발화를 Whisper
 | 마이크 버튼이 비활성화됨 | HTTPS/localhost 보안 컨텍스트, `getUserMedia` 지원, 브라우저 마이크 권한 |
 | Web Speech 미지원 메시지 | 브라우저에 `SpeechRecognition`/`webkitSpeechRecognition`이 있는지 확인; 필요하면 로컬 STT로 전환 |
 | Web Speech 인식 오류 | 마이크 권한, 네트워크 및 해당 브라우저 인식 서비스 상태를 확인. 오류 종류는 화면에 표시됨 |
-| 로컬 모드에서 프로필을 찾지 못함 | 최신 코드 및 브라우저 캐시 확인. 현재 일반 로컬 STT는 프로필을 필요로 하지 않음 |
 | `403 Forbidden` | Owner 로그인/세션 권한을 확인. 일반 로컬 STT에서는 `speaker_mismatch`가 발생하지 않음 |
 | `insufficient_speech` (422) | 마이크 입력 및 발화 길이, VAD가 감지할 수 있는 실제 음성 구간을 확인 |
 | 모델/패키지 로딩 오류 | 서버 로그의 구체적인 예외를 확인하고 해당 Python 의존성·모델 파일 다운로드 상태를 해결 |
@@ -86,18 +83,26 @@ Whisper는 서버 CPU와 RAM을 사용하며, 이미 감지한 발화를 Whisper
 
 ### 현재 적용 상태 확인
 
-Owner로 로그인한 MAI 화면에서 마이크를 눌렀을 때의 안내 메시지로 흐름을 구분할 수 있다. 더 직접적으로는 인증된 브라우저에서 호출되는 **`GET /voice/config` 응답의 `stt_provider` 필드**를 확인한다. `local`에서도 `speaker_verification_required: false`이며 목소리 등록 여부와 관계없이 인식한다. 해당 API는 Owner 인증이 필요하며, 미인증 호출의 실패를 서버 장애로 오인하지 않는다.
+Owner로 로그인한 MAI 화면에서 마이크를 눌렀을 때의 안내 메시지로 흐름을 구분할 수 있다. 더 직접적으로는 인증된 브라우저에서 호출되는 **`GET /voice/config` 응답의 `stt_provider` 필드**를 확인한다. `local`에서도 목소리 등록 여부와 관계없이 인식하며, 화자 검증 관련 설정값은 더 이상 반환하지 않는다. 해당 API는 Owner 인증이 필요하며, 미인증 호출의 실패를 서버 장애로 오인하지 않는다.
 
 ### 원래 방식으로 복원하기
 
-`settings.yaml`의 `VOICE_STT_PROVIDER`를 이전 값(`web_speech` 또는 `local`)으로 되돌리고 MAI 서버를 재시작한다. 제공자 전환만으로 기존 목소리 프로필 파일이 삭제되지는 않는다.
+`settings.yaml`의 `VOICE_STT_PROVIDER`를 이전 값(`web_speech` 또는 `local`)으로 되돌리고 MAI 서버를 재시작한다. 제공자 전환 및 화자 검증 코드 제거는 기존 목소리 프로필 파일을 삭제하지 않는다.
 
 ## 구현 위치
 
 - `settings.yaml`: STT 제공자 및 인식 관련 설정
 - `mai/app/settings.py`: 제공자 값 유효성 검사 및 설정 로드
 - `mai/app/static/voice-input.js`: 마이크, Web Speech, 녹음, 자동 전송, TTS 연결
-- `mai/app/server.py`: `/voice/config`, `/voice/activity`, `/voice/enroll`, `/voice/transcribe`
-- `mai/app/voice.py`: VAD, 기존 호환용 화자 등록·검증 메서드, 일반 입력용 CPU Whisper 변환
+- `mai/app/server.py`: `/voice/config`, `/voice/activity`, `/voice/transcribe`
+- `mai/app/voice.py`: VAD와 CPU Whisper 변환
 
 이 문서는 **기능의 구현 계약 및 사용자 조작 방법**을 설명한다. 모든 브라우저/기기에서의 음성 입력 성공, 음성인식 정확도 및 실제 서버별 CPU·메모리 성능을 보장하거나 실기기 테스트 완료를 뜻하지 않는다.
+
+## 화자 검증 제거 후 정리
+
+화자 식별만을 위한 `speakeronnx` 및 WeSpeaker ResNet34 모델, `VOICE_MATCH_THRESHOLD`, `VOICE_PROFILE_DIR`, 목소리 등록 UI/API/코드를 제거했다. `vadonnx`·Silero VAD는 발화 감지와 5초 종료 판단에 필요하고, `faster-whisper`, `numpy`, `scipy`는 로컬 음성인식에 계속 필요하다.
+
+기존 `MAI_MEMORY/voice_profiles/` 사용자 파일, 이미 설치된 Python 패키지와 공유 모델 캐시는 자동 삭제하지 않는다. 환경을 확인한 후 별도 패키지 정리가 필요하면 `python -m pip uninstall speakeronnx`를 사용할 수 있지만, 다른 프로젝트의 사용 여부도 먼저 확인해야 한다.
+
+로컬 Whisper는 완성된 녹음을 서버로 전송한 뒤 변환하므로 Web Speech처럼 실시간 부분 전사를 표시하지 않는다. 다만 **메시지 입력창 위의 초기 듣기 안내 문구는 두 모드에서 동일**하게 표시한다.
