@@ -365,7 +365,7 @@ class MAIRuntime:
         model_prompt, inline_images = await prepare_main_image_input(
             prompt=prompt, attachments=attachments, principal=principal,
             upload_root=self.upload_root, model=selected_model,
-            supports_vision=self.model_supports_projector_vision(selected_model),
+            supports_vision=(self.model_supports_projector_vision(selected_model) if attachments else False),
         )
         adapter = self._adapter_for(selected_model)
         # The selected GGUF is shared by Main, Verifier, and memory extraction.
