@@ -62,38 +62,23 @@ def test_remote_pc_limits_double_current_local(tmp_path):
     assert worker.get("terminal_run").timeout_seconds is None
 
 
-def test_local_terminal_handler_uses_120_second_execution_budget(tmp_path, monkeypatch):
+def test_terminal_has_no_execution_budget_on_host_or_worker(tmp_path, monkeypatch):
     from mai.tools import terminal
-
     captured = []
     async def fake_terminal_run(**kwargs):
         captured.append(kwargs)
         return {"ok": True}
-
-    monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
-    registry = ToolRegistry()
-    register_local_pc_tools(registry, cwd=tmp_path, terminal_timeout_seconds=120)
-    result = asyncio.run(registry.get("terminal_run").invoke({"command": "echo hello"}))
-    assert result == {"ok": True}
-    assert captured[0]["default_timeout_seconds"] == 120
-
-
-def test_configured_terminal_timeout_reaches_host_and_remote(tmp_path, monkeypatch):
-    from mai.tools import terminal
-    captured = []
-
-    async def fake_terminal_run(**kwargs):
-        captured.append(kwargs["default_timeout_seconds"])
-        return {"ok": True}
-
     monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
     monkeypatch.setenv("TERMINAL_TIMEOUT_SECONDS", "73")
     host = ToolRegistry()
     register_routed_pc_tools(host, owner_id="owner", cwd=str(tmp_path))
-    asyncio.run(host.get("terminal_run").invoke({"command": "echo test"}))
-    remote = build_registry(cwd=tmp_path)
-    asyncio.run(remote.get("terminal_run").invoke({"command": "echo test"}))
-    assert captured == [73, 146]
+    worker = build_registry(cwd=tmp_path)
+    asyncio.run(host.get("terminal_run").invoke({"command": "echo hello"}))
+    asyncio.run(worker.get("terminal_run").invoke({"command": "echo hello"}))
+    assert len(captured) == 2
+    assert all("default_timeout_seconds" not in args for args in captured)
+    assert host.get("terminal_run").timeout_seconds is None
+    assert worker.get("terminal_run").timeout_seconds is None
 
 
 def test_owner_web_search_has_independent_180_second_timeout(monkeypatch):
