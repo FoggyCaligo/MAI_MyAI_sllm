@@ -47,12 +47,11 @@ def test_llamacpp_main_image_opt_in(tmp_path, monkeypatch):
     raw = b"\x89PNG\r\n\x1a\nexample"
     (upload / "picture.png").write_bytes(raw)
     params = dict(prompt="describe", attachments=("picture.png",), principal=principal,
-                  upload_root=tmp_path, model="mai-main")
-    monkeypatch.setenv("LLAMACPP_MAIN_VISION", "true")
+                  upload_root=tmp_path, model="mai-main", supports_vision=True)
     prompt, images = asyncio.run(prepare_main_image_input(**params))
     assert prompt == "describe"
     assert images == (raw,)
-    monkeypatch.delenv("LLAMACPP_MAIN_VISION")
+    params["supports_vision"] = False
     prompt, images = asyncio.run(prepare_main_image_input(**params))
     assert not images
     assert "cannot inspect these images" in prompt
