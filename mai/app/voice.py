@@ -18,6 +18,8 @@ from fastapi import HTTPException
 class VoiceService:
     _PROFILE_ENCODER = "speakeronnx/wespeaker-resnet34"
     enrollment_min_speech_seconds = 3.0
+    speaker_window_seconds = 2.0
+    speaker_ambiguity_margin = 0.15
     def __init__(self) -> None:
         self.silence_seconds = float(os.environ.get("VOICE_SILENCE_SECONDS", "5"))
         self.match_threshold = float(os.environ.get("VOICE_MATCH_THRESHOLD", "0.75"))
@@ -47,7 +49,7 @@ class VoiceService:
             self._encoder = SpeakerEmbedder(model="wespeaker-resnet34", providers=["CPUExecutionProvider"])
         return self._encoder
 
-    def _waveform(self, payload: bytes, *, minimum_seconds: float = 0.0):
+    def _speech_segments(self, payload: bytes, *, minimum_seconds: float = 0.0):
         import numpy as np
         from scipy.signal import resample_poly
         from math import gcd
@@ -79,10 +81,30 @@ class VoiceService:
         timestamps = vad.get_speech_segments(processed, sample_rate=16000, min_speech_duration=0.0)
         if not timestamps:
             raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
-        speech = np.concatenate([processed[int(segment.start * 16000):int(segment.end * 16000)] for segment in timestamps])
-        if not speech.size or len(speech) < 16000 * minimum_seconds:
+        segments = [
+            processed[int(segment.start * 16000):int(segment.end * 16000)]
+            for segment in timestamps
+        ]
+        segments = [segment for segment in segments if segment.size]
+        speech_samples = sum(len(segment) for segment in segments)
+        if speech_samples < 16000 * minimum_seconds or not speech_samples:
             raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
-        return speech
+        return segments
+
+    def _waveform(self, payload: bytes, *, minimum_seconds: float = 0.0):
+        import numpy as np
+
+        return np.concatenate(self._speech_segments(payload, minimum_seconds=minimum_seconds))
+
+    def _speaker_windows(self, segments):
+        """Split VAD speech into bounded non-overlapping windows.
+
+        Mixed speech is retained; this is not source separation.
+        """
+        window_samples = int(16000 * self.speaker_window_seconds)
+        for segment in segments:
+            for start in range(0, len(segment), window_samples):
+                yield segment[start:start + window_samples]
 
     def last_speech_end(self, payload: bytes) -> float | None:
         """Find the last real speech boundary in a short recording using ONNX VAD."""
@@ -155,8 +177,7 @@ class VoiceService:
             path = self._profile_path(db_id)
             if not path.is_file():
                 raise HTTPException(409, "enroll a voice profile before using voice input")
-            speech = self._waveform(recording, minimum_seconds=0.0)
-            actual = self._embedding(speech)
+            speech_segments = self._speech_segments(recording, minimum_seconds=0.0)
             with np.load(path, allow_pickle=False) as profile:
                 if "encoder" not in profile or str(profile["encoder"].item()) != self._PROFILE_ENCODER:
                     raise HTTPException(409, "voice profile belongs to a different speaker model; re-enrollment is required")
@@ -164,18 +185,37 @@ class VoiceService:
                 adapted = self._unit(profile["adapted"])
                 count = int(profile["count"])
 
-            original_similarity = float(np.dot(original, actual))
-            adapted_similarity = float(np.dot(adapted, actual))
-            # The original enrollment remains an immutable trust anchor. A
-            # gradually adapted profile must never accept a voice radically
-            # different from that first enrolled sample.
-            if (
-                not np.isfinite(original_similarity)
-                or not np.isfinite(adapted_similarity)
-                or original_similarity < self.match_threshold - 0.03
-                or adapted_similarity < self.match_threshold
-            ):
+            # Exclude only clearly unrelated speaker windows. Ambiguous
+            # mixed/overlapping windows remain available to Whisper but
+            # never count as positive evidence for the enrolled speaker.
+            selected = []
+            verified = []
+            embeddings = []
+            for window in self._speaker_windows(speech_segments):
+                actual = self._embedding(window)
+                original_similarity = float(np.dot(original, actual))
+                adapted_similarity = float(np.dot(adapted, actual))
+                if not np.isfinite(original_similarity) or not np.isfinite(adapted_similarity):
+                    raise ValueError("non-finite speaker similarity")
+                is_match = (
+                    original_similarity >= self.match_threshold - 0.03
+                    and adapted_similarity >= self.match_threshold
+                )
+                clearly_other = (
+                    original_similarity < self.match_threshold - self.speaker_ambiguity_margin
+                    and adapted_similarity < self.match_threshold - self.speaker_ambiguity_margin
+                )
+                if clearly_other:
+                    continue
+                selected.append(window)
+                if is_match:
+                    verified.append(window)
+                    embeddings.append(actual)
+
+            # Unknown/ambiguous audio alone must not authorize transcription.
+            if not verified:
                 raise HTTPException(403, {"code": "speaker_mismatch", "message": "speaker verification failed"})
+            speech = np.concatenate(selected)
 
             if self._transcriber is None:
                 from faster_whisper import WhisperModel
@@ -194,8 +234,10 @@ class VoiceService:
             # Update only after successful verification *and* speech
             # recognition. Bound the weight of later samples and retain the
             # original sample as an immutable component of the model.
+            # Never adapt a voice profile using ambiguous mixed audio.
+            verified_actual = self._unit(np.mean(embeddings, axis=0))
             sample_weight = 1.0 / min(count + 1, 20)
-            adjusted = self._unit((1 - sample_weight) * adapted + sample_weight * actual)
+            adjusted = self._unit((1 - sample_weight) * adapted + sample_weight * verified_actual)
             combined = self._unit(0.5 * original + 0.5 * adjusted)
             self._save_profile(path, original, combined, min(count + 1, 20))
             return text
