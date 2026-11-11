@@ -59,7 +59,6 @@ def test_default_paths_use_memory_repo_in_config_and_launchers():
     for path in (
         root / ".env.example",
         root / "mai" / "app" / "server.py",
-        root / "mai" / "app" / "voice.py",
         root / "scripts" / "reset_trial.py",
         root / "portable" / "start-portable-llamacpp-router.ps1",
         root / "portable" / "start-portable-llamacpp-linux.sh",

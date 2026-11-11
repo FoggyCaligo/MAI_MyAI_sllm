@@ -47,7 +47,6 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
   await flush();
   assert.equal(recognitions.length, 1);
   assert.equal(recognitions[0].started, true);
-  assert.equal(element('voice-enroll-btn').hidden, true);
   assert.deepEqual(requests, ['/voice/config']);
   recognitions[0].onresult({resultIndex: 0, results: [{isFinal: true, 0: {transcript: '안녕하세요'}}]});
   recognitions[0].onend();

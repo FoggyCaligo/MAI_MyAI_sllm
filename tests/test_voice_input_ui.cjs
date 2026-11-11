@@ -3,7 +3,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync(require('node:path').join(__dirname, '..', 'mai', 'app', 'static', 'voice-input.js'), 'utf8');
 
-async function run(mode) {
+async function run() {
   const nodes = new Map();
   const calls = [];
   let context;
@@ -34,32 +34,27 @@ async function run(mode) {
     async fetch(path) {
       calls.push(path);
       const data = path === '/voice/config'
-        ? {stt_provider: 'local', enrolled: mode === 'transcribe', silence_seconds: 5, enrollment_min_speech_seconds: 3, min_speech_seconds: 0.5}
+        ? {stt_provider: 'local', silence_seconds: 5}
         : path === '/voice/activity' ? {speech_end_seconds: 0.1} : {text: '응'};
       return {ok: true, status: 200, headers: {get() {return 'application/json';}}, async json() {return data;}};
     }
   };
   vm.runInNewContext(source, sandbox);
   const flush = async () => {for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve));};
-  element(mode === 'transcribe' ? 'mic-btn' : 'voice-enroll-btn').handlers.click();
+  element('mic-btn').handlers.click();
   await flush();
+  assert.equal(element('upload-status').textContent, '브라우저에서 듣고 있어. 마지막 발화 뒤 설정된 시간이 지나면 전송해.');
   context.currentTime = 0.1;
   processor.onaudioprocess({inputBuffer: {getChannelData() {return new Float32Array(1600).fill(0.2);}}});
   context.currentTime = 6;
   processor.onaudioprocess({inputBuffer: {getChannelData() {return new Float32Array(94400);}}});
   await flush();
-  if (mode === 'transcribe') {
-    assert.equal(calls.filter(path => path === '/voice/transcribe').length, 1);
-    assert.equal(sent, 1);
-    assert.equal(element('msg-input').value, '응');
-  } else {
-    assert.equal(calls.filter(path => path === '/voice/enroll').length, 0);
-    assert.match(element('upload-status').textContent, /최소 3초/);
-  }
+  assert.equal(calls.filter(path => path === '/voice/transcribe').length, 1);
+  assert.equal(sent, 1);
+  assert.equal(element('msg-input').value, '응');
 }
 
 (async () => {
-  await run('transcribe');
-  await run('enroll');
-  console.log('PASS: 0.1s speech submitted; 0.1s enrollment blocked by 3s requirement.');
+  await run();
+  console.log('PASS: short voice input submitted without speaker registration.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

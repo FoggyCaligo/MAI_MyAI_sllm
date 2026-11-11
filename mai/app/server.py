@@ -418,11 +418,6 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
     return {
         "stt_provider": provider,
         "silence_seconds": voice.silence_seconds if voice else float(os.environ.get("VOICE_SILENCE_SECONDS", "5")),
-        "enrollment_min_speech_seconds": voice.enrollment_min_speech_seconds if voice else 3.0,
-        "speaker_verification_required": False,
-        "enrolled": voice.enrolled(principal.db_id) if voice else False,
-        "profile_directory": str(voice.root) if voice else None,
-        "profile_path": str(voice._profile_path(principal.db_id)) if voice else None,
     }
 
 
@@ -439,21 +434,6 @@ async def voice_activity(
         raise HTTPException(413, "voice activity window exceeds 2 MB")
     from starlette.concurrency import run_in_threadpool
     return {"speech_end_seconds": await run_in_threadpool(_voice().last_speech_end, recording)}
-
-
-@app.post("/voice/enroll")
-async def voice_enroll(
-    file: UploadFile = File(...),
-    authorization: str | None = Header(default=None),
-) -> dict[str, bool]:
-    _, principal = _principal_from_authorization(authorization)
-    if principal.role is not AccessRole.OWNER:
-        raise HTTPException(403, "voice input is restricted to the owner")
-    recording = await file.read(20 * 1024 * 1024 + 1)
-    if len(recording) > 20 * 1024 * 1024:
-        raise HTTPException(413, "voice recording exceeds 20 MB")
-    _voice().enroll(principal.db_id, recording)
-    return {"enrolled": True}
 
 
 @app.post("/voice/transcribe")
