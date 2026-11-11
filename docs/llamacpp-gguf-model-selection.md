@@ -19,6 +19,18 @@ LLAMACPP_MAIN_VISION: true
 * 파일명은 UI 표시 이름이고, 내부 라우터 ID는 **정규화된 GGUF 경로의 SHA-256 기반 ID**다. 따라서 사용자가 임의의 임시 ID를 입력해 로드할 수 없다.
 * 모델 파일 목록은 **프로세스 시작 시 생성된 고정 스냅샷**이다. 파일 추가·삭제 또는 `settings.yaml` 변경을 반영하려면 MAI Portable 서버를 재시작한다. 실행 중 목록과 등록된 라우터가 달라지면 명시적으로 오류를 반환한다.
 
+## 양자화 이름이 다른 프로젝터 명시 연결
+
+파일명 자동 연결은 정확히 같은 모델 GGUF 파일명 앞에 `mmproj-` 또는 `mmproj_`가 붙은 경우에만 적용한다. 모델과 프로젝터 양자화 방식이 다른 경우에는 `settings.yaml`의 JSON 연결표를 사용한다.
+
+```yaml
+LLAMACPP_MODEL_MMPROJ_MAP: '{"gemma-4-E4B-it-Q4_K_M.gguf":"mmproj-gemma-4-E4B-it-BF16.gguf"}'
+```
+
+키는 선택할 모델 GGUF 파일명, 값은 연결할 프로젝터 GGUF 파일명이다. 두 파일 모두 `LLAMACPP_GGUF_DIRECTORY` 안에 실제로 존재해야 한다. Gemma Q8과 Q8 프로젝터처럼 이름이 정확히 대응하면 기존 자동 연결을 사용한다. 지정한 모델이나 프로젝터가 없거나 기본 모델 연결과 충돌하면 명시적 오류를 발생시킨다.
+
+TTS 스피커 버튼은 STT 마이크와 별개로 작동하며, 마이크를 켜지 않아도 스피커를 활성화하면 이후 완료되는 MAI 답변을 브라우저 음성으로 읽는다.
+
 ## Reasoning 설정
 
 `settings.yaml`:
