@@ -427,6 +427,8 @@
     if (voiceMode) {
       setVoiceMode(false);
       if (active) void finish(true);
+      // The listening prompt belongs to the ended voice session.
+      setStatus('');
       return;
     }
     setVoiceMode(true);
