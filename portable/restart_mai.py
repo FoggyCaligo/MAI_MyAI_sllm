@@ -103,7 +103,7 @@ def stop_registered_server() -> None:
             raise RuntimeError("Process registration changed during shutdown")
         IDENTITY.unlink()
 
-def coordinate() -> None:
+def coordinate(*, update: bool) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
@@ -114,7 +114,8 @@ def coordinate() -> None:
         if branch != "dev":
             raise RuntimeError(f"Only dev may be updated by restart (current: {branch!r})")
         stop_registered_server()
-        subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only", "origin", "dev"], check=True)
+        if update:
+            subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only", "origin", "dev"], check=True)
         command = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                     "-File", str(ROOT / "mai.ps1"), "start"] if sys.platform == "win32"
                    else ["bash", str(ROOT / "mai.sh"), "start"])
@@ -130,24 +131,27 @@ def coordinate() -> None:
     finally:
         LOCK.unlink(missing_ok=True)
 
-def detach() -> None:
+def detach(*, update: bool) -> dict[str, object]:
     DATA.mkdir(parents=True, exist_ok=True)
     with LOG.open("ab", buffering=0) as output:
         output.write(b"\n--- Restart requested ---\n")
         flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
-        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate"],
+        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate", "--update" if update else "--no-update"],
                                    cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output,
                                    stderr=subprocess.STDOUT, close_fds=True, creationflags=flags,
                                    start_new_session=sys.platform != "win32")
-    print(f"Detached restart coordinator launched: PID {process.pid}. Log: {LOG}")
+    return {"status": "accepted", "coordinator_pid": process.pid, "update": update, "log_path": str(LOG), "result_confirmed": False}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--detach", action="store_true")
     mode.add_argument("--coordinate", action="store_true")
+    options = parser.add_mutually_exclusive_group(required=True)
+    options.add_argument("--update", action="store_true")
+    options.add_argument("--no-update", action="store_true")
     args = parser.parse_args()
     if args.detach:
-        detach()
+        print(json.dumps(detach(update=args.update)))
     else:
-        coordinate()
+        coordinate(update=args.update)
