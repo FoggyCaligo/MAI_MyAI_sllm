@@ -44,7 +44,7 @@ def test_restart_refuses_non_dev_before_shutdown(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "main\n")
     monkeypatch.setattr(module, "stop_registered_server", lambda: pytest.fail("Do not stop on main"))
     with pytest.raises(RuntimeError, match="Only dev"):
-        module.coordinate()
+        module.coordinate(update=True)
     assert not module.LOCK.exists()
 
 
@@ -53,3 +53,42 @@ def test_restart_rejects_bad_registration(monkeypatch, tmp_path):
     module.IDENTITY.write_text(json.dumps({"schema": 999, "pid": 12, "root": str(tmp_path)}))
     with pytest.raises(RuntimeError, match="Invalid server process registration"):
         module.stop_registered_server()
+
+
+def test_tool_requires_explicit_boolean_and_handoff(monkeypatch):
+    from mai.tools.registry import ToolArgumentsError, ToolRegistry
+    from mai.tools.restart import register_restart_tool
+    from mai.tools import restart as restart_module
+    observed = []
+    monkeypatch.setattr(restart_module, "detach", lambda **kwargs: observed.append(kwargs) or {
+        "status": "accepted", "request_id": "test", "result_confirmed": False,
+    })
+    registry = ToolRegistry()
+    register_restart_tool(registry)
+    tool = registry.get("restart")
+    assert tool.category == "host-lifecycle"
+    with pytest.raises(ToolArgumentsError):
+        tool.validate_arguments({"update": "true"})
+    with pytest.raises(ToolArgumentsError):
+        tool.validate_arguments({})
+    import asyncio
+    receipt = asyncio.run(tool.invoke({"update": False}))
+    assert receipt["status"] == "accepted"
+    assert receipt["result_confirmed"] is False
+    assert observed == [{"update": False, "await_handoff": True}]
+
+
+def test_handoff_is_atomic_and_structured(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    request_id = "1c4e858f-d497-4dc5-b559-b6fe0d24123d"
+    module.signal_handoff(request_id, completed=True)
+    module.wait_for_handoff(request_id)
+    assert not (module.DATA / f"restart-handoff-{request_id}.json").exists()
+
+
+def test_failed_handoff_blocks_shutdown(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    request_id = "1c4e858f-d497-4dc5-b559-b6fe0d24123d"
+    module.signal_handoff(request_id, completed=False)
+    with pytest.raises(RuntimeError, match="handoff failed"):
+        module.wait_for_handoff(request_id)
