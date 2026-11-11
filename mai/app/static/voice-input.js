@@ -46,7 +46,7 @@
   let active = null;
   let finishingCapture = null;
   let voiceMode = false;
-  let ttsEnabled = true;
+  let ttsEnabled = false;
   let currentUtterance = null;
   let ttsError = '';
   let starting = false;
@@ -68,8 +68,6 @@
       modeRevision += 1;
       finishingCapture?.controller.abort();
       finishingCapture = null;
-      ttsError = '';
-      stopTts();
       if (webRecognition) {
         const recognition = webRecognition;
         webRecognition = null;
@@ -199,20 +197,23 @@
     resumeAfterAnswer();
   }
 
-  speaker.addEventListener('click', () => {
-    ttsEnabled = !ttsEnabled;
-    speaker.classList.toggle('muted', !ttsEnabled);
-    speaker.setAttribute('aria-pressed', String(ttsEnabled));
-    speaker.title = ttsEnabled ? 'Mute voice output' : 'Enable voice output';
+  function setTtsEnabled(enabled) {
+    ttsEnabled = enabled;
+    speaker.classList.toggle('muted', !enabled);
+    speaker.setAttribute('aria-pressed', String(enabled));
+    speaker.title = enabled ? 'Mute voice output' : 'Enable voice output';
     speaker.setAttribute('aria-label', speaker.title);
-    if (!ttsEnabled && currentUtterance) {
+    if (!enabled && currentUtterance) {
       stopTts();
       resumeAfterAnswer();
     }
+  }
+
+  speaker.addEventListener('click', () => {
+    setTtsEnabled(!ttsEnabled);
   });
 
   document.addEventListener('mai:answer-complete', event => {
-    if (!voiceMode) return;
     if (!ttsEnabled || !event.detail?.text) { resumeAfterAnswer(); return; }
     try {
       const synth = window.speechSynthesis;
@@ -510,6 +511,7 @@
       return;
     }
     setVoiceMode(true);
+    setTtsEnabled(true);
     void start();
   });
   if (!navigator.mediaDevices?.getUserMedia) {
