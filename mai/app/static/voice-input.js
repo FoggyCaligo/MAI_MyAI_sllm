@@ -101,7 +101,7 @@
     }
     input.value = recognized.trim();
     input.dispatchEvent(new Event('input'));
-    if (send.disabled) throw new Error('전송 버튼이 비활성화되어 자동 전송할 수 없어.');
+    if (send.disabled) throw new Error('Send is disabled; cannot auto-submit.');
     form.requestSubmit();
     setStatus('Sending recognized message…');
     return true;
