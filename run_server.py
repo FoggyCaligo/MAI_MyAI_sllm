@@ -11,6 +11,7 @@ if __name__ == "__main__":
     os.chdir(PROJECT_ROOT)
 
 import uvicorn
+from portable.restart_mai import register_server, unregister_server
 from dotenv import load_dotenv
 
 from mai.app.resumable_chat import install as install_resumable_chat
@@ -22,4 +23,8 @@ if __name__ == "__main__":
     install_resumable_chat()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
-    uvicorn.run(app, host=host, port=port, workers=1)
+    register_server()
+    try:
+        uvicorn.run(app, host=host, port=port, workers=1)
+    finally:
+        unregister_server()
