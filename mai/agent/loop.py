@@ -427,13 +427,23 @@ class AgentLoop:
                     # Keep only the most recent recovery instruction in model
                     # context. Repeated recoveries have no count limit but
                     # must not accumulate identical system prompts forever.
-                    history[:] = [
-                        item for item in history
-                        if not (
-                            item.get("role") == "system"
-                            and str(item.get("content", "")).startswith("[REASONING_LOOP_DETECTED]")
-                        )
+                    recovery_indices = [
+                        index for index, item in enumerate(history)
+                        if item.get("role") == "system"
+                        and str(item.get("content", "")).startswith("[REASONING_LOOP_DETECTED]")
                     ]
+                    if recovery_indices:
+                        removed = set(recovery_indices)
+                        history[:] = [
+                            item for index, item in enumerate(history) if index not in removed
+                        ]
+                        # Pending tool-result compactions use indices into
+                        # history; removing a prior notice must rebase them.
+                        pending_history_compactions = {
+                            index - sum(old < index for old in recovery_indices): content
+                            for index, content in pending_history_compactions.items()
+                            if index not in removed
+                        }
                     history.append({
                         "role": "system",
                         "content": (
