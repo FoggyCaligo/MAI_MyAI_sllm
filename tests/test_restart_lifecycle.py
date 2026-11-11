@@ -101,3 +101,15 @@ def test_duplicate_restart_rejected_before_spawn(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("No new coordinator"))
     with pytest.raises(FileExistsError):
         module.detach(update=True, await_handoff=True)
+
+
+def test_restart_description_does_not_conflate_restart_with_permanent_shutdown():
+    from mai.tools.registry import ToolRegistry
+    from mai.tools.restart import register_restart_tool
+    registry = ToolRegistry()
+    register_restart_tool(registry)
+    tool = registry.get("restart")
+    assert "NOT a permanent shutdown" in tool.description
+    assert "git pull --ff-only origin dev" in tool.description
+    assert "launches MAI and the model runtime again" in tool.description
+    assert "in-flight" in tool.description

@@ -16,10 +16,13 @@ def register_restart_tool(registry: ToolRegistry) -> None:
     registry.add(
         name="restart",
         description=(
-            "Request an MAI HOST restart by an independent process. "
-            "update=true runs git pull --ff-only origin dev after stopping MAI; "
-            "update=false restarts without pulling. "
-            "This disrupts the current server, chat, model and tool executions. "
+            "Restart the currently running MAI host service so that deployed code changes take effect. "
+            "This is a controlled stop-and-start, NOT a permanent shutdown of MAI or its LLM. "
+            "An independent manager survives the old MAI process, stops it and its model runtime, "
+            "then launches MAI and the model runtime again. "
+            "With update=true, the manager runs git pull --ff-only origin dev between stop and start; "
+            "with update=false, it starts again without pulling code. "
+            "Current in-flight chat, model and tool operations end and do not automatically resume. "
             "Invoke ONLY when the user's current text/voice request explicitly "
             "authorizes restart or its established task scope explicitly includes "
             "applying changes to the running MAI. Do not treat code analysis or "
@@ -36,6 +39,6 @@ def register_restart_tool(registry: ToolRegistry) -> None:
         metadata={"model_context": {
             "authorization": "The owner's current natural-language or spoken instruction is approval if it expressly requests the restart or applying finished changes to the running MAI. Otherwise ask in chat before calling restart. Never use substring matching as proof of consent.",
             "scope": "MAI host only; not the connected remote worker.",
-            "execution": "Restart ends the current agent process. Accepted != completed. Read MAI_MEMORY/restart.log after reconnecting to verify the result.",
+            "execution": "A separate process performs stop -> optional dev pull -> start of MAI and its model runtime. The old agent process ends but this is not a permanent shutdown. In-flight operations are interrupted, not resumed. Accepted means handoff, not completed; inspect MAI_MEMORY/restart.log after reconnecting.",
         }},
     )
