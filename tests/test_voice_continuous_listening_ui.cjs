@@ -7,6 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai/app/static/voice-
 
 async function scenario({emptyFirst = false, idleOnly = false}) {
   const nodes = new Map();
+  const listeners = {};
   const contexts = [];
   const requests = [];
   let sent = 0, transcribed = 0, microphoneStarts = 0;
@@ -43,7 +44,7 @@ async function scenario({emptyFirst = false, idleOnly = false}) {
     async close() {}
   }
   const sandbox = {
-    document: {getElementById: elt, addEventListener() {}},
+    document: {getElementById: elt, addEventListener(name, callback) {listeners[name] = callback;}},
     window: {}, AudioContext, Blob, FormData, Float32Array, ArrayBuffer, DataView,
     Event: class {},
     navigator: {mediaDevices: {async getUserMedia() {
@@ -113,6 +114,10 @@ async function scenario({emptyFirst = false, idleOnly = false}) {
     assert.equal(transcribed, 2);
     assert.equal(sent, 1);
     assert.equal(elt('msg-input').value, '인식 성공');
+    listeners['mai:answer-complete']({detail: {text: '반가워요'}});
+    await flush();
+    assert.equal(microphoneStarts, 3, 'Unavailable TTS must resume local capture');
+    assert.match(elt('upload-status').textContent, /Listening.*Speech synthesis unavailable/);
     elt('mic-btn').handlers.click();
     assert.equal(elt('mic-btn').classList.active, false);
   }
@@ -121,5 +126,5 @@ async function scenario({emptyFirst = false, idleOnly = false}) {
 (async () => {
   await scenario({idleOnly: true});
   await scenario({emptyFirst: true});
-  console.log('PASS: silent voice mode persists, empty Whisper retries, manual stop respected.');
+  console.log('PASS: local STT survives silence, empty Whisper, and unavailable TTS.');
 })().catch(err => {console.error(err); process.exitCode = 1;});

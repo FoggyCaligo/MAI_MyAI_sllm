@@ -9,6 +9,8 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
   const listeners = {};
   const requests = [];
   const recognitions = [];
+  const utterances = [];
+  let synthesisError = null;
   let sent = 0;
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
@@ -27,8 +29,26 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
     abort() {this.aborted = true;}
   }
   const sandbox = {
-    document: {getElementById: element, addEventListener(name, callback) {listeners[name] = callback;}},
-    window: {SpeechRecognition},
+    document: {
+      getElementById(id) {return id === 'tts-voice-select' ? null : element(id);},
+      addEventListener(name, callback) {listeners[name] = callback;},
+      createElement() {
+        return {set innerHTML(text) {this.textContent = text;}, querySelectorAll() {return [];}};
+      },
+    },
+    window: {
+      SpeechRecognition,
+      speechSynthesis: {
+        getVoices() {return [];},
+        cancel() {},
+        speak(utterance) {
+          if (synthesisError) throw synthesisError;
+          utterances.push(utterance);
+        },
+      },
+    },
+    SpeechSynthesisUtterance: class {},
+    renderMarkdown: text => text,
     navigator: {mediaDevices: {getUserMedia() {throw Error('Local microphone path must not be used');}}},
     Event: class {},
     setTimeout, clearTimeout,
@@ -48,15 +68,49 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
   assert.equal(recognitions.length, 1);
   assert.equal(recognitions[0].started, true);
   assert.deepEqual(requests, ['/voice/config']);
-  recognitions[0].onresult({resultIndex: 0, results: [{isFinal: true, 0: {transcript: '안녕하세요'}}]});
-  recognitions[0].onend();
+  const submitVoiceTurn = () => {
+    element('msg-input').value = '';
+    const recognition = recognitions.at(-1);
+    recognition.onresult({resultIndex: 0, results: [{isFinal: true, 0: {transcript: '안녕하세요'}}]});
+    recognition.onend();
+  };
+  const completeAnswer = () => listeners['mai:answer-complete']({detail: {text: '반가워요'}});
+  submitVoiceTurn();
   assert.equal(element('msg-input').value, '안녕하세요');
   assert.equal(sent, 1);
-  element('tts-toggle-btn').handlers.click();
-  listeners['mai:answer-complete']({detail: {text: '반가워요'}});
+
+  completeAnswer();
   await flush();
-  assert.equal(recognitions.length, 2, 'TTS-disabled reply must resume listening');
+  assert.equal(recognitions.length, 1, 'STT must wait while TTS is active');
+  utterances[0].onerror({error: 'synthesis-failed'});
+  await flush();
+  assert.equal(recognitions.length, 2, 'TTS error must resume listening');
+  assert.match(element('upload-status').textContent, /Listening.*TTS error: synthesis-failed/);
+
+  submitVoiceTurn();
+  assert.equal(sent, 2, 'Recognition after TTS failure must still submit the next turn');
+  completeAnswer();
+  utterances[0].onend();
+  await flush();
+  assert.equal(recognitions.length, 2, 'A stale TTS callback must not resume listening');
+  utterances[1].onend();
+  await flush();
+  assert.equal(recognitions.length, 3, 'Successful TTS must resume listening');
+  assert.doesNotMatch(element('upload-status').textContent, /TTS error/);
+
+  submitVoiceTurn();
+  synthesisError = new Error('speak failed');
+  completeAnswer();
+  await flush();
+  assert.equal(recognitions.length, 4, 'A synchronous TTS failure must resume listening');
+  assert.match(element('upload-status').textContent, /Listening.*TTS error: speak failed/);
+
+  submitVoiceTurn();
+  element('tts-toggle-btn').handlers.click();
+  completeAnswer();
+  await flush();
+  assert.equal(recognitions.length, 5, 'TTS-disabled reply must resume listening');
   element('mic-btn').handlers.click();
-  assert.equal(recognitions[1].aborted, true);
-  console.log('PASS: configured Web Speech STT keeps the continuous voice loop');
+  assert.equal(recognitions[4].aborted, true);
+  console.log('PASS: Web Speech STT resumes after TTS completion, failure, or mute');
 })().catch(error => {console.error(error); process.exitCode = 1;});
