@@ -368,8 +368,8 @@
         if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
         return;
       }
-      if (mode === 'transcribe' && !config.speaker_verification_required) enroll.hidden = true;
-      if (mode === 'transcribe' && config.speaker_verification_required && !config.enrolled) {
+      if (mode === 'transcribe' && config.speaker_verification_required === false) enroll.hidden = true;
+      if (mode === 'transcribe' && config.speaker_verification_required !== false && !config.enrolled) {
         enroll.hidden = false;
         setStatus('등록된 음성 프로필을 찾지 못했어. 서버의 VOICE_PROFILE_DIR 및 로그인 계정 db_id를 확인해 줘.', true);
         return;
