@@ -189,3 +189,16 @@ def test_unready_running_launcher_does_not_claim_success(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "listening", lambda port: False)
     with pytest.raises(TimeoutError, match="port_states"):
         module.wait_for_launcher(RunningLauncher(), 0)
+
+
+def test_windows_launcher_uses_hidden_console_not_detached_process(monkeypatch):
+    from portable import restart_mai
+    import subprocess
+    monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, raising=False)
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x8000000, raising=False)
+    monkeypatch.setattr(subprocess, "DETACHED_PROCESS", 0x8, raising=False)
+    flags = restart_mai.launcher_creation_flags("win32")
+    assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+    assert flags & subprocess.CREATE_NO_WINDOW
+    assert flags & subprocess.DETACHED_PROCESS == 0
+    assert restart_mai.launcher_creation_flags("linux") == 0
