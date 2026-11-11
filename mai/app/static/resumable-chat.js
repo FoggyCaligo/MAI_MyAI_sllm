@@ -403,7 +403,10 @@
     };
     signal?.addEventListener('abort', cancelOnAbort, {once: true});
     if (signal?.aborted) cancelOnAbort();
-    setLiveProgressWrap(latestMaiWrap());
+    const foregroundWrap = latestMaiWrap();
+    const foregroundRow = foregroundWrap?.closest('.msg-row.mai');
+    if (foregroundRow) foregroundRow.dataset.chatJobId = jobId;
+    setLiveProgressWrap(foregroundWrap);
     setCurrentJob(jobId);
     localStorage.setItem(storageKey, JSON.stringify({job_id: jobId, created_at: Date.now()}));
     try {
@@ -496,6 +499,7 @@
       recoverySubmissionEpoch !== foregroundSubmissionEpoch || hasForegroundChat()
     );
     let pending = null;
+    let createdRecoveryPending = false;
     let recoveredJobId = null;
     try {
       if (!state?.token) return;
@@ -526,13 +530,18 @@
       // This is a presentation guard; the normal foreground submit path
       // always owns its row and never enters recovery.
       const loadingRow = Array.from(document.querySelectorAll('.msg-row.mai'))
-        .find(row => row.querySelector('.loader') && row.isConnected);
+        .find(row => row.dataset.chatJobId === recoveredJobId &&
+          row.querySelector('.loader') && row.isConnected);
       if (loadingRow) {
         const wrap = loadingRow.querySelector('.content-wrap');
         const bubble = wrap?.querySelector('.bubble');
         if (wrap && bubble) pending = {row: loadingRow, wrap, bubble};
       }
-      if (!pending && typeof addThinking === 'function') pending = addThinking();
+      if (!pending && typeof addThinking === 'function') {
+        pending = addThinking();
+        createdRecoveryPending = Boolean(pending);
+      }
+      if (pending?.row) pending.row.dataset.chatJobId = recoveredJobId;
       setCurrentJob(recoveredJobId);
       setLiveProgressWrap(pending?.wrap || latestMaiWrap());
       const response = await pollJob(recoveredJobId);
@@ -544,7 +553,12 @@
         return;
       }
 
-      if (foregroundStarted() || currentSubmissionJobId !== recoveredJobId) return;
+      if (foregroundStarted() || currentSubmissionJobId !== recoveredJobId) {
+        // The recovery lost ownership to a foreground form submission.
+        // Remove only the placeholder that this recovery created.
+        if (createdRecoveryPending) pending?.row?.remove();
+        return;
+      }
       if (response.ok) {
         if (pending) {
           pending.bubble.innerHTML = typeof renderMarkdown === 'function' ? renderMarkdown(data.answer) : String(data.answer || '');
