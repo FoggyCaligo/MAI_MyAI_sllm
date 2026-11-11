@@ -30,7 +30,7 @@ def register_restart_tool(registry: ToolRegistry) -> None:
             "independent coordinator accepted the request, NOT successful restart."
         ),
         input_model=RestartInput,
-        handler=detach,
+        handler=lambda update: detach(update=update, await_handoff=True),
         timeout_seconds=15,
         category="host-lifecycle",
         metadata={"model_context": {
