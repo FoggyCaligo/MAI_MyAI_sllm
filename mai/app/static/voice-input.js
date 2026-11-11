@@ -331,7 +331,7 @@
     body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
     let retryAfterRecoverableVoiceFailure = false;
     try {
-      setStatus(capture.mode === 'enroll' ? '목소리 특징 등록 중…' : '화자 확인 및 음성 인식 중…');
+      setStatus(capture.mode === 'enroll' ? '목소리 특징 등록 중…' : '음성 인식 중…');
       const path = capture.mode === 'enroll' ? '/voice/enroll' : '/voice/transcribe';
       const result = await request(path, {method: 'POST', body});
       if (capture.mode === 'enroll') {
@@ -368,7 +368,8 @@
         if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
         return;
       }
-      if (mode === 'transcribe' && !config.enrolled) {
+      if (mode === 'transcribe' && !config.speaker_verification_required) enroll.hidden = true;
+      if (mode === 'transcribe' && config.speaker_verification_required && !config.enrolled) {
         enroll.hidden = false;
         setStatus('등록된 음성 프로필을 찾지 못했어. 서버의 VOICE_PROFILE_DIR 및 로그인 계정 db_id를 확인해 줘.', true);
         return;
