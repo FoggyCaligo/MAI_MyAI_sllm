@@ -50,6 +50,23 @@ def test_llamacpp_image_capable_main_receives_pixels_directly(tmp_path, monkeypa
     assert images == (b"test-raw-image",)
 
 
+def test_selected_gguf_vision_capability_is_not_global(monkeypatch):
+    from portable import llamacpp_model_catalog
+    from mai.app.runtime import MAIRuntime
+
+    monkeypatch.setattr(llamacpp_model_catalog, "from_settings", lambda root: {
+        "models": [
+            {"id": "vision-model", "projector": "projector.gguf"},
+            {"id": "text-model", "projector": None},
+        ],
+    })
+    runtime = object.__new__(MAIRuntime)
+    assert runtime.model_supports_projector_vision("vision-model")
+    assert not runtime.model_supports_projector_vision("text-model")
+    with pytest.raises(ValueError, match="absent from GGUF catalog"):
+        runtime.model_supports_projector_vision("unknown-model")
+
+
 def test_attachment_path_cannot_escape_account_directory(tmp_path):
     principal = image_fixture(tmp_path)
     with pytest.raises(ValueError, match="filename"):
