@@ -32,7 +32,7 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 | 에이전트 실행·도구 호출 | `mai/agent/` |
 | 사실·수치 검증 | `mai/agent/verification.py` |
 | 기억과 검색 | `mai/memory/`, SQLite와 FTS5 |
-| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `is_remote=true` 지정 |
+| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `at_remote_pc=true` 지정 |
 | 공개 웹 서버 | `mai/app/`; Tailscale Funnel/Cloudflare는 선택형 별도 기능 |
 | Portable 준비·검증 | `mai.sh`, `mai.ps1`, `portable/` |
 
