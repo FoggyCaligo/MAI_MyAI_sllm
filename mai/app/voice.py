@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 from threading import Lock
 import wave
 
 from fastapi import HTTPException
+
+_LOG = logging.getLogger("uvicorn.error")
 
 
 class VoiceService:
@@ -102,5 +105,9 @@ class VoiceService:
             segments, _ = self._transcriber.transcribe(speech, vad_filter=False)
             text = " ".join(segment.text.strip() for segment in segments).strip()
             if not text:
-                raise HTTPException(422, "no speech recognized")
+                _LOG.info("MAI voice transcription empty after VAD speech_seconds=%.3f", len(speech) / 16000)
+                raise HTTPException(422, {
+                    "code": "insufficient_speech",
+                    "message": "no speech recognized",
+                })
             return text
