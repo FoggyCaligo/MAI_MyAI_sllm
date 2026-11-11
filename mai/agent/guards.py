@@ -128,7 +128,7 @@ class AgentGuard:
         """
         if ok or not error_type or threshold < 2:
             return None
-        target = str(arguments.get("is_remote", False))
+        target = str(arguments.get("at_remote_pc", False))
         if name == "terminal_run":
             command = str(arguments.get("command", "")).strip().lower()
             # Strip common wrappers and use a command family, not entire
