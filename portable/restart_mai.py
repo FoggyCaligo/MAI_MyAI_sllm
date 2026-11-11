@@ -220,7 +220,11 @@ def coordinate(*, update: bool, request_id: str | None = None) -> None:
         print(f"Launching MAI with {command[0]}; launcher_log={LAUNCH_LOG}", flush=True)
         with LAUNCH_LOG.open("ab", buffering=0) as output:
             output.write(b"\n--- New MAI launcher ---\n")
-            flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
+            # The PowerShell startup script launches llama.cpp with -NoNewWindow.
+            # DETACHED_PROCESS leaves that console contract unavailable and can
+            # make PowerShell exit 0 before either service is started.
+            # CREATE_NO_WINDOW retains a usable hidden console for child processes.
+            flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if sys.platform == "win32" else 0
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=subprocess.STDOUT, close_fds=True,
                                        creationflags=flags, start_new_session=sys.platform != "win32")
