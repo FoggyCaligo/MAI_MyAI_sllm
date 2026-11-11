@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "MAI_MEMORY"
 IDENTITY = DATA / "server-process.json"
 LOG = DATA / "restart.log"
+LAUNCH_LOG = DATA / "restart-launcher.log"
 LOCK = DATA / "restart.lock"
 PENDING = DATA / "restart.pending"
 PORTS = (8000, 8080, 8081)
@@ -74,6 +75,27 @@ def wait_ports(starting: bool, seconds: int) -> None:
             return
         time.sleep(0.5)
     raise TimeoutError(f"Port readiness failure: {dict(zip(PORTS, states))}")
+
+def wait_for_launcher(process: subprocess.Popen, seconds: int) -> None:
+    """Distinguish a failed launcher from a hung startup."""
+    deadline = time.monotonic() + seconds
+    states = {}
+    while time.monotonic() < deadline:
+        result = process.poll()
+        if result is not None:
+            raise RuntimeError(
+                f"MAI launcher exited before startup: pid={process.pid} "
+                f"exit_code={result}; inspect {LAUNCH_LOG}"
+            )
+        states = {port: listening(port) for port in PORTS}
+        if states[8000] and states[8080]:
+            return
+        time.sleep(0.5)
+    raise TimeoutError(
+        f"MAI launcher startup timed out: pid={process.pid}, "
+        f"port_states={states}; inspect {LAUNCH_LOG}"
+    )
+
 
 def stop_registered_server() -> None:
     if not IDENTITY.exists():
@@ -159,10 +181,10 @@ def preflight_update() -> str:
         # A newly tracked upstream path must not overwrite an untracked local file.
         incoming_paths = set(subprocess.check_output(
             ["git", "-C", str(ROOT), "ls-tree", "-r", "--name-only", "-z", remote],
-        ).decode("utf-8").split("\\0"))
+        ).decode("utf-8").split(chr(0)))
         local_untracked = set(subprocess.check_output(
             ["git", "-C", str(ROOT), "ls-files", "--others", "--exclude-standard", "-z"],
-        ).decode("utf-8").split("\\0"))
+        ).decode("utf-8").split(chr(0)))
         collisions = sorted((incoming_paths & local_untracked) - {""})
         if collisions:
             raise RuntimeError(
@@ -195,14 +217,15 @@ def coordinate(*, update: bool, request_id: str | None = None) -> None:
         command = (["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                     "-File", str(ROOT / "mai.ps1"), "start"] if sys.platform == "win32"
                    else ["bash", str(ROOT / "mai.sh"), "start"])
-        with LOG.open("ab", buffering=0) as output:
-            output.write(b"\n--- Starting MAI ---\n")
+        print(f"Launching MAI with {command[0]}; launcher_log={LAUNCH_LOG}", flush=True)
+        with LAUNCH_LOG.open("ab", buffering=0) as output:
+            output.write(b"\n--- New MAI launcher ---\n")
             flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=subprocess.STDOUT, close_fds=True,
                                        creationflags=flags, start_new_session=sys.platform != "win32")
-            output.write(f"Launcher pid={process.pid}\n".encode())
-        wait_ports(True, 150)
+        print(f"New MAI launcher pid={process.pid}", flush=True)
+        wait_for_launcher(process, 150)
         print("MAI startup ports ready (not an application health check)", flush=True)
     finally:
         LOCK.unlink(missing_ok=True)
