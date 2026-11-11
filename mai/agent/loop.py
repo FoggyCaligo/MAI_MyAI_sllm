@@ -136,10 +136,6 @@ class ToolResultSerializationError(AgentRuntimeError):
     """A tool returned a value that cannot be represented in a tool message."""
 
 
-class ModelRoundsExhausted(AgentRuntimeError):
-    """The agent reached its bounded model/tool round limit without a final answer."""
-
-
 class EmptyFinalResponseError(AgentRuntimeError):
     """The model repeatedly attempted to finish with an empty response."""
 
@@ -264,9 +260,6 @@ class AgentLoop:
         guard = AgentGuard(self.guard_config)
         reuse_enabled = os.environ.get("AGENT_EVIDENCE_REUSE_ENABLED", "true").lower() in {"true", "1", "yes"}
         progress_enabled = os.environ.get("AGENT_PROGRESS_SUMMARY_ENABLED", "true").lower() in {"true", "1", "yes"}
-        max_rounds = int(os.environ.get("AGENT_MAX_MODEL_ROUNDS", "16"))
-        if not 1 <= max_rounds <= 128:
-            raise ValueError("AGENT_MAX_MODEL_ROUNDS must be between 1 and 128")
         read_cache: dict[str, ToolExecution] = {}
         permanent_failure_cache: dict[str, ToolExecution] = {}
         reuse_count = 0
@@ -305,11 +298,6 @@ class AgentLoop:
 
         try:
             while True:
-                if round_number > max_rounds:
-                    raise ModelRoundsExhausted(
-                        f"Agent stopped after {max_rounds} model rounds without completing; "
-                        "review tool outcomes and retry with a narrower request"
-                    )
                 round_started = time.perf_counter()
                 tool_elapsed_ms = 0
                 model_elapsed_ms = 0
