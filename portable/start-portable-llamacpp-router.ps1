@@ -49,7 +49,6 @@ $env:MEMORY_DB_PATH = Join-Path $root 'MAI_MEMORY/memory.sqlite3'
 $env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'MAI_MEMORY/sentence_breaker.sqlite3'
 $env:CHAT_DB_PATH = Join-Path $root 'MAI_MEMORY/chat.sqlite3'
 $env:LOG_DB_PATH = Join-Path $root 'MAI_MEMORY/log.sqlite3'
-$env:VOICE_PROFILE_DIR = Join-Path $root 'MAI_MEMORY/voice_profiles'
 $guardEnabled = [bool]$catalog.memory_guard_enabled
 $routerPort = if ($guardEnabled) { 8081 } else { 8080 }
 $env:LLAMACPP_MEMORY_GUARD_ENABLED = if ($guardEnabled) { 'true' } else { 'false' }
