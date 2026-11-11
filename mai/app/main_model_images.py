@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import os
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +12,7 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 async def prepare_main_image_input(
     *, prompt: str, attachments: Sequence[str], principal: Any,
-    upload_root: str | Path, model: str,
+    upload_root: str | Path, model: str, supports_vision: bool,
 ) -> tuple[str, tuple[bytes, ...]]:
     """Use only configured llama.cpp Main vision; never invent image observations."""
     if not attachments:
@@ -32,7 +31,6 @@ async def prepare_main_image_input(
             raise ValueError("attached image exceeds 20 MiB limit")
         paths.append(target)
 
-    supports_vision = os.environ.get("LLAMACPP_MAIN_VISION", "false").lower() == "true"
     if supports_vision:
         return prompt, tuple(path.read_bytes() for path in paths)
     if not supports_vision:
