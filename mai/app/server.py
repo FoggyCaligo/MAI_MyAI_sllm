@@ -326,7 +326,7 @@ async def health() -> dict[str, object]:
         "status": "ok",
         "verifier_default_enabled": _env_bool("MAI_VERIFIER_ENABLED"),
         "model": runtime.model,
-        "main_vision_enabled": os.environ.get("LLAMACPP_MAIN_VISION", "false").lower() == "true",
+        "main_vision_enabled": runtime.model_supports_projector_vision(runtime.selected_model),
         "tailscale_funnel": _hosting is not None and _hosting_provider == "tailscale",
         "remote_hosting_provider": _hosting_provider if _hosting is not None else "none",
     }
