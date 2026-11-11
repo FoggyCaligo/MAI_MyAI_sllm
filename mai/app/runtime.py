@@ -80,7 +80,7 @@ Answer the current request fully; do not assume the user knows prior answers or 
 
 Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all native schemas: activate required tools by exact name and use their native schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: memory for user context, local tools for local resources, and information tools for external facts.
 
-MAI's owner-authorized remote connection lets native tools execute on another connected Windows or Linux computer. First activate required tools with tool_manual and follow their next-round native schemas; there is no CodeAct or execute_code tool. For every applicable native call, choose is_remote=true when the user's request targets the connected remote worker and is_remote=false (or omit) when it targets the MAI host. The model selects that target from the user's intent and observed context, not substring rules. Tool activation does not select the target. Web search, web fetch and browser tools are always MAI-host-only and have no is_remote argument. For remote filesystem access, terminal commands, PC administration and any other tools whose schemas declare is_remote, select the requested target consistently. Remote paths and shell syntax belong to the worker's operating system (Linux uses Bash; terminal_run defaults to Bash, but Windows system administration commands should use shell=powershell with PowerShell pipelines exclusively). Do not mix CMD and Bash syntax, or nest cmd.exe /c with Bash pipelines. Host memory_search, tool_result_read and file_download_link remain host-only and never acquire is_remote. The runtime resolves the account's active remote session; never supply its ID as a tool argument. If the remote session is unavailable or a tool is unsupported on that worker, report the failure; never substitute local execution.
+MAI's owner-authorized remote connection lets native tools execute on another connected Windows or Linux computer. First activate required tools with tool_manual and follow their next-round native schemas; there is no CodeAct or execute_code tool. For every applicable native call, choose at_remote_pc=true when the user's request targets the connected remote worker and at_remote_pc=false (or omit) when it targets the MAI host. The model selects that target from the user's intent and observed context, not substring rules. Tool activation does not select the target. Web search, web fetch and browser tools are always MAI-host-only and have no at_remote_pc argument. For remote filesystem access, terminal commands, PC administration and any other tools whose schemas declare at_remote_pc, select the requested target consistently. Remote paths and shell syntax belong to the worker's operating system (Linux uses Bash; terminal_run defaults to Bash, but Windows system administration commands should use shell=powershell with PowerShell pipelines exclusively). Do not mix CMD and Bash syntax, or nest cmd.exe /c with Bash pipelines. Host memory_search, tool_result_read and file_download_link remain host-only and never acquire at_remote_pc. The runtime resolves the account's active remote session; never supply its ID as a tool argument. If the remote session is unavailable or a tool is unsupported on that worker, report the failure; never substitute local execution.
 
 Use persistent-memory retrieval for missing user context. Activate the appropriate tool and read its schema before choosing arguments. Bounded or empty results are not exhaustive proof of absence.
 
@@ -257,6 +257,18 @@ class MAIRuntime:
         labels.update({name: name for name in configured_models()})
         return labels
 
+    def model_supports_projector_vision(self, model: str) -> bool:
+        """Use the exact GGUF preset's projector mapping, never a global flag."""
+        from portable.llamacpp_model_catalog import from_settings
+        root = Path(__file__).resolve().parents[2]
+        catalog = from_settings(root)
+        for entry in catalog["models"]:
+            if entry["id"] == model:
+                return entry["projector"] is not None
+        if model in configured_models():
+            return False
+        raise ValueError(f"Selected model is absent from GGUF catalog: {model}")
+
     async def select_model(self, model: str) -> str:
         """User-driven, confirmed one-resident model transition.
 
@@ -353,6 +365,7 @@ class MAIRuntime:
         model_prompt, inline_images = await prepare_main_image_input(
             prompt=prompt, attachments=attachments, principal=principal,
             upload_root=self.upload_root, model=selected_model,
+            supports_vision=(self.model_supports_projector_vision(selected_model) if attachments else False),
         )
         adapter = self._adapter_for(selected_model)
         # The selected GGUF is shared by Main, Verifier, and memory extraction.

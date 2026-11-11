@@ -16,7 +16,7 @@ def test_pc_tool_names_are_unified_and_default_local(tmp_path):
     assert registry.has("document_edit")
     assert not registry.has("remote_file_read")
     assert not registry.has("remote_process_run")
-    assert registry.get("file_read").input_model.model_fields["is_remote"].default is False
+    assert registry.get("file_read").input_model.model_fields["at_remote_pc"].default is False
 
 
 def test_unconnected_remote_fails_without_touching_local_file(tmp_path):
@@ -27,7 +27,7 @@ def test_unconnected_remote_fails_without_touching_local_file(tmp_path):
     async def exercise():
         with pytest.raises(RemoteExecutionError, match="active remote session"):
             await registry.get("file_write").invoke({
-                "path": str(file), "content": "modified", "is_remote": True,
+                "path": str(file), "content": "modified", "at_remote_pc": True,
             })
         result = await registry.get("file_read").invoke({"path": str(file)})
         assert result["content"] == "untouched"

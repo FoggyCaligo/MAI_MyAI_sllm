@@ -14,7 +14,7 @@ LLAMACPP_MAIN_VISION: true
 ```
 
 * `LLAMACPP_GGUF_DIRECTORY` 아래의 **직접 자식 `.gguf` 파일**을 실행 시 읽고, GGUF 매직 헤더를 확인한다. 디렉터리가 없거나 잘못된 파일이 있으면 시작을 실패로 처리한다.
-* 설정에 **명시된** `LLAMACPP_MAIN_MMPROJ_PATH` 및 `LLAMACPP_VISION_MMPROJ_PATH`는 모델 선택 목록에서 제외한다. **다른 projector 파일의 역할을 이름으로 추측하지 않는다.** 추가 projector를 폴더에 함께 보관할 경우 별도 설정에 경로를 명시하거나 일반 모델 폴더와 분리해야 한다.
+* 설정에 **명시된** `LLAMACPP_MAIN_MMPROJ_PATH` 및 `LLAMACPP_VISION_MMPROJ_PATH`, `mmproj-` / `mmproj_`로 시작하는 GGUF는 모델 선택 목록에서 제외한다. 기본 모델에는 기존 `LLAMACPP_MAIN_MMPROJ_PATH`를 우선 적용한다. 다른 모델은 같은 폴더에 정확히 `mmproj-<모델 GGUF 파일명>` 또는 `mmproj_<모델 GGUF 파일명>`인 파일이 하나 존재할 때 해당 프리셋의 projector로 등록한다. 대응 파일이 없으면 projector를 지정하지 않으며, 두 파일이 동시에 대응하면 명시적 오류를 낸다.
 * `LLAMACPP_MAIN_GGUF_PATH`는 **기본 선택 모델**이며 탐색 폴더 안에 있어야 한다. 실행기가 등록된 GGUF의 내부 모델 ID를 `MAIN_MODEL` 환경변수에 지정한다. 선택한 같은 모델 ID를 Main·Verifier·기억 추출에 전달한다.
 * 파일명은 UI 표시 이름이고, 내부 라우터 ID는 **정규화된 GGUF 경로의 SHA-256 기반 ID**다. 따라서 사용자가 임의의 임시 ID를 입력해 로드할 수 없다.
 * 모델 파일 목록은 **프로세스 시작 시 생성된 고정 스냅샷**이다. 파일 추가·삭제 또는 `settings.yaml` 변경을 반영하려면 MAI Portable 서버를 재시작한다. 실행 중 목록과 등록된 라우터가 달라지면 명시적으로 오류를 반환한다.
@@ -65,7 +65,7 @@ LLAMACPP_REASONING_PRESERVE: false
 5. 성공일 때만 UI에서 선택 상태를 확정한다. 오류가 나면 오류를 보이고 원래 선택을 되돌린다. **오류를 다른 모델 재시도나 묵시적 fallback으로 숨기지 않는다.**
 6. 이후 그 모델 ID로 생성·검증·기억 사실 추출을 수행한다. 서로 다른 추론 프롬프트를 사용하며 KV 캐시 공유는 보장하지 않는다.
 
-**동일 GGUF를 계속 사용할 때는 강제 언로드·재로드하지 않는다.** Main과 Verifier는 같은 모델 가중치를 사용하되 프롬프트·검증 계약은 분리된다. 비전 지원 여부를 파일명으로 추측하지 않으며, 기본 Ornith용 mmproj를 다른 모델에 자동 적용하지 않는다.
+**동일 GGUF를 계속 사용할 때는 강제 언로드·재로드하지 않는다.** Main과 Verifier는 같은 모델 가중치를 사용하되 프롬프트·검증 계약은 분리된다. 이미지 첨부는 선택한 모델 프리셋에 projector가 연결된 경우에만 전달한다. 기본 Ornith용 mmproj를 다른 모델에 적용하지 않는다. 파일 이름이 대응하더라도 실제 모델·projector 호환성은 llama.cpp 로딩으로 검증해야 한다.
 
 **시간 제한:** `MODEL_REQUEST_TIMEOUT_SECONDS: 300`은 각 모델 API 요청의 기본 제한이다. 요청 전체, 도구 실행 또는 GAIA 문제별 제한과 혼동하지 않는다. Verifier는 배포 설정 `MAI_VERIFIER_ENABLED: false`에서 기본적으로 꺼져 있다.
 

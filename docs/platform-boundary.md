@@ -7,7 +7,7 @@ MAI의 Agent·Verifier·Memory·도구 계약은 호스트 운영체제와 분�
 ```text
 Agent / Verifier / Memory
   ├─ MAI 호스트 Native 도구
-  └─ Owner 원격 Native 워커 (is_remote=true)
+  └─ Owner 원격 Native 워커 (at_remote_pc=true)
        └─ terminal_run → current_platform()
             ├─ Windows: Git Bash(기본) / CMD / PowerShell, UTF-8, Windows 프로세스 그룹
             └─ Linux: Bash(기본), POSIX 세션 및 프로세스 그룹

@@ -10,8 +10,8 @@ def test_remote_target_context_is_explicit_and_unified(tmp_path):
     assert set(target["context"]) == {"default", "remote", "session_selection", "failures"}
     assert all(isinstance(text, str) and text.strip() for text in target["context"].values())
     model = registry.get("file_read").input_model
-    assert model.model_fields["is_remote"].default is False
-    assert model.model_fields["is_remote"].annotation is bool
+    assert model.model_fields["at_remote_pc"].default is False
+    assert model.model_fields["at_remote_pc"].annotation is bool
     assert "path" in model.model_fields
     assert not registry.has("remote_file_read")
     assert not any(item.get("source") == "remote_execution_target" for item in registry.model_context(names=()))

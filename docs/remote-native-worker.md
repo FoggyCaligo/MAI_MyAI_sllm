@@ -5,7 +5,7 @@
 ## 실행 계약
 
 1. 모델의 최초 차례에는 `tool_manual`만 노출된다. 활성화한 도구의 실제 Pydantic 인수 계약이 다음 차례부터 제공된다.
-2. Owner의 원격 지원 native 도구에는 `is_remote: bool = false`가 추가된다. 모델은 사용자 요청의 실행 대상을 기준으로 이를 선택하며, 경로·명령 문자열 패턴으로 원격 여부를 추측하지 않는다.
+2. Owner의 원격 지원 native 도구에는 `at_remote_pc: bool = false`가 추가된다. 모델은 사용자 요청의 실행 대상을 기준으로 이를 선택하며, 경로·명령 문자열 패턴으로 원격 여부를 추측하지 않는다.
 3. 생략 또는 `false`는 MAI 호스트에서 실행한다. `true`는 해당 Owner가 인증·연결한 원격 워커의 `native.invoke` 경로에서 실행한다.
 4. 대상 워커가 없거나 연결이 끊겼거나 미지원 도구인 경우 명시적으로 실패하며, 로컬 실행으로 되돌리지 않는다. 원격 실패 유형과 메시지도 보존한다.
 5. 결과는 전송용 envelope가 아니라 원래 도구의 결과를 모델에 보여준다.
@@ -13,7 +13,7 @@
 예를 들어 `file_read`를 활성화한 뒤에는 다음 인수를 사용할 수 있다.
 
 ```json
-{"path":"/home/owner/notes.txt","is_remote":true}
+{"path":"/home/owner/notes.txt","at_remote_pc":true}
 ```
 
 ## 구현 및 도구 지원 범위

@@ -40,6 +40,7 @@ def test_catalog_discovers_models_excludes_explicit_projector_and_sets_default(t
     ini = render_ini(catalog, context_size=131072, gpu_layers=99)
     assert ini.count("model = ") == 2
     assert "mmproj = " + str(projector) in ini
+    assert default["projector"] == str(projector)
     assert "ctx-size = 131072" in ini
     assert "[mai-verifier]" not in ini
 
@@ -58,8 +59,60 @@ def test_catalog_skips_unconfigured_mmproj_files_but_keeps_models(tmp_path):
     })
     assert {model["label"] for model in catalog["models"]} == {main.name, secondary.name}
     ini = render_ini(catalog, context_size=65536, gpu_layers=99)
-    assert str(ignored) not in ini
+    assert "mmproj = " + str(ignored) in ini
     assert str(ignored_case) not in ini
+
+
+def test_catalog_connects_exact_projector_per_selected_model(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    default = gguf(folder / "Ornith-1.5-9B-Q4_K_M.gguf")
+    default_mmproj = gguf(folder / "mmproj-Ornith-1.5-9B-BF16.gguf")
+    gemma = gguf(folder / "gemma-4-E4B-it-Q8_0.gguf")
+    gemma_mmproj = gguf(folder / "mmproj-gemma-4-E4B-it-Q8_0.gguf")
+    text_only = gguf(folder / "text-only-Q4.gguf")
+    catalog = discover(tmp_path, {
+        "LLAMACPP_MAIN_GGUF_PATH": str(default),
+        "LLAMACPP_GGUF_DIRECTORY": str(folder),
+        "LLAMACPP_MAIN_MMPROJ_PATH": str(default_mmproj),
+    })
+    entries = {entry["label"]: entry for entry in catalog["models"]}
+    assert entries[default.name]["projector"] == str(default_mmproj)
+    assert entries[gemma.name]["projector"] == str(gemma_mmproj)
+    assert entries[text_only.name]["projector"] is None
+    ini = render_ini(catalog, context_size=65536, gpu_layers=99)
+    for entry in entries.values():
+        block = ini.split(f"[{entry['id']}]\\n", 1)[1].split("\\n[", 1)[0]
+        if entry["projector"]:
+            assert f"mmproj = {entry['projector']}" in block
+        else:
+            assert "mmproj = " not in block
+    assert len(entries) == 3
+
+
+def test_catalog_rejects_ambiguous_matching_projectors(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    model = gguf(folder / "Another.gguf")
+    gguf(folder / "mmproj-Another.gguf")
+    gguf(folder / "mmproj_Another.gguf")
+    with pytest.raises(ValueError, match="Ambiguous mmproj"):
+        discover(tmp_path, {
+            "LLAMACPP_MAIN_GGUF_PATH": str(model),
+            "LLAMACPP_GGUF_DIRECTORY": str(folder),
+        })
+
+
+def test_catalog_refuses_invalid_matching_projector(tmp_path):
+    folder = tmp_path / "gguf"
+    folder.mkdir()
+    model = gguf(folder / "Another.gguf")
+    (folder / "mmproj-Another.gguf").write_bytes(b"BAD!")
+    with pytest.raises(ValueError, match="Invalid GGUF"):
+        discover(tmp_path, {
+            "LLAMACPP_MAIN_GGUF_PATH": str(model),
+            "LLAMACPP_GGUF_DIRECTORY": str(folder),
+        })
 
 
 def test_catalog_rejects_mmproj_file_as_default_model(tmp_path):

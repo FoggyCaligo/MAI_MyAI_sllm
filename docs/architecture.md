@@ -80,7 +80,7 @@ AgentRuntime / AgentLoop
 | 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
 | 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-**원격 Native 도구:** Owner가 `is_remote=true`로 호출하면 인증된 Windows/Linux 워커에서 실행. 생략하거나 `false`이면 MAI 호스트에서 실행. 원격 미연결·미지원 시 로컬로 자동 대체하지 않음.
+**원격 Native 도구:** Owner가 `at_remote_pc=true`로 호출하면 인증된 Windows/Linux 워커에서 실행. 생략하거나 `false`이면 MAI 호스트에서 실행. 원격 미연결·미지원 시 로컬로 자동 대체하지 않음.
 
 **웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 
