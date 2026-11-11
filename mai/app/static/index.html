@@ -126,8 +126,6 @@
     #tts-voice-select:disabled { opacity:.5; }
     #mic-btn.active { color:var(--danger); }
     #mic-btn:disabled { opacity:.35; cursor:wait; }
-    #voice-enroll-btn { color:var(--text-dim); background:transparent; border:0; padding:0 5px; cursor:pointer; font-size:11px; }
-    #voice-enroll-btn:hover { color:var(--text); }
 
     @media (max-width:680px) {
       header { align-items:flex-start; flex-direction:column; padding:12px; }
@@ -187,7 +185,6 @@
   <div id="input-area">
     <form id="chat-form">
       <div id="upload-status"></div>
-      <button id="voice-enroll-btn" type="button" hidden>목소리 등록</button>
       <div id="clipboard-previews" aria-label="첨부 이미지 미리보기"></div>
       <div id="input-row">
         <label id="upload-btn" title="파일 업로드">＋<input id="file-input" type="file" /></label>
