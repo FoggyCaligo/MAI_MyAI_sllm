@@ -38,6 +38,9 @@ def is_mmproj_filename(path: Path) -> bool:
 def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
     """Discover exactly one model and at most one projector in each model folder."""
     root = root.resolve()
+    for old_key in ("LLAMACPP_MAIN_MMPROJ_PATH", "LLAMACPP_VISION_MMPROJ_PATH", "LLAMACPP_MODEL_MMPROJ_MAP"):
+        if config.get(old_key):
+            raise ValueError(f"{old_key} is obsolete; place the model and mmproj in one folder")
     directory_raw = config.get("LLAMACPP_GGUF_DIRECTORY")
     main_raw = config.get("LLAMACPP_MAIN_GGUF_PATH")
     if not isinstance(directory_raw, str) or not directory_raw.strip():
