@@ -62,6 +62,10 @@ def test_empty_transcription_is_rejected():
     with pytest.raises(HTTPException) as exc:
         voice.transcribe(wav(0.1))
     assert exc.value.status_code == 422
+    assert exc.value.detail == {
+        "code": "insufficient_speech",
+        "message": "no speech recognized",
+    }
 
 
 def test_empty_wav_is_insufficient_speech():
