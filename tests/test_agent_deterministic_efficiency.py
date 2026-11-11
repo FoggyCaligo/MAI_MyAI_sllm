@@ -37,7 +37,7 @@ def _turn(*calls, content=""):
 
 def test_related_failures_warn_without_blocking_changed_commands():
     guard = AgentGuard()
-    command = {"command": "schtasks /query /fo LIST", "is_remote": False}
+    command = {"command": "schtasks /query /fo LIST", "at_remote_pc": False}
     assert guard.after_similar_failure("terminal_run", command, ok=False, error_type="TerminalTimeoutError") is None
     notice = guard.after_similar_failure(
         "terminal_run", {"command": "schtasks /query /fo CSV"}, ok=False,
