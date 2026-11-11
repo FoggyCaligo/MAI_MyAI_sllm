@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "MAI_MEMORY"
@@ -103,12 +104,42 @@ def stop_registered_server() -> None:
             raise RuntimeError("Process registration changed during shutdown")
         IDENTITY.unlink()
 
-def coordinate(*, update: bool) -> None:
+def wait_for_handoff(request_id: str) -> None:
+    signal_path = DATA / f"restart-handoff-{request_id}.json"
+    deadline = time.monotonic() + 1800
+    while time.monotonic() < deadline:
+        if signal_path.exists():
+            data = json.loads(signal_path.read_text(encoding="utf-8"))
+            if data != {"request_id": request_id, "status": "completed"}:
+                raise RuntimeError(f"Restart handoff failed: {data}")
+            signal_path.unlink()
+            return
+        time.sleep(0.25)
+    raise TimeoutError(f"Restart handoff not completed: {request_id}")
+
+
+def signal_handoff(request_id: str, *, completed: bool) -> None:
+    uuid.UUID(request_id)
+    DATA.mkdir(parents=True, exist_ok=True)
+    target = DATA / f"restart-handoff-{request_id}.json"
+    if target.exists():
+        raise FileExistsError(target)
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
+        "request_id": request_id,
+        "status": "completed" if completed else "failed",
+    }), encoding="utf-8")
+    temporary.replace(target)
+
+
+def coordinate(*, update: bool, request_id: str | None = None) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         with os.fdopen(descriptor, "w") as f:
             f.write(str(os.getpid()))
+        if request_id is not None:
+            wait_for_handoff(request_id)
         # Avoid pulling onto a non-dev branch, even when restarting an offline instance.
         branch = subprocess.check_output(["git", "-C", str(ROOT), "branch", "--show-current"], text=True).strip()
         if branch != "dev":
@@ -131,16 +162,17 @@ def coordinate(*, update: bool) -> None:
     finally:
         LOCK.unlink(missing_ok=True)
 
-def detach(*, update: bool) -> dict[str, object]:
+def detach(*, update: bool, await_handoff: bool = False) -> dict[str, object]:
     DATA.mkdir(parents=True, exist_ok=True)
+    request_id = str(uuid.uuid4()) if await_handoff else None
     with LOG.open("ab", buffering=0) as output:
         output.write(b"\n--- Restart requested ---\n")
         flags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS) if sys.platform == "win32" else 0
-        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate", "--update" if update else "--no-update"],
+        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--coordinate", "--update" if update else "--no-update", * (["--request-id", request_id] if request_id else [])],
                                    cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output,
                                    stderr=subprocess.STDOUT, close_fds=True, creationflags=flags,
                                    start_new_session=sys.platform != "win32")
-    return {"status": "accepted", "coordinator_pid": process.pid, "update": update, "log_path": str(LOG), "result_confirmed": False}
+    return {"status": "accepted", "request_id": request_id, "coordinator_pid": process.pid, "update": update, "log_path": str(LOG), "result_confirmed": False}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -150,8 +182,9 @@ if __name__ == "__main__":
     options = parser.add_mutually_exclusive_group(required=True)
     options.add_argument("--update", action="store_true")
     options.add_argument("--no-update", action="store_true")
+    parser.add_argument("--request-id", type=str, default=None)
     args = parser.parse_args()
     if args.detach:
         print(json.dumps(detach(update=args.update)))
     else:
-        coordinate(update=args.update)
+        coordinate(update=args.update, request_id=args.request_id)
