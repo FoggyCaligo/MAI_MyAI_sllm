@@ -22,7 +22,7 @@
     big.className = 'big';
     big.textContent = 'MAI';
     const hint = document.createElement('div');
-    hint.textContent = '메시지를 입력하세요.';
+    hint.textContent = 'Start a conversation';
     empty.append(big, hint);
     host.appendChild(empty);
   }
@@ -30,8 +30,8 @@
   async function startNewChat(button) {
     if (!state?.token) return;
     button.disabled = true;
-    const originalText = button.textContent;
-    button.textContent = '초기화 중…';
+    button.setAttribute('aria-busy', 'true');
+    button.title = 'Starting new chat…';
     try {
       if (typeof window.maiResetConversation !== 'function') {
         throw new Error('대화 초기화 기능이 준비되지 않았습니다.');
@@ -39,9 +39,10 @@
       await window.maiResetConversation();
       document.getElementById('msg-input')?.focus();
     } catch (error) {
-      window.alert(`새 채팅 시작 실패: ${error.message}`);
+      window.alert(`New chat failed: ${error.message}`);
     } finally {
-      button.textContent = originalText;
+      button.removeAttribute('aria-busy');
+      button.title = 'New chat (keeps long-term memory)';
       button.disabled = false;
     }
   }
@@ -50,6 +51,7 @@
     const button = document.getElementById('new-chat-btn');
     if (!button || button.dataset.bound === 'true') return;
     button.dataset.bound = 'true';
+    if (typeof setMaiIconButton === 'function') setMaiIconButton(button, 'message-plus', 'New chat (keeps long-term memory)');
     button.addEventListener('click', () => void startNewChat(button));
   }
 
