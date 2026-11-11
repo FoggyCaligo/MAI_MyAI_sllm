@@ -362,6 +362,11 @@
   }
 
   async function submitDetachedChat(init) {
+    // Aborting the original /chat fetch must cancel the detached server job,
+    // not just stop browser polling. The job-create POST must stay connected
+    // long enough to obtain its id even if the user presses Stop mid-submit.
+    const signal = init?.signal;
+    if (signal?.aborted) return jsonResponse({detail: 'Request cancelled.'}, 499);
     // A replaced prompt must not race with the cancelled request's model
     // stream and the single-resident llama.cpp gateway. Wait for the old
     // task to release its server-side locks before posting the new one.
@@ -373,18 +378,32 @@
       }
       if (currentSubmissionJobId === precedingJobId) setCurrentJob(null);
     }
-    const submit = await nativeFetch('/chat/jobs', init);
+    const submit = await nativeFetch('/chat/jobs', {...init, signal: undefined});
     if (!submit.ok) return submit;
     const data = await submit.json();
     if (!data.job_id) return jsonResponse({detail: 'Missing chat job ID.'}, 500);
 
     const jobId = data.job_id;
+    let cancellation = null;
+    const cancelOnAbort = () => {
+      // Keep a single cancellation request even if Stop races job creation.
+      if (!cancellation) cancellation = cancelJob(jobId);
+    };
+    signal?.addEventListener('abort', cancelOnAbort, {once: true});
+    if (signal?.aborted) cancelOnAbort();
     setLiveProgressWrap(latestMaiWrap());
     setCurrentJob(jobId);
     localStorage.setItem(storageKey, JSON.stringify({job_id: jobId, created_at: Date.now()}));
     try {
+      if (cancellation) {
+        const cancelled = await cancellation;
+        if (cancelled) localStorage.removeItem(storageKey);
+        return jsonResponse({detail: cancelled ? 'Request cancelled.' : 'Server cancellation failed.'},
+          cancelled ? 499 : 503);
+      }
       return await pollJob(jobId);
     } finally {
+      signal?.removeEventListener('abort', cancelOnAbort);
       if (currentSubmissionJobId === jobId) setCurrentJob(null);
     }
   }
