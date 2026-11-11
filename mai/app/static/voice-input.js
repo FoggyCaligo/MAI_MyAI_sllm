@@ -157,7 +157,7 @@
       if (!voiceMode || revision !== modeRevision) return;
       if (recognitionError && recognitionError !== 'no-speech') return;
       if (!finalText.trim()) {
-        void start('transcribe');
+        void start();
         return;
       }
       try {
@@ -179,7 +179,7 @@
 
   function resumeAfterAnswer() {
     if (!voiceMode || active || webRecognition || starting || currentUtterance) return;
-    void start('transcribe');
+    void start();
   }
 
   speaker.addEventListener('click', () => {
@@ -314,10 +314,10 @@
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
-    if (discard || (!voiceMode)) return;
+    if (discard || !voiceMode) return;
     if (!capture.chunks.length) {
       setStatus('녹음 데이터가 없어 다시 듣는 중…', true);
-      if (voiceMode) await start('transcribe');
+      if (voiceMode) await start();
       return;
     }
     const data = new Float32Array(capture.chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -339,11 +339,11 @@
     }
     if (retryAfterRecoverableVoiceFailure && voiceMode) {
       setStatus('이번 음성은 처리하지 않았어. 다시 듣는 중…', true);
-      await start('transcribe');
+      await start();
     }
   }
 
-  async function start(mode) {
+  async function start() {
     if (starting || active || webRecognition || !voiceMode) return;
     const revision = modeRevision;
     starting = true;
@@ -357,7 +357,7 @@
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
-      if ((!voiceMode || revision !== modeRevision)) {
+      if (!voiceMode || revision !== modeRevision) {
         stream.getTracks().forEach(track => track.stop());
         return;
       }
@@ -406,7 +406,7 @@
       return;
     }
     setVoiceMode(true);
-    void start('transcribe');
+    void start();
   });
   if (!navigator.mediaDevices?.getUserMedia) {
     mic.disabled = true;
