@@ -475,6 +475,15 @@
           showExpiredLogin();
           return null;
         }
+        if (response.ok) {
+          const snapshot = await response.json().catch(() => ({}));
+          // The session-history refresh already renders completed replies.
+          // Never reconstruct a loading bubble for a terminal job.
+          if (['completed', 'failed', 'cancelled'].includes(snapshot.status)) {
+            localStorage.removeItem(storageKey);
+            return null;
+          }
+        }
         if (response.status !== 404) return saved.job_id;
         localStorage.removeItem(storageKey);
       } catch (_) {
