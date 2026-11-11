@@ -17,7 +17,7 @@ def test_web_and_browser_tools_are_host_only_without_remote_flag():
         "browser_scroll", "browser_close",
     ):
         assert registry.has(name)
-        assert "is_remote" not in registry.get(name).input_model.model_fields
+        assert "at_remote_pc" not in registry.get(name).input_model.model_fields
         # Existing model hallucinations must fail validation, not dispatch
         # a remote worker request or quietly ignore the unsupported flag.
         from mai.tools.registry import ToolArgumentsError
@@ -37,13 +37,13 @@ def test_web_and_browser_tools_are_host_only_without_remote_flag():
         elif name == "browser_scroll":
             sample["pixels"] = 100
         with pytest.raises(ToolArgumentsError):
-            definition.validate_arguments({**sample, "is_remote": True})
+            definition.validate_arguments({**sample, "at_remote_pc": True})
 
     # Other routed services retain remote capability.
     for name in ("current_time", "calculator"):
         model = registry.get(name).input_model
-        assert model.model_fields["is_remote"].default is False
-        assert model.model_fields["is_remote"].annotation is bool
+        assert model.model_fields["at_remote_pc"].default is False
+        assert model.model_fields["at_remote_pc"].annotation is bool
 
     context = next(
         entry for entry in registry.model_context()
