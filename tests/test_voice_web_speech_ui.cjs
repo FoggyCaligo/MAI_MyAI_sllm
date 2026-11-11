@@ -63,8 +63,24 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
   };
   vm.runInNewContext(source, sandbox);
   const flush = async () => {for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));};
+  // Manual TTS is independent: microphone stays inactive and no STT request is sent.
+  const completeAnswer = () => listeners['mai:answer-complete']({detail: {text: '반가워요'}});
+  completeAnswer();
+  assert.equal(utterances.length, 0, 'TTS must be off by default');
+  element('tts-toggle-btn').handlers.click();
+  completeAnswer();
+  assert.equal(utterances.length, 1, 'speaker button activates TTS without STT');
+  assert.equal(recognitions.length, 0);
+  assert.deepEqual(requests, []);
+  utterances[0].onend();
+  utterances.length = 0;
+
+  // The next mic off -> on transition enables TTS; no other STT transition does.
+  element('tts-toggle-btn').handlers.click();
+  assert.equal(element('tts-toggle-btn').title, 'Enable voice output');
   element('mic-btn').handlers.click();
   await flush();
+  assert.equal(element('tts-toggle-btn').title, 'Mute voice output');
   assert.equal(recognitions.length, 1);
   assert.equal(recognitions[0].started, true);
   assert.deepEqual(requests, ['/voice/config']);
@@ -74,7 +90,6 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
     recognition.onresult({resultIndex: 0, results: [{isFinal: true, 0: {transcript: '안녕하세요'}}]});
     recognition.onend();
   };
-  const completeAnswer = () => listeners['mai:answer-complete']({detail: {text: '반가워요'}});
   submitVoiceTurn();
   assert.equal(element('msg-input').value, '안녕하세요');
   assert.equal(sent, 1);
@@ -112,5 +127,9 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
   assert.equal(recognitions.length, 5, 'TTS-disabled reply must resume listening');
   element('mic-btn').handlers.click();
   assert.equal(recognitions[4].aborted, true);
-  console.log('PASS: Web Speech STT resumes after TTS completion, failure, or mute');
+  assert.equal(element('tts-toggle-btn').title, 'Enable voice output', 'mic off does not turn on TTS');
+  element('mic-btn').handlers.click();
+  await flush();
+  assert.equal(element('tts-toggle-btn').title, 'Mute voice output', 'mic on re-enables TTS');
+  console.log('PASS: STT/TTS independent; mic off-to-on enables TTS and retry never toggles it');
 })().catch(error => {console.error(error); process.exitCode = 1;});
