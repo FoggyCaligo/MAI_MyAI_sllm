@@ -18,9 +18,9 @@
 git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
 cd MAI_MyAI_sllm
 ./mai.sh setup
-mkdir -p portable/portable-models/gguf
-curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf
-curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf
+mkdir -p portable/portable-models/gguf/Ornith-1.5-9B
+curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf
+curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/mmproj-Ornith-1.5-9B-BF16.gguf
 ```
 #### 2. 각 명령어 별 설명
 **git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git**
@@ -29,11 +29,11 @@ MAI 프로젝트의 깃허브 레포를 클론(다운로드)한다.
 클론한 레포에 해당하는 폴더로 이동한다.
 **./mai.sh setup** 
 MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 묶은 설치스크립트를 실행한다.( 다운로드 하는 모든 목록은 3번에서 상세하게 설명한다.)
-**mkdir -p portable/portable-models/gguf**
-로컬llm모델을 설치할 폴더를 만든다.
-**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf**
+**mkdir -p portable/portable-models/gguf/Ornith-1.5-9B**
+Ornith 모델 전용 폴더를 만든다. 다른 모델도 각각 별도 하위 폴더를 사용한다.
+**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf**
 ornith-1.5:9b 이라는 로컬모델을 다운로드 받는다.
-**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf**
+**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/mmproj-Ornith-1.5-9B-BF16.gguf**
 ornith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmproj를 다운받는다.
 
 #### 3. 설치 스크립트가 하는 것
@@ -88,9 +88,34 @@ Hugging Face에서는 [Access Tokens](https://huggingface.co/settings/tokens)에
 1. 허깅페이스에서, llama.cpp이 지원하는 모델 중, 본인의 컴퓨터에서 가동 가능한 모델을 찾는다. 링크 : https://huggingface.co/models?apps=llama.cpp
 2. 모델을 찾았으면 클릭해서 상세 페이지로 이동, **Files** 탭으로 이동한다.
 3. Files 탭 내부의 검색창에서 ".gguf"를 검색한다.
-4. 나오는 파일들 중, 선택한 모델과 이름이 일치하는 파일 중 원하는 파일을 다운로드 한다. (**mmproj**로 시작하는 .gguf 파일이 있다면 그것도 같이 다운로드 한다)
-5. 다운로드한 모델 파일을 MAI 프로젝트의 다음 폴더에 넣는다. ./portable/portable-models/gguf/
+4. 원하는 모델 GGUF를 다운로드하고, 해당 모델에 맞는 mmproj GGUF가 있다면 함께 다운로드한다. 서로 다른 양자화 이름이어도 모델 전용 폴더에 같이 넣으면 된다.
+5. **모델마다 별도 폴더**를 만든다. 예를 들어 `./portable/portable-models/gguf/Gemma-4-E4B-Q8/` 안에 모델 GGUF 1개와 mmproj GGUF 최대 1개를 넣는다. 폴더 안에 모델 GGUF가 2개 있으면 오류가 난다.
 6. Git Bash에서 프로젝트 폴더로 이동 후, " **./mai.sh check** " 를 복사/붙여넣기/엔터 입력하여 모델 인식 상태를 확인한다.
+
+### 기존 평면 GGUF 폴더에서 이전하기
+
+기존 GGUF 파일은 다운로드할 필요 없이 **MAI가 종료된 상태에서** 모델별 폴더로 이동한다. 기존 데이터를 삭제하거나 덮어쓰지 말고 이동 대상의 파일이 없는지 먼저 확인한다. 아래는 Git Bash 예시이며 사용자 폴더에 실제로 존재하는 파일만 이동한다.
+
+```bash
+mkdir -p portable/portable-models/gguf/{Ornith-1.5-9B,Gemma-4-E4B-Q4,Gemma-4-E4B-Q8,Gemma-4-12B,LFM2.5-2.6B}
+move_gguf() {
+  local source="$1" destination="$2" target="$2/${1##*/}"
+  if [[ ! -f "$source" ]]; then echo "파일 없음: $source" >&2; return 1; fi
+  if [[ -e "$target" ]]; then echo "이미 존재함(덮어쓰기 거부): $target" >&2; return 1; fi
+  mv -- "$source" "$destination/"
+}
+move_gguf "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf" "portable/portable-models/gguf/Ornith-1.5-9B/"
+move_gguf "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf" "portable/portable-models/gguf/Ornith-1.5-9B/"
+move_gguf "portable/portable-models/gguf/gemma-4-E4B-it-Q4_K_M.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q4/"
+move_gguf "portable/portable-models/gguf/mmproj-gemma-4-E4B-it-BF16.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q4/"
+move_gguf "portable/portable-models/gguf/gemma-4-E4B-it-Q8_0.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q8/"
+move_gguf "portable/portable-models/gguf/mmproj-gemma-4-E4B-it-Q8_0.gguf" "portable/portable-models/gguf/Gemma-4-E4B-Q8/"
+move_gguf "portable/portable-models/gguf/gemma-4-12b-it-qat-q4_0.gguf" "portable/portable-models/gguf/Gemma-4-12B/"
+move_gguf "portable/portable-models/gguf/mmproj-gemma-4-12b-it-qat-q4_0.gguf" "portable/portable-models/gguf/Gemma-4-12B/"
+move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/portable-models/gguf/LFM2.5-2.6B/
+```
+"
+`active.gguf` 및 `.cache/`는 모델 폴더로 옮기지 않는다. 기본 모델의 새 경로는 `settings.yaml`에 반영되어 있다. 수동 이동을 완료하지 않고 시작하면 기본 모델을 찾지 못하므로 명시적으로 실패한다. `./mai.sh check`로 먼저 점검하고 재시작한다.
 
 ## 4. 실행시키는 방법
 ```bash
@@ -128,9 +153,9 @@ Hugging Face에서는 [Access Tokens](https://huggingface.co/settings/tokens)에
 
 | 설정 | 기능 |
 |---|---|
-| `LLAMACPP_GGUF_DIRECTORY` | 모델 목록을 탐색할 폴더 |
+| `LLAMACPP_GGUF_DIRECTORY` | 모델별 하위 폴더를 탐색할 상위 폴더 |
 | `LLAMACPP_MAIN_GGUF_PATH` | 기본 GGUF |
-| `LLAMACPP_MAIN_MMPROJ_PATH`, `LLAMACPP_MAIN_VISION` | 비전 projector와 이미지 입력 |
+| 모델 전용 폴더의 `mmproj-*.gguf` | 해당 모델 프리셋의 이미지 입력용 projector 자동 연결 |
 | `LLAMACPP_REASONING_PRESERVE` | llama.cpp 추론 보존 여부 |
 | `MODEL_MAX_OUTPUT_TOKENS` | 모델 출력 토큰 한도(기본 32768) |
 | `MODEL_REQUEST_TIMEOUT_SECONDS` | **각 llama.cpp 모델 호출** 제한 시간(기본 500초, 전체 사용자 요청 시간 한도가 아님) |

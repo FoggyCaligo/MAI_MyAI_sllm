@@ -1,11 +1,8 @@
 """Structural catalog of local llama.cpp GGUF models.
 
-The only discovery criterion is a regular GGUF file in the configured model
-directory, excluding explicitly configured multimodal projector paths and
-files conventionally named mmproj-*.gguf or mmproj_*.gguf.
-Only an explicit default projector or an exact mmproj- / mmproj_ companion
-filename associates a projector with a model; never infer a model family's
-vision capability from its name.
+Each direct child directory contains exactly one model GGUF and optionally one
+mmproj GGUF. The folder is the association boundary, independent of model
+or projector quantization names. Unsupported or ambiguous layouts fail visibly.
 """
 from __future__ import annotations
 
@@ -39,83 +36,71 @@ def is_mmproj_filename(path: Path) -> bool:
 
 
 def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
+    """Discover exactly one model and at most one projector in each model folder."""
     root = root.resolve()
-    main_raw = config.get("LLAMACPP_MAIN_GGUF_PATH")
-    if not isinstance(main_raw, str) or not main_raw.strip():
-        raise ValueError("LLAMACPP_MAIN_GGUF_PATH is required as the default model")
-    default_path = resolve_path(root, main_raw)
-    valid_gguf(default_path)
-    if is_mmproj_filename(default_path):
-        raise ValueError("Default main GGUF cannot be an mmproj projector")
+    for old_key in ("LLAMACPP_MAIN_MMPROJ_PATH", "LLAMACPP_VISION_MMPROJ_PATH", "LLAMACPP_MODEL_MMPROJ_MAP"):
+        if config.get(old_key):
+            raise ValueError(f"{old_key} is obsolete; place the model and mmproj in one folder")
     directory_raw = config.get("LLAMACPP_GGUF_DIRECTORY")
-    directory = (resolve_path(root, directory_raw) if isinstance(directory_raw, str)
-                 and directory_raw.strip() else default_path.parent)
+    main_raw = config.get("LLAMACPP_MAIN_GGUF_PATH")
+    if not isinstance(directory_raw, str) or not directory_raw.strip():
+        raise ValueError("LLAMACPP_GGUF_DIRECTORY is required")
+    if not isinstance(main_raw, str) or not main_raw.strip():
+        raise ValueError("LLAMACPP_MAIN_GGUF_PATH is required")
+    directory = resolve_path(root, directory_raw)
     if not directory.is_dir():
         raise ValueError(f"GGUF directory does not exist: {directory}")
-    if not default_path.is_relative_to(directory):
-        raise ValueError("Default main GGUF must be in the configured GGUF directory")
-    excluded: set[Path] = set()
-    for key in ("LLAMACPP_MAIN_MMPROJ_PATH", "LLAMACPP_VISION_MMPROJ_PATH"):
-        raw = config.get(key)
-        if isinstance(raw, str) and raw.strip():
-            path = resolve_path(root, raw)
-            valid_gguf(path)
-            excluded.add(path)
-    if default_path in excluded:
-        raise ValueError("Main model cannot also be a projector")
-    # A projector is associated only by an explicit default-model setting
-    # or by the exact documented companion-file naming convention.
-    # Never infer multimodal capability from the model family or architecture.
-    explicit_projector_raw = config.get("LLAMACPP_MAIN_MMPROJ_PATH")
-    explicit_projector = (
-        resolve_path(root, explicit_projector_raw)
-        if isinstance(explicit_projector_raw, str) and explicit_projector_raw.strip()
-        else None
-    )
+    default_path = resolve_path(root, main_raw)
+    valid_gguf(default_path)
+    if not default_path.is_relative_to(directory) or default_path.parent == directory:
+        raise ValueError("Default GGUF must be inside a direct child model directory")
+    if default_path.parent.parent != directory:
+        raise ValueError("Nested GGUF model directories are unsupported")
+    if is_mmproj_filename(default_path):
+        raise ValueError("Default GGUF cannot be a projector")
 
-    def companion_projector(model_path: Path) -> Path | None:
-        candidates = [
-            model_path.with_name(prefix + model_path.name)
-            for prefix in ("mmproj-", "mmproj_")
-        ]
-        present = [candidate for candidate in candidates if candidate.is_file()]
-        if len(present) > 1:
-            raise ValueError(f"Ambiguous mmproj companions for {model_path}: {present}")
-        if not present:
-            return None
-        projector_path = present[0].resolve(strict=True)
-        valid_gguf(projector_path)
-        return projector_path
-
+    # A model folder is the authoritative association boundary. No model-name
+    # matching, quantization matching, or explicit global projector fallback.
     entries: list[dict[str, str | None]] = []
     ids: set[str] = set()
-    for path in sorted(directory.glob("*.gguf")):
-        resolved = path.resolve(strict=True)
-        if resolved in excluded or is_mmproj_filename(resolved):
+    for folder in sorted(directory.iterdir()):
+        if folder.name.startswith("."):
+            continue  # Ignore cache/metadata folders, not model installations.
+        if not folder.is_dir():
             continue
-        valid_gguf(resolved)
-        # Stable ID comes from the exact canonical path, not a naming heuristic.
-        model_id = "gguf-" + hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:20]
+        if folder.is_symlink() or folder.resolve() != folder:
+            raise ValueError(f"GGUF model folder must not be a symlink: {folder}")
+        files = sorted(path for path in folder.iterdir() if path.is_file() and path.suffix.lower() == ".gguf")
+        if not files:
+            raise ValueError(f"GGUF model folder contains no GGUF file: {folder}")
+        for path in files:
+            if path.is_symlink() or path.resolve().parent != folder:
+                raise ValueError(f"GGUF file must stay in its model folder: {path}")
+            valid_gguf(path)
+        models = [path for path in files if not is_mmproj_filename(path)]
+        projectors = [path for path in files if is_mmproj_filename(path)]
+        if len(models) != 1:
+            raise ValueError(f"Expected exactly one model GGUF in {folder}, found {len(models)}")
+        if len(projectors) > 1:
+            raise ValueError(f"Expected at most one mmproj GGUF in {folder}, found {len(projectors)}")
+        model = models[0].resolve(strict=True)
+        projector = projectors[0].resolve(strict=True) if projectors else None
+        model_id = "gguf-" + hashlib.sha256(str(model).encode("utf-8")).hexdigest()[:20]
         if model_id in ids:
-            raise ValueError(f"Duplicate GGUF identity: {resolved}")
+            raise ValueError(f"Duplicate GGUF identity: {model}")
         ids.add(model_id)
-        projector_path = (
-            explicit_projector if resolved == default_path and explicit_projector is not None
-            else companion_projector(resolved)
-        )
         entries.append({
-            "id": model_id, "label": resolved.name, "path": str(resolved),
-            "projector": str(projector_path) if projector_path else None,
+            "id": model_id, "label": model.name, "path": str(model),
+            "projector": str(projector) if projector else None,
         })
-    default = next((entry["id"] for entry in entries if Path(entry["path"]) == default_path), None)
-    if default is None:
-        raise ValueError("Default main GGUF was not discovered")
-    projector_raw = config.get("LLAMACPP_MAIN_MMPROJ_PATH")
-    projector = resolve_path(root, projector_raw) if isinstance(projector_raw, str) and projector_raw else None
+
+    default_entry = next((entry for entry in entries if entry["path"] == str(default_path)), None)
+    if default_entry is None:
+        raise ValueError("Default GGUF was not found in a model directory")
     return {
-        "default": default, "models": entries,
-        "projector": str(projector) if projector else None,
-        "main_vision": bool(config.get("LLAMACPP_MAIN_VISION")),
+        "default": default_entry["id"], "models": entries,
+        "projector": default_entry["projector"],
+        "main_vision": default_entry["projector"] is not None,
         "reasoning_preserve": config.get("LLAMACPP_REASONING_PRESERVE", False),
         "cache_ram_mib": int(config.get("LLAMACPP_CACHE_RAM_MIB", 8192)),
         "memory_guard_enabled": config.get("LLAMACPP_MEMORY_GUARD_ENABLED", True),
