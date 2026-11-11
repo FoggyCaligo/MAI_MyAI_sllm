@@ -105,6 +105,20 @@ class PartialCompletion:
             self.finish_reason = finish
         self.chunks += 1
 
+    def ready_tool_call_count(self) -> int:
+        """Count tool calls with a complete function name and JSON object arguments."""
+        count = 0
+        for parts in self.tool_fragments.values():
+            if not parts["name"].strip() or not parts["arguments"].strip():
+                continue
+            try:
+                arguments = json.loads(parts["arguments"])
+            except json.JSONDecodeError:
+                continue  # Still assembling: not an executable tool call yet.
+            if isinstance(arguments, dict):
+                count += 1
+        return count
+
     def completed_response(self) -> dict[str, Any]:
         if not self.saw_done or self.finish_reason is None:
             raise ModelProtocolError("llama.cpp streaming response did not complete")
@@ -184,6 +198,9 @@ async def stream_completion(
                                     "".join(partial.thinking_parts),
                                     content_chars=sum(map(len, partial.content_parts)),
                                     tool_fragment_count=len(partial.tool_fragments),
+                tool_call_ready_count=partial.ready_tool_call_count(),
+                        tool_call_ready_count=partial.ready_tool_call_count(),
+                                    tool_call_ready_count=partial.ready_tool_call_count(),
                                 )
                                 partial.reasoning_diagnostics = diagnostic
                                 if diagnostic["status"] != last_monitor_status and diagnostic["status"] in {
