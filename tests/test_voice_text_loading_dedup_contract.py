@@ -26,7 +26,7 @@ def test_form_submission_blocks_inflight_job_recovery_before_job_id():
 
 
 def test_stale_history_cannot_replace_foreground_loader():
-    assert "currentSubmissionJobId || hasForegroundChat()) return;" in CHAT
+    assert "currentSubmissionJobId || hasForegroundChat() || !state?.token) return;" in CHAT
     assert "epoch !== historyEpoch || resettingConversation ||" in CHAT
     assert "renderPersistentHistory(Array.isArray(data.messages) ? data.messages : []);" in CHAT
 
