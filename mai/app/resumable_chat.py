@@ -179,6 +179,20 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 chat_job_store.update_stream_progress(
                     job_id, model_round=round_number, partial=partial,
                 )
+                if partial.get("recovery_event") == "reasoning_loop_interrupted":
+                    # Retain metadata only; never audit or replay the incomplete
+                    # reasoning or partly generated native tool-call arguments.
+                    diagnostic = partial.get("reasoning_diagnostics")
+                    audit.append(
+                        job_id, "model", "Reasoning loop interrupted; next model turn",
+                        round_number=round_number, status="RECOVERED",
+                        details={
+                            "event": "reasoning_loop_interrupted",
+                            "reasoning_diagnostics": diagnostic,
+                            "partial_output_discarded": True,
+                            "tool_calls_executed": False,
+                        },
+                    )
 
             def publish_round_timing(round_number: int, details: dict[str, object]) -> None:
                 audit.append_timing(job_id, round_number, details)
