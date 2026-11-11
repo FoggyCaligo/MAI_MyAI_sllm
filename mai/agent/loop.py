@@ -424,6 +424,16 @@ class AgentLoop:
                             "reasoning_diagnostics": diagnostic,
                             "recovery_event": "reasoning_loop_interrupted",
                         })
+                    # Keep only the most recent recovery instruction in model
+                    # context. Repeated recoveries have no count limit but
+                    # must not accumulate identical system prompts forever.
+                    history[:] = [
+                        item for item in history
+                        if not (
+                            item.get("role") == "system"
+                            and str(item.get("content", "")).startswith("[REASONING_LOOP_DETECTED]")
+                        )
+                    ]
                     history.append({
                         "role": "system",
                         "content": (
