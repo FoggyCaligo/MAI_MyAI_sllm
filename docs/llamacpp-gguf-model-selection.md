@@ -4,20 +4,37 @@
 
 ## 모델 목록과 기본값
 
-`settings.yaml`:
+모델별로 독립 폴더를 사용한다. 폴더 이름은 자유롭지만 각 폴더 안에는 **모델 GGUF 정확히 1개**와 **mmproj GGUF 0개 또는 1개**만 허용한다. 모델의 Q4/Q8과 mmproj의 BF16/Q8 이름이 서로 달라도 같은 폴더면 연결된다.
+
+```text
+portable/portable-models/gguf/
+├── Ornith-1.5-9B/
+│   ├── Ornith-1.5-9B-Q4_K_M.gguf
+│   └── mmproj-Ornith-1.5-9B-BF16.gguf
+├── Gemma-4-E4B-Q4/
+│   ├── gemma-4-E4B-it-Q4_K_M.gguf
+│   └── mmproj-gemma-4-E4B-it-BF16.gguf
+├── Gemma-4-E4B-Q8/
+│   ├── gemma-4-E4B-it-Q8_0.gguf
+│   └── mmproj-gemma-4-E4B-it-Q8_0.gguf
+└── LFM2.5-2.6B/
+    └── LFM2.5-2.6B-Q4_K_M.gguf
+```
+
+`settings.yaml`의 기본 모델 경로는 다음과 같다.
 
 ```yaml
 LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"
-LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"
-LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"
-LLAMACPP_MAIN_VISION: true
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf"
 ```
 
-* `LLAMACPP_GGUF_DIRECTORY` 아래의 **직접 자식 `.gguf` 파일**을 실행 시 읽고, GGUF 매직 헤더를 확인한다. 디렉터리가 없거나 잘못된 파일이 있으면 시작을 실패로 처리한다.
-* 설정에 **명시된** `LLAMACPP_MAIN_MMPROJ_PATH` 및 `LLAMACPP_VISION_MMPROJ_PATH`, `mmproj-` / `mmproj_`로 시작하는 GGUF는 모델 선택 목록에서 제외한다. 기본 모델에는 기존 `LLAMACPP_MAIN_MMPROJ_PATH`를 우선 적용한다. 다른 모델은 같은 폴더에 정확히 `mmproj-<모델 GGUF 파일명>` 또는 `mmproj_<모델 GGUF 파일명>`인 파일이 하나 존재할 때 해당 프리셋의 projector로 등록한다. 대응 파일이 없으면 projector를 지정하지 않으며, 두 파일이 동시에 대응하면 명시적 오류를 낸다.
-* `LLAMACPP_MAIN_GGUF_PATH`는 **기본 선택 모델**이며 탐색 폴더 안에 있어야 한다. 실행기가 등록된 GGUF의 내부 모델 ID를 `MAIN_MODEL` 환경변수에 지정한다. 선택한 같은 모델 ID를 Main·Verifier·기억 추출에 전달한다.
-* 파일명은 UI 표시 이름이고, 내부 라우터 ID는 **정규화된 GGUF 경로의 SHA-256 기반 ID**다. 따라서 사용자가 임의의 임시 ID를 입력해 로드할 수 없다.
-* 모델 파일 목록은 **프로세스 시작 시 생성된 고정 스냅샷**이다. 파일 추가·삭제 또는 `settings.yaml` 변경을 반영하려면 MAI Portable 서버를 재시작한다. 실행 중 목록과 등록된 라우터가 달라지면 명시적으로 오류를 반환한다.
+- 설정한 상위 폴더의 **직접 자식 폴더**만 모델 설치 디렉터리로 판단한다. `.cache`와 같은 숨김 폴더는 제외한다. 상위 폴더에 남은 평면 GGUF는 새 카탈로그 대상이 아니다.
+- 모델 GGUF는 일반 `.gguf` 파일, 프로젝터 GGUF는 `mmproj-` 또는 `mmproj_` 접두사가 붙은 `.gguf` 파일로 구분한다. 이는 파일 역할을 구분하는 규칙이지, 모델 호환성을 파일명으로 추측하는 규칙이 아니다.
+- 모델 하나에 프로젝터가 여러 개이거나, 같은 폴더에 모델 GGUF가 여러 개이면 **자동 선택 없이 실패**한다. 파일이 누락되거나 GGUF 헤더가 올바르지 않아도 시작을 실패로 처리한다.
+- 별도의 `LLAMACPP_MAIN_MMPROJ_PATH` 또는 모델별 JSON 연결표는 사용하지 않는다. 이전 설정값이 남아 있으면 무시하지 않고 명시적인 오류를 반환한다.
+- 선택한 GGUF의 경로를 해시한 내부 ID가 UI에 등록되며, Main·Verifier·기억 추출은 같은 모델 ID를 사용한다.
+- 모델 목록과 프리셋은 **MAI 시작 시 스냅샷**으로 생성된다. 폴더를 추가하거나 파일을 이동한 다음에는 `./mai.sh check` 후 재시작한다. 선택 UI에서 모델을 바꾸면 같은 폴더의 프로젝터를 포함한 프리셋으로 전환한다.
+- **기존 평면 폴더에서의 마이그레이션:** 모든 GGUF를 대응하는 모델 전용 폴더로 이동하고 `LLAMACPP_MAIN_GGUF_PATH`를 갱신해야 한다. 구체적인 안전 이전 예시는 [설치 안내](../setup.md)를 참고한다.
 
 ## Reasoning 설정
 
@@ -65,7 +82,7 @@ LLAMACPP_REASONING_PRESERVE: false
 5. 성공일 때만 UI에서 선택 상태를 확정한다. 오류가 나면 오류를 보이고 원래 선택을 되돌린다. **오류를 다른 모델 재시도나 묵시적 fallback으로 숨기지 않는다.**
 6. 이후 그 모델 ID로 생성·검증·기억 사실 추출을 수행한다. 서로 다른 추론 프롬프트를 사용하며 KV 캐시 공유는 보장하지 않는다.
 
-**동일 GGUF를 계속 사용할 때는 강제 언로드·재로드하지 않는다.** Main과 Verifier는 같은 모델 가중치를 사용하되 프롬프트·검증 계약은 분리된다. 이미지 첨부는 선택한 모델 프리셋에 projector가 연결된 경우에만 전달한다. 기본 Ornith용 mmproj를 다른 모델에 적용하지 않는다. 파일 이름이 대응하더라도 실제 모델·projector 호환성은 llama.cpp 로딩으로 검증해야 한다.
+**동일 GGUF를 계속 사용할 때는 강제 언로드·재로드하지 않는다.** Main과 Verifier는 같은 모델 가중치를 사용하되 프롬프트·검증 계약은 분리된다. 이미지 첨부는 선택한 모델 폴더에 mmproj가 연결된 경우에만 전달한다. 다른 폴더의 mmproj를 대신 연결하지 않으며 실제 호환성은 llama.cpp에서 검증한다.
 
 **시간 제한:** `MODEL_REQUEST_TIMEOUT_SECONDS: 300`은 각 모델 API 요청의 기본 제한이다. 요청 전체, 도구 실행 또는 GAIA 문제별 제한과 혼동하지 않는다. Verifier는 배포 설정 `MAI_VERIFIER_ENABLED: false`에서 기본적으로 꺼져 있다.
 
@@ -77,7 +94,7 @@ python -m pytest -q tests/test_llamacpp_auto_catalog_and_switch.py tests/test_ll
 
 | 검사 | 범위 |
 |---|---|
-| GGUF 카탈로그 | 직접 자식 파일, 기본 모델, projector 제외 |
+| GGUF 카탈로그 | 모델별 직접 자식 폴더, 1개 모델/최대 1개 projector, 기본 모델 경로 검증 |
 | 모델 전환 | 상태 확인, 언로드·로드 순서, 실패 처리 |
 | 동일 모델 사용 | Main → Verifier 호출 시 불필요한 재로드 방지 |
 | 실제 GPU 추론·VRAM | **실기기 확인 필요** |
