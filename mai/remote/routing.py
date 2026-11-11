@@ -28,7 +28,7 @@ def _add_routed_definitions(
     for definition in definitions.definitions():
         if definition.category in host_only_categories:
             # External search and browser sessions always belong to the MAI
-            # host. Do not expose or accept is_remote for these tools.
+            # host. Do not expose or accept at_remote_pc for these tools.
             registry.add(
                 name=definition.name,
                 description=definition.description,
@@ -42,21 +42,21 @@ def _add_routed_definitions(
         routed_model = create_model(
             f"Routed{definition.input_model.__name__}",
             __base__=definition.input_model,
-            is_remote=(bool, False),
+            at_remote_pc=(bool, False),
         )
 
         async def invoke(_definition=definition, **kwargs: Any) -> Any:
-            remote = kwargs.pop("is_remote")
+            remote = kwargs.pop("at_remote_pc")
             if not remote:
                 return await _definition.invoke(kwargs)
             session = remote_sessions.owner_session(owner_id)
             if session is None:
-                raise RemoteExecutionError("is_remote=true requires an active remote session")
+                raise RemoteExecutionError("at_remote_pc=true requires an active remote session")
             target = ExecutionTarget(owner_id=owner_id, remote_session_id=session.session_id)
             response = await target.execute(
                 "native.invoke",
                 {"name": _definition.name, "arguments": kwargs},
-                is_remote=True,
+                at_remote_pc=True,
             )
             # Transport envelope is distinct from the tool's own result.
             # A missing value is a protocol failure, not a successful null.
@@ -83,15 +83,15 @@ def _add_remote_context(registry: ToolRegistry, names: tuple[str, ...], key: str
         tools=names,
         context={
             "default": (
-                "Owner native-tool calls accept is_remote (boolean, default false) "
+                "Owner native-tool calls accept at_remote_pc (boolean, default false) "
                 "when that field is declared in the activated tool schema. "
-                "Pass is_remote in the native tool arguments object."
+                "Pass at_remote_pc in the native tool arguments object."
             ),
             "remote": (
-                "is_remote=true executes on the connected owner-authorized Windows or Linux worker. "
+                "at_remote_pc=true executes on the connected owner-authorized Windows or Linux worker. "
                 "The terminal_run shell defaults to Bash (Git Bash on Windows, Bash on Linux); "
                 "select shell=cmd or shell=powershell explicitly for Windows-specific commands. "
-                "Web search, web fetch and browser navigation always run on the MAI host and do not accept is_remote."
+                "Web search, web fetch and browser navigation always run on the MAI host and do not accept at_remote_pc."
             ),
             "session_selection": (
                 "The host resolves the authenticated account's session; "
