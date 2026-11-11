@@ -1,6 +1,5 @@
 (() => {
   const mic = document.getElementById('mic-btn');
-  const enroll = document.getElementById('voice-enroll-btn');
   const speaker = document.getElementById('tts-toggle-btn');
   const voiceSelect = document.getElementById('tts-voice-select');
   const voiceStorageKey = 'mai.tts.voiceURI';
@@ -311,17 +310,14 @@
     if (!active) return;
     const capture = active;
     active = null;
-    if (capture.mode === 'enroll') setVoiceMode(false);
     capture.processor.disconnect();
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
     await capture.context.close();
-    if (discard || (capture.mode === 'transcribe' && !voiceMode)) return;
-    if (!capture.chunks.length || (capture.mode === 'enroll' && capture.speechSeconds < capture.enrollmentMinSpeechSeconds)) {
-      setStatus(capture.mode === 'enroll'
-        ? `목소리 등록에는 최소 ${capture.enrollmentMinSpeechSeconds}초 발화가 필요해. 다시 등록해 줘.`
-        : '녹음 데이터가 없어 다시 듣는 중…', true);
-      if (capture.mode === 'transcribe' && voiceMode) await start('transcribe');
+    if (discard || (!voiceMode)) return;
+    if (!capture.chunks.length) {
+      setStatus('녹음 데이터가 없어 다시 듣는 중…', true);
+      if (voiceMode) await start('transcribe');
       return;
     }
     const data = new Float32Array(capture.chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -331,20 +327,13 @@
     body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
     let retryAfterRecoverableVoiceFailure = false;
     try {
-      setStatus(capture.mode === 'enroll' ? '목소리 특징 등록 중…' : '음성 인식 중…');
-      const path = capture.mode === 'enroll' ? '/voice/enroll' : '/voice/transcribe';
-      const result = await request(path, {method: 'POST', body});
-      if (capture.mode === 'enroll') {
-        enroll.hidden = true;
-        setStatus('목소리 등록 완료. 마이크 버튼으로 음성 입력할 수 있어.');
-      } else {
-        submitRecognizedText(result.text);
-      }
+      setStatus('음성 인식 중…');
+      const result = await request('/voice/transcribe', {method: 'POST', body});
+      submitRecognizedText(result.text);
     } catch (error) {
       setStatus(`음성 처리 실패: ${error.message}`, true);
-      retryAfterRecoverableVoiceFailure = capture.mode === 'transcribe' &&
-        ((error.status === 403 && error.code === 'speaker_mismatch') ||
-         (error.status === 422 && error.code === 'insufficient_speech'));
+      retryAfterRecoverableVoiceFailure =
+        error.status === 422 && error.code === 'insufficient_speech';
     } finally {
       mic.disabled = false;
     }
@@ -355,7 +344,7 @@
   }
 
   async function start(mode) {
-    if (starting || active || webRecognition || (mode === 'transcribe' && !voiceMode)) return;
+    if (starting || active || webRecognition || !voiceMode) return;
     const revision = modeRevision;
     starting = true;
     try {
@@ -363,23 +352,12 @@
       if (!['local', 'web_speech'].includes(config.stt_provider)) {
         throw new Error('서버의 STT 제공자 설정 계약이 유효하지 않아.');
       }
-      if (mode === 'transcribe' && config.stt_provider === 'web_speech') {
-        enroll.hidden = true;
+      if (config.stt_provider === 'web_speech') {
         if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
         return;
       }
-      if (mode === 'transcribe' && config.speaker_verification_required === false) enroll.hidden = true;
-      if (mode === 'transcribe' && config.speaker_verification_required !== false && !config.enrolled) {
-        enroll.hidden = false;
-        setStatus('등록된 음성 프로필을 찾지 못했어. 서버의 VOICE_PROFILE_DIR 및 로그인 계정 db_id를 확인해 줘.', true);
-        return;
-      }
-      if (mode === 'enroll' && config.enrolled) {
-        setStatus('이미 목소리가 등록돼 있어. 재등록은 현재 지원하지 않아.', true);
-        return;
-      }
       const stream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
-      if (mode === 'transcribe' && (!voiceMode || revision !== modeRevision)) {
+      if ((!voiceMode || revision !== modeRevision)) {
         stream.getTracks().forEach(track => track.stop());
         return;
       }
@@ -392,11 +370,10 @@
       processor.connect(sink);
       sink.connect(context.destination);
       const capture = {
-        mode, stream, context, source, processor, chunks: [],
-        sampleRate: context.sampleRate, speechSeconds: 0,
+        stream, context, source, processor, chunks: [],
+        sampleRate: context.sampleRate,
         lastSpeechEnd: null, lastCheck: context.currentTime, checking: false, began: context.currentTime,
-        silenceSeconds: config.silence_seconds,
-        enrollmentMinSpeechSeconds: config.enrollment_min_speech_seconds
+        silenceSeconds: config.silence_seconds
       };
       active = capture;
       processor.onaudioprocess = event => {
@@ -404,11 +381,7 @@
         const pcm = event.inputBuffer.getChannelData(0);
         const chunk = new Float32Array(pcm);
         capture.chunks.push(chunk);
-        let sum = 0;
-        for (let i = 0; i < chunk.length; i += 1) sum += chunk[i] * chunk[i];
-        const speech = Math.sqrt(sum / chunk.length) > 0.012;
         const now = context.currentTime;
-        if (speech) capture.speechSeconds += chunk.length / capture.sampleRate;
         if (now - capture.began >= 120) {
           void finish();
         } else if (now - capture.lastCheck >= 1 && !capture.checking) {
@@ -416,7 +389,7 @@
           void checkSpeechEnd(capture);
         }
       };
-      setStatus(mode === 'enroll' ? `목소리 등록 녹음 중 (최소 ${capture.enrollmentMinSpeechSeconds}초 말해 줘)` : '듣고 있어. 마지막 말이 끝난 뒤 설정된 시간이 지나면 종료돼.');
+      setStatus('브라우저에서 듣고 있어. 마지막 발화 뒤 설정된 시간이 지나면 전송해.');
     } catch (error) {
       setStatus(`마이크 시작 실패: ${error.message}`, true);
     } finally {
@@ -434,10 +407,6 @@
     }
     setVoiceMode(true);
     void start('transcribe');
-  });
-  enroll.addEventListener('click', () => {
-    if (active) { void finish(); return; }
-    void start('enroll');
   });
   if (!navigator.mediaDevices?.getUserMedia) {
     mic.disabled = true;
