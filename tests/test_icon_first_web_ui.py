@@ -43,3 +43,15 @@ def test_status_and_accessibility_english():
     assert 'aria-label="Verify answers"' in HTML
     assert 'aria-label="Model"' in HTML
     assert 'aria-label="Voice"' in HTML
+
+
+def test_header_wraps_actions_only_when_needed():
+    assert "header { display:flex; flex-wrap:wrap;" in HTML
+    assert ".header-top { display:flex; flex:1 1 280px;" in HTML
+    assert ".header-right { display:flex; flex:0 0 auto;" in HTML
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in HTML
+    assert "#model-select, #tts-voice-select {" in HTML
+    assert 'id="identity"' not in HTML
+    assert 'id="connection"' not in HTML
+    assert 'class="header-top"' in HTML
+    assert 'class="header-right"' in HTML
