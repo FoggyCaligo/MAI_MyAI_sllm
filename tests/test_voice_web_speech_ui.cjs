@@ -63,6 +63,18 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
   };
   vm.runInNewContext(source, sandbox);
   const flush = async () => {for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));};
+  // TTS can be enabled and play answers without ever activating STT.
+  const completeAnswer = () => listeners['mai:answer-complete']({detail: {text: '반가워요'}});
+  completeAnswer();
+  assert.equal(utterances.length, 0, 'TTS starts disabled');
+  element('tts-toggle-btn').handlers.click();
+  completeAnswer();
+  assert.equal(utterances.length, 1, 'TTS enabled without STT must speak');
+  assert.equal(recognitions.length, 0, 'Speaking alone must not start recognition');
+  assert.deepEqual(requests, [], 'TTS alone must not request STT configuration');
+  utterances[0].onend();
+  utterances.length = 0;
+
   element('mic-btn').handlers.click();
   await flush();
   assert.equal(recognitions.length, 1);
@@ -74,7 +86,6 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'mai', 'app', 'static'
     recognition.onresult({resultIndex: 0, results: [{isFinal: true, 0: {transcript: '안녕하세요'}}]});
     recognition.onend();
   };
-  const completeAnswer = () => listeners['mai:answer-complete']({detail: {text: '반가워요'}});
   submitVoiceTurn();
   assert.equal(element('msg-input').value, '안녕하세요');
   assert.equal(sent, 1);
