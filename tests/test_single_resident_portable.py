@@ -19,8 +19,9 @@ def test_linux_llamacpp_router_allows_one_resident_model_only():
 
 def test_settings_uses_ornith_main_and_matching_projector():
     content = (ROOT / "settings.yaml").read_text(encoding="utf-8")
-    assert 'LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B-Q4_K_M.gguf"' in content
-    assert 'LLAMACPP_MAIN_MMPROJ_PATH: "portable/portable-models/gguf/mmproj-Ornith-1.5-9B-BF16.gguf"' in content
+    assert 'LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf"' in content
+    assert 'LLAMACPP_MAIN_MMPROJ_PATH:' not in content
+    assert 'LLAMACPP_MODEL_MMPROJ_MAP:' not in content
     assert 'LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"' in content
 
 def test_windows_and_linux_router_take_64k_context_from_settings():
