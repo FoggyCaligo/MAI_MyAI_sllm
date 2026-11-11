@@ -34,7 +34,7 @@
     button.title = 'Starting new chat…';
     try {
       if (typeof window.maiResetConversation !== 'function') {
-        throw new Error('대화 초기화 기능이 준비되지 않았습니다.');
+        throw new Error('Chat reset is unavailable.');
       }
       await window.maiResetConversation();
       document.getElementById('msg-input')?.focus();
