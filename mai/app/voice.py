@@ -10,6 +10,8 @@ import wave
 from fastapi import HTTPException
 
 _LOG = logging.getLogger("uvicorn.error")
+MAX_RECORDING_SECONDS = 120
+MAX_RECORDING_BYTES = 20 * 1024 * 1024
 
 
 class VoiceService:
@@ -19,14 +21,23 @@ class VoiceService:
             raise ValueError("VOICE_SILENCE_SECONDS must be between 1 and 120")
         self._vad = None
         self._transcriber = None
-        self._lock = Lock()
+        self._vad_lock = Lock()
+        self._transcription_lock = Lock()
+
+    def _speech_segments(self, audio):
+        with self._vad_lock:
+            if self._vad is None:
+                from vadonnx import load_vad
+
+                self._vad = load_vad("silero")
+            return self._vad.get_speech_segments(audio, sample_rate=16000, min_speech_duration=0.0)
 
     def _waveform(self, payload: bytes, *, minimum_seconds: float = 0.0):
         import numpy as np
         from scipy.signal import resample_poly
         from math import gcd
 
-        if len(payload) > 20 * 1024 * 1024:
+        if len(payload) > MAX_RECORDING_BYTES:
             raise HTTPException(413, "voice recording exceeds 20 MB")
         try:
             with wave.open(io.BytesIO(payload), "rb") as file:
@@ -35,8 +46,8 @@ class VoiceService:
                 )
                 if channels != 1 or width != 2 or rate < 8000 or rate > 96000:
                     raise ValueError("expected mono 16-bit PCM WAV, sample rate 8–96 kHz")
-                if count / rate > 120:
-                    raise ValueError("voice recording must not exceed 120 seconds")
+                if count / rate > MAX_RECORDING_SECONDS:
+                    raise ValueError(f"voice recording must not exceed {MAX_RECORDING_SECONDS} seconds")
                 pcm = np.frombuffer(file.readframes(count), dtype="<i2").astype("float32") / 32768.0
         except (EOFError, wave.Error, ValueError) as exc:
             raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
@@ -46,11 +57,7 @@ class VoiceService:
             raise HTTPException(422, {"code": "insufficient_speech", "message": f"at least {minimum_seconds:g} seconds of recording is required"})
         divisor = gcd(rate, 16000)
         processed = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
-        if self._vad is None:
-            from vadonnx import load_vad
-            self._vad = load_vad("silero")
-        vad = self._vad
-        timestamps = vad.get_speech_segments(processed, sample_rate=16000, min_speech_duration=0.0)
+        timestamps = self._speech_segments(processed)
         if not timestamps:
             raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
         speech = np.concatenate([processed[int(segment.start * 16000):int(segment.end * 16000)] for segment in timestamps])
@@ -58,12 +65,11 @@ class VoiceService:
             raise HTTPException(422, {"code": "insufficient_speech", "message": "not enough speech detected in recording"})
         return speech
 
-    def last_speech_end(self, payload: bytes) -> float | None:
-        """Find the last real speech boundary in a short recording using ONNX VAD."""
+    def speech_bounds(self, payload: bytes) -> tuple[float | None, float | None]:
+        """Find the first and last speech boundaries in a short recording."""
         import numpy as np
         from scipy.signal import resample_poly
         from math import gcd
-        from vadonnx import load_vad
 
         if len(payload) > 2 * 1024 * 1024:
             raise HTTPException(413, "voice activity window exceeds 2 MB")
@@ -80,19 +86,16 @@ class VoiceService:
         except (EOFError, wave.Error, ValueError) as exc:
             raise HTTPException(422, f"invalid WAV recording: {exc}") from exc
 
-        with self._lock:
-            if self._vad is None:
-                self._vad = load_vad("silero")
-            divisor = gcd(rate, 16000)
-            audio = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
-            segments = self._vad.get_speech_segments(audio, sample_rate=16000, min_speech_duration=0.0)
-            if not segments:
-                return None
-            return float(max(segment.end for segment in segments))
+        divisor = gcd(rate, 16000)
+        audio = resample_poly(pcm, 16000 // divisor, rate // divisor).astype("float32")
+        segments = self._speech_segments(audio)
+        if not segments:
+            return None, None
+        return float(min(segment.start for segment in segments)), float(max(segment.end for segment in segments))
 
     def transcribe(self, recording: bytes) -> str:
         """Transcribe VAD-detected speech without speaker enrollment or verification."""
-        with self._lock:
+        with self._transcription_lock:
             speech = self._waveform(recording, minimum_seconds=0.0)
             if self._transcriber is None:
                 from faster_whisper import WhisperModel

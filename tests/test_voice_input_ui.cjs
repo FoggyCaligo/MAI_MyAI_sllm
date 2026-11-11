@@ -29,13 +29,13 @@ async function run() {
   const sandbox = {
     document: {getElementById: element, addEventListener() {}},
     window: {}, navigator: {mediaDevices: {async getUserMedia() {return {getTracks() {return [{stop() {}}];}};}}},
-    AudioContext, Blob, FormData, ArrayBuffer, DataView, Float32Array, Event: class {},
+    AudioContext, AbortController, Blob, FormData, ArrayBuffer, DataView, Float32Array, Event: class {},
     authHeaders: () => ({}),
     async fetch(path) {
       calls.push(path);
       const data = path === '/voice/config'
-        ? {stt_provider: 'local', silence_seconds: 5}
-        : path === '/voice/activity' ? {speech_end_seconds: 0.1} : {text: '응'};
+        ? {stt_provider: 'local', silence_seconds: 5, max_recording_seconds: 120, max_recording_bytes: 20 * 1024 * 1024}
+        : path === '/voice/activity' ? {speech_start_seconds: 0, speech_end_seconds: 0.1} : {text: '응'};
       return {ok: true, status: 200, headers: {get() {return 'application/json';}}, async json() {return data;}};
     }
   };

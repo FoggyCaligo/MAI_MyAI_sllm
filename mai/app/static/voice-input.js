@@ -41,7 +41,10 @@
   }
   const status = document.getElementById('upload-status');
   const input = document.getElementById('msg-input');
+  const wavHeaderBytes = 44;
+  const pcmSampleBytes = Int16Array.BYTES_PER_ELEMENT;
   let active = null;
+  let finishingCapture = null;
   let voiceMode = false;
   let ttsEnabled = true;
   let currentUtterance = null;
@@ -63,6 +66,8 @@
     mic.setAttribute('aria-label', mic.title);
     if (!enabled) {
       modeRevision += 1;
+      finishingCapture?.controller.abort();
+      finishingCapture = null;
       ttsError = '';
       stopTts();
       if (webRecognition) {
@@ -183,7 +188,7 @@
   }
 
   function resumeAfterAnswer() {
-    if (!voiceMode || active || webRecognition || starting || currentUtterance) return;
+    if (!voiceMode || active || finishingCapture || webRecognition || starting || currentUtterance) return;
     void start();
   }
 
@@ -269,7 +274,7 @@
   }
 
   function toWave(samples, sampleRate) {
-    const output = new ArrayBuffer(44 + samples.length * 2);
+    const output = new ArrayBuffer(wavHeaderBytes + samples.length * pcmSampleBytes);
     const view = new DataView(output);
     const word = (offset, value) => {
       for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i));
@@ -286,41 +291,103 @@
     view.setUint16(32, 2, true);
     view.setUint16(34, 16, true);
     word(36, 'data');
-    view.setUint32(40, samples.length * 2, true);
+    view.setUint32(40, samples.length * pcmSampleBytes, true);
     samples.forEach((sample, index) => {
       const clamped = Math.max(-1, Math.min(1, sample));
-      view.setInt16(44 + index * 2, clamped < 0 ? clamped * 32768 : clamped * 32767, true);
+      view.setInt16(wavHeaderBytes + index * pcmSampleBytes, clamped < 0 ? clamped * 32768 : clamped * 32767, true);
     });
     return new Blob([output], {type: 'audio/wav'});
+  }
+
+  function readSamples(capture, start, end) {
+    const samples = new Float32Array(end - start);
+    let offset = capture.bufferStart;
+    for (const chunk of capture.chunks) {
+      const chunkEnd = offset + chunk.length;
+      if (chunkEnd > start) {
+        const from = Math.max(start, offset);
+        const to = Math.min(end, chunkEnd);
+        samples.set(chunk.subarray(from - offset, to - offset), from - start);
+      }
+      if (chunkEnd >= end) break;
+      offset = chunkEnd;
+    }
+    return samples;
+  }
+
+  function discardSamplesBefore(capture, sample) {
+    let count = 0;
+    while (count < capture.chunks.length && capture.bufferStart + capture.chunks[count].length <= sample) {
+      capture.bufferStart += capture.chunks[count].length;
+      count += 1;
+    }
+    if (count) capture.chunks.splice(0, count);
+    if (sample > capture.bufferStart) {
+      capture.chunks[0] = capture.chunks[0].subarray(sample - capture.bufferStart);
+      capture.bufferStart = sample;
+    }
+  }
+
+  function queueTranscription(capture, end) {
+    const samples = readSamples(capture, capture.chunkStart, end);
+    capture.chunkStart = end;
+    const {signal} = capture.controller;
+    capture.transcription = capture.transcription.then(async () => {
+      if (signal.aborted || capture.transcriptionError) return;
+      try {
+        const body = new FormData();
+        body.append('file', toWave(samples, capture.sampleRate), 'voice.wav');
+        const result = await request('/voice/transcribe', {method: 'POST', body, signal});
+        if (signal.aborted) return;
+        if (typeof result.text !== 'string' || !result.text.trim()) {
+          throw new Error('Invalid speech transcription response.');
+        }
+        capture.transcripts.push(result.text.trim());
+      } catch (error) {
+        if (signal.aborted) return;
+        capture.transcriptionError = error;
+        if (active === capture) void finish();
+      }
+    });
   }
 
   async function checkSpeechEnd(capture) {
     capture.checking = true;
     try {
-      const all = new Float32Array(capture.chunks.reduce((n, c) => n + c.length, 0));
-      let offset = 0;
-      for (const chunk of capture.chunks) { all.set(chunk, offset); offset += chunk.length; }
-      const recentLength = Math.min(all.length, capture.sampleRate * 8);
-      const recent = all.subarray(all.length - recentLength);
-      const windowStart = (all.length - recentLength) / capture.sampleRate;
+      const {activitySamples, sampleRate} = capture;
+      const windowEnd = Math.min(capture.sampleCount, capture.checkedThrough + activitySamples);
+      const windowStart = Math.max(capture.bufferStart, windowEnd - activitySamples);
       const body = new FormData();
-      body.append('file', toWave(recent, capture.sampleRate), 'activity.wav');
-      const result = await request('/voice/activity', {method: 'POST', body});
+      body.append('file', toWave(readSamples(capture, windowStart, windowEnd), sampleRate), 'activity.wav');
+      const result = await request('/voice/activity', {method: 'POST', body, signal: capture.controller.signal});
       if (active !== capture) return;
-      if (result.speech_end_seconds !== null) {
-        const end = windowStart + result.speech_end_seconds;
-        capture.lastSpeechEnd = Math.max(capture.lastSpeechEnd ?? 0, end);
+      const {speech_start_seconds: first, speech_end_seconds: last} = result;
+      if (first !== null || last !== null) {
+        if (!Number.isFinite(first) || !Number.isFinite(last) || first < 0 || first >= last ||
+            first * sampleRate >= windowEnd - windowStart) {
+          throw new Error('Invalid speech activity response.');
+        }
+        const speechStart = windowStart + Math.floor(first * sampleRate);
+        const speechEnd = Math.min(windowEnd, windowStart + Math.ceil(last * sampleRate));
+        capture.chunkStart ??= speechStart;
+        capture.lastSpeechEnd = Math.max(capture.lastSpeechEnd ?? 0, speechEnd);
       }
-      const elapsed = capture.context.currentTime - capture.began;
-      if (capture.lastSpeechEnd !== null && elapsed - capture.lastSpeechEnd >= capture.silenceSeconds) {
+
+      capture.checkedThrough = windowEnd;
+      while (capture.lastSpeechEnd !== null && capture.lastSpeechEnd - capture.chunkStart > capture.chunkSamples) {
+        // Leave audio for the next chunk even if we crossed the limit by a few samples.
+        const end = Math.min(capture.chunkStart + capture.chunkSamples, capture.lastSpeechEnd - capture.chunkTailSamples);
+        queueTranscription(capture, end);
+      }
+      if (capture.lastSpeechEnd !== null && windowEnd - capture.lastSpeechEnd >= capture.silenceSamples) {
         void finish();
+        return;
       }
+      const recentStart = Math.max(capture.bufferStart, windowEnd - activitySamples + sampleRate);
+      discardSamplesBefore(capture, Math.min(capture.chunkStart ?? recentStart, recentStart));
     } catch (error) {
       if (active === capture) {
-        // A transient VAD/API error is not a user request to exit voice
-        // mode. Keep collecting audio, and let the 120-second rotation
-        // restart the recorder if no speech boundary can be resolved.
-        setStatus('Voice activity unavailable · still listening…', true);
+        setStatus(`Voice activity failed: ${error.message} · still listening…`, true);
       }
     } finally {
       capture.checking = false;
@@ -332,29 +399,26 @@
     const capture = active;
     const revision = modeRevision;
     active = null;
+    if (discard) capture.controller.abort();
+    else finishingCapture = capture;
     capture.processor.disconnect();
     capture.source.disconnect();
     capture.stream.getTracks().forEach(track => track.stop());
-    await capture.context.close();
-    if (discard || !voiceMode || revision !== modeRevision) return;
-    if (!capture.chunks.length) {
-      setStatus('No audio captured · listening again…', true);
-      if (voiceMode && revision === modeRevision) await start();
-      return;
-    }
-    const data = new Float32Array(capture.chunks.reduce((size, chunk) => size + chunk.length, 0));
-    let offset = 0;
-    for (const chunk of capture.chunks) { data.set(chunk, offset); offset += chunk.length; }
-    const body = new FormData();
-    body.append('file', toWave(data, capture.sampleRate), 'voice.wav');
     let retryAfterRecoverableVoiceFailure = false;
     try {
+      await capture.context.close();
+      if (discard || !voiceMode || revision !== modeRevision) return;
       setStatus('Transcribing…');
-      const result = await request('/voice/transcribe', {method: 'POST', body});
-      if (voiceMode && revision === modeRevision) submitRecognizedText(result.text);
+      if (!capture.transcriptionError && capture.lastSpeechEnd > capture.chunkStart) {
+        queueTranscription(capture, capture.lastSpeechEnd);
+      }
+      await capture.transcription;
+      if (!voiceMode || revision !== modeRevision) return;
+      if (capture.transcriptionError) throw capture.transcriptionError;
+      submitRecognizedText(capture.transcripts.join(' '));
     } catch (error) {
       retryAfterRecoverableVoiceFailure =
-        error.status === 422 && error.code === 'insufficient_speech';
+        !capture.transcripts.length && error.status === 422 && error.code === 'insufficient_speech';
       if (voiceMode && revision === modeRevision) {
         setStatus(
           retryAfterRecoverableVoiceFailure
@@ -364,7 +428,7 @@
         );
       }
     } finally {
-      mic.disabled = false;
+      if (finishingCapture === capture) finishingCapture = null;
     }
     if (retryAfterRecoverableVoiceFailure && voiceMode && revision === modeRevision) {
       await start();
@@ -372,7 +436,7 @@
   }
 
   async function start() {
-    if (starting || active || webRecognition || !voiceMode) return;
+    if (starting || active || finishingCapture || webRecognition || !voiceMode) return;
     const revision = modeRevision;
     starting = true;
     try {
@@ -383,6 +447,11 @@
       if (config.stt_provider === 'web_speech') {
         if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
         return;
+      }
+      const {max_recording_seconds: maxSeconds, max_recording_bytes: maxBytes} = config;
+      if (!Number.isFinite(maxSeconds) || maxSeconds < 1 || !Number.isSafeInteger(maxBytes) ||
+          maxBytes < wavHeaderBytes + pcmSampleBytes) {
+        throw new Error('Invalid voice recording limits.');
       }
       const stream = await navigator.mediaDevices.getUserMedia({audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}});
       if (!voiceMode || revision !== modeRevision) {
@@ -397,11 +466,20 @@
       source.connect(processor);
       processor.connect(sink);
       sink.connect(context.destination);
+      const chunkSamples = Math.min(
+        Math.floor(context.sampleRate * maxSeconds),
+        Math.floor((maxBytes - wavHeaderBytes) / pcmSampleBytes),
+      );
       const capture = {
         stream, context, source, processor, chunks: [],
         sampleRate: context.sampleRate,
-        lastSpeechEnd: null, lastCheck: context.currentTime, checking: false, began: context.currentTime,
-        silenceSeconds: config.silence_seconds
+        sampleCount: 0, bufferStart: 0, checkedThrough: 0, lastCheck: 0, checking: false,
+        chunkStart: null, lastSpeechEnd: null,
+        activitySamples: context.sampleRate * 8,
+        silenceSamples: context.sampleRate * config.silence_seconds,
+        chunkSamples, chunkTailSamples: Math.min(context.sampleRate, Math.floor(chunkSamples / 2)),
+        controller: new AbortController(),
+        transcripts: [], transcription: Promise.resolve(), transcriptionError: null,
       };
       active = capture;
       processor.onaudioprocess = event => {
@@ -409,19 +487,9 @@
         const pcm = event.inputBuffer.getChannelData(0);
         const chunk = new Float32Array(pcm);
         capture.chunks.push(chunk);
-        const now = context.currentTime;
-        if (now - capture.began >= 120) {
-          // A long quiet period is not a voice-mode stop. Rotate the
-          // recording rather than uploading 120 seconds of silence to STT.
-          if (capture.lastSpeechEnd === null) {
-            void finish(true).then(() => {
-              if (voiceMode && revision === modeRevision) void start();
-            });
-          } else {
-            void finish();
-          }
-        } else if (now - capture.lastCheck >= 1 && !capture.checking) {
-          capture.lastCheck = now;
+        capture.sampleCount += chunk.length;
+        if (!capture.checking && capture.sampleCount - capture.lastCheck >= capture.sampleRate) {
+          capture.lastCheck = capture.sampleCount;
           void checkSpeechEnd(capture);
         }
       };
