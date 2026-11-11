@@ -41,6 +41,7 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 ## 문서
 
 - [설치·설정·테스트](setup.md)
+- [음성 입력: Web Speech·로컬 Whisper STT](docs/voice-stt.md)
 - [Portable 구조·백업](portable/README.md)
 - [실행 구조](docs/architecture.md)
 - [답변 검증](docs/verifier.md)
