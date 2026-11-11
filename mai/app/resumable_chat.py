@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import time
 import hashlib
+import json
 from pathlib import Path
 
 from fastapi import Header
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ..agent import AgentRunFailure
+from portable.restart_mai import signal_handoff
 from . import server
 from .chat_jobs import ChatJobStore
 from .audit_log import AuditLogStore
@@ -234,12 +236,22 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                 on_verification_rejection=publish_verification_rejection,
                 on_verification_audit=publish_verification_audit,
             )
+        restart_requests = []
+        for execution in payload.get("tools", []):
+            if execution["name"] != "restart" or not execution["ok"]:
+                continue
+            receipt = json.loads(execution["result"])
+            if receipt["status"] != "accepted" or not isinstance(receipt["request_id"], str):
+                raise ValueError("Invalid restart handoff receipt")
+            restart_requests.append(receipt["request_id"])
         if status_code == 200:
             if request.verify:
                 audit.append(job_id, "verifier_step", "Final answer accepted.",
                              round_number=int(payload["model_rounds"]), status="ACCEPTED")
             audit.finish(job_id, status="completed")
             chat_job_store.complete(job_id, payload)
+            for request_id in restart_requests:
+                signal_handoff(request_id, completed=True)
         else:
             detail = str(payload.get("detail") or payload.get("error_type") or "chat failed")
             error_type = str(payload.get("error_type") or "ChatError")
@@ -257,6 +269,8 @@ async def _run_job(*, job_id: str, request: server.ChatRequest, principal: objec
                          error_type=error_type, error_message=detail)
             payload = {**payload, "status_code": status_code}
             chat_job_store.fail(job_id, error=detail, response=payload)
+            for request_id in restart_requests:
+                signal_handoff(request_id, completed=False)
     except asyncio.CancelledError:
         if audit is not None:
             audit.finish(job_id, status="cancelled")
