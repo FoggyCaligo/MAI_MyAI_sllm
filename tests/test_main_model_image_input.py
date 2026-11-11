@@ -27,7 +27,7 @@ def image_fixture(tmp_path):
 def prepare(tmp_path, principal, **overrides):
     kwargs = dict(
         prompt="What is pictured?", attachments=("test.png",), principal=principal,
-        upload_root=tmp_path, model="local-vision-gguf",
+        upload_root=tmp_path, model="local-vision-gguf", supports_vision=False,
     )
     kwargs.update(overrides)
     return run(prepare_main_image_input(**kwargs))
@@ -35,7 +35,6 @@ def prepare(tmp_path, principal, **overrides):
 
 def test_llamacpp_text_only_main_explains_unavailable_image_without_tool_or_exception(tmp_path, monkeypatch):
     principal = image_fixture(tmp_path)
-    monkeypatch.setenv("LLAMACPP_MAIN_VISION", "false")
     prompt, images = prepare(tmp_path, principal)
     assert images == ()
     assert "cannot inspect these images" in prompt
@@ -46,8 +45,7 @@ def test_llamacpp_text_only_main_explains_unavailable_image_without_tool_or_exce
 
 def test_llamacpp_image_capable_main_receives_pixels_directly(tmp_path, monkeypatch):
     principal = image_fixture(tmp_path)
-    monkeypatch.setenv("LLAMACPP_MAIN_VISION", "true")
-    prompt, images = prepare(tmp_path, principal)
+    prompt, images = prepare(tmp_path, principal, supports_vision=True)
     assert prompt == "What is pictured?"
     assert images == (b"test-raw-image",)
 
