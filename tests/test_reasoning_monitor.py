@@ -5,6 +5,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from mai.llm.reasoning_monitor import ReasoningMonitor
 from mai.llm.stream_diagnostics import stream_completion
@@ -142,7 +143,7 @@ def test_repeated_stream_interrupts_current_request_and_closes_stream(monkeypatc
                         "index": 0, "delta": {"reasoning_content": phrase},
                         "finish_reason": None,
                     }],
-                }) + "\\n\\n").encode()
+                }) + "\n\n").encode()
             raise AssertionError("stuck stream should have been interrupted")
 
         async def aclose(self):
@@ -183,14 +184,14 @@ def test_thinking_with_answer_progress_is_not_interrupted(monkeypatch):
                 "choices": [{"index": 0, "delta": {
                     "reasoning_content": phrase, "content": "Answer started"
                 }, "finish_reason": None}],
-            }) + "\\n\\n").encode()
+            }) + "\n\n").encode()
             await asyncio.sleep(1.05)
             yield ("data: " + json.dumps({
                 "choices": [{"index": 0, "delta": {
                     "reasoning_content": phrase, "content": " and finished"
                 }, "finish_reason": "stop"}],
-            }) + "\\n\\n").encode()
-            yield b"data: [DONE]\\n\\n"
+            }) + "\n\n").encode()
+            yield b"data: [DONE]\n\n"
 
         async def aclose(self):
             pass
