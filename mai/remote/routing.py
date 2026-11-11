@@ -57,6 +57,7 @@ def _add_routed_definitions(
                 "native.invoke",
                 {"name": _definition.name, "arguments": kwargs},
                 is_remote=True,
+                timeout=None if _definition.category == "terminal" else 600,
             )
             # Transport envelope is distinct from the tool's own result.
             # A missing value is a protocol failure, not a successful null.
@@ -107,7 +108,7 @@ def _add_remote_context(registry: ToolRegistry, names: tuple[str, ...], key: str
 
 def register_routed_pc_tools(registry: ToolRegistry, *, owner_id: str, cwd: str) -> None:
     local = ToolRegistry()
-    register_local_pc_tools(local, cwd=cwd, terminal_timeout_seconds=float(os.environ.get("TERMINAL_TIMEOUT_SECONDS", "120")))
+    register_local_pc_tools(local, cwd=cwd)
     _add_routed_definitions(registry, local, owner_id=owner_id)
     _add_remote_context(registry, local.names(), "remote_execution_target")
 

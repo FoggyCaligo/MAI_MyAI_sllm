@@ -140,7 +140,7 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
     local = ToolRegistry()
     register_local_pc_tools(
         local, cwd=tmp_path, filesystem_timeout_seconds=120,
-        code_timeout_seconds=120, terminal_timeout_seconds=240,
+        code_timeout_seconds=120,
     )
     remote = build_registry(cwd=tmp_path)
     assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2

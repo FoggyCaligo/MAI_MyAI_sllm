@@ -186,7 +186,7 @@ def test_absolute_path_is_not_confined_to_registered_cwd(tmp_path: Path) -> None
 
 def test_terminal_run_schema_keeps_timeout_internal(tmp_path: Path) -> None:
     registry = ToolRegistry()
-    register_terminal_tools(registry, cwd=tmp_path, timeout_seconds=5)
+    register_terminal_tools(registry, cwd=tmp_path)
 
     parameters = registry.get("terminal_run").native_schema()["function"]["parameters"]
     assert set(parameters["properties"]) == {"command", "cwd", "shell"}
@@ -200,7 +200,7 @@ def test_terminal_run_schema_keeps_timeout_internal(tmp_path: Path) -> None:
 
 def test_terminal_run_nonzero_returncode_is_a_real_failure(tmp_path: Path) -> None:
     registry = ToolRegistry()
-    register_terminal_tools(registry, cwd=tmp_path, timeout_seconds=5)
+    register_terminal_tools(registry, cwd=tmp_path)
     command = f'"{sys.executable}" -c "import sys; print(123); print(456, file=sys.stderr); sys.exit(7)"'
 
     with pytest.raises(TerminalCommandError) as exc_info:
@@ -218,21 +218,16 @@ def test_terminal_run_nonzero_returncode_is_a_real_failure(tmp_path: Path) -> No
     assert Path(result["cwd"]) == tmp_path.resolve()
 
 
-def test_terminal_run_timeout_is_a_real_failure(tmp_path: Path) -> None:
+def test_terminal_run_waits_without_deadline(tmp_path: Path) -> None:
     registry = ToolRegistry()
-    register_terminal_tools(registry, cwd=tmp_path, timeout_seconds=0.01)
-    command = f'"{sys.executable}" -c "import time; time.sleep(1)"'
-
-    with pytest.raises(TerminalTimeoutError) as exc_info:
-        run(registry.invoke(NativeToolCall(
-            name="terminal_run",
-            arguments={"command": command},
-        )))
-
-    result = exc_info.value.result
-    assert result["timed_out"] is True
-    assert result["returncode"] is not None
-    assert result["shell"]
+    register_terminal_tools(registry, cwd=tmp_path)
+    command = f'"{sys.executable}" -c "import time; time.sleep(0.05); print(42)"'
+    result = run(registry.invoke(NativeToolCall(
+        name="terminal_run", arguments={"command": command},
+    )))
+    assert result["returncode"] == 0
+    assert "42" in result["stdout"]
+    assert result["timed_out"] is False
 
 
 def test_terminal_run_refuses_missing_cwd(tmp_path: Path) -> None:
