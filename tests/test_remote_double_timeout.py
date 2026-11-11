@@ -15,7 +15,7 @@ from mai.tools.registry import ToolRegistry
 
 def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
     local = ToolRegistry()
-    register_local_pc_tools(local, cwd=tmp_path, terminal_timeout_seconds=120)
+    register_local_pc_tools(local, cwd=tmp_path)
     register_external_information_tools(
         local, web_timeout_seconds=60, market_timeout_seconds=60,
     )
@@ -32,19 +32,18 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
         assert remote_timeout == 2 * local_timeout, (
             f"{name} local={local_timeout} remote={remote_timeout}"
         )
-    # TerminalTool has an internal subprocess deadline instead of an outer
-    # registry deadline. Assert the exact deadline passed to the subprocess.
     from mai.tools import terminal
     seen = []
     async def fake_terminal_run(**kwargs):
-        seen.append(kwargs["default_timeout_seconds"])
-        return {"stdout": "", "stderr": "", "exit_code": 0}
+        seen.append(kwargs)
+        return {"stdout": "", "stderr": "", "returncode": 0}
     monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
     async def exercise():
         await local.get("terminal_run").invoke({"command": "echo ok"})
         await remote.get("terminal_run").invoke({"command": "echo ok"})
     asyncio.run(exercise())
-    assert seen == [120, 240]
+    assert len(seen) == 2
+    assert all("default_timeout_seconds" not in args for args in seen)
     assert local.get("terminal_run").timeout_seconds is None
     assert remote.get("terminal_run").timeout_seconds is None
 
