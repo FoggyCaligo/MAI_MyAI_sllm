@@ -22,7 +22,7 @@ def test_worker_exposes_all_worker_portable_services():
         assert not worker.has(name)
 
 
-def test_host_and_worker_service_schemas_are_exact_except_is_remote():
+def test_host_and_worker_service_schemas_are_exact_except_at_remote_pc():
     host = ToolRegistry()
     register_routed_service_tools(
         host, owner_id="owner", browser_manager=BrowserSessionManager(),
@@ -31,11 +31,11 @@ def test_host_and_worker_service_schemas_are_exact_except_is_remote():
     for definition in host.definitions():
         remote_fields = set(definition.input_model.model_fields)
         if definition.category == "web":
-            assert "is_remote" not in remote_fields
+            assert "at_remote_pc" not in remote_fields
             assert not worker.has(definition.name)
         else:
             worker_fields = set(worker.get(definition.name).input_model.model_fields)
-            assert remote_fields == worker_fields | {"is_remote"}
+            assert remote_fields == worker_fields | {"at_remote_pc"}
 
 
 def test_remote_service_without_connection_fails_and_does_not_run_locally():
@@ -52,7 +52,7 @@ def test_remote_service_without_connection_fails_and_does_not_run_locally():
         assert local["result"] == "20"
         with pytest.raises(RemoteExecutionError, match="active remote session"):
             await host.get("calculator").invoke(
-                {"expression": "12+8", "is_remote": True}
+                {"expression": "12+8", "at_remote_pc": True}
             )
     asyncio.run(exercise())
 
@@ -89,15 +89,15 @@ def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
         lambda owner_id: SimpleNamespace(session_id="authenticated-session"),
     )
 
-    async def fake_execute(self, operation, arguments, *, is_remote):
-        routed.append((self.owner_id, self.remote_session_id, operation, arguments, is_remote))
+    async def fake_execute(self, operation, arguments, *, at_remote_pc):
+        routed.append((self.owner_id, self.remote_session_id, operation, arguments, at_remote_pc))
         return {"value": {"expression": "7+5", "result": "REMOTE-12"}}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", fake_execute)
 
     async def exercise():
         value = await host.get("calculator").invoke(
-            {"expression": "7+5", "is_remote": True}
+            {"expression": "7+5", "at_remote_pc": True}
         )
         assert value["result"] == "REMOTE-12"
     asyncio.run(exercise())
@@ -120,14 +120,14 @@ def test_remote_transport_missing_value_envelope_fails(monkeypatch):
         lambda owner_id: SimpleNamespace(session_id="authenticated-session"),
     )
 
-    async def invalid_result(self, operation, arguments, *, is_remote):
+    async def invalid_result(self, operation, arguments, *, at_remote_pc):
         return {"result": "old worker protocol"}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", invalid_result)
     async def exercise():
         with pytest.raises(RemoteExecutionError, match="invalid tool-result envelope"):
             await host.get("calculator").invoke(
-                {"expression": "1+2", "is_remote": True}
+                {"expression": "1+2", "at_remote_pc": True}
             )
     asyncio.run(exercise())
 
