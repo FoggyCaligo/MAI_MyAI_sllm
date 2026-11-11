@@ -26,13 +26,14 @@
     #login-btn { background:var(--accent); color:#fff; border-color:transparent; }
     #login-error { min-height:18px; margin-top:10px; color:var(--danger); font-size:12px; }
 
-    header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; border-bottom:1px solid var(--border); background:var(--bg); flex-shrink:0; }
+    header { display:grid; grid-template-rows:auto auto; gap:7px; padding:10px 18px; border-bottom:1px solid var(--border); background:var(--bg); flex-shrink:0; min-width:0; }
+    .header-top { display:flex; align-items:center; gap:10px; min-width:0; }
+    .header-selects { flex:1; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; min-width:0; max-width:480px; margin-left:auto; }
     .brand { min-width:0; } .logo { color:var(--accent); font-size:18px; font-weight:700; letter-spacing:.5px; }
     .subtitle { color:var(--text-dim); font-size:11px; margin-top:2px; }
-    .header-right { display:flex; align-items:center; gap:8px; min-width:0; }
-    #model-select { max-width:220px; min-width:140px; background:var(--surface); border:1px solid var(--border); color:var(--text); padding:7px 11px; border-radius:20px; font-size:12px; outline:none; }
-    #model-select:focus { border-color:var(--accent); }
-    .identity { color:var(--text-dim); font-size:11px; white-space:nowrap; }
+    .header-right { display:flex; align-items:center; justify-content:flex-end; gap:8px; min-width:0; flex-wrap:nowrap; }
+    #model-select, #tts-voice-select { display:block; width:100%; min-width:0; max-width:none; height:34px; padding:6px 9px; border:1px solid var(--border); border-radius:9px; background:var(--surface); color:var(--text); font-size:12px; line-height:20px; outline:none; text-overflow:ellipsis; }
+    #model-select:focus, #tts-voice-select:focus { border-color:var(--accent); }
     #logout-btn { background:none; border:1px solid var(--border); color:var(--text-dim); border-radius:20px; padding:6px 10px; cursor:pointer; }
     #logout-btn:hover { border-color:var(--accent); color:var(--text); }
     #remote-btn { background:none; border:1px solid var(--border); color:var(--text-dim); border-radius:20px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
@@ -132,15 +133,18 @@
     #tts-toggle-btn.muted { color:var(--danger); }
     #tts-toggle-btn .mute-line { display:none; }
     #tts-toggle-btn.muted .mute-line { display:block; }
-    #tts-voice-select { width:112px; max-width:28vw; min-width:72px; background:var(--surface); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:5px 4px; font-size:11px; outline:none; }
-    #tts-voice-select:focus { border-color:var(--accent); }
     #tts-voice-select:disabled { opacity:.5; }
     #mic-btn.active { color:var(--danger); }
     #mic-btn:disabled { opacity:.35; cursor:wait; }
 
     @media (max-width:680px) {
-      header { align-items:flex-start; flex-direction:column; padding:12px; }
-      .header-right { width:100%; flex-wrap:wrap; } #model-select { flex:1; min-width:0; max-width:none; } #tts-voice-select { flex:0 1 112px; max-width:34vw; }
+      header { padding:8px 10px; gap:6px; }
+      .header-top { gap:8px; }
+      .header-selects { gap:6px; max-width:none; }
+      .logo { font-size:16px; }
+      .brand .subtitle { display:none; }
+      .header-right { gap:7px; }
+      #model-select, #tts-voice-select { font-size:11px; padding:5px 6px; height:32px; }
       #messages { padding:16px 10px; } #input-area { padding:6px 8px; } #input-row { gap:6px; padding:6px 8px; }
       #upload-status:empty { min-height:0; margin-bottom:0; }
       .content-wrap, .msg-row.mai .content-wrap { max-width:88%; }
@@ -160,12 +164,15 @@
 
 <div id="app">
   <header>
-    <div class="brand"><div class="logo">MAI</div><div class="subtitle">local personal agent</div></div>
+    <div class="header-top">
+      <div class="brand"><div class="logo">MAI</div><div class="subtitle">local personal agent</div></div>
+      <div class="header-selects">
+        <select id="model-select" aria-label="Model" title="Model"><option value="">Loading models…</option></select>
+        <select id="tts-voice-select" aria-label="Voice" title="Voice"><option value="">Default</option></select>
+      </div>
+    </div>
     <div class="header-right">
-      <select id="model-select" aria-label="Model" title="Model"><option value="">Loading models…</option></select>
-       <select id="tts-voice-select" aria-label="Voice" title="Voice"><option value="">Default</option></select>
       <label class="verify-switch" title="Verify answers"><input type="checkbox" id="verify-toggle" aria-label="Verify answers" /><svg class="mai-action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg></label>
-      <div class="identity" id="identity"></div><div class="identity" id="connection"></div>
       <button id="remote-btn" type="button" hidden aria-expanded="false" aria-controls="remote-panel" data-mai-icon="monitor" data-mai-label="Remote connection"></button>
       <button id="logout-btn" type="button" data-mai-icon="log-out" data-mai-label="Sign out"></button>
     </div>
@@ -244,7 +251,7 @@
   const state = { token: sessionStorage.getItem('MAI:auth-token'), userId:null, role:null, sessionId:crypto.randomUUID() };
   const $loginPassword=document.getElementById('login-password');
   const $loginScreen=document.getElementById('login-screen'), $loginForm=document.getElementById('login-form'), $loginId=document.getElementById('login-id'), $loginBtn=document.getElementById('login-btn'), $loginError=document.getElementById('login-error');
-  const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $connection=document.getElementById('connection'), $identity=document.getElementById('identity'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
+  const $app=document.getElementById('app'), $messages=document.getElementById('messages'), $form=document.getElementById('chat-form'), $input=document.getElementById('msg-input'), $send=document.getElementById('send-btn'), $model=document.getElementById('model-select'), $logout=document.getElementById('logout-btn'), $fileInput=document.getElementById('file-input'), $uploadBtn=document.getElementById('upload-btn'), $uploadStatus=document.getElementById('upload-status');
   const $remoteBtn=document.getElementById('remote-btn'), $remotePanel=document.getElementById('remote-panel'), $remoteCreate=document.getElementById('remote-create'), $remoteClose=document.getElementById('remote-close'), $remoteStatus=document.getElementById('remote-status'), $remoteError=document.getElementById('remote-error'), $remoteDetails=document.getElementById('remote-details'), $remotePlatform=document.getElementById('remote-platform');
   let remoteSession=null, remotePollTimer=null, remoteCommandText='', remoteCredentials=null;
   async function remoteApi(path,method='GET'){
@@ -550,7 +557,7 @@
     }
     wrap.appendChild(details);
   }
-  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'Health check failed');document.getElementById('verify-toggle').checked=data.verifier_default_enabled;$connection.textContent=data.remote_hosting_provider==='cloudflare'?'Cloudflare':(data.remote_hosting_provider==='tailscale'?'Tailscale':'Local');}
+  async function loadHealth(){const res=await fetch('/health');const data=await res.json();if(!res.ok)throw new Error(data.detail||'Health check failed');document.getElementById('verify-toggle').checked=data.verifier_default_enabled;}
   const modelLabels = Object.create(null);
   function modelDisplayName(model){
     const id=String(model||'unknown');
@@ -610,7 +617,7 @@
       $model.disabled=false;
     }
   });
-  function showApp(){ $remoteBtn.hidden=state.role!=='owner'; $loginScreen.style.display='none'; $app.style.display='flex'; $identity.textContent=`${state.userId} · ${state.role}`; Promise.all([loadHealth(),loadModels()]).catch(err=>{$connection.textContent='Connection failed';$connection.title=err.message;}); syncSendButton(); recoverRemoteSession().catch(err=>{$remoteError.textContent=err.message;}); $input.focus(); }
+  function showApp(){ $remoteBtn.hidden=state.role!=='owner'; $loginScreen.style.display='none'; $app.style.display='flex'; Promise.all([loadHealth(),loadModels()]).catch(err=>{$uploadStatus.classList.add('failed');$uploadStatus.textContent='Connection failed: '+err.message;}); syncSendButton(); recoverRemoteSession().catch(err=>{$remoteError.textContent=err.message;}); $input.focus(); }
   function showLogin(message=''){remoteReset();$remoteBtn.hidden=true;$remotePanel.hidden=true;if(activeChat){activeChat.controller.abort();activeChat=null;}syncSendButton();state.token=null;state.userId=null;state.role=null;sessionStorage.removeItem('MAI:auth-token');$app.style.display='none';$loginScreen.style.display='grid';$loginError.textContent=message;$loginId.focus();}
   async function restoreSession(){if(!state.token){showLogin();return;}try{const res=await fetch('/me',{headers:authHeaders()});const data=await res.json();if(!res.ok)throw new Error(data.detail||'Session expired');state.userId=data.user_id;state.role=data.role;showApp();}catch(err){showLogin(err.message);}}
 
