@@ -16,7 +16,7 @@ class ExecutionTarget:
     owner_id: str
     remote_session_id: str | None = None
 
-    async def execute(self, operation: str, arguments: dict[str, Any], *, is_remote: bool) -> dict[str, Any]:
+    async def execute(self, operation: str, arguments: dict[str, Any], *, is_remote: bool, timeout: float | None = 600) -> dict[str, Any]:
         if not is_remote:
             raise ValueError("ExecutionTarget.execute is only for explicit remote calls")
         if self.remote_session_id is None:
@@ -25,4 +25,5 @@ class ExecutionTarget:
             self.owner_id,
             self.remote_session_id,
             RemoteOperation(operation=operation, arguments=arguments),
+            timeout=timeout,
         )
