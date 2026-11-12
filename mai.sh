@@ -29,6 +29,13 @@ case "$command" in
     [[ -x "$python" ]] || { echo "Portable Python missing; run ./mai.sh setup first" >&2; exit 1; }
     exec "$python" "$root/portable/restart_mai.py" --detach --update
     ;;
+  end)
+    id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
+    cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
+    python="$cache/python/bin/python3"
+    [[ -x "$python" ]] || { echo "Portable Python missing; run ./mai.sh setup first" >&2; exit 1; }
+    exec "$python" "$root/portable/restart_mai.py" --stop
+    ;;
   update)
     id="$(printf '%s' "$root" | sha256sum | cut -c1-24)"
     cache="${XDG_CACHE_HOME:-$HOME/.cache}/mai-portable/$id"
@@ -228,6 +235,6 @@ PY
     mai_linux_setup
     ;;
   *)
-    echo "Usage: ./mai.sh [start|restart|setup|check|update]" >&2; exit 2
+    echo "Usage: ./mai.sh [start|restart|end|setup|check|update]" >&2; exit 2
     ;;
 esac
