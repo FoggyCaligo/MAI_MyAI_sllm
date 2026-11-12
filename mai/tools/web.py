@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from bs4 import BeautifulSoup
 from ddgs import DDGS
-from ddgs.exceptions import DDGSException, TimeoutException
+from ddgs.exceptions import TimeoutException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .registry import ToolRegistry
@@ -147,14 +147,6 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
                             "backend=google page=%d unique_results_before_page=%d",
                             page, len(merged),
                         )
-                except DDGSException as exc:
-                    # DDGS has no dedicated no-results type. Recognize only its
-                    # exact empty-result sentinel at this provider boundary;
-                    # subclasses, wrapped errors and other messages remain failures.
-                    if (page == 1 or not merged or type(exc) is not DDGSException
-                            or exc.args != ("No results found.",)):
-                        raise
-                    raw_results = []
                 if not raw_results:
                     stopped_on_empty_page = page
                     _LOG.info(
@@ -205,7 +197,18 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
         "stopped_on_empty_page": stopped_on_empty_page,
         "results": results,
         "status": "results" if results else "no_results",
-        "message": None if results else "결과없음",
+        "message": None if results else "이 검색어로 확인된 결과가 없습니다.",
+        "search_scope": "requested_query",
+        "suggested_next_action": (
+            None if results else {
+                "type": "reformulate_query",
+                "guidance": (
+                    "다른 키워드, 동의어, 언어 또는 더 넓은 검색 범위로 재검색을 고려하세요. "
+                    "이번 검색의 0건 결과는 정보가 존재하지 않는다는 증거가 아닙니다."
+                ),
+                "mandatory": False,
+            }
+        ),
     }
 
 
@@ -339,8 +342,10 @@ def register_web_tools(registry: ToolRegistry, *, timeout_seconds: float | None 
             "the web. Queries up to three provider result pages in one call and returns one compact merged list "
             "of ranked titles, URLs, and short snippets. If a later page has no results, earlier results remain "
             "valid; provider_pages reports completed pages and stopped_on_empty_page identifies that stop. "
-            "A completed search with zero matches returns status=no_results and message=결과없음; "
-            "provider errors, rate limits and connection failures remain explicit failures. "
+            "A completed search with zero matches returns status=no_results and an optional "
+                        "reformulate_query suggestion. Zero matches for a query do not prove absence. "
+                        "Provider exceptions (including ambiguous no-results exceptions), rate limits "
+                        "and connection failures remain explicit failures. "
             "Use web_fetch for page contents."
         ),
         input_model=WebSearchInput,

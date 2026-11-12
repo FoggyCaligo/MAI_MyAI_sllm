@@ -75,16 +75,13 @@ def test_web_search_success_retains_ranked_results(monkeypatch):
 
 
 @pytest.mark.parametrize("empty_page", [2, 3])
-@pytest.mark.parametrize("raises", [False, True])
-def test_later_empty_page_returns_existing_results_and_stops(monkeypatch, caplog, empty_page, raises):
+def test_later_empty_page_returns_existing_results_and_stops(monkeypatch, caplog, empty_page):
     calls = []
 
     class EmptyLaterDDGS(FakeDDGS):
         def text(self, query, *, page, **kwargs):
             calls.append(page)
             if page == empty_page:
-                if raises:
-                    raise DDGSException("No results found.")
                 return []
             return [{"href": f"https://example.com/{page}", "title": f"Page {page}", "body": "Observed"}]
 
@@ -94,12 +91,27 @@ def test_later_empty_page_returns_existing_results_and_stops(monkeypatch, caplog
     assert calls == list(range(1, empty_page + 1))
     assert result["provider_pages"] == empty_page - 1
     assert result["stopped_on_empty_page"] == empty_page
+    assert result["status"] == "results"
+    assert result["suggested_next_action"] is None
     assert [item["url"] for item in result["results"]] == [
         f"https://example.com/{page}" for page in range(1, empty_page)
     ]
-    assert [item["rank"] for item in result["results"]] == list(range(1, empty_page))
     assert "pagination ended" in caplog.text
 
+
+def test_ambiguous_provider_exception_on_later_page_is_failure(monkeypatch):
+    class AmbiguousDDGS(FakeDDGS):
+        def text(self, query, *, page, **kwargs):
+            if page == 2:
+                raise DDGSException("No results found.")
+            return [{"href": "https://example.com/1", "title": "Result"}]
+
+    monkeypatch.setattr(web_module, "DDGS", AmbiguousDDGS)
+    with pytest.raises(web_module.WebSearchError) as raised:
+        web_module.web_search("test news")
+    assert raised.value.page == 2
+    assert raised.value.completed_pages == 1
+    assert isinstance(raised.value.__cause__, DDGSException)
 
 @pytest.mark.parametrize("error,failure_page", [
     (DDGSException("No results found."), 1),
@@ -151,9 +163,13 @@ def test_first_empty_provider_page_is_successful_no_results(monkeypatch):
     result = web_module.web_search("test news")
     assert calls == [1]
     assert result["status"] == "no_results"
-    assert result["message"] == "결과없음"
+    assert result["message"] == "이 검색어로 확인된 결과가 없습니다."
     assert result["results"] == []
     assert result["stopped_on_empty_page"] == 1
+    assert result["search_scope"] == "requested_query"
+    assert result["suggested_next_action"]["type"] == "reformulate_query"
+    assert result["suggested_next_action"]["mandatory"] is False
+    assert "동의어" in result["suggested_next_action"]["guidance"]
 
 
 def test_filtered_out_provider_records_are_no_results(monkeypatch):
@@ -165,7 +181,7 @@ def test_filtered_out_provider_records_are_no_results(monkeypatch):
     result = web_module.web_search("test news")
     assert result["results"] == []
     assert result["status"] == "no_results"
-    assert result["message"] == "결과없음"
+    assert result["message"] == "이 검색어로 확인된 결과가 없습니다."
 
 
 
