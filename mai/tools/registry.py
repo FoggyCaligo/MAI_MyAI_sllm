@@ -60,6 +60,7 @@ class ToolDefinition:
     handler: ToolHandler
     timeout_seconds: float | None = None
     category: str | None = None
+    activation_requires_invocation: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -71,6 +72,8 @@ class ToolDefinition:
             raise TypeError("input_model must be a pydantic BaseModel subclass")
         if not callable(self.handler):
             raise TypeError("tool handler must be callable")
+        if type(self.activation_requires_invocation) is not bool:
+            raise TypeError("activation_requires_invocation must be bool")
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive when provided")
 
@@ -143,6 +146,7 @@ class ToolRegistry:
         handler: ToolHandler,
         timeout_seconds: float | None = None,
         category: str | None = None,
+        activation_requires_invocation: bool = False,
         metadata: Mapping[str, Any] | None = None,
     ) -> ToolDefinition:
         """Convenience constructor plus registration for an executable tool."""
@@ -155,6 +159,7 @@ class ToolRegistry:
                 handler=handler,
                 timeout_seconds=timeout_seconds,
                 category=category,
+                activation_requires_invocation=activation_requires_invocation,
                 metadata=dict(metadata or {}),
             )
         )
