@@ -115,38 +115,37 @@ def web_search(query: str, max_results: int = WEB_SEARCH_DEFAULT_RESULTS) -> dic
         with DDGS(timeout=60) as ddgs:
             for page in range(1, WEB_SEARCH_PAGE_COUNT + 1):
                 try:
-                    try:
-                        raw_results = list(ddgs.text(
-                            clean_query,
-                            max_results=results_per_page,
-                            page=page,
-                            region="kr-ko",
-                            safesearch="moderate",
-                        ))
-                    except Exception as initial_exc:
-                        if not _is_search_timeout(initial_exc):
-                            raise
-                        _LOG.warning(
-                            "MAI web_search primary timeout provider=ddgs page=%d "
-                            "cause_type=%s; retrying backend=google once",
-                            page, type(initial_exc).__name__,
-                        )
-                        # A timeout must remain visible even if Google succeeds.
-                        # Any Google failure is reported by the outer error boundary.
-                        raw_results = list(ddgs.text(
-                            clean_query,
-                            max_results=results_per_page,
-                            page=page,
-                            region="kr-ko",
-                            safesearch="moderate",
-                            backend="google",
-                        ))
-                        fallback_pages.append(page)
-                        _LOG.info(
-                            "MAI web_search fallback succeeded provider=ddgs "
-                            "backend=google page=%d unique_results_before_page=%d",
-                            page, len(merged),
-                        )
+                    raw_results = list(ddgs.text(
+                        clean_query,
+                        max_results=results_per_page,
+                        page=page,
+                        region="kr-ko",
+                        safesearch="moderate",
+                    ))
+                except Exception as initial_exc:
+                    if not _is_search_timeout(initial_exc):
+                        raise
+                    _LOG.warning(
+                        "MAI web_search primary timeout provider=ddgs page=%d "
+                        "cause_type=%s; retrying backend=google once",
+                        page, type(initial_exc).__name__,
+                    )
+                    # A timeout must remain visible even if Google succeeds.
+                    # Any Google failure is reported by the outer error boundary.
+                    raw_results = list(ddgs.text(
+                        clean_query,
+                        max_results=results_per_page,
+                        page=page,
+                        region="kr-ko",
+                        safesearch="moderate",
+                        backend="google",
+                    ))
+                    fallback_pages.append(page)
+                    _LOG.info(
+                        "MAI web_search fallback succeeded provider=ddgs "
+                        "backend=google page=%d unique_results_before_page=%d",
+                        page, len(merged),
+                    )
                 if not raw_results:
                     stopped_on_empty_page = page
                     _LOG.info(
