@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+ROOT = HERE.parents[2]
 GAIA = ROOT / "benchmark" / "GAIA Benchmark" / "adapter"
 sys.path.insert(0, str(GAIA))
 TASKS = ("F01", "F02", "C01", "C02", "W01", "W02", "S02")
@@ -141,7 +141,7 @@ def grade(task: str, workspace: Path) -> tuple[bool, str]:
                     "def subtotal(prices, discount=0):\n    return sum(prices) - discount\n"):
                 return False, "prices.py modified"
             if task == "C01" and any(x.name not in {"clamp.py", "prompt.txt", "__pycache__",
-                                                     "agent.stdout", "agent.stderr"}
+                                                     "agent.stdout", "agent.stderr", "gaia_prompt.txt", "openclaw_stdout.json", "openclaw_stderr.log"}
                                       for x in workspace.iterdir()):
                 return False, "unexpected files changed/created"
             return result.returncode == 0, result.stderr[-1000:]
