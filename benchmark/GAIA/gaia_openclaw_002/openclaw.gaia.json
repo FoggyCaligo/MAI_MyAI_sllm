@@ -1,0 +1,39 @@
+{
+  "models": {
+    "mode": "replace",
+    "providers": {
+      "mai-local": {
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "apiKey": "local-unauthed-llamacpp",
+        "api": "openai-completions",
+        "timeoutSeconds": 500,
+        "models": [
+          {
+            "id": "gguf-404af33501979fcc02a5",
+            "name": "gguf-404af33501979fcc02a5",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 32768
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "mai-local/gguf-404af33501979fcc02a5"
+      },
+      "contextInjection": "never"
+    }
+  }
+}

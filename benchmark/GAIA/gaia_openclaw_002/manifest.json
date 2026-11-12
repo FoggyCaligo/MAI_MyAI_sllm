@@ -1,0 +1,12 @@
+{
+  "agent": "openclaw",
+  "split": "validation",
+  "level": "level1",
+  "start": 0,
+  "end": 1,
+  "model_id": "gguf-404af33501979fcc02a5",
+  "openclaw_version": "OpenClaw 2026.11.2 (b556fdf)",
+  "timeout_seconds": 1800,
+  "endpoint": "http://127.0.0.1:8080/v1",
+  "code_mode": "direct"
+}
