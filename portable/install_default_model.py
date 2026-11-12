@@ -5,6 +5,9 @@ import hashlib
 import os
 from pathlib import Path
 import urllib.request
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from portable.llamacpp_model_catalog import selected_default_path
 from portable.resolve_llamacpp_settings import read_config
