@@ -1,4 +1,4 @@
-"""Install verified official Google Gemma 4 12B QAT GGUF and projector."""
+"""Install SHA-256 verified startup-tier GGUF and matching multimodal projector."""
 from __future__ import annotations
 import argparse
 import hashlib
