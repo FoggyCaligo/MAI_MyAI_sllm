@@ -118,9 +118,6 @@
   function startWebSpeech(config, revision) {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) throw new Error('Web Speech is unavailable in this browser.');
-    if (!Number.isFinite(config.silence_seconds) || config.silence_seconds < 1 || config.silence_seconds > 120) {
-      throw new Error('Invalid VOICE_SILENCE_SECONDS setting.');
-    }
     const recognition = new Recognition();
     recognition.lang = 'ko-KR';
     recognition.continuous = true;
@@ -444,6 +441,9 @@
       const config = await request('/voice/config');
       if (!['local', 'web_speech'].includes(config.stt_provider)) {
         throw new Error('Invalid server STT provider.');
+      }
+      if (!Number.isFinite(config.silence_seconds) || config.silence_seconds < 1 || config.silence_seconds > 120) {
+        throw new Error('Invalid VOICE_SILENCE_SECONDS setting.');
       }
       let webSpeechStartupError = null;
       if (config.stt_provider === 'web_speech') {
