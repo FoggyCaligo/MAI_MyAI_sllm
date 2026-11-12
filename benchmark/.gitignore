@@ -10,3 +10,7 @@ agents/
 LongMemEval Benchmark/data/
 LongMemEval Benchmark/result/
 LongMemEval Benchmark/adapter/__pycache__/
+
+# Agent Comparison temporary workspaces, local outputs and fixtures
+Agent Comparison/result/
+Agent Comparison/adapter/__pycache__/
