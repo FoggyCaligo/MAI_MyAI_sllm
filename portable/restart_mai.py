@@ -134,6 +134,23 @@ def stop_registered_server() -> None:
             raise RuntimeError("Process registration changed during shutdown")
         IDENTITY.unlink()
 
+def stop() -> None:
+    """Stop only the registered MAI instance, rejecting concurrent restarts."""
+    DATA.mkdir(parents=True, exist_ok=True)
+    if PENDING.exists():
+        raise RuntimeError(f"MAI restart is pending; refusing concurrent stop: {PENDING}")
+    descriptor = os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(descriptor, "w") as lock_file:
+            lock_file.write(str(os.getpid()))
+        if PENDING.exists():
+            raise RuntimeError(f"MAI restart became pending; refusing concurrent stop: {PENDING}")
+        stop_registered_server()
+        print("MAI stopped; startup ports are no longer listening.", flush=True)
+    finally:
+        LOCK.unlink(missing_ok=True)
+
+
 def wait_for_handoff(request_id: str) -> None:
     signal_path = DATA / f"restart-handoff-{request_id}.json"
     deadline = time.monotonic() + 1800
@@ -266,12 +283,20 @@ if __name__ == "__main__":
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--detach", action="store_true")
     mode.add_argument("--coordinate", action="store_true")
-    options = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--stop", action="store_true")
+    options = parser.add_mutually_exclusive_group()
     options.add_argument("--update", action="store_true")
     options.add_argument("--no-update", action="store_true")
     parser.add_argument("--request-id", type=str, default=None)
     args = parser.parse_args()
-    if args.detach:
-        print(json.dumps(detach(update=args.update)))
+    if args.stop:
+        if args.update or args.no_update or args.request_id is not None:
+            parser.error("--stop does not accept restart options")
+        stop()
     else:
-        coordinate(update=args.update, request_id=args.request_id)
+        if args.update == args.no_update:
+            parser.error("restart requires exactly one of --update or --no-update")
+        if args.detach:
+            print(json.dumps(detach(update=args.update)))
+        else:
+            coordinate(update=args.update, request_id=args.request_id)
