@@ -141,6 +141,10 @@ class EmptyFinalResponseError(AgentRuntimeError):
     """The model repeatedly attempted to finish with an empty response."""
 
 
+class ActivatedToolNotInvokedError(AgentRuntimeError):
+    """An explicitly activated, invocation-required tool was never called."""
+
+
 class ToolUnavailableInRoundError(AgentRuntimeError):
     """The model called a registered tool that was not exposed in this round."""
 
@@ -270,6 +274,7 @@ class AgentLoop:
         numeric_verification_retries = 0
         coverage_verification_retries = 0
         empty_final_retries = 0
+        activation_completion_retries = 0
         pending_history_compactions: dict[int, str] = {}
         rejected_final_indices: list[int] = []
         rejection_feedback_indices: list[int] = []
@@ -472,6 +477,42 @@ class AgentLoop:
                 history.append(dict(turn.assistant_message))
 
                 if not turn.tool_calls:
+                    # Some side-effecting native tools require a real invocation
+                    # after activation. Never treat tool_manual success as the
+                    # effect's execution receipt; reject unsupported final output
+                    # using structural registry metadata, not text matching.
+                    pending_actions = [
+                        name for name in activated_tool_names
+                        if self.registry.get(name).activation_requires_invocation
+                        and not any(execution.name == name for execution in executions)
+                    ]
+                    if pending_actions:
+                        if activation_completion_retries >= 1:
+                            raise ActivatedToolNotInvokedError(
+                                "Activated required native tool(s) were never invoked: "
+                                + ", ".join(sorted(pending_actions))
+                            )
+                        activation_completion_retries += 1
+                        _LOG.warning(
+                            "MAI missing required tool invocation round=%d tools=%s",
+                            round_number, ",".join(sorted(pending_actions)),
+                        )
+                        history.append({
+                            "role": "system",
+                            "content": (
+                                "Your latest final answer was rejected: you activated "
+                                "these side-effecting native tools but never invoked them: "
+                                + ", ".join(sorted(pending_actions))
+                                + ". tool_manual only exposes a tool schema; it DOES NOT "
+                                "perform the operation. Call the actual activated tool "
+                                "using its declared arguments now. If execution fails, "
+                                "report that observed failure. Do not claim acceptance "
+                                "or success without a real tool invocation and receipt."
+                            ),
+                        })
+                        record_timing(round_number, "activation_invocation_retry", model_ms=model_elapsed_ms)
+                        round_number += 1
+                        continue
                     if not turn.content.strip():
                         if empty_final_retries >= 1:
                             raise EmptyFinalResponseError(
