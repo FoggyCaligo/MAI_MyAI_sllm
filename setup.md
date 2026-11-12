@@ -26,11 +26,11 @@ MAI 프로젝트의 깃허브 레포를 클론(다운로드)한다.
 클론한 레포에 해당하는 폴더로 이동한다.
 **./mai.sh setup** 
 MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 묶은 설치스크립트를 실행한다.( 다운로드 하는 모든 목록은 3번에서 상세하게 설명한다.)
-`setup`은 설치된 물리 RAM이 24GiB 미만이면 공식 Ornith 1.5 9B Q4_K_M과 mmproj를 `portable/portable-models/gguf/ornith_1.5_9b_Q4/`에, 24GiB 이상이면 Google Gemma 4 12B QAT Q4_0 GGUF와 mmproj를 `portable/portable-models/gguf/gemma4_12b_Q4/`에 자동 설치한다. 두 파일의 SHA-256을 확인하며, 이미 검증된 파일은 재사용하고 손상된 파일은 덮어쓰지 않고 실패를 알린다. 기존 Ornith 모델이 있으면 선택 목록에 그대로 유지된다.
+`setup`은 시스템 RAM 용량과 관계없이 기본 Ornith 1.5 9B Q4_K_M 및 mmproj를 `portable/portable-models/gguf/ornith_1.5_9b_Q4/`에 자동 설치한다. 두 파일의 SHA-256을 검증하고 정상 파일은 재사용하며 손상된 파일을 덮어쓰지 않는다. Gemma 4는 별도 선택 가능한 모델로 유지하며 필요한 경우 `portable/install_default_model.py --gemma`로 설치할 수 있다.
 
 #### 3. 설치 스크립트가 하는 것
 - Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
-- 설치된 시스템 RAM에 따라 기본 모델과 mmproj 선택 다운로드: 24GiB 미만은 Ornith 1.5 9B Q4_K_M, 24GiB 이상은 Gemma 4 12B QAT Q4_0 (각 공식 Hugging Face SHA-256 검증). 다른 모델은 추후 수동 설치 가능
+- 기본 Ornith 1.5 9B Q4_K_M 및 mmproj 다운로드 (RAM 용량 무관, 공식 Hugging Face SHA-256 검증); Gemma 4는 선택적 다운로드
 - 프로젝트 루트에 있는 `pyproject.toml`의 기본·개발 의존성, Playwright Chromium 다운로드
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
@@ -76,7 +76,7 @@ Hugging Face에서는 [Access Tokens](https://huggingface.co/settings/tokens)에
 세부 사항: [외부 모델 Provider](docs/cloud-model-providers.md), [GAIA 설치](benchmark/GAIA%20Benchmark/docs/README.md).
 
 ## 3. 모델 추가 다운받는 방법
-기본 다운로드 모델 출처: Ornith https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main / Gemma 4 https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/tree/main
+기본 다운로드 모델 출처: https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main (Gemma 4 선택적 다운로드: https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/tree/main)
 
 1. 허깅페이스에서, llama.cpp이 지원하는 모델 중, 본인의 컴퓨터에서 가동 가능한 모델을 찾는다. 링크 : https://huggingface.co/models?apps=llama.cpp
 2. 모델을 찾았으면 클릭해서 상세 페이지로 이동, **Files** 탭으로 이동한다.
@@ -115,7 +115,7 @@ move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/port
 ./mai.sh check
 ./mai.sh start
 ```
-`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. 서버 시작 시에는 설치된 총 RAM으로 기본 GGUF가 한 번 선택되며, 사용자가 이후 모델 선택 UI에서 바꾼 모델은 현재 실행 중에는 자동으로 덮어쓰지 않는다. 선택된 모델 파일이 없거나 손상되면 다른 모델로 자동 우회하지 않고 오류를 표시한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
+`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. 서버 시작 시 `LLAMACPP_MAIN_GGUF_PATH`에 지정된 Ornith를 기본 GGUF로 선택하며, 사용자가 이후 모델 선택 UI에서 다른 모델로 변경하는 것은 자유롭다. 선택된 모델 파일이 없거나 손상되면 다른 모델로 자동 우회하지 않고 오류를 표시한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
 
 | 환경 | 설치 | 실행 |
 |---|---|---|
@@ -148,9 +148,6 @@ move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/port
 |---|---|
 | `LLAMACPP_GGUF_DIRECTORY` | 모델별 하위 폴더를 탐색할 상위 폴더 |
 | `LLAMACPP_MAIN_GGUF_PATH` | 기본 GGUF |
-| `LLAMACPP_LOW_RAM_GGUF_PATH` | RAM 24GiB 미만에서 시작 시 선택할 Ornith GGUF 경로 |
-| `LLAMACPP_HIGH_RAM_GGUF_PATH` | RAM 24GiB 이상에서 시작 시 선택할 Gemma GGUF 경로 |
-| `LLAMACPP_HIGH_RAM_MIN_MIB` | 고RAM 프로필 선택 경계값 (기본 24576MiB) |
 | 모델 전용 폴더의 `mmproj-*.gguf` | 해당 모델 프리셋의 이미지 입력용 projector 자동 연결 |
 | `LLAMACPP_REASONING_PRESERVE` | llama.cpp 추론 보존 여부 |
 | `MODEL_MAX_OUTPUT_TOKENS` | 모델 출력 토큰 한도(기본 32768) |
