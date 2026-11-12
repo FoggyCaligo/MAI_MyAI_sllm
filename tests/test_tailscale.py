@@ -28,14 +28,14 @@ def test_tailscale_funnel_configures_background_public_proxy_and_returns_status(
     funnel = TailscaleFunnel(port=8000)
     status = funnel.start()
 
-    assert calls[0] == ["tailscale", "funnel", "--bg", "--yes", "8000"]
-    assert calls[1] == ["tailscale", "funnel", "status"]
+    assert calls[0] == ["tailscale", "funnel", "status"]
+    assert len(calls) == 1
     assert "https://machine.example.ts.net" in status
     assert funnel.status_text == status
 
     funnel.stop()
     assert funnel.status_text is None
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_tailscale_funnel_configuration_failure_is_visible(monkeypatch):
@@ -63,6 +63,8 @@ def test_tailscale_funnel_status_failure_is_visible(monkeypatch):
         nonlocal calls
         calls += 1
         if calls == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not configured")
+        if calls == 2:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         return SimpleNamespace(returncode=1, stdout="", stderr="status failed")
 
@@ -112,3 +114,41 @@ def test_funnel_failure_does_not_block_local_server(monkeypatch, tmp_path, caplo
     asyncio.run(check_startup())
     assert "unexpected state: NoState" in caplog.text
     assert "local server remains available" in caplog.text
+
+
+def test_tailscale_funnel_reconfigures_wrong_port(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tailscale_module.shutil, "which", lambda name: "tailscale")
+
+    def fake_run(args, **kwargs):
+        calls.append(list(args))
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=0, stdout="|-- / proxy http://127.0.0.1:8080", stderr="")
+        if len(calls) == 2:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="|-- / proxy http://127.0.0.1:8000", stderr="")
+
+    monkeypatch.setattr(tailscale_module.subprocess, "run", fake_run)
+    assert "8000" in TailscaleFunnel(port=8000).start()
+    assert calls == [
+        ["tailscale", "funnel", "status"],
+        ["tailscale", "funnel", "--bg", "--yes", "8000"],
+        ["tailscale", "funnel", "status"],
+    ]
+
+
+def test_windows_fallback_without_path(monkeypatch, tmp_path):
+    directory = tmp_path / "Tailscale"
+    directory.mkdir()
+    executable = directory / "tailscale.exe"
+    executable.write_bytes(b"")
+    monkeypatch.setattr(tailscale_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(tailscale_module.sys, "platform", "win32")
+    monkeypatch.setenv("ProgramFiles", str(tmp_path))
+    assert tailscale_module._find_tailscale_executable() == str(executable)
+
+
+def test_unix_without_path_has_no_windows_fallback(monkeypatch):
+    monkeypatch.setattr(tailscale_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(tailscale_module.sys, "platform", "linux")
+    assert tailscale_module._find_tailscale_executable() is None
