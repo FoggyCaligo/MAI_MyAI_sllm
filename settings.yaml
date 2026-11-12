@@ -10,12 +10,7 @@ LLAMACPP_HOST: "http://127.0.0.1:8080"
 # llama.cpp 전용: 폴더 내 GGUF를 시작 시 자동 탐색. MAIN_GGUF_PATH는 기본 선택값.
 # 경로는 프로젝트 루트 상대경로 또는 절대경로.
 LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"  # 실행 시작 시 모델 목록 자동 탐색
-LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma4_12b_Q4/gemma-4-12b-it-qat-q4_0.gguf"
-# 시작 시 설치 RAM 총량에 따라 첫 선택 모델을 결정하며, 실행 중 사용자가 모델을 바꾸는 동작은 유지.
-# 24GiB 미만(16GB 구성)은 Ornith, 24GiB 이상(32GB 구성)은 Gemma 4.
-LLAMACPP_LOW_RAM_GGUF_PATH: "portable/portable-models/gguf/ornith_1.5_9b_Q4/Ornith-1.5-9B-Q4_K_M.gguf"
-LLAMACPP_HIGH_RAM_GGUF_PATH: "portable/portable-models/gguf/gemma4_12b_Q4/gemma-4-12b-it-qat-q4_0.gguf"
-LLAMACPP_HIGH_RAM_MIN_MIB: 24576
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/ornith_1.5_9b_Q4/Ornith-1.5-9B-Q4_K_M.gguf"
 # UI 선택 GGUF는 Main·Verifier·기억 추출에 공통 적용된다.
 # 각 모델은 gguf/<모델폴더>/ 안에 모델 GGUF 1개와 선택적 mmproj GGUF 1개를 가진다.
 # 폴더 단위로 연결하므로 양자화 이름이 달라도 매핑 설정은 필요하지 않다.

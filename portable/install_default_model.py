@@ -1,17 +1,10 @@
-"""Install SHA-256 verified startup-tier GGUF and matching multimodal projector."""
+"""Install SHA-256 verified default Ornith GGUF or optional Gemma GGUF."""
 from __future__ import annotations
 import argparse
 import hashlib
 import os
 from pathlib import Path
 import urllib.request
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from portable.llamacpp_model_catalog import selected_default_path
-from portable.resolve_llamacpp_settings import read_config
-from portable.system_memory import installed_ram_bytes
 
 MODEL_DIRECTORY = Path("portable/portable-models/gguf/gemma4_12b_Q4")
 BASE_URL = "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/main"
@@ -74,41 +67,24 @@ def install_artifacts(root: Path, *, directory: Path, base_url: str, artifacts, 
 
 
 def install(root: Path, *, fetch=None) -> None:
-    """Retain the explicit Gemma installer for direct use."""
+    """Install the default Ornith model, independent of host RAM size."""
+    install_artifacts(root, directory=ORNITH_DIRECTORY, base_url=ORNITH_BASE_URL,
+                      artifacts=ORNITH_ARTIFACTS, fetch=fetch)
+
+
+def install_gemma(root: Path, *, fetch=None) -> None:
+    """Install optional Gemma 4 model without changing the MAI default."""
     install_artifacts(root, directory=MODEL_DIRECTORY, base_url=BASE_URL,
                       artifacts=ARTIFACTS, fetch=fetch)
-
-
-def install_selected(root: Path, *, fetch=None, total_ram_bytes: int | None = None) -> None:
-    """Install the startup RAM tier only; no silent substitute model."""
-    root = root.resolve()
-    config = read_config(root / "settings.yaml")
-    ram = installed_ram_bytes() if total_ram_bytes is None else total_ram_bytes
-    chosen = selected_default_path(config, ram)
-    selected = Path(chosen)
-    selected = (selected if selected.is_absolute() else root / selected).resolve()
-    profiles = (
-        (MODEL_DIRECTORY, BASE_URL, ARTIFACTS),
-        (ORNITH_DIRECTORY, ORNITH_BASE_URL, ORNITH_ARTIFACTS),
-    )
-    matches = [
-        (directory, base_url, artifacts)
-        for directory, base_url, artifacts in profiles
-        if selected == (root / directory / artifacts[0][0]).resolve()
-    ]
-    if len(matches) != 1:
-        raise ValueError(f"Selected startup model has no declared verified installer: {selected}")
-    directory, base_url, artifacts = matches[0]
-    install_artifacts(root, directory=directory, base_url=base_url, artifacts=artifacts, fetch=fetch)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--selected", action="store_true")
+    parser.add_argument("--gemma", action="store_true", help="Install optional Gemma model instead of Ornith")
     args = parser.parse_args()
-    if args.selected:
-        install_selected(args.root)
+    if args.gemma:
+        install_gemma(args.root)
     else:
         install(args.root)
 

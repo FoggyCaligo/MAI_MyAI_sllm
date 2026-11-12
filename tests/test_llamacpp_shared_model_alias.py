@@ -20,9 +20,9 @@ from portable.resolve_llamacpp_settings import read_config
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_settings_define_default_gemma_for_auto_catalog():
+def test_settings_define_default_ornith_for_auto_catalog():
     config = read_config(ROOT / "settings.yaml")
-    assert "gemma-4-12b-it-qat-q4_0.gguf" in str(config["LLAMACPP_MAIN_GGUF_PATH"])
+    assert "Ornith-1.5-9B-Q4_K_M.gguf" in str(config["LLAMACPP_MAIN_GGUF_PATH"])
     assert config["LLAMACPP_GGUF_DIRECTORY"] == "portable/portable-models/gguf"
 
 

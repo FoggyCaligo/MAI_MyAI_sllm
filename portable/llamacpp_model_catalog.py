@@ -13,7 +13,6 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from portable.resolve_llamacpp_settings import read_config
-from portable.system_memory import installed_ram_bytes
 
 
 def resolve_path(root: Path, raw: str) -> Path:
@@ -36,34 +35,14 @@ def is_mmproj_filename(path: Path) -> bool:
     return path.name.lower().startswith(("mmproj-", "mmproj_"))
 
 
-def selected_default_path(config: dict[str, object], total_ram_bytes: int) -> str:
-    """Choose configured startup model based on physical RAM, not free RAM."""
-    low = config.get("LLAMACPP_LOW_RAM_GGUF_PATH")
-    high = config.get("LLAMACPP_HIGH_RAM_GGUF_PATH")
-    threshold = config.get("LLAMACPP_HIGH_RAM_MIN_MIB")
-    if low is None and high is None and threshold is None:
-        configured = config.get("LLAMACPP_MAIN_GGUF_PATH")
-        if not isinstance(configured, str) or not configured.strip():
-            raise ValueError("LLAMACPP_MAIN_GGUF_PATH is required")
-        return configured
-    if not isinstance(low, str) or not low.strip() or not isinstance(high, str) or not high.strip():
-        raise ValueError("Both RAM tier model paths are required")
-    if type(threshold) is not int or threshold <= 0:
-        raise ValueError("LLAMACPP_HIGH_RAM_MIN_MIB must be a positive integer")
-    if type(total_ram_bytes) is not int or total_ram_bytes <= 0:
-        raise ValueError("Installed RAM capacity must be positive")
-    return high if total_ram_bytes >= threshold * 1024 * 1024 else low
-
-
-def discover(root: Path, config: dict[str, object], *, total_ram_bytes: int | None = None) -> dict[str, object]:
+def discover(root: Path, config: dict[str, object]) -> dict[str, object]:
     """Discover exactly one model and at most one projector in each model folder."""
     root = root.resolve()
     for old_key in ("LLAMACPP_MAIN_MMPROJ_PATH", "LLAMACPP_VISION_MMPROJ_PATH", "LLAMACPP_MODEL_MMPROJ_MAP"):
         if config.get(old_key):
             raise ValueError(f"{old_key} is obsolete; place the model and mmproj in one folder")
     directory_raw = config.get("LLAMACPP_GGUF_DIRECTORY")
-    total_ram_bytes = installed_ram_bytes() if total_ram_bytes is None else total_ram_bytes
-    main_raw = selected_default_path(config, total_ram_bytes)
+    main_raw = config.get("LLAMACPP_MAIN_GGUF_PATH")
     if not isinstance(directory_raw, str) or not directory_raw.strip():
         raise ValueError("LLAMACPP_GGUF_DIRECTORY is required")
     if not isinstance(main_raw, str) or not main_raw.strip():
@@ -120,7 +99,6 @@ def discover(root: Path, config: dict[str, object], *, total_ram_bytes: int | No
         raise ValueError("Default GGUF was not found in a model directory")
     return {
         "default": default_entry["id"], "models": entries,
-        "installed_ram_bytes": total_ram_bytes,
         "projector": default_entry["projector"],
         "main_vision": default_entry["projector"] is not None,
         "reasoning_preserve": config.get("LLAMACPP_REASONING_PRESERVE", False),

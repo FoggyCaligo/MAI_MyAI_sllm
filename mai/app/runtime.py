@@ -453,13 +453,6 @@ class MAIRuntime:
         task.add_done_callback(
             lambda completed, user_id=principal.memory_user_id: self._forget_memory_task(user_id, completed)
         )
-        _LOG.info("MAI memory background scheduled after final answer user_id=%s", principal.memory_user_id)
-        # Give the independent memory task its first event-loop turn while the
-        # main inference lock has already been released. Never await extraction
-        # or graph admission here: the accepted answer must be delivered
-        # independently of TTS playback and background memory latency.
-        await asyncio.sleep(0)
-
         return MAIRunResult(answer=answer, model=selected_model, model_rounds=model_rounds, tools=tools)
 
     async def _await_pending_memory_update(self, user_id: str) -> None:
@@ -488,7 +481,6 @@ class MAIRuntime:
         extraction_tool_results = successful_non_recall_tool_results(tool_executions)
         fact_texts: tuple[str, ...] = ()
         extraction_succeeded = False
-        _LOG.info("MAI memory background started; fact extraction before graph admission")
         try:
             fact_texts = await self.memory.extract_facts(
                 user_text=prompt,

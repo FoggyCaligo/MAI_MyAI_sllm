@@ -17,9 +17,6 @@ from mai.app.settings import load_settings
 KEYS = (
     "LLAMACPP_GGUF_DIRECTORY",
     "LLAMACPP_MAIN_GGUF_PATH",
-    "LLAMACPP_LOW_RAM_GGUF_PATH",
-    "LLAMACPP_HIGH_RAM_GGUF_PATH",
-    "LLAMACPP_HIGH_RAM_MIN_MIB",
     "LLAMACPP_MAIN_MMPROJ_PATH",
     "LLAMACPP_MAIN_VISION",
     "LLAMACPP_REASONING_PRESERVE",
@@ -56,7 +53,6 @@ def read_config(path: Path) -> dict[str, str | bool | None]:
         ("MAI_MIN_AVAILABLE_RAM_MIB", 6144, 512, 262144),
         ("LLAMACPP_CONTEXT_SIZE", 131072, 512, 262144),
         ("LLAMACPP_CACHE_RAM_MIB", 8192, 0, 262144),
-        ("LLAMACPP_HIGH_RAM_MIN_MIB", 24576, 1024, 262144),
     ):
         value = data.get(key, str(default))
         try:
