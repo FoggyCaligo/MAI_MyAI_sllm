@@ -18,9 +18,6 @@
 git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git
 cd MAI_MyAI_sllm
 ./mai.sh setup
-mkdir -p portable/portable-models/gguf/Ornith-1.5-9B
-curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf
-curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/mmproj-Ornith-1.5-9B-BF16.gguf
 ```
 #### 2. 각 명령어 별 설명
 **git clone --branch dev https://github.com/FoggyCaligo/MAI_MyAI_sllm.git**
@@ -29,15 +26,11 @@ MAI 프로젝트의 깃허브 레포를 클론(다운로드)한다.
 클론한 레포에 해당하는 폴더로 이동한다.
 **./mai.sh setup** 
 MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 묶은 설치스크립트를 실행한다.( 다운로드 하는 모든 목록은 3번에서 상세하게 설명한다.)
-**mkdir -p portable/portable-models/gguf/Ornith-1.5-9B**
-Ornith 모델 전용 폴더를 만든다. 다른 모델도 각각 별도 하위 폴더를 사용한다.
-**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf**
-ornith-1.5:9b 이라는 로컬모델을 다운로드 받는다.
-**curl -fL --retry 3 "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/mmproj-Ornith-1.5-9B-BF16.gguf" -o portable/portable-models/gguf/Ornith-1.5-9B/mmproj-Ornith-1.5-9B-BF16.gguf**
-ornith-1.5:9b 모델이 이미지를 받을 수 있도록 돕는 ornith용 mmproj를 다운받는다.
+`setup`은 공식 Google Gemma 4 12B QAT Q4_0 GGUF와 대응하는 `mmproj`를 `portable/portable-models/gguf/gemma4_12b_Q4/`에 자동 설치한다. 두 파일의 SHA-256을 확인하며, 이미 검증된 파일은 재사용하고 손상된 파일은 덮어쓰지 않고 실패를 알린다. 기존 Ornith 모델이 있으면 선택 목록에 그대로 유지된다.
 
 #### 3. 설치 스크립트가 하는 것
 - Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
+- 기본 Gemma 4 12B QAT Q4_0 모델 및 mmproj 다운로드 (Google 공식 Hugging Face 파일, SHA-256 검증)
 - 프로젝트 루트에 있는 `pyproject.toml`의 기본·개발 의존성, Playwright Chromium 다운로드
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
@@ -83,7 +76,7 @@ Hugging Face에서는 [Access Tokens](https://huggingface.co/settings/tokens)에
 세부 사항: [외부 모델 Provider](docs/cloud-model-providers.md), [GAIA 설치](benchmark/GAIA%20Benchmark/docs/README.md).
 
 ## 3. 모델 추가 다운받는 방법
-기본 다운로드 모델 출처: https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/tree/main
+기본 다운로드 모델 출처: https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/tree/main
 
 1. 허깅페이스에서, llama.cpp이 지원하는 모델 중, 본인의 컴퓨터에서 가동 가능한 모델을 찾는다. 링크 : https://huggingface.co/models?apps=llama.cpp
 2. 모델을 찾았으면 클릭해서 상세 페이지로 이동, **Files** 탭으로 이동한다.
@@ -122,7 +115,7 @@ move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/port
 ./mai.sh check
 ./mai.sh start
 ```
-`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C`를 사용한다.
+`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
 
 | 환경 | 설치 | 실행 |
 |---|---|---|
