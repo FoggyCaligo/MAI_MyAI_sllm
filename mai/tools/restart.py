@@ -36,6 +36,7 @@ def register_restart_tool(registry: ToolRegistry) -> None:
         handler=lambda update: detach(update=update, await_handoff=True),
         timeout_seconds=15,
         category="host-lifecycle",
+        activation_requires_invocation=True,
         metadata={"model_context": {
             "authorization": "The owner's current natural-language or spoken instruction is approval if it expressly requests the restart or applying finished changes to the running MAI. Otherwise ask in chat before calling restart. Never use substring matching as proof of consent.",
             "scope": "MAI host only; not the connected remote worker.",
