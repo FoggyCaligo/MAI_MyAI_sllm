@@ -445,9 +445,18 @@
       if (!['local', 'web_speech'].includes(config.stt_provider)) {
         throw new Error('Invalid server STT provider.');
       }
+      let webSpeechStartupError = null;
       if (config.stt_provider === 'web_speech') {
-        if (voiceMode && revision === modeRevision) startWebSpeech(config, revision);
-        return;
+        if (!voiceMode || revision !== modeRevision) return;
+        try {
+          startWebSpeech(config, revision);
+          return;
+        } catch (error) {
+          // Only a synchronous Web Speech startup failure selects local STT.
+          // Recognition errors after start remain explicit Web Speech failures.
+          webSpeechStartupError = error;
+          console.warn('Web Speech startup failed; trying local STT:', error);
+        }
       }
       const {max_recording_seconds: maxSeconds, max_recording_bytes: maxBytes} = config;
       if (!Number.isFinite(maxSeconds) || maxSeconds < 1 || !Number.isSafeInteger(maxBytes) ||
@@ -494,7 +503,9 @@
           void checkSpeechEnd(capture);
         }
       };
-      setStatus('Listening · sends after the configured pause');
+      setStatus(webSpeechStartupError
+        ? `Web Speech startup failed (${webSpeechStartupError.message}); Local STT listening…`
+        : 'Listening · sends after the configured pause');
     } catch (error) {
       setStatus(`Microphone failed: ${error.message}`, true);
     } finally {
