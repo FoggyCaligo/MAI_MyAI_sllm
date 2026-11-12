@@ -57,7 +57,7 @@ MAI_VERIFIER_BLOCKING_MODE: critical
 VOICE_SILENCE_SECONDS: 5
 VOICE_WHISPER_MODEL: small
 # 음성 인식: local(Whisper + Silero VAD) / web_speech(브라우저 인식)
-VOICE_STT_PROVIDER: local
+VOICE_STT_PROVIDER: web_speech
 
 # 원격 웹 호스팅 선택: none / tailscale / cloudflare. 비밀 토큰은 .env에만 저장.
 REMOTE_HOSTING_PROVIDER: tailscale
