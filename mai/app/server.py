@@ -411,16 +411,18 @@ async def voice_config(authorization: str | None = Header(default=None)) -> dict
     _, principal = _principal_from_authorization(authorization)
     if principal.role is not AccessRole.OWNER:
         raise HTTPException(403, "voice input is restricted to the owner")
-    provider = os.environ.get("VOICE_STT_PROVIDER", "local")
+    provider = os.environ.get("VOICE_STT_PROVIDER", "web_speech")
     if provider not in {"local", "web_speech"}:
         raise ValueError("VOICE_STT_PROVIDER must be local or web_speech")
     voice = _voice() if provider == "local" else None
     config = {
         "stt_provider": provider,
         "silence_seconds": voice.silence_seconds if voice else float(os.environ.get("VOICE_SILENCE_SECONDS", "5")),
+        # Web Speech startup may fail in-browser; local capture needs these
+        # exact server limits even if the preferred provider is Web Speech.
+        "max_recording_seconds": MAX_RECORDING_SECONDS,
+        "max_recording_bytes": MAX_RECORDING_BYTES,
     }
-    if voice is not None:
-        config.update(max_recording_seconds=MAX_RECORDING_SECONDS, max_recording_bytes=MAX_RECORDING_BYTES)
     return config
 
 
