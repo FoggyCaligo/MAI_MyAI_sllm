@@ -6,6 +6,7 @@ import json
 from pydantic import BaseModel, ConfigDict
 
 from mai.agent import AgentRuntime
+from mai.agent.loop import AgentRunFailure
 from mai.llm.models import ModelTurn, NativeToolCall
 from mai.tools.registry import ToolRegistry
 
@@ -149,3 +150,53 @@ def test_unknown_manual_returns_registry_names_without_partial_activation():
     assert payload["available_tools"] == ["echo"]
     assert names(adapter.requests[1]) == ["tool_manual"]
     assert "echo" not in names(adapter.requests[1])
+
+
+def test_required_invocation_corrects_false_final_and_invokes_actual_tool():
+    calls = []
+    registry = ToolRegistry()
+    registry.add(
+        name="controlled_action", description="Execute an authorized operation",
+        input_model=EchoInput, handler=lambda text: calls.append(text) or {"status": "accepted"},
+        activation_requires_invocation=True,
+    )
+    adapter = Adapter([
+        turn(calls=[NativeToolCall(name="tool_manual", arguments={"tools": ["controlled_action"]})]),
+        turn(content="Request accepted without using the tool."),
+        turn(calls=[NativeToolCall(name="controlled_action", arguments={"text": "run"})]),
+        turn(content="The actual tool accepted the request."),
+    ])
+    result = run(adapter, registry)
+    assert calls == ["run"]
+    assert [e.name for e in result.tool_executions] == ["tool_manual", "controlled_action"]
+    assert "activated" in str(adapter.requests[2].messages).lower()
+    assert result.content == "The actual tool accepted the request."
+
+
+def test_required_invocation_does_not_allow_fake_success_after_retry():
+    registry = ToolRegistry()
+    registry.add(
+        name="controlled_action", description="Execute an authorized operation",
+        input_model=EchoInput, handler=lambda text: {"status": "accepted"},
+        activation_requires_invocation=True,
+    )
+    adapter = Adapter([
+        turn(calls=[NativeToolCall(name="tool_manual", arguments={"tools": ["controlled_action"]})]),
+        turn(content="It is done."),
+        turn(content="It is done."),
+    ])
+    import pytest
+    with pytest.raises(AgentRunFailure) as raised:
+        run(adapter, registry)
+    assert raised.value.error_type == "ActivatedToolNotInvokedError"
+    assert all(e.name != "controlled_action" for e in raised.value.context.tool_executions)
+
+
+def test_optional_tool_activation_does_not_require_invocation():
+    registry = ToolRegistry()
+    registry.add(name="echo", description="Echo", input_model=EchoInput, handler=lambda text: text)
+    adapter = Adapter([
+        turn(calls=[NativeToolCall(name="tool_manual", arguments={"tools": ["echo"]})]),
+        turn(content="I chose not to use the optional tool."),
+    ])
+    assert run(adapter, registry).content == "I chose not to use the optional tool."
