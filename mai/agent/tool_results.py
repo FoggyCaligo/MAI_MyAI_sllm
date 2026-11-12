@@ -97,6 +97,10 @@ class ToolResultStore:
                 "provider": payload.get("provider"),
                 "provider_pages": payload.get("provider_pages"),
                 "stopped_on_empty_page": payload.get("stopped_on_empty_page"),
+                "status": payload.get("status"),
+                "message": payload.get("message"),
+                "search_scope": payload.get("search_scope"),
+                "suggested_next_action": payload.get("suggested_next_action"),
                 "results": [
                     {"rank": item.get("rank"), "title": item.get("title"),
                      "url": item.get("url"), "snippet": item.get("snippet")}
