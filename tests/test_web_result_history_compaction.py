@@ -65,3 +65,30 @@ def test_unrecognized_web_payload_does_not_claim_valid_source_extract():
     views = store.web_model_views(original, tool_name="web_fetch")
     assert views.initial_content == original
     assert views.compact_history_content is None
+
+
+def test_no_results_guidance_survives_later_history_compaction():
+    store = ToolResultStore(max_inline_chars=8000)
+    response = {
+        "query": "rare exact phrase",
+        "provider": "ddgs",
+        "provider_pages": 0,
+        "stopped_on_empty_page": 1,
+        "status": "no_results",
+        "message": "이 검색어로 확인된 결과가 없습니다.",
+        "search_scope": "requested_query",
+        "results": [],
+        "suggested_next_action": {
+            "type": "reformulate_query",
+            "guidance": "다른 키워드로 재검색을 고려하세요.",
+            "mandatory": False,
+        },
+    }
+    original = json.dumps(response, ensure_ascii=False)
+    views = store.web_model_views(original, tool_name="web_search")
+    assert views.initial_content == original
+    later = json.loads(views.compact_history_content)
+    assert later["status"] == "no_results"
+    assert later["results"] == []
+    assert later["search_scope"] == "requested_query"
+    assert later["suggested_next_action"] == response["suggested_next_action"]
