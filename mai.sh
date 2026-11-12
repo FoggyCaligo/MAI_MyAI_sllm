@@ -197,6 +197,7 @@ if [[ "$install_chromium" == 1 ]]; then
 fi
 echo "[Linux Portable] Host runtime prepared: $cache"
 if [[ "$with_llamacpp" == 1 ]]; then echo "llama.cpp available: portable/start-portable-llamacpp-linux.sh"; fi
+"$python" "$root/portable/install_default_model.py" --root "$root"
 echo "Run: ./mai.sh start"
 
   if [[ ! -f "$root/.env" ]]; then
