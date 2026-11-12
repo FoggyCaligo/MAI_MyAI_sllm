@@ -8,7 +8,7 @@ def test_configuration_template_separates_secrets_and_defaults() -> None:
     env = Path(".env.example").read_text(encoding="utf-8")
     settings = load_settings(Path("settings.yaml"), environ={})
     assert settings["LLM_BACKEND"] == "llamacpp"
-    assert settings["LLAMACPP_MAIN_GGUF_PATH"].endswith("gemma-4-12b-it-qat-q4_0.gguf")
+    assert settings["LLAMACPP_MAIN_GGUF_PATH"].endswith("Ornith-1.5-9B-Q4_K_M.gguf")
     assert settings["MAI_VERIFIER_ENABLED"] == "false"
     assert settings["MAI_ANSWER_QUALITY_REVIEW"] == "false"
     assert settings["SESSION_HISTORY_MESSAGES"] == "10"
