@@ -4,7 +4,7 @@ from pathlib import Path
 import mai.mcp_tools.mcp_servers as servers
 import mai.mcp_tools.tool_manual as manual
 from mai.agent.loop import ToolManualInput, _tool_manual_schema, _insert_tool_catalog
-from mai.mcp_tools.MCP_memorizer import server as memory_launcher
+from mai.mcp_tools.mcp_memorizer import server as memory_launcher
 from mcp_memorizer.extraction.prompt import _FACT_EXTRACTION_SYSTEM
 from mcp_memorizer.policy import MEMORY_MODEL_CONTEXT
 
