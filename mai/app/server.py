@@ -176,8 +176,10 @@ async def _remote_idle_reaper() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _runtime, _access_policy, _chat_session_store, _hosting, _hosting_provider, _voice_service, _login_rate_limiter
     # Standalone run_server.py starts without Portable launcher: migrate before DB open.
-    from portable.runtime_data_paths import migrate
-    migrate(Path(__file__).resolve().parents[2])
+    from portable.runtime_data_paths import migrate, normalize_legacy_environment
+    project_root = Path(__file__).resolve().parents[2]
+    migrate(project_root)
+    normalize_legacy_environment(project_root)
     _voice_service = VoiceService()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
