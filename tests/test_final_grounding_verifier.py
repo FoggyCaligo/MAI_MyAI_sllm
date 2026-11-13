@@ -285,7 +285,7 @@ def test_numeric_budget_exhaustion_uses_independent_reviews() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 6  # three numeric and three factual checks
+    assert len(reviewer.requests) == 3  # one unified review for each rejected candidate
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
