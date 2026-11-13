@@ -28,6 +28,7 @@ from .login_rate_limit import LoginRateLimiter
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
+from ..tools.mcp_connection import MCPConnectionManager, ensure_default_mcp_config
 from ..hosting import HostingError, create_hosting
 from .uploads import principal_upload_directory
 from .voice import MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, VoiceService
@@ -188,6 +189,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # an already-created conversation.
     for previous_id, db_id in _access_policy.user_to_db_ids().items():
         _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
+
+    configured_path = os.environ.get("MAI_MCP_CONFIG", "").strip()
+    if configured_path:
+        mcp_config_path = Path(configured_path).expanduser().resolve()
+    else:
+        mcp_config_path = ensure_default_mcp_config(
+            memory_db_path=_db_path("MEMORY_DB_PATH"),
+            sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
+        )
+    # At startup, discover only enabled MCPs. The discovery connections are
+    # closed immediately; real tool sessions open lazily upon tool_manual.
+    discovery = MCPConnectionManager(mcp_config_path, memory_user_id="catalog-discovery")
+    discovered_tools = await discovery.refresh_catalog()
+    os.environ["MAI_MCP_CONFIG"] = str(mcp_config_path)
+    logger.info("MAI MCP startup catalog enabled_servers=%d tools=%d names=%s",
+                len(discovery.servers), len(discovered_tools), discovered_tools)
 
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", ""),
