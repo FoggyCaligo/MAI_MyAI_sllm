@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from mcp_memorizer.manager import MemorySearchInput
-from mai.mcp_tools.MCP_memorizer.admission import MEMORY_RECALL_TOOL_NAMES
+from mai.mcp_tools.mcp_memorizer.admission import MEMORY_RECALL_TOOL_NAMES
 
 
 def test_lookup_keyword_with_limit():
