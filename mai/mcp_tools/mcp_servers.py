@@ -52,7 +52,8 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                     json.dump(previous, fp, ensure_ascii=False, indent=2)
             except FileExistsError:
                 pass
-            return path
+            # Continue to schema-v2 migration below so MCP_remote is
+            # registered on this first start even with a legacy config.
         config = {
             "schema_version": 2,
             "catalog_path": "mcp_catalog.json",
