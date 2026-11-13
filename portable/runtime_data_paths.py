@@ -70,6 +70,12 @@ def _update_memorizer_config(root: Path) -> bool:
         if isinstance(configured, str) and Path(configured).expanduser().resolve() == prior:
             env["MEMORIZER_DATA_DIR"] = str(target)
             changed = True
+        args = entry.get("args")
+        if isinstance(args, list):
+            for index, value in enumerate(args):
+                if value == "mai.mcp_tools.MCP_memorizer.server":
+                    args[index] = "mai.mcp_tools.mcp_memorizer.server"
+                    changed = True
     if changed:
         # Preserve the operator's original settings and enabled toggles.
         backup = config_file.with_name("mcp_servers.pre-data-path-migration.json")
