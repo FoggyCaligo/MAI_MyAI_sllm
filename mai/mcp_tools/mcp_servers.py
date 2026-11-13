@@ -132,6 +132,7 @@ class MCPConnectionManager:
         self._model_to_qualified: dict[str, str] = {}
         self._stacks: dict[str, AsyncExitStack] = {}
         self._sessions: dict[str, Any] = {}
+        self._server_instructions: dict[str, str] = {}
 
     @staticmethod
     def _check_tool_record(entry: Any) -> None:
@@ -143,6 +144,8 @@ class MCPConnectionManager:
             raise ValueError("invalid MCP schema/description")
         if entry["schema"].get("type") != "object":
             raise ValueError("MCP input schema must have object root")
+        if not isinstance(entry.get("instructions", ""), str):
+            raise ValueError("invalid MCP server instructions")
         if entry.get("schema_hash") != _checksum(entry["schema"]):
             raise ValueError("MCP cached schema hash mismatch")
 
@@ -170,7 +173,8 @@ class MCPConnectionManager:
                                            env=self._server_env(server))
             reader, writer = await stack.enter_async_context(stdio_client(params))
             session = await stack.enter_async_context(ClientSession(reader, writer))
-            await asyncio.wait_for(session.initialize(), timeout=float(config.get("connect_timeout", 30)))
+            initialized = await asyncio.wait_for(session.initialize(), timeout=float(config.get("connect_timeout", 30)))
+            self._server_instructions[server] = initialized.instructions or ""
             self._stacks[server] = stack
             self._sessions[server] = session
             return session
@@ -179,7 +183,7 @@ class MCPConnectionManager:
             raise MCPConnectionError(f"MCP server '{server}' connection failed: {type(exc).__name__}: {exc}") from exc
 
     @staticmethod
-    def _live_records(server: str, result: Any) -> list[dict[str,Any]]:
+    def _live_records(server: str, result: Any, instructions: str = "") -> list[dict[str,Any]]:
         records = []
         for tool in result.tools:
             name = tool.name
@@ -190,7 +194,8 @@ class MCPConnectionManager:
                 raise MCPConnectionError(f"server {server} returned invalid schema for {name}")
             records.append({"server": server, "name": name,
                             "description": tool.description or "",
-                            "schema": schema, "schema_hash": _checksum(schema)})
+                            "schema": schema, "schema_hash": _checksum(schema),
+                            "instructions": instructions})
         return records
 
     async def refresh_catalog(self) -> list[str]:
@@ -204,7 +209,7 @@ class MCPConnectionManager:
                 session = await self._connect(server)
                 fresh.extend(self._live_records(server, await asyncio.wait_for(
                     session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
-                )))
+                ), self._server_instructions.get(server, "")))
             body = {"version": 1, "tools": fresh}
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.cache_path.with_suffix(".tmp")
@@ -246,6 +251,9 @@ class MCPConnectionManager:
                          category="mcp", metadata={
                              "mcp_qualified_name": full_name,
                              "mcp_input_schema": record["schema"],
+                             **({"model_context": {"kind": "mcp_server_instructions",
+                                      "instruction": record["instructions"]}}
+                                if record.get("instructions") else {}),
                              "catalog_hint": (description[:350] + " (MCP server " + record["server"] + ")"),
                          })
             self._model_to_qualified[model_name] = full_name
@@ -259,13 +267,14 @@ class MCPConnectionManager:
             session = await self._connect(server)
             actual = {x["name"]: x for x in self._live_records(server, await asyncio.wait_for(
                 session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
-            ))}
+            ), self._server_instructions.get(server, ""))}
             for name in qualified_names:
                 cached = self.catalog.get(name)
                 if cached is None or cached["server"] != server:
                     continue
                 live = actual.get(cached["name"])
-                if live is None or live["schema_hash"] != cached["schema_hash"]:
+                if (live is None or live["schema_hash"] != cached["schema_hash"]
+                        or live["instructions"] != cached.get("instructions", "")):
                     raise MCPConnectionError(f"cached MCP tool contract changed: {name}; explicitly refresh catalog")
         return None
 
@@ -286,6 +295,7 @@ class MCPConnectionManager:
         for server in reversed(list(self._stacks)):
             stack = self._stacks.pop(server)
             self._sessions.pop(server, None)
+            self._server_instructions.pop(server, None)
             await stack.aclose()
 
 
