@@ -14,22 +14,13 @@ class Reviewer:
 
     async def chat(self, request):
         self.requests.append(request)
-        if len(self.requests) == 1:
-            payload = {
-                "evidence_verdict": "supported",
-                "reasons": [],
-                "claims": [],
-                "action_verdict": "not_applicable",
-                "retry_summary": "No correction needed.",
-            }
-        else:
-            payload = {
-                "alignment_verdict": "aligned",
-                "coverage_verdict": "sufficient",
-                "coverage_reasons": [],
-                "reasons": [],
-                "retry_summary": "No correction needed.",
-            }
+        payload = {
+            "numeric_verdict": "supported", "numeric_reason": "",
+            "evidence_verdict": "supported", "claims": [],
+            "action_verdict": "not_applicable",
+            "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
+            "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
+        }
         content = json.dumps(payload)
         return ModelTurn(content, "", (), {"role": "assistant", "content": content})
 
@@ -46,7 +37,7 @@ def test_full_candidate_reaches_factual_and_quality_reviewers():
         )
     )
     assert result.ok
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 1
     for request in reviewer.requests:
         payload = json.loads(request.messages[1]["content"])
         assert payload["candidate_final"] == candidate
