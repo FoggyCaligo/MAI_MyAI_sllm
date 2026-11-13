@@ -122,6 +122,9 @@ def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
         registry = ToolRegistry()
         manager.register(registry)
         assert manager._sessions == {}
+        contexts = registry.model_context(names=["memorizer__memory_search"])
+        assert any("latest created_at" in c["context"].get("instruction", "") for c in contexts)
+        assert registry.model_context(names=()) == ()
         try:
             await manager.activate(["memorizer__memory_search"])
             output = await registry.invoke(NativeToolCall(
