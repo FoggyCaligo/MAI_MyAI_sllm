@@ -91,3 +91,44 @@ def test_missing_catalog_means_no_process_started(tmp_path):
     manager.register(registry)
     assert registry.names() == ()
     assert manager._sessions == {}
+
+
+def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
+    """End-to-end: explicit refresh, lazy tool_manual activation, stdio call."""
+    import sys
+    from mai.llm.models import NativeToolCall
+
+    data_dir = tmp_path / "private-memory"
+    config = tmp_path / "servers.json"
+    config.write_text(json.dumps({
+        "catalog_path": "catalog.json",
+        "servers": [{
+            "id": "memorizer",
+            "command": sys.executable,
+            "args": ["-m", "mcp_memorizer.mcp_server"],
+            "env": {
+                "MEMORIZER_DATA_DIR": str(data_dir),
+                "MEMORIZER_USER_ID": "{memory_user_id}",
+            },
+        }],
+    }), encoding="utf-8")
+
+    async def exercise():
+        discovery = MCPConnectionManager(config, memory_user_id="test-user")
+        names = await discovery.refresh_catalog()
+        assert names == ["memorizer.memory_search"]
+        manager = MCPConnectionManager(config, memory_user_id="test-user")
+        registry = ToolRegistry()
+        manager.register(registry)
+        assert manager._sessions == {}
+        try:
+            await manager.activate(["memorizer.memory_search"])
+            output = await registry.invoke(NativeToolCall(
+                name="memorizer.memory_search", arguments={"limit": 5}))
+            assert output is not None
+            assert "memorizer" in manager._sessions
+        finally:
+            await manager.close()
+        assert manager._sessions == {}
+
+    asyncio.run(exercise())
