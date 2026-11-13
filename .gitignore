@@ -46,3 +46,10 @@ dist/
 /mai/mcp_tools/mcp_servers.json
 /mai/mcp_tools/mcp_catalog.json
 /mai/mcp_tools/*.tmp
+
+# Generated Windows MAI distribution / C# intermediate build
+/배포/.launcher-build/
+/배포/launcher/bin/
+/배포/launcher/obj/
+/배포/MAI/*
+!/배포/MAI/.gitkeep
