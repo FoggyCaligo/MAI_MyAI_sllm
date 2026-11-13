@@ -10,7 +10,8 @@ LLAMACPP_HOST: "http://127.0.0.1:8080"
 # llama.cpp 전용: 폴더 내 GGUF를 시작 시 자동 탐색. MAIN_GGUF_PATH는 기본 선택값.
 # 경로는 프로젝트 루트 상대경로 또는 절대경로.
 LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"  # 실행 시작 시 모델 목록 자동 탐색
-LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/ornith_1.5_9b_Q4/Ornith-1.5-9B-Q4_K_M.gguf"
+#LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/ornith_1.5_9b_Q8/Ornith-1.5-9B-Q8_0.gguf"
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/ornith_1.5_9b_Q8/Ornith-1.5-9B-Q8_0.gguf"
 #LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/gemma4_12b_Q4/gemma-4-12b-it-qat-q4_0.gguf"
 # UI 선택 GGUF는 Main·Verifier·기억 추출에 공통 적용된다.
 # 각 모델은 gguf/<모델폴더>/ 안에 모델 GGUF 1개와 선택적 mmproj GGUF 1개를 가진다.
@@ -50,9 +51,9 @@ TOOL_TIMEOUT_SECONDS: 60
 MAX_INLINE_TOOL_RESULT_CHARS: 8000
 MEMORY_RECALL_INCLUDE_UTTERANCES: false
 SESSION_HISTORY_MESSAGES: 16
-MAI_VERIFIER_ENABLED: false  # UI와 서버의 요청별 검증 기본값
+MAI_VERIFIER_ENABLED: true  # UI와 서버의 요청별 검증 기본값
 MAI_VERIFIER_NUMERIC: true
-MAI_VERIFIER_FACTUAL: true
+MAI_VERIFIER_FACTUAL: false
 MAI_VERIFIER_ACTION_GROUNDING: true
 MAI_ANSWER_QUALITY_REVIEW: false
 # strict: 기존 모든 검증 이슈를 차단. critical: 입증된 중대한 오류 위주로 차단.
