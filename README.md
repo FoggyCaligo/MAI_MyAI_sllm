@@ -2,6 +2,9 @@
 
 MAI는 로컬 llama.cpp 추론 서버에 연결해 대화, 도구 실행, 장기기억 및 답변 검증을 수행하는 개인 AI 에이전트다. 현재 런타임은 **llama.cpp 전용**이며 Ollama 어댑터·서버·SDK·모델 매니페스트를 사용하지 않는다. 모델 파일은 GGUF로 관리한다.
 
+<img width="946" height="904" alt="image" src="https://github.com/user-attachments/assets/9bcc41fc-4f8d-43c3-90ba-913f70527269" />
+
+
 ## 실행 및 설치
 
 저장소 루트에서 Git Bash(Windows) 또는 Bash(Ubuntu 24.04 x86-64)를 사용한다.
