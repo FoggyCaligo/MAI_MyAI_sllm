@@ -85,7 +85,7 @@ selector combinations are rejected by the MCP JSON schema and server.
 Long-term memory extraction after the final response remains host
 controlled and does not expose a memory-save model tool.
 
-The built-in `remote__switch_workspace(target="host"|"client")` is provided by `mai/mcp_tools/MCP_remote/`. Each new agent run starts on `host`. A successful `client` selection persists for every subsequent workspace-capable tool in that same run until another successful switch (no per-tool location parameter); `host` restores the MAI server PC. Internet, browser, memory, and host-control tools always execute on host regardless of selection. A disconnected client raises an explicit error without falling back to host.
+내장된 `remote__switch_workspace(target="host"|"client")`는 `mai/mcp_tools/MCP_remote/`에서 제공한다. 새 에이전트 작업은 항상 `host`(MAI 서버 PC)에서 시작한다. `client` 전환에 성공하면 다른 전환이 성공하거나 해당 작업이 끝날 때까지 모든 Workspace 지원 도구가 계속 연결된 클라이언트에서 실행된다. 개별 도구에 위치 인자를 추가하거나 반복 전환할 필요는 없다. 인터넷·브라우저·메모리·호스트 관리 도구는 선택과 관계없이 host에서 실행한다. client 연결이 끊어지면 오류를 반환하고 host로 자동 재시도하지 않는다.
 
 Other MAI tools remain native until migrated into separate MCP servers.
 Each additional MCP tool is internally namespaced `server_id.tool_name`; the model-facing callable alias is `server_id__tool_name` (compatible with function-call name requirements).
