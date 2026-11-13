@@ -327,8 +327,8 @@ class MAIRuntime:
         if principal.role is AccessRole.OWNER:
             if not functional_mcp:
                 register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
-            register_restart_tool(registry)
-            registry.add(
+                register_restart_tool(registry)
+                registry.add(
                 name="file_download_link",
                 description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
                 input_model=FileDownloadLinkInput,
@@ -343,10 +343,13 @@ class MAIRuntime:
             )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
-        register_tool_result_tools(registry, tool_result_store)
+        if not functional_mcp:
+            register_tool_result_tools(registry, tool_result_store)
         if mcp_config and principal.role is AccessRole.OWNER:
             manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
-                                           workspace=workspace)
+                                           workspace=workspace,
+                                           host_download_links=self.download_links,
+                                           host_tool_result_store=tool_result_store)
             # Disabled groups are genuinely unavailable: never restore their
             # old native counterpart behind the operator's back.
             manager.register(registry)
