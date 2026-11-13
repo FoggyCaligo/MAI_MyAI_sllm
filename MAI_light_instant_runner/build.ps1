@@ -76,7 +76,9 @@ $routerScript = Join-Path $output 'portable/start-portable-llamacpp-router.ps1'
 $routerContent = [IO.File]::ReadAllText($routerScript)
 if (-not $routerContent.Contains('& $python scripts/run_server.py')) { throw 'Portable launcher entrypoint changed: update portfolio compatibility' }
 $routerContent = $routerContent.Replace('& $python scripts/run_server.py', '& $python scripts/portfolio_server.py')
-$routerContent = $routerContent.Replace("if (-not (Test-Path -LiteralPath (Join-Path $root '.env') -PathType Leaf)) { throw 'Missing .env' }", '')
+# The portfolio deliberately has no .env. The source router already uses
+# defaults; never interpolate an undefined $root under StrictMode here.
+$routerContent = $routerContent.Replace('if (-not (Test-Path -LiteralPath (Join-Path $root ''.env'') -PathType Leaf)) { throw ''Missing .env'' }', '')
 [IO.File]::WriteAllText($routerScript, $routerContent, (New-Object Text.UTF8Encoding($false)))
 
 # Preserve the EXISTING MAI chat presentation and JS, rather than inventing
