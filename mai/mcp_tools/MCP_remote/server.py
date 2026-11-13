@@ -16,7 +16,7 @@ mcp = FastMCP(
         "filesystem, code, document, terminal, and utility tools in this task. "
         "Each new MAI task starts on host. Switching to client requires an "
         "authenticated connected worker. The choice persists until another switch in the same task. Host-only services (web, browser, "
-        "memory, restart) do not move. No per-tool remote argument exists. "
+        "memory, restart) do not move. No per-tool location argument exists. "
         "The host validates this selection and does not silently fall back to host when client fails."
     ),
 )
@@ -29,7 +29,7 @@ def switch_workspace(target: Literal["host", "client"]) -> dict[str, str]:
     client: connected owner-authorized Windows/Linux worker. The MAI host
     validates connection and permissions before committing the selection.
     Do not provide remote IP, user, session ID, install command, or credentials.
-    On remote selection failure, the previous workspace remains unchanged.
+    On client selection failure, the previous workspace remains unchanged.
     """
     return {"target": target}
 
