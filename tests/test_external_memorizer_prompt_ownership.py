@@ -1,7 +1,7 @@
 """MAI delegates long-term memory guidance to the MCP server."""
 from mai.app.runtime import AGENT_SYSTEM_PROMPT
 from mcp_memorizer.policy import MEMORY_SEARCH_DESCRIPTION, MEMORY_MODEL_CONTEXT
-from mai.tools.mcp_connection import MCPConnectionManager
+from mai.mcp_tools.mcp_servers import MCPConnectionManager
 from mai.tools.registry import ToolRegistry
 import hashlib
 import json
