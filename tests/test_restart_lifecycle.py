@@ -118,7 +118,7 @@ def test_restart_description_does_not_conflate_restart_with_permanent_shutdown()
 
 def test_update_preflight_failure_does_not_stop_running_mai(monkeypatch, tmp_path):
     module = configure_paths(monkeypatch, tmp_path)
-    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev\\n")
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev")
     monkeypatch.setattr(module, "preflight_update", lambda: (_ for _ in ()).throw(
         RuntimeError("Cannot safely update dev")
     ))
@@ -132,7 +132,7 @@ def test_update_preflight_failure_does_not_stop_running_mai(monkeypatch, tmp_pat
 
 def test_restart_without_update_skips_git_preflight(monkeypatch, tmp_path):
     module = configure_paths(monkeypatch, tmp_path)
-    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev\\n")
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: "dev")
     monkeypatch.setattr(module, "preflight_update", lambda: pytest.fail("Unexpected git update"))
     monkeypatch.setattr(module, "stop_registered_server", lambda: None)
     monkeypatch.setattr(module, "wait_for_launcher", lambda process, seconds: None)
