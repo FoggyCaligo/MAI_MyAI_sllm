@@ -10,15 +10,20 @@ import asyncio
 from contextlib import AsyncExitStack
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict
 
 from ..tools.registry import ToolRegistry, ToolRegistryError
 from .workspace import WorkspaceContext
+
+
+_LOG = logging.getLogger(__name__)
 
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
@@ -316,19 +321,47 @@ class MCPConnectionManager:
 
         Used automatically once per MAI process startup, never per model turn.
         """
-        fresh = []
+        started = time.monotonic()
+        # Discovery sessions are independent. Bound concurrency so startup
+        # does not spawn every MCP child at once on memory-constrained hosts.
+        semaphore = asyncio.Semaphore(2)
+
+        async def discover_one(server: str) -> list[dict[str, Any]]:
+            async with semaphore:
+                server_started = time.monotonic()
+                _LOG.info("MAI MCP discovery starting server=%s", server)
+                try:
+                    session = await self._connect(server)
+                    records = self._live_records(server, await asyncio.wait_for(
+                        session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
+                    ), self._server_instructions.get(server, ""))
+                    _LOG.info("MAI MCP discovery completed server=%s tools=%d elapsed_seconds=%.3f",
+                              server, len(records), time.monotonic() - server_started)
+                    return records
+                except Exception:
+                    _LOG.exception("MAI MCP discovery failed server=%s elapsed_seconds=%.3f",
+                                   server, time.monotonic() - server_started)
+                    raise
+
         try:
-            for server in self.servers:
-                session = await self._connect(server)
-                fresh.extend(self._live_records(server, await asyncio.wait_for(
-                    session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
-                ), self._server_instructions.get(server, "")))
+            servers = list(self.servers)
+            # return_exceptions ensures all child tasks settle before closing
+            # their async context stacks, even if one server has failed.
+            results = await asyncio.gather(
+                *(discover_one(server) for server in servers), return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            fresh = [record for records in results for record in records]
             body = {"version": 1, "tools": fresh}
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.cache_path.with_suffix(".tmp")
             temp.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
             temp.replace(self.cache_path)
             self.catalog = {f'{entry["server"]}.{entry["name"]}': entry for entry in fresh}
+            _LOG.info("MAI MCP discovery finished servers=%d tools=%d elapsed_seconds=%.3f",
+                      len(servers), len(fresh), time.monotonic() - started)
             return list(self.catalog)
         finally:
             await self.close()
