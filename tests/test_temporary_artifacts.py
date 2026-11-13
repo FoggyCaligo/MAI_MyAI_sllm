@@ -115,3 +115,139 @@ def test_temporary_cleanup_failure_is_explicit(tmp_path: Path) -> None:
         artifacts.register(directory)
         with pytest.raises(TemporaryArtifactCleanupError, match="no longer a file"):
             artifacts.cleanup()
+
+
+def test_terminal_declared_scratch_is_removed_after_task(tmp_path: Path, monkeypatch) -> None:
+    from mai.tools import terminal
+
+    scratch = tmp_path / "diagnostic.ps1"
+
+    async def fake_command(command, cwd, *, shell):
+        scratch.write_text("temporary", encoding="utf-8")
+        return {"returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(terminal, "_run_command", fake_command)
+    with temporary_artifact_scope() as ledger:
+        result = run(terminal.terminal_run(
+            command="create diagnostic", cwd=str(tmp_path),
+            temporary_outputs=["diagnostic.ps1"],
+        ))
+        assert result["returncode"] == 0
+        assert scratch.is_file()
+        ledger.cleanup()
+    assert not scratch.exists()
+
+
+def test_existing_shell_output_is_protected_before_command_runs(tmp_path: Path, monkeypatch) -> None:
+    from mai.tools import terminal
+
+    existing = tmp_path / "user-result.txt"
+    existing.write_text("keep", encoding="utf-8")
+
+    async def unexpected_command(command, cwd, *, shell):
+        raise AssertionError("terminal command should not start")
+
+    monkeypatch.setattr(terminal, "_run_command", unexpected_command)
+    with temporary_artifact_scope() as ledger:
+        with pytest.raises(FileExistsError, match="already exists"):
+            run(terminal.terminal_run(
+                command="overwrite something", cwd=str(tmp_path),
+                temporary_outputs=["user-result.txt"],
+            ))
+        ledger.cleanup()
+    assert existing.read_text(encoding="utf-8") == "keep"
+
+
+def test_failed_terminal_command_leaves_declared_scratch_for_final_cleanup(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from mai.tools import terminal
+
+    scratch = tmp_path / "broken.json"
+
+    async def failing_command(command, cwd, *, shell):
+        scratch.write_text("incomplete", encoding="utf-8")
+        return {"returncode": 7, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(terminal, "_run_command", failing_command)
+    with temporary_artifact_scope() as ledger:
+        with pytest.raises(terminal.TerminalCommandError):
+            run(terminal.terminal_run(
+                command="create and fail", cwd=str(tmp_path),
+                temporary_outputs=["broken.json"],
+            ))
+        ledger.cleanup()
+    assert not scratch.exists()
+
+
+def test_agent_run_failure_cleans_registered_scratch(tmp_path: Path) -> None:
+    from mai.tools.artifacts import register_temporary_artifact
+
+    scratch = tmp_path / "agent-temp.ps1"
+
+    class FailingAdapter:
+        async def chat(self, request):
+            scratch.write_text("scratch", encoding="utf-8")
+            register_temporary_artifact(scratch)
+            raise RuntimeError("model failed")
+
+    with pytest.raises(RuntimeError, match="model failed"):
+        run(AgentRuntime(FailingAdapter(), ToolRegistry()).run_user_message("test error"))
+    assert not scratch.exists()
+
+
+def test_mcp_terminal_outputs_registered_on_agent_host(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager
+
+    scratch = tmp_path / "mcp-run.json"
+
+    class FakeSession:
+        async def call_tool(self, name, arguments):
+            scratch.write_text("generated", encoding="utf-8")
+            return SimpleNamespace(isError=False, structuredContent={"returncode": 0})
+
+    manager = MCPConnectionManager.__new__(MCPConnectionManager)
+    manager.workspace = None
+    manager.catalog = {
+        "mai_terminal_run.terminal_run": {"server": "mai_terminal_run", "name": "terminal_run"},
+    }
+    manager._sessions = {"mai_terminal_run": FakeSession()}
+    manager.servers = {"mai_terminal_run": {"env": {"MAI_CWD": str(tmp_path)}}}
+
+    with temporary_artifact_scope() as ledger:
+        result = run(manager.call("mai_terminal_run.terminal_run", {
+            "command": "create scratch", "temporary_outputs": ["mcp-run.json"],
+        }))
+        assert result["returncode"] == 0
+        assert scratch.exists()
+        ledger.cleanup()
+    assert not scratch.exists()
+
+
+def test_mcp_failed_command_still_registers_scratch(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager, MCPToolExecutionError
+
+    scratch = tmp_path / "partial.ps1"
+
+    class FailedSession:
+        async def call_tool(self, name, arguments):
+            scratch.write_text("incomplete", encoding="utf-8")
+            return SimpleNamespace(isError=True, content=["failed shell"], structuredContent=None)
+
+    manager = MCPConnectionManager.__new__(MCPConnectionManager)
+    manager.workspace = None
+    manager.catalog = {
+        "mai_terminal_run.terminal_run": {"server": "mai_terminal_run", "name": "terminal_run"},
+    }
+    manager._sessions = {"mai_terminal_run": FailedSession()}
+    manager.servers = {"mai_terminal_run": {"env": {"MAI_CWD": str(tmp_path)}}}
+
+    with temporary_artifact_scope() as ledger:
+        with pytest.raises(MCPToolExecutionError):
+            run(manager.call("mai_terminal_run.terminal_run", {
+                "command": "broken", "temporary_outputs": ["partial.ps1"],
+            }))
+        ledger.cleanup()
+    assert not scratch.exists()
