@@ -95,10 +95,8 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
         temp = path.with_suffix(".workspace.tmp")
         temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
-    # Functional tool servers are provisioned as disabled, opt-in entries
-    # during compatibility staging. Existing native registrations remain
-    # authoritative until the schema/remote-routing cutover is validated.
-    # In particular, do not change an operator's existing enabled flags.
+    # New installations/migrating v2 configs enable each functional MCP group.
+    # Existing v3/v4 entries retain the operator's exact enabled flags.
     existing = json.loads(path.read_text(encoding="utf-8"))
     if existing.get("schema_version", 1) < 3:
         from .native_groups import GROUPS
