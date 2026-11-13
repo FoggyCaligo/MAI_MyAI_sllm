@@ -5,7 +5,7 @@ import pytest
 
 from mai.agent.guards import AgentGuard, GuardConfig, NoProgressError
 from mai.agent.tool_results import ToolResultStore
-from mai.memory.recall.service import DEFAULT_ANCHOR_FACT_LIMIT
+from mcp_memorizer.memory.recall.service import DEFAULT_ANCHOR_FACT_LIMIT
 from mcp_memorizer.manager import MemorySearchInput
 from mai.tools.web import (
     WEB_SEARCH_DEFAULT_RESULTS,
