@@ -35,10 +35,10 @@ MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 �
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
  
-**개인 DB 저장소 준비:** MAI는 기본적으로 프로젝트 루트 `MAI_MEMORY/`의 DB를 사용한다. 별도 비공개 저장소를 처음 설치할 때 아래 명령으로 체크아웃한다. 기존에 보유한 `MAI_MEMORY/`가 있으면 다시 복제하거나 덮어쓰지 않는다.
+**개인 DB 저장소 준비:** MAI는 기본적으로 프로젝트 루트 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`의 DB를 사용한다. 별도 비공개 저장소를 처음 설치할 때 아래 명령으로 체크아웃한다. 기존에 보유한 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`가 있으면 다시 복제하거나 덮어쓰지 않는다.
 
 ```bash
-git clone https://github.com/FoggyCaligo/MAI_MEMORY.git MAI_MEMORY
+git clone https://github.com/FoggyCaligo/MAI_MEMORY.git mai/mcp_tools/mcp_memorizer/MAI_MEMORY
 ```
 
 저장소 이름 변경 이전의 개인 `.env`에는 `data/` 또는 `MAI_MyAI_sllm_Memory/` 경로가 남아 있을 수 있으므로 [데이터 이전 안내](docs/memory-repository.md)를 참고해 경로를 직접 확인한다.
