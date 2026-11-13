@@ -7,7 +7,6 @@ from mai.app.access import AccessPrincipal, AccessRole
 
 def test_llamacpp_uses_main_model_only_for_vision(monkeypatch):
     for name in (
-        "register_memory_tools",
         "register_time_tools",
         "register_calculator_tools",
         "register_external_information_tools",
