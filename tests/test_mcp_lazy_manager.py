@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mai.tools.mcp_connection import MCPConnectionManager, MCPConnectionError
+from mai.mcp_tools.mcp_servers import MCPConnectionManager, MCPConnectionError
 from mai.tools.registry import ToolArgumentsError, ToolRegistry
 from mai.agent.loop import _insert_tool_catalog
 
@@ -106,7 +106,7 @@ def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
         "servers": [{
             "id": "memorizer",
             "command": sys.executable,
-            "args": ["-m", "mcp_memorizer.mcp_server"],
+            "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
             "env": {
                 "MEMORIZER_DATA_DIR": str(data_dir),
                 "MEMORIZER_USER_ID": "{memory_user_id}",
@@ -155,7 +155,7 @@ def test_disabled_server_not_listed_and_toggle_without_reinstall(tmp_path):
 
 
 def test_default_memory_mcp_config_is_created_once_and_preserved(tmp_path):
-    from mai.tools.mcp_connection import ensure_default_mcp_config
+    from mai.mcp_tools.mcp_servers import ensure_default_mcp_config
     path = ensure_default_mcp_config(
         memory_db_path=tmp_path / "memory.sqlite3",
         sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3")
