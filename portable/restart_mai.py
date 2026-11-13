@@ -124,7 +124,17 @@ def stop_registered_server() -> None:
     if identity != item.get("identity"):
         raise RuntimeError("PID reused; refusing to kill unrelated process")
     if not listening(8000):
-        raise RuntimeError("Registered MAI server is not listening on port 8000")
+        # The API has already exited. Do not repeatedly signal its PID, and
+        # never kill unknown port owners. Once all ports are free the stale
+        # registration can be safely cleared without touching a process.
+        occupied = [port for port in PORTS if listening(port)]
+        if occupied:
+            raise RuntimeError(
+                f"MAI API port 8000 is down but companion ports remain occupied: {occupied}; "
+                "inspect the owning processes before stopping them"
+            )
+        IDENTITY.unlink()
+        return
     # Never kill a process tree: the detached coordinator must survive.
     os.kill(pid, signal.SIGTERM)
     wait_ports(False, 60)
