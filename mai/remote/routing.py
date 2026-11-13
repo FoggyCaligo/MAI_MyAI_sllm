@@ -48,7 +48,6 @@ def _add_routed_definitions(
             response = await target.execute(
                 "native.invoke",
                 {"name": _definition.name, "arguments": kwargs},
-                at_remote_pc=True,
                 timeout=None if _definition.category == "terminal" else 600,
             )
             if set(response) != {"value"}:
