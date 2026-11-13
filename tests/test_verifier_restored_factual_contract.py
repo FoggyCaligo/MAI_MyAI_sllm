@@ -1,4 +1,4 @@
-"""Restored factual claim contract with independently invoked numeric verification."""
+"""Restored factual claim contract within unified numeric and factual verification."""
 from __future__ import annotations
 
 import asyncio
