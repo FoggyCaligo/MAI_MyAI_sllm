@@ -10,22 +10,22 @@ def test_remote_without_selected_session_fails_closed():
     async def exercise():
         target = ExecutionTarget(owner_id="owner", remote_session_id=None)
         with pytest.raises(RemoteExecutionError, match="active owner remote session"):
-            await target.execute("file.read", {"path": "a.txt"}, at_remote_pc=True)
+            await target.execute("file.read", {"path": "a.txt"})
     asyncio.run(exercise())
 
 
-def test_execution_target_refuses_local_dispatch():
+def test_execution_target_requires_remote_session():
     async def exercise():
         target = ExecutionTarget(owner_id="owner")
-        with pytest.raises(ValueError, match="explicit remote"):
-            await target.execute("file.read", {"path": "a.txt"}, at_remote_pc=False)
+        with pytest.raises(RemoteExecutionError, match="active owner remote session"):
+            await target.execute("file.read", {"path": "a.txt"}, )
     asyncio.run(exercise())
 
 
 def test_explicit_remote_dispatch_is_bound_to_selected_owner_session(monkeypatch):
     calls = []
 
-    async def execute(owner_id, session_id, operation):
+    async def execute(owner_id, session_id, operation, *, timeout=600):
         calls.append((owner_id, session_id, operation.operation, operation.arguments))
         return {"ok": True}
 
