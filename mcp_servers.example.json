@@ -3,6 +3,7 @@
   "servers": [
     {
       "id": "memorizer",
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": ["-m", "mcp_memorizer.mcp_server"],
       "env": {
