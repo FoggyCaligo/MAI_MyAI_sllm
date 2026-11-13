@@ -5,7 +5,7 @@ from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter as ExternalS
 from mcp_memorizer.extraction.prompt import _FACT_EXTRACTION_SYSTEM as EXTERNAL_PROMPT
 
 def test_external_memory_contract_preserves_extraction_prompt():
-    assert "latest_user_message" in EXTERNAL_PROMPT
+    assert "durable, user-grounded facts" in EXTERNAL_PROMPT
     assert "assistant_final_answer" in EXTERNAL_PROMPT
     assert "facts" in EXTERNAL_PROMPT
 
