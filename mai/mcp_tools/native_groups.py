@@ -82,15 +82,17 @@ def create_server(group: str, *, cwd: str | Path | None = None) -> tuple[Server,
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:
+    async def call_tool(name: str, arguments: dict[str, Any] | None) -> types.CallToolResult:
         # Validate against original input_model and invoke exactly that tool.
         # Exceptions propagate as MCP errors (never success-shaped fallbacks).
         definition = registry.get(name)
         result = await definition.invoke(arguments or {})
-        return [types.TextContent(
-            type="text",
-            text=json.dumps(result, ensure_ascii=False, default=str),
-        )]
+        return types.CallToolResult(
+            content=[types.TextContent(
+                type="text", text=json.dumps(result, ensure_ascii=False, default=str),
+            )],
+            structuredContent=result if isinstance(result, dict) else {"value": result},
+        )
     return server, registry, browser
 
 
