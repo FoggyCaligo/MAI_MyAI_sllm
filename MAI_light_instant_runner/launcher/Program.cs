@@ -23,7 +23,7 @@ internal sealed class MainWindow : Form
     };
     private readonly Label status = new()
     {
-        AutoSize = true, Text = "Ready · MAI host",
+        AutoSize = true, Text = "Ready · Local portfolio only",
         Padding = new Padding(8)
     };
     private readonly string root = AppContext.BaseDirectory;
@@ -33,14 +33,13 @@ internal sealed class MainWindow : Form
 
     public MainWindow()
     {
-        Text = "MAI — Portable Launcher";
+        Text = "MAI — Light Instant Runner (Local Portfolio)";
         Width = 910; Height = 610; MinimumSize = new Size(680, 420);
         StartPosition = FormStartPosition.CenterScreen;
         var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8) };
         foreach (var (caption, command) in new[] {
             ("Start", "start"), ("Stop", "end"), ("Restart", "restart"),
-            ("Check", "check"), ("Setup", "setup"), ("Update llama.cpp", "update"),
-            ("Update Python", "update-python") })
+            ("Check", "check") })
         {
             var button = new Button { Text = caption, AutoSize = true, MinimumSize = new Size(85, 34) };
             button.Click += async (_, _) => await RunCommandAsync(command);
