@@ -302,3 +302,31 @@ def test_host_mcp_actions_keep_ownership_of_state(tmp_path):
         assert page == "test:12:20"
         await manager.close()
     asyncio.run(run())
+
+
+def test_default_functional_mcp_config_discovers_all_enabled_servers(tmp_path):
+    import asyncio
+    from mai.mcp_tools.mcp_servers import (
+        MCPConnectionManager, ensure_default_mcp_config,
+    )
+
+    async def run():
+        data = tmp_path / "memory"
+        config = ensure_default_mcp_config(
+            memory_db_path=data / "memory.sqlite3",
+            sentence_breaker_db_path=data / "sentence_breaker.sqlite3",
+            config_path=tmp_path / "mcp_servers.json",
+        )
+        manager = MCPConnectionManager(config, memory_user_id="local-owner")
+        assert manager.functional_mode is True
+        assert set(GROUPS).issubset(manager.servers)
+        assert {"memorizer", "remote", "host"}.issubset(manager.servers)
+        names = await manager.refresh_catalog()
+        assert "mai_file.file_read" in names
+        assert "mai_terminal_run.terminal_run" in names
+        assert "mai_internet.web_search" in names
+        assert "memorizer.memory_search" in names
+        assert "remote.switch_workspace" in names
+        assert "host.tool_result_read" in names
+        await manager.close()
+    asyncio.run(run())
