@@ -48,6 +48,13 @@ def unified(*, numeric_verdict="supported", numeric_reason="", supported=True):
     ).model_dump(mode="json")
 
 
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
+
+
 class Reviewer:
     def __init__(self, responses):
         self.responses = iter(responses)
