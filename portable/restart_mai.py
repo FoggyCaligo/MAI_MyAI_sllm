@@ -14,7 +14,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "MAI_MEMORY"
+DATA = ROOT / "mai" / "mcp_tools" / "mcp_memorizer" / "MAI_MEMORY"
 IDENTITY = DATA / "server-process.json"
 LOG = DATA / "restart.log"
 LAUNCH_LOG = DATA / "restart-launcher.log"
