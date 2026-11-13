@@ -62,6 +62,33 @@ def temporary_artifact_scope() -> Iterator[TemporaryArtifactLedger]:
         _CURRENT_LEDGER.reset(token)
 
 
+
+def declare_temporary_outputs(
+    paths: list[str] | tuple[str, ...], *, cwd: str | Path,
+) -> None:
+    """Reserve explicitly declared shell output paths before running a command.
+
+    Existing files and symlinks are never registered or overwritten as scratch.
+    The agent-run ledger removes paths even if execution later fails.
+    """
+    base = Path(cwd).expanduser().resolve(strict=False)
+    resolved: list[Path] = []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError("temporary output path must be a non-empty string")
+        candidate = Path(raw).expanduser()
+        target = (candidate if candidate.is_absolute() else base / candidate).resolve(strict=False)
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(f"temporary output already exists; refusing to delete it: {target}")
+        resolved.append(target)
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("temporary output paths must be unique")
+    ledger = _CURRENT_LEDGER.get()
+    if ledger is not None:
+        for target in resolved:
+            ledger.register(target)
+
+
 def register_temporary_artifact(path: str | Path) -> None:
     ledger = _CURRENT_LEDGER.get()
     if ledger is not None:
