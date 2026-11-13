@@ -40,6 +40,8 @@ foreach ($port in @(8080, 8081)) {
         throw "Port $port occupied; refusing to connect to another router."
     }
 }
+& $python -m portable.runtime_data_paths --root $root
+if ($LASTEXITCODE -ne 0) { throw 'MAI runtime data migration blocked: check old/new data folders before starting.' }
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:MAI_CWD = $root
