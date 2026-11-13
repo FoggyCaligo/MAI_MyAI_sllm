@@ -78,6 +78,13 @@ def test_production_verifies_with_the_selected_main_model(
         runtime.close()
 
 
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
+
+
 def test_unsupported_inference_backend_rejected_before_initializing_resources(tmp_path):
     with pytest.raises(ValueError, match="LLM_BACKEND must be llamacpp"):
         runtime_module.MAIRuntime(
