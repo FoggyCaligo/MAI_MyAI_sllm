@@ -19,9 +19,13 @@ def run(coro):
 
 
 @pytest.fixture(autouse=True)
-def enable_quality_for_legacy_combined_review_vectors(monkeypatch):
-    # These vectors exercise both stages. Importing app settings in another test
-    # must not silently disable their quality/alignment assertions.
+def enable_verifier_criteria_for_review_vectors(monkeypatch):
+    # These vectors explicitly test all review criteria. Other test modules may
+    # load deployment-specific settings into os.environ during collection.
+    # Keep the test contract independent of the user's local settings.yaml.
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
     monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "true")
 
 
