@@ -46,7 +46,7 @@ Python 패키지는 **`pyproject.toml`**의 기본·`dev` 의존성을 설치한
 
 개인 DB도 일반 Portable 설치가 다운로드하지 않는다. 비공개 [MAI_MEMORY 저장소](../docs/memory-repository.md)를 별도로 준비하고 기존 `.env`의 DB 경로가 새 폴더를 가리키는지 확인한다. `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`는 본체 Git에서 무시되지만, 과거 본체 Git에 추적된 `data/` DB 파일은 이 변경만으로 제거되지 않는다.
 
-사용자 모델 파일은 자동 다운로드되지 않는다. `settings.yaml`에 선언된 GGUF 기본 파일과 대응 projector가 존재해야 한다. 모델 배포처의 라이선스·파일명·SHA-256을 별도 확인한다.
+`setup`은 Ornith 1.5 9B Q8_0 GGUF와 BF16 projector를 `portable/portable-models/gguf/ornith_1.5_9b_Q8/`에 자동 다운로드한다. 공식 배포처의 SHA-256을 검증하고 기존 정상 파일은 재사용한다. 손상된 파일은 덮어쓰지 않고 명시적으로 오류를 반환하며, 기존 Q4 모델을 삭제하지 않는다. 추가 모델은 사용자가 별도로 설치한다.
 
 ## llama.cpp 업데이트
 
