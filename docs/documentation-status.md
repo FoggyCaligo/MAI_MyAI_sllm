@@ -1,6 +1,6 @@
 # MAI 문서 현행화 점검 기록
 
-**기준:** 2026-11-09의 `dev` 코드 및 현재 작업 브랜치. 문서 내용은 실제 구현을 설명하는 것이고 Windows·Linux·네트워크·GPU에서의 종단간 작동 보증이 아니다. 기존 사용자가 제공한 `706 passed, 4 skipped`는 **이 문서 PR 이전 테스트 결과**이므로 이번 문서 변경의 신규 테스트 결과로 표기하지 않는다.
+**기준:** 메모리 문서 이관 작업 기준 `dev` 구현. 문서 내용은 실제 구현을 설명하는 것이고 Windows·Linux·네트워크·GPU에서의 종단간 작동 보증이 아니다. 과거의 테스트 통과 기록은 이번 문서 이관의 신규 검증으로 간주하지 않는다.
 
 ## 문서별 기준 구현
 
@@ -11,9 +11,9 @@
 | [Portable](../portable/README.md) | `portable/` 실행기·카탈로그 | 단일 모델 상주, 운영체제별 런타임, Memory 별도 복제 |
 | [실행 구조](architecture.md) | `mai/app/runtime.py`, `mai/agent/loop.py` | 요청 흐름과 요청별 Verifier 활성화 |
 | [답변 검증](verifier.md) | `mai/agent/verification.py`, `settings.yaml` | 현재 기본 OFF와 추가 품질 검토 OFF 구분 |
-| [장기기억](memory.md) | `mai/memory/`, `mai/app/runtime.py` | 검증 비활성 요청의 저장 흐름, DB 경로 |
+| [장기기억 연동](memory.md) | `mai/app/runtime.py`, 외부 `MCP_memorizer` | MAI의 후처리·사용자 권한·도구 호출 설명만 유지; 엔진 내부 구조는 독립 원본 문서로 이관 |
 | [기억 저장소 분리](memory-repository.md) | `mai/app/server.py`, Portable 실행기, `.gitignore` | `MAI_MEMORY/` 클론과 경로, 기존 Git 추적 DB 경고 |
-| [문장 분해기](sentence-breaker.md) | `mai/memory/segmenter.py`, DB 설정 | 누적 DB 기본 경로와 외부 알고리즘 설명 구분 |
+| [문장 분해기 안내](sentence-breaker.md) | 독립 `Sentence_Breaker`, `MCP_memorizer/memory/segmenter.py` | 알고리즘 원본은 Sentence_Breaker, Concept 연동은 MCP_memorizer로 이관; MAI는 DB 경로만 문서화 |
 | [도구 결과](TOOL_RESULT_PAGINATION.md) | `mai/tools/web.py`, `mai/agent/tool_results.py` | 빈 결과의 명시적 성공 계약, 원문/발췌 구별 |
 | [OS 및 인코딩](platform-boundary.md) | `mai/platform/`, `mai/tools/terminal.py` | Git Bash·PowerShell·Linux, UTF-8와 추가 디코딩 후보 |
 | [Linux 점검](linux-tool-audit.md) | Linux 실행기 및 `mai/platform/linux.py` | 기본 셸 Bash, 실기기 미검증 표시 |
