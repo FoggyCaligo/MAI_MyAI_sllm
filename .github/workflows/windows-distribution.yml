@@ -18,7 +18,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Compile MAI.exe and assemble tracked source only
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile MAI.exe and assemble lightweight local-only agent
         shell: pwsh
         run: ./MAI_light_instant_runner/build.ps1
       - name: Validate distribution tree and protect private data
@@ -26,14 +29,24 @@ jobs:
         run: |
           if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/MAI.exe')) { throw 'No MAI.exe' }
           if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/mai.ps1')) { throw 'No entrypoint' }
-          if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/mai/mcp_tools/mcp_memorizer/server.py')) { throw 'No MCP launcher' }
+          if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/scripts/portfolio_server.py')) { throw 'No lightweight backend' }
+          if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/mai/app/static/index.html')) { throw 'Original MAI chat UI missing' }
+          if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/mai/agent/loop.py')) { throw 'Agent loop missing' }
+          foreach ($path in @('mai/remote','mai/hosting','mai/app/server.py','mai/app/access.py','mai/app/tailscale.py','mai/mcp_tools/MCP_remote','scripts/run_server.py','restart-mai.sh')) {
+            if (Test-Path -LiteralPath (Join-Path 'MAI_light_instant_runner/MAI' $path)) { throw "Unwanted production module bundled: $path" }
+          }
           if (-not (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/portable/start-portable-llamacpp-router.ps1')) { throw 'No Portable launcher' }
           if (Test-Path -LiteralPath 'MAI_light_instant_runner/MAI/.env') { throw 'Private env leaked into distribution' }
           $personal = @(Get-ChildItem -Path 'MAI_light_instant_runner/MAI' -Recurse -File | Where-Object { $_.Name -match '\.sqlite3($|[-.])' })
           if ($personal.Count -gt 0) { throw 'Private SQLite data leaked into distribution' }
+      - name: Validate portfolio Python source syntax
+        shell: pwsh
+        run: |
+          python -m compileall -q MAI_light_instant_runner/MAI/mai MAI_light_instant_runner/MAI/scripts/portfolio_server.py
+          if ($LASTEXITCODE -ne 0) { throw 'Compiled portfolio source contains Python syntax errors' }
       - uses: actions/upload-artifact@v4
         with:
-          name: MAI-windows-distribution-source-only
+          name: MAI-light-instant-runner-local-only
           path: MAI_light_instant_runner/MAI/
           if-no-files-found: error
           retention-days: 14
