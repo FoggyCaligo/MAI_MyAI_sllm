@@ -324,15 +324,15 @@ class FinalGroundingVerifier:
 
         if action_active and review.action_verdict == "unverified":
             reason = "; ".join(review.reasons) or (
-                    "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
-                    "does not establish that outcome."
-                )
-                issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
+                "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
+                "does not establish that outcome."
+            )
+            issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
         elif action_active and review.action_verdict == "contradicted":
             reason = "; ".join(review.reasons) or (
-                    "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
-                )
-                issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
+                "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
+            )
+            issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
 
         if quality_active:
             if review.alignment_verdict == "misaligned":
