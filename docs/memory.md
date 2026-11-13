@@ -1,10 +1,10 @@
 # MAI 장기기억 — 구조와 동작
 
-2026-11-04 정리. 기존 기억 계약과 상세 설명서를 통합했다. 요청 전체 흐름은 [실행 구조](architecture.md), 도구 결과 전달은 [도구 결과 전달](TOOL_RESULT_PAGINATION.md)을 따른다.
+2026-11-13 갱신. 기억 엔진은 독립 MCP_memorizer 패키지를 사용하고, 검색은 MCP 전용 도구로 연결한다. 요청 전체 흐름은 [실행 구조](architecture.md), 도구 결과 전달은 [도구 결과 전달](TOOL_RESULT_PAGINATION.md)을 따른다.
 
 ## 기억의 종류와 저장 구조
 
-최근 대화는 이어서 대화하기 위한 기록이고, 장기기억은 이후에도 참고할 사실을 구조화한 저장소다. 현재 사실검증 Verifier는 이번 요청의 성공한 `memory_search` 결과를 **호출별 실행 순서대로** 받고, 해당 호출 인수도 근거 항목에 별도로 포함한다. 검색 결과의 의미상 유사 노드를 툴별로 병합하거나 자동 중복 제거하지 않는다. 감사 로그는 장애 확인용이며 기억이나 답변 근거로 자동 주입하지 않는다.
+최근 대화는 이어서 대화하기 위한 기록이고, 장기기억은 이후에도 참고할 사실을 구조화한 저장소다. 현재 사실검증 Verifier는 이번 요청의 성공한 `memorizer.memory_search` 결과를 **호출별 실행 순서대로** 받고, 해당 호출 인수도 근거 항목에 별도로 포함한다. 검색 결과의 의미상 유사 노드를 툴별로 병합하거나 자동 중복 제거하지 않는다. 감사 로그는 장애 확인용이며 기억이나 답변 근거로 자동 주입하지 않는다.
 
 ```text
 사용자 기준점(anchor) → 사실(fact) → 검색용 개념(concept)
@@ -30,7 +30,7 @@
 5. 사실을 사용자 기준점의 `asserted_fact`로 연결한다.
 6. Sentence_Breaker로 사실을 분할해 개념과 `mentions` 연결 및 색인을 만든다.
 
-추출 입력은 최신 사용자 원문, 직전 도우미 메시지, 승인된 최종 답변, 성공한 비기억조회 도구의 최초 `context_content`다. 실패한 실행과 `memory_search` 결과는 제외하며, 성공한 `tool_manual`·`tool_result_read`는 현재 별도 제외하지 않는다. 출처 번호를 사실마다 검사하는 절차는 없다.
+추출 입력은 최신 사용자 원문, 직전 도우미 메시지, 승인된 최종 답변, 성공한 비기억조회 도구의 최초 `context_content`다. 실패한 실행과 `memorizer.memory_search` 결과는 제외하며, 성공한 `tool_manual`·`tool_result_read`는 현재 별도 제외하지 않는다. 출처 번호를 사실마다 검사하는 절차는 없다.
 
 기억 조회만 했고 새 사실이 없으면 영구 저장을 생략할 수 있다. 조회와 함께 새로운 직접 진술이 있으면 도구 사용 자체가 새 사실 저장을 막지 않는다. 과거 기억을 다시 읽었다는 이유로 새 사실처럼 증폭 저장하지 않는다.
 
@@ -48,9 +48,9 @@
 
 임베딩 의미 유사도 검색이 아닌 어휘 검색이다. 표현이 크게 다르면 검색어를 바꾸거나 주변 노드를 더 탐색해야 한다. 검색 결과는 개념의 동일성을 바꾸지 않는다. 시작 시 영구 개념의 색인 누락을 비파괴적으로 동기화한다. FTS5 불능이나 식별 충돌을 다른 검색 성공으로 숨기지 않는다.
 
-## 모델이 사용하는 `memory_search`
+## 모델이 사용하는 `memorizer.memory_search` (MCP 전용)
 
-장기기억 전체를 매번 자동으로 넣지 않는다. 모델이 필요할 때 단일 도구의 세 모드 중 하나를 호출한다.
+장기기억 전체를 매번 자동으로 넣지 않는다. MAI는 과거 네이티브 `memory_search`를 등록하지 않는다. 시작 시 활성화된 MCP 서버의 도구 목록을 수집해 `memorizer.memory_search`로 노출하고, 모델은 `tool_manual`에서 활성화한 뒤 단일 도구의 세 모드 중 하나를 호출한다.
 
 | 입력 | 동작 |
 |---|---|
@@ -62,7 +62,7 @@
 
 최근 목록은 기준점에 `spoke` 또는 `asserted_fact`로 직접 연결된 항목을 `last_seen_at DESC, id DESC`로 읽는다. 옛 발화도 포함될 수 있으며 제한된 목록이 전체 기억을 뜻하지 않는다.
 
-자기 기준점 확장은 기본 5개 사실을 제공한다. 다른 사용자 기준점은 거부하지만 일반 노드 확장의 모든 이웃·경로에 동일한 소유권 필터가 적용되는 것은 아니다. `node_id`에 `keyword`나 `limit`을 함께 지정할 수 없다.
+자기 기준점 확장은 기존 검색 동작을 유지한다. MCP_memorizer는 사용자별 소유 범위를 검증한다. 다중 사용자 격리와 모든 그래프 경계의 보안 감사는 계속 필요하다. `node_id`에 `keyword`나 `limit`을 함께 지정할 수 없다.
 
 요청별 작업 그래프는 조회 결과를 내부 누적한다. 모델에는 사실·옛 발화의 `node_id`, `node_type`, `data`, `created_at`, `provenance`, `evidence_id`를 보여주고 개념·내부 연결은 숨긴다. 새 사실의 `evidence_id`는 현재 보통 비어 있다. 내부 메서드 이름과 모델에 노출된 도구 이름은 구분한다.
 
@@ -80,10 +80,12 @@
 
 | 범위 | 구현 |
 |---|---|
-| 영구 그래프 | `mai/memory/graph/schema.py`, `repository.py` |
-| 원문·사실 저장 | `mai/memory/runtime.py`, `extraction/service.py` |
-| 개념·검색 | `segmenter.py`, `index/sqlite_fts.py`, `recall/service.py` |
-| 모델 출력·도구 | `working.py`, `tools.py` |
+| 영구 그래프 | `mcp_memorizer/memory/graph/schema.py`, `repository.py` |
+| 원문·사실 저장 | `mcp_memorizer/memory/runtime.py`, `extraction/service.py` |
+| 개념·검색 | `mcp_memorizer/memory/segmenter.py`, `index/sqlite_fts.py`, `recall/service.py` |
+| 모델 출력·도구 | `mcp_memorizer/memory/working.py`, `mcp_memorizer/mcp_server.py`, `mai/tools/mcp_connection.py` |
 | 저장 순서·비동기 처리 | `mai/app/runtime.py` |
 
-기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 본체와 독립된 비공개 Git 저장소이며 [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
+기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 사용자 데이터 보관 경로이며 공개 소스 Git에서 제외해야 하고, [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
+
+MCP 서버 토글, 자동 카탈로그 초기화, 외부 플러그인 연결 방법은 [MCP 지연 로딩](mcp-lazy-loading.md)을 참고한다.
