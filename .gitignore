@@ -37,3 +37,7 @@ portable/portable-sources-linux.json
 build/
 dist/
 *.spec
+
+# Local MCP runtime configuration and discovered catalogs (private)
+/mcp_servers.json
+/mcp_catalog.json
