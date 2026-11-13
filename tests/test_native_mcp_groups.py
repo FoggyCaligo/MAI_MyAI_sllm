@@ -40,3 +40,27 @@ def test_groups_are_independent_and_no_duplicate_tool_names(tmp_path):
     assert found["terminal_run"] == "mai_terminal_run"
     assert found["document_edit"] == "mai_docs"
     assert found["calculator"] == "mai_utilities"
+
+
+def test_utilities_stdio_mcp_tool_list_and_call():
+    import asyncio
+    import sys
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    async def run():
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "mai.mcp_tools.native_groups", "--group", "mai_utilities"],
+        )
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                assert {tool.name for tool in tools.tools} == {"calculator", "current_time"}
+                calculator = next(tool for tool in tools.tools if tool.name == "calculator")
+                assert "expression" in calculator.inputSchema["properties"]
+                result = await session.call_tool("calculator", {"expression": "2 + 3"})
+                assert not result.isError
+                assert any("5" in item.text for item in result.content if hasattr(item, "text"))
+    asyncio.run(run())
