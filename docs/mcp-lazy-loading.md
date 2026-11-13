@@ -37,7 +37,7 @@ Example configuration:
       "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
       "env": {
         "MEMORIZER_USER_ID": "{memory_user_id}",
-        "MEMORIZER_DATA_DIR": "D:/path/to/MAI/MAI_MEMORY"
+        "MEMORIZER_DATA_DIR": "D:/path/to/MAI/mai/mcp_tools/mcp_memorizer/MAI_MEMORY"
       }
     },
     {
