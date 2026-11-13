@@ -348,6 +348,33 @@ class MCPConnectionManager:
         if name not in self.catalog or self.catalog[name]["server"] not in self._sessions:
             raise MCPConnectionError(f"MCP tool {name} is not activated")
         entry = self.catalog[name]
+        # Workspace selection is host-owned.  Compatible tools use their
+        # original native tool names on the authenticated worker, without
+        # changing public MCP schemas or leaking a session token to the model.
+        workspace_groups = frozenset({
+            "mai_file", "mai_code", "mai_docs",
+            "mai_terminal_run", "mai_utilities",
+        })
+        if self.workspace is not None and entry["server"] in workspace_groups:
+            snapshot = self.workspace.snapshot()
+            if snapshot.target == "remote":
+                from ..remote.target import ExecutionTarget
+                from ..remote.session import RemoteExecutionError
+                session_id = self.workspace.validate_remote(snapshot)
+                target = ExecutionTarget(
+                    owner_id=self.workspace.owner_id,
+                    remote_session_id=session_id,
+                )
+                response = await target.execute(
+                    "native.invoke",
+                    {"name": entry["name"], "arguments": dict(arguments)},
+                    timeout=None if entry["server"] == "mai_terminal_run" else 600,
+                )
+                if set(response) != {"value"}:
+                    raise RemoteExecutionError(
+                        f"remote worker returned invalid tool-result envelope for {entry['name']!r}"
+                    )
+                return response["value"]
         response = await self._sessions[entry["server"]].call_tool(entry["name"], dict(arguments))
         if response.isError:
             raise MCPConnectionError(f"MCP tool {name} returned an error: {response.content}")
