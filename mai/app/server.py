@@ -65,10 +65,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # Keep database path defaults in one place. Paths supplied by the
 # environment retain their existing semantics (relative to the process CWD).
 _DB_PATH_DEFAULTS = {
-    "MEMORY_DB_PATH": "./MAI_MEMORY/memory.sqlite3",
-    "SENTENCE_BREAKER_DB_PATH": "./MAI_MEMORY/sentence_breaker.sqlite3",
-    "CHAT_DB_PATH": "./MAI_MEMORY/chat.sqlite3",
-    "LOG_DB_PATH": "./MAI_MEMORY/log.sqlite3",
+    "MEMORY_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3",
+    "SENTENCE_BREAKER_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3",
+    "CHAT_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/chat.sqlite3",
+    "LOG_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3",
 }
 
 
@@ -212,7 +212,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
-        upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
+        upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai/mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
     print(f"MAI local: http://{host}:{port}", flush=True)
