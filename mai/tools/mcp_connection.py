@@ -129,6 +129,7 @@ class MCPConnectionManager:
                 if full_name in self.catalog:
                     raise ValueError(f"duplicate cached MCP tool: {full_name}")
                 self.catalog[full_name] = entry
+        self._model_to_qualified: dict[str, str] = {}
         self._stacks: dict[str, AsyncExitStack] = {}
         self._sessions: dict[str, Any] = {}
 
@@ -214,11 +215,24 @@ class MCPConnectionManager:
         finally:
             await self.close()
 
+    @staticmethod
+    def _model_tool_name(server: str, tool: str) -> str:
+        # Function-call names in OpenAI-compatible APIs cannot contain dots.
+        # Keep server.tool as an internal key; expose server__tool to the model.
+        name = f"{server}__{tool}"
+        if not _valid_id(name):
+            raise MCPConnectionError(
+                f"MCP tool '{server}.{tool}' cannot be encoded into a "
+                "64-character OpenAI-compatible function name"
+            )
+        return name
+
     def register(self, registry: ToolRegistry) -> None:
         """Register catalog placeholders; no MCP processes or tools/list here."""
         from .registry import EmptyToolInput
         for full_name, record in self.catalog.items():
-            if registry.has(full_name):
+            model_name = self._model_tool_name(record["server"], record["name"])
+            if registry.has(model_name) or model_name in self._model_to_qualified:
                 raise MCPConnectionError(f"conflicting MCP tool name: {full_name}")
             # Each tool gets its own bound closure, never the loop variable.
             def bind(name):
@@ -226,24 +240,27 @@ class MCPConnectionManager:
                     return await self.call(name, kwargs)
                 return invoke
             description = record["description"] or f"Tool {record['name']} on MCP server {record['server']}"
-            registry.add(name=full_name, description=description,
+            registry.add(name=model_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
                          timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
                          category="mcp", metadata={
+                             "mcp_qualified_name": full_name,
                              "mcp_input_schema": record["schema"],
                              "catalog_hint": (description[:350] + " (MCP server " + record["server"] + ")"),
                          })
+            self._model_to_qualified[model_name] = full_name
 
     async def activate(self, names: list[str]) -> None:
         """Connect only selected servers and verify selected cached schemas."""
-        servers = {self.catalog[name]["server"] for name in names if name in self.catalog}
+        qualified_names = [self._model_to_qualified.get(name, name) for name in names]
+        servers = {self.catalog[name]["server"] for name in qualified_names if name in self.catalog}
         # Check all selected contracts before returning activation success.
         for server in sorted(servers):
             session = await self._connect(server)
             actual = {x["name"]: x for x in self._live_records(server, await asyncio.wait_for(
                 session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
             ))}
-            for name in names:
+            for name in qualified_names:
                 cached = self.catalog.get(name)
                 if cached is None or cached["server"] != server:
                     continue
