@@ -27,13 +27,26 @@ class FakeGraph:
             102: SimpleNamespace(id=102, node_type="fact", payload={"user_id": "u"}),
             103: SimpleNamespace(id=103, node_type="fact", payload={"user_id": "u"}),
         }
+        # Concept recall follows explicit "mentions" relations in the
+        # installed MCP_memorizer version; disconnected facts must not appear.
+        self.mentions = (
+            SimpleNamespace(id=1, from_node_id=10, to_node_id=101,
+                            relation="mentions", provenance="test"),
+            SimpleNamespace(id=2, from_node_id=10, to_node_id=102,
+                            relation="mentions", provenance="test"),
+            SimpleNamespace(id=3, from_node_id=20, to_node_id=102,
+                            relation="mentions", provenance="test"),
+            SimpleNamespace(id=4, from_node_id=20, to_node_id=103,
+                            relation="mentions", provenance="test"),
+        )
 
     def get_user_anchor(self, user_id):
         return self.nodes[1]
 
     def one_hop(self, node_id):
         ids = (10, 101, 102) if node_id == 10 else (20, 102, 103)
-        return GraphNeighborhood(node_id, tuple(self.nodes[i] for i in ids), ())
+        edges = tuple(edge for edge in self.mentions if edge.from_node_id == node_id)
+        return GraphNeighborhood(node_id, tuple(self.nodes[i] for i in ids), edges)
 
     def shortest_path_to_user_anchor(self, node_id, user_id):
         return GraphNeighborhood(node_id, (self.nodes[1], self.nodes[node_id]), ())
