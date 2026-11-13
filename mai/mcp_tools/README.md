@@ -18,6 +18,6 @@ catalog**, and **tool_manual** discovery/activation policy.
 To enable or disable any server, edit
 `mai/mcp_tools/mcp_servers.json` and restart MAI. No uninstallation or
 download is needed when toggling `enabled`. Private memory databases
-remain under `MAI_MEMORY/`, never here.
+remain under `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`, never here.
 
 See `docs/mcp-lazy-loading.md` for configuration and deployment.
