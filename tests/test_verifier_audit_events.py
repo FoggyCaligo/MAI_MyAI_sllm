@@ -9,7 +9,7 @@ import pytest
 
 from mai.app.audit_log import AuditLogStore
 
-from mai.agent.verification import FinalGroundingVerifier
+from mai.agent.verification import FinalGroundingVerifier, _UnifiedReviewPayload
 from tests.reviewer_fixtures import reviewer_payload
 from mai.llm.models import ModelTurn
 
@@ -22,6 +22,13 @@ def as_turn(payload):
     )
 
 
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
+
+
 class Reviewer:
     def __init__(self, *, reject=False, fail=False):
         self.calls = []
@@ -32,23 +39,23 @@ class Reviewer:
         self.calls.append(request)
         if self.fail:
             raise RuntimeError("reviewer unavailable")
-        if len(self.calls) == 1:
-            return as_turn(reviewer_payload({
-                "evidence_verdict": "unsupported" if self.reject else "supported",
-                "action_verdict": "not_applicable",
-                "claims": ([{
-                    "claim": "Unsupported claim",
-                    "verdict": "unsupported",
-                    "defect": "missing_evidence",
-                    "reason": "No observed source",
-                }] if self.reject else []),
-                "reasons": ["No observed source"] if self.reject else [],
-                "retry_summary": "Get evidence." if self.reject else "No correction needed.",
-            }, request))
-        return as_turn({
-            "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
-            "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
-        })
+        payload = {
+            "numeric_verdict": "supported", "numeric_reason": "",
+            "evidence_verdict": "unsupported" if self.reject else "supported",
+            "action_verdict": "not_applicable",
+            "claims": ([{
+                "claim": "Unsupported claim",
+                "verdict": "unsupported",
+                "defect": "missing_evidence",
+                "reason": "No observed source",
+            }] if self.reject else []),
+            "alignment_verdict": "aligned",
+            "coverage_verdict": "sufficient", "coverage_reasons": [],
+            "reasons": ["No observed source"] if self.reject else [],
+            "retry_summary": "Get evidence." if self.reject else "No correction needed.",
+        }
+        assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+        return as_turn(_UnifiedReviewPayload.model_validate(payload).model_dump(mode="json"))
 
 
 def verify(reviewer, events, *, quality=True):
@@ -67,17 +74,16 @@ def test_audit_records_exact_factual_and_quality_inputs_outputs_and_decision():
     result = verify(reviewer, events)
     assert result.ok
     assert [name for name, _ in events] == [
-        "request", "raw_response", "validated_response",
         "request", "raw_response", "validated_response", "decision",
     ]
     factual_request = events[0][1]
-    assert factual_request["stage"] == "factual"
+    assert factual_request["stage"] == "unified"
     assert factual_request["messages"] == list(reviewer.calls[0].messages)
     assert factual_request["response_schema"] == reviewer.calls[0].response_format
     assert json.loads(factual_request["messages"][1]["content"])["tool_results_in_execution_order"][0]["result"] == "Ark is an underground shelter."
     raw = events[1][1]["content"]
     assert json.loads(raw) == events[2][1]["verdict"]
-    assert events[3][1]["stage"] == "quality"
+    assert events[2][1]["stage"] == "unified"
     assert events[-1][1]["ok"] is True
     assert events[-1][1]["review_details"]["alignment_verdict"] == "aligned"
 
@@ -105,10 +111,12 @@ def test_reviewer_failure_keeps_request_and_error_without_false_decision():
 def test_audit_callback_failure_is_not_suppressed():
     async def check():
         async def chat(request):
-            return as_turn(reviewer_payload({
-                "evidence_verdict": "supported", "action_verdict": "not_applicable",
-                "claims": [], "reasons": [], "retry_summary": "No correction needed.",
-            }, request))
+            return as_turn(_UnifiedReviewPayload(
+                numeric_verdict="supported", numeric_reason="",
+                evidence_verdict="supported", action_verdict="not_applicable",
+                claims=[], alignment_verdict="skipped", coverage_verdict="skipped",
+                coverage_reasons=[], reasons=[], retry_summary="No correction needed.",
+            ).model_dump(mode="json"))
 
         class Adapter:
             async def chat(self, request):
@@ -152,7 +160,7 @@ def test_audit_trace_can_be_read_from_sqlite_by_run_round_and_model(tmp_path):
             "SELECT round_number, role, status, details_json FROM steps "
             "WHERE run_id=? AND role='verifier_step' ORDER BY id", ("run-1",),
         ).fetchall()
-    assert len(rows) == 7
+    assert len(rows) == 4
     assert all(row[:3] == (2, "verifier_step", "TRACE") for row in rows)
     parsed = [json.loads(row[3]) for row in rows]
     assert all(item["verifier_model"] == "granite4:3b-h" for item in parsed)

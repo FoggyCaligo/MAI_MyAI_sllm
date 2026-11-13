@@ -26,7 +26,7 @@ AgentRuntime / AgentLoop
 | 추론 | `mai/llm/llamacpp.py` | llama.cpp OpenAI 호환 API 요청 |
 | 모델 상주·전환 | `mai/llm/llamacpp_router.py` | 모델 상태 조회·언로드·로드 확인 |
 | 검증 | `mai/agent/verification.py` | 수치·사실·선택적 품질 검토 |
-| 기억 | `mai/memory/` | 추출, 그래프, SQLite FTS5 검색 |
+| 기억 | 독립 `MCP_memorizer` 패키지 + `mai/mcp_tools/mcp_memorizer/` 어댑터 | 추출, 그래프, SQLite FTS5 검색 |
 | 도구 | `mai/tools/`, `mai/agent/tool_results.py` | 로컬 작업 및 결과 원문·페이지네이션 |
 | 원격 PC | `mai/remote/` | 인증된 원격 Native 워커 호출 |
 | 실행·설치 | `mai.sh`, `mai.ps1`, `portable/` | OS별 설치·실행 및 GGUF 카탈로그 |
@@ -80,7 +80,7 @@ AgentRuntime / AgentLoop
 | 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
 | 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-**원격 Native 도구:** Owner가 `at_remote_pc=true`로 호출하면 인증된 Windows/Linux 워커에서 실행. 생략하거나 `false`이면 MAI 호스트에서 실행. 원격 미연결·미지원 시 로컬로 자동 대체하지 않음.
+**Workspace 실행 대상:** 새 Agent 작업은 `local`로 시작한다. Owner는 `tool_manual`로 `remote__switch_workspace`를 활성화하고 `target="remote"`로 인증된 워커에 전환한다. 이후 호환되는 파일·터미널·PC 도구는 별도 `at_remote_pc` 인자 없이 선택한 위치에서 실행된다. `target="local"`로 복귀한다. 원격 미연결·미지원 시 로컬로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI 호스트에서 실행한다.
 
 **웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 
@@ -90,17 +90,17 @@ AgentRuntime / AgentLoop
 
 | 데이터 | 기본 경로 |
 |---|---|
-| 장기기억 | `MAI_MEMORY/memory.sqlite3` |
-| 분해기 누적 데이터 | `MAI_MEMORY/sentence_breaker.sqlite3` |
-| 대화 | `MAI_MEMORY/chat.sqlite3` |
-| 감사 | `MAI_MEMORY/log.sqlite3` |
-| 업로드 | `mai_uploads/` |
+| 장기기억 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3` |
+| 분해기 누적 데이터 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3` |
+| 대화 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/chat.sqlite3` |
+| 감사 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3` |
+| 업로드 | `mai/mai_uploads/` |
 
-- **Owner:** 호스트 파일·터미널 및 승인된 원격 Native 도구 사용.
+- **Owner:** 작업별 Workspace를 선택하여 호스트 및 인증된 원격 워커의 파일·터미널 기능 사용.
 - **체험 계정:** 허용된 읽기 기능과 자기 업로드 영역의 제한적 쓰기. Owner 모델 선택·원격 관리 불가.
 - **계정 식별:** 로그인 ID와 데이터 소유 식별자 `db_id` 분리.
 - **기억 저장:** 승인 후 사용자 진술 및 허용된 성공 도구 결과에서 사실 추출 → 사용자별 그래프·개념 색인. 별도 비동기 작업.
-- **기억 검색:** 필요할 때 `memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
+- **기억 검색:** 필요할 때 MCP 도구 `memorizer__memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
 - **보안:** `.env`, 업로드, 개인 SQLite, 원격 인증 키는 Git에 올리지 않음.
 
 참조: [기억](memory.md), [별도 Memory Git 저장소](memory-repository.md), [로그인 제한](login-ip-lockout.md).
@@ -138,3 +138,8 @@ python scripts/audit_codebase.py
 정적 코드 분석은 **미사용 확정 또는 테스트 커버리지 측정이 아님**. 이전 정적 감사 원본: [.old/REFERENCE_AUDIT.md](.old/REFERENCE_AUDIT.md).
 
 **검증 한계:** 코드에 구현된 기능과 실제 Windows/Linux GPU·네트워크·브라우저·원격 워커에서 정상 동작한 기능은 구분한다. 테스트 실패를 정상 상태로 간주하지 않는다.
+
+
+
+### Function-group MCP tool boundary
+기능별 MCP 구조와 전체 하위 도구 매핑, 실행 위치, Lazy activation, schema-v5 마이그레이션은 [MCP 문서](mcp-lazy-loading.md)를 참고한다. Owner는 기본으로 기능별 서버를 사용하고, Trial 축소 도구 권한은 기존 Native 레지스트리로 격리한다.

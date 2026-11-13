@@ -112,7 +112,7 @@ LLAMACPP_CONTEXT_SIZE: 65536
 - `LLAMACPP_MIN_FREE_VRAM_MIB`: 모델 로딩 전에 router `/models`의 GPU별 `memory.max.devices[].free`와 모델/컨텍스트/연산 예상 사용량을 비교한다. projector 등의 미계측 할당을 위한 1024 MiB의 **추가 내부 여유분**을 차감한다. 예상 잔여량이 설정값보다 작거나 측정치가 없으면 모델 로딩을 거부한다. 측정은 **router가 수행했던 스냅샷**으로, 현재 순간의 GPU 가용량을 재측정하는 기능이나 GPU 하드 메모리 한도가 아니다. 이미 로딩된 모델에는 재적용하지 않는다.
 - `MAI_MIN_AVAILABLE_RAM_MIB`: 매 신규 모델 작업 전 Windows `GlobalMemoryStatusEx.ullAvailPhys` 또는 Linux `/proc/meminfo:MemAvailable`를 확인한다. 임계값 미만이거나 계측 실패 시 해당 요청을 거부한다. 시스템 전체의 RAM 사용 상한, 강제 종료, 메모리 부족 해소 기능이 아니다.
 - `LLAMACPP_CONTEXT_SIZE`: 모델 preset의 컨텍스트 상한. KV cache 배치에 영향을 주며 기본 64K.
-- 실행 중 2초 간격으로 가용 물리 RAM을 `MAI_MEMORY/gpu_ram_safety.jsonl`에 기록한다(설정된 `LOG_DB_PATH`와 같은 디렉터리). GPU는 모델 로딩 전 추정치를 기록한다. 강제 전원 차단 시 가장 마지막 기록 일부가 손실될 수 있다.
+- 실행 중 2초 간격으로 가용 물리 RAM을 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl`에 기록한다(설정된 `LOG_DB_PATH`와 같은 디렉터리). GPU는 모델 로딩 전 추정치를 기록한다. 강제 전원 차단 시 가장 마지막 기록 일부가 손실될 수 있다.
 - 이미 진행 중인 GPU 호출은 RAM 부족 감지만으로 즉시 멈출 수 있다고 보장하지 않는다. 주기 샘플은 진단 목적으로 저장하고 다음 요청은 시작 전에 다시 확인한다.
 - 설정 변경 시 MAI 재시작 필요. Windows launcher에서 명시적으로 `-ContextSize`를 지정하는 경우 런처 인자가 우선한다.
 - **반복적인 시스템 전원 차단은 메모리 보호만으로 해결되지 않을 수 있다.** 불안정한 PC에서 장시간 벤치마크로 검증하지 말고 전력/메모리/드라이버 원인을 따로 진단한다.

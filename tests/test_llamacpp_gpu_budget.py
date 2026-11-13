@@ -82,7 +82,7 @@ def test_ram_unknown_is_fail_closed(monkeypatch):
 
 def test_model_catalog_keeps_fixed_context_size():
     from portable.llamacpp_model_catalog import render_ini
-    config = {"models": [{"id": "a", "path": "/fake.gguf"}],
+    config = {"models": [{"id": "a", "path": "/fake.gguf", "projector": None}],
               "default": "a", "projector": None}
     result = render_ini(config, context_size=65536, gpu_layers=99)
     assert "ctx-size = 65536" in result

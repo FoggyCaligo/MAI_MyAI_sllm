@@ -55,7 +55,7 @@ def test_model_folders_link_different_quantizations_without_mapping(tmp_path):
     assert entries[text_model.name]["projector"] is None
     ini = render_ini(catalog, context_size=65536, gpu_layers=99)
     for entry in entries.values():
-        section = ini.split(f"[{entry['id']}]\\n", 1)[1].split("\\n[", 1)[0]
+        section = ini.split(f"[{entry['id']}]\n", 1)[1].split("\n[", 1)[0]
         if entry["projector"]:
             assert f"mmproj = {entry['projector']}" in section
         else:

@@ -2,7 +2,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
-mai_uploads/
+/mai/mai_uploads/
 *.egg-info/
 .pytest_cache/
 .coverage
@@ -16,7 +16,7 @@ htmlcov/
 data/*.db
 # Quality dataset intentionally remains in Git.
 !data/sentence_breaker.sqlite3
-MAI_MEMORY/
+/mai/mcp_tools/mcp_memorizer/MAI_MEMORY/
 MAI_MyAI_sllm/*
 
 # 로컬 화자 특징 데이터
@@ -37,3 +37,19 @@ portable/portable-sources-linux.json
 build/
 dist/
 *.spec
+
+# Local MCP runtime configuration and discovered catalogs (private)
+/mcp_servers.json
+/mcp_catalog.json
+
+# Editable MCP config and generated catalog, colocated with MCP manager
+/mai/mcp_tools/mcp_servers.json
+/mai/mcp_tools/mcp_catalog.json
+/mai/mcp_tools/*.tmp
+
+# Generated Windows MAI distribution / C# intermediate build
+/MAI_light_instant_runner/.launcher-build/
+/MAI_light_instant_runner/launcher/bin/
+/MAI_light_instant_runner/launcher/obj/
+/MAI_light_instant_runner/MAI/*
+!/MAI_light_instant_runner/MAI/.gitkeep

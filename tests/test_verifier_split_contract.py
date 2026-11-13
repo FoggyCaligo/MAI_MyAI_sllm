@@ -4,8 +4,17 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from mai.agent.verification import FinalGroundingVerifier, _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
+
+
+@pytest.fixture(autouse=True)
+def enable_review_criteria(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
 
 
 def _turn(value):
@@ -50,8 +59,8 @@ def test_factual_and_quality_run_in_one_request():
     assert _verify(reviewer).ok
     assert len(reviewer.requests) == 1
     prompt = reviewer.requests[0].messages[0]["content"]
-    assert "FACTUAL VERIFICATION:" in prompt
-    assert "ANSWER QUALITY VERIFICATION:" in prompt
+    assert "factual grounding reviewer" in prompt
+    assert "answer-quality reviewer" in prompt
 
 
 def test_factual_rejection_remains_visible_without_extra_call():

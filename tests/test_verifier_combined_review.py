@@ -1,4 +1,4 @@
-"""Independent numeric and factual reviews retain their own structured contracts."""
+"""Numeric and factual checks share one strict structured reviewer contract."""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from mai.agent import AgentRuntime
 from tests.reviewer_fixtures import reviewer_payload
-from mai.agent.verification import FinalGroundingVerifier, _NUMERIC_REVIEW_SYSTEM
+from mai.agent.verification import FinalGroundingVerifier, _NUMERIC_REVIEW_SYSTEM, _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
 from mai.tools.registry import ToolRegistry
 
@@ -34,6 +34,25 @@ def factual(*, supported=True):
         }],
         "retry_summary": "No correction needed." if supported else "Preserve the original condition.",
     }
+
+
+def unified(*, numeric_verdict="supported", numeric_reason="", supported=True):
+    fact = factual(supported=supported)
+    return _UnifiedReviewPayload(
+        numeric_verdict=numeric_verdict, numeric_reason=numeric_reason,
+        evidence_verdict=fact["evidence_verdict"], claims=fact["claims"],
+        action_verdict=fact["action_verdict"],
+        alignment_verdict="skipped", coverage_verdict="skipped",
+        coverage_reasons=[], reasons=fact["reasons"],
+        retry_summary=fact["retry_summary"],
+    ).model_dump(mode="json")
+
+
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
 
 
 class Reviewer:
@@ -62,10 +81,9 @@ def test_reviewer_failure_preserves_unverified_draft_with_the_error():
     assert "확정 답변이 아닙니다" in failure.value.user_visible_error
 
 
-def test_flagged_numeric_and_factual_verdicts_use_separate_model_calls():
+def test_flagged_numeric_and_factual_verdicts_share_one_model_call():
     reviewer = Reviewer([
-        {"numeric_verdict": "unsupported", "reason": "The source establishes a different price."},
-        factual(),
+        unified(numeric_verdict="unsupported", numeric_reason="The source establishes a different price."),
     ])
     result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
         candidate="The price is 72,000 won.", messages=[{"role": "user", "content": "The price is 70,000 won."}],
@@ -73,11 +91,9 @@ def test_flagged_numeric_and_factual_verdicts_use_separate_model_calls():
     ))
     assert not result.ok
     assert [issue.code for issue in result.issues] == ["numeric_grounding_failed"]
-    assert len(reviewer.requests) == 2
-    assert reviewer.requests[0].response_format["title"] == "_NumericReviewPayload"
-    assert reviewer.requests[1].response_format["title"] == "_FactualReviewPayload"
+    assert len(reviewer.requests) == 1
+    assert reviewer.requests[0].response_format == _UnifiedReviewPayload.model_json_schema()
     assert _NUMERIC_REVIEW_SYSTEM in reviewer.requests[0].messages[0]["content"]
-    assert _NUMERIC_REVIEW_SYSTEM not in reviewer.requests[1].messages[0]["content"]
     assert json.loads(reviewer.requests[0].messages[1]["content"])["flagged_numeric_or_date_values"] == ["72000"]
 
 
@@ -91,7 +107,7 @@ def test_python_numeric_checker_exceptions_remain_errors(monkeypatch):
 
 
 def test_missing_independent_numeric_verdict_is_not_accepted():
-    reviewer = Reviewer([factual()] * 3)
+    reviewer = Reviewer([factual()] * 3)  # intentionally invalid unified output
     with pytest.raises(ValidationError):
         asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
             candidate="가격은 72,000원.", messages=[{"role": "user", "content": "가격은 70,000원."}],
@@ -101,7 +117,7 @@ def test_missing_independent_numeric_verdict_is_not_accepted():
 
 
 def test_general_schema_retry_preserves_input_and_reports_validation_errors():
-    reviewer = Reviewer([{"unexpected": "invalid required verdict"}, factual(supported=False)])
+    reviewer = Reviewer([{"unexpected": "invalid required verdict"}, unified(supported=False)])
     result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
         candidate="The offer is unconditional.", messages=[], tool_results=[],
     ))
@@ -114,8 +130,7 @@ def test_general_schema_retry_preserves_input_and_reports_validation_errors():
 
 def test_supported_numeric_verdict_cannot_override_factual_rejection():
     reviewer = Reviewer([
-        {"numeric_verdict": "supported", "reason": "Equivalent date formatting."},
-        factual(supported=False),
+        unified(numeric_verdict="supported", numeric_reason="Equivalent date formatting.", supported=False),
     ])
     result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=False).verify(
         candidate="The offer is unconditional through 2026년.", messages=[], tool_results=[],
@@ -123,4 +138,4 @@ def test_supported_numeric_verdict_cannot_override_factual_rejection():
     assert not result.ok
     assert [issue.code for issue in result.issues] == ["claim_grounding_failed"]
     assert result.review_details["numeric_verdict"] == "supported"
-    assert len(reviewer.requests) == 2
+    assert len(reviewer.requests) == 1

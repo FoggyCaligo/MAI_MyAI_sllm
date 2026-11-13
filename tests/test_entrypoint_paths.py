@@ -38,7 +38,7 @@ def test_server_entrypoint_uses_project_root_without_starting_server(tmp_path):
         "runpy.run_path(sys.argv[1], run_name='__main__')"
     )
     process = subprocess.run(
-        [sys.executable, "-c", code, str(ROOT / "run_server.py")],
+        [sys.executable, "-c", code, str(ROOT / "scripts" / "run_server.py")],
         cwd=tmp_path, capture_output=True, text=True, timeout=30, check=True,
     )
     assert Path(process.stdout.strip()) == ROOT

@@ -19,9 +19,13 @@ def run(coro):
 
 
 @pytest.fixture(autouse=True)
-def enable_quality_for_legacy_combined_review_vectors(monkeypatch):
-    # These vectors exercise both stages. Importing app settings in another test
-    # must not silently disable their quality/alignment assertions.
+def enable_verifier_criteria_for_review_vectors(monkeypatch):
+    # These vectors explicitly test all review criteria. Other test modules may
+    # load deployment-specific settings into os.environ during collection.
+    # Keep the test contract independent of the user's local settings.yaml.
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
     monkeypatch.setenv("MAI_ANSWER_QUALITY_REVIEW", "true")
 
 
@@ -46,18 +50,23 @@ class SequenceAdapter:
         return turn(self.contents.pop(0))
 
 
-from mai.agent.verification import _FactualReviewPayload, _QualityReviewPayload, _NumericReviewPayload
+from mai.agent.verification import _UnifiedReviewPayload
 
 
-def _kind(request):
-    schema = request.response_format
-    if schema == _FactualReviewPayload.model_json_schema():
-        return "factual"
-    if schema == _QualityReviewPayload.model_json_schema():
-        return "quality"
-    if schema == _NumericReviewPayload.model_json_schema():
-        return "numeric"
-    raise AssertionError("unexpected structured review schema")
+def _unified_review(review, request):
+    """Adapt legacy fixture verdicts to the production one-call review contract."""
+    assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+    fact, quality = _split_legacy_review(review)
+    payload = {
+        "numeric_verdict": review.get("numeric_verdict", "supported"),
+        "numeric_reason": review.get("numeric_reason", "Equivalent numeric/date evidence."),
+        **fact,
+        **quality,
+    }
+    payload["retry_summary"] = review.get(
+        "retry_summary", "Correct the listed material defects using observed evidence."
+    )
+    return _UnifiedReviewPayload.model_validate(payload).model_dump(mode="json")
 
 
 def _split_legacy_review(review):
@@ -89,67 +98,31 @@ class ReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
-        self._quality = None
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
-        kind = _kind(request)
-        if kind == "quality":
-            if self._quality is None:
-                raise AssertionError("quality review without accepted factual review")
-            result = self._quality
-            self._quality = None
-            return turn(json.dumps(result))
-        if kind == "numeric":
-            return turn(json.dumps({"numeric_verdict": "supported", "reason": "Equivalent to observed evidence."}))
-        if kind != "factual":
-            raise AssertionError("unexpected review kind")
         if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
         evidence, alignment, reasons = self.reviews.pop(0)
-        fact, quality = _split_legacy_review({
+        review = {
             "evidence_verdict": evidence,
             "alignment_verdict": alignment,
             "reasons": list(reasons),
-        })
-        self._quality = quality if evidence == "supported" else None
-        return turn(json.dumps(reviewer_payload(fact, request)))
+        }
+        return turn(json.dumps(_unified_review(review, request), ensure_ascii=False))
 
 
 class StructuredReviewerAdapter:
     def __init__(self, reviews):
         self.reviews = list(reviews)
         self.requests = []
-        self._quality = None
-        self._pending_fact = None
 
     async def chat(self, request):
         self.requests.append(deepcopy(request))
-        kind = _kind(request)
-        if kind == "quality" and self._quality is not None:
-            result = self._quality
-            self._quality = None
-            return turn(json.dumps(result, ensure_ascii=False))
-        if kind == "numeric":
-            if not self.reviews:
-                raise AssertionError("unexpected extra numeric reviewer call")
-            self._pending_fact = dict(self.reviews.pop(0))
-            review = self._pending_fact
-            return turn(json.dumps({
-                "numeric_verdict": review.get("numeric_verdict", "supported"),
-                "reason": review.get("numeric_reason", "Equivalent numeric/date evidence."),
-            }, ensure_ascii=False))
-        if kind == "quality":
-            if not self.reviews:
-                raise AssertionError("unexpected extra quality reviewer call")
-            return turn(json.dumps(self.reviews.pop(0), ensure_ascii=False))
-        if not self.reviews and self._pending_fact is None:
+        if not self.reviews:
             raise AssertionError("unexpected extra reviewer call")
-        review = self._pending_fact if self._pending_fact is not None else dict(self.reviews.pop(0))
-        self._pending_fact = None
-        fact, quality = _split_legacy_review(review)
-        self._quality = quality if fact["evidence_verdict"] == "supported" else None
-        return turn(json.dumps(reviewer_payload(fact, request), ensure_ascii=False))
+        review = dict(self.reviews.pop(0))
+        return turn(json.dumps(_unified_review(review, request), ensure_ascii=False))
 
 
 class SlowReviewerAdapter:
@@ -160,18 +133,13 @@ class SlowReviewerAdapter:
     async def chat(self, request):
         self.requests.append(deepcopy(request))
         await asyncio.sleep(self.delay_seconds)
-        kind = _kind(request)
-        if kind == "factual":
-            return turn(json.dumps(reviewer_payload({
-                "evidence_verdict": "supported", "reasons": [], "claims": [],
-                "action_verdict": "not_applicable", "retry_summary": "No correction needed.",
-            }, request)))
-        if kind == "quality":
-            return turn(json.dumps({
-                "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
-                "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
-            }))
-        raise AssertionError("unsupported numeric review request")
+        return turn(json.dumps(_unified_review({
+            "evidence_verdict": "supported",
+            "reasons": [],
+            "claims": [],
+            "action_verdict": "not_applicable",
+            "retry_summary": "No correction needed.",
+        }, request)))
 
 
 def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None:
@@ -179,24 +147,34 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
         "케이씨텍은 72,000원에 팔았습니다.",
         "케이씨텍은 70,000원에 팔았습니다.",
     ])
-    reviewer = StructuredReviewerAdapter([
-        {
-            "evidence_verdict": "supported",
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [],
-            "action_verdict": "not_applicable",
-            "numeric_verdict": "unsupported",
-            "numeric_reason": "The evidence says 70,000, not 72,000."
-        },
-        {
-            "evidence_verdict": "supported",
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [],
-            "action_verdict": "not_applicable",
-        },
-    ])
+    class UnifiedNumericReviewerAdapter:
+        def __init__(self):
+            self.requests = []
+            self.numeric_verdicts = [
+                ("unsupported", "The evidence says 70,000, not 72,000."),
+                ("supported", "Equivalent to the provided price."),
+            ]
+
+        async def chat(self, request):
+            from mai.agent.verification import _UnifiedReviewPayload
+            self.requests.append(deepcopy(request))
+            assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+            verdict, reason = self.numeric_verdicts.pop(0)
+            return turn(json.dumps({
+                "numeric_verdict": verdict,
+                "numeric_reason": reason,
+                "evidence_verdict": "supported",
+                "claims": [],
+                "action_verdict": "not_applicable",
+                "alignment_verdict": "aligned",
+                "coverage_verdict": "sufficient",
+                "coverage_reasons": [],
+                "reasons": [],
+                "retry_summary": "Correct the numeric discrepancy." if verdict == "unsupported"
+                                 else "No correction needed.",
+            }, ensure_ascii=False))
+
+    reviewer = UnifiedNumericReviewerAdapter()
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
@@ -206,7 +184,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 4  # numeric + factual rejection, then factual + quality
+    assert len(reviewer.requests) == 2  # one unified review per candidate
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     correction_messages = [m for m in main.requests[1].messages if m.get("role") == "system" and "rejected_provisional_answer" in m.get("content", "")]
@@ -311,7 +289,7 @@ def test_numeric_budget_exhaustion_uses_independent_reviews() -> None:
             final_verifier=FinalGroundingVerifier(reviewer_adapter=reviewer),
         ).run_user_message("70,000원 상품을 비교해줘."))
 
-    assert len(reviewer.requests) == 6  # three numeric and three factual checks
+    assert len(reviewer.requests) == 3  # one unified review for each rejected candidate
 
 
 def test_evidence_and_alignment_retry_budgets_are_independent() -> None:
@@ -451,7 +429,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 6  # three factual and three quality reviews
+    assert len(reviewer.requests) == 3  # one unified review for each candidate
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -521,7 +499,7 @@ def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
     ))
 
     assert result.ok is True
-    assert len(reviewer.requests) == 3  # numeric, factual, quality
+    assert len(reviewer.requests) == 1  # one unified numeric/factual/quality review
     numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert numeric_payload["flagged_numeric_or_date_values"] == ["2026"]
     assert reviewer.requests[0].response_format["properties"]["numeric_verdict"]
@@ -666,15 +644,13 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert isinstance(schema, dict)
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
+    assert schema == _UnifiedReviewPayload.model_json_schema()
     assert set(schema["required"]) == {
-        "evidence_verdict", "reasons", "claims", "action_verdict", "retry_summary",
+        "numeric_verdict", "numeric_reason", "evidence_verdict", "claims",
+        "action_verdict", "alignment_verdict", "coverage_verdict",
+        "coverage_reasons", "reasons", "retry_summary",
     }
-    assert "claims" in schema["properties"]
-    assert "action_verdict" in schema["properties"]
-    quality_schema = reviewer.requests[1].response_format
-    assert set(quality_schema["required"]) == {
-        "alignment_verdict", "coverage_verdict", "coverage_reasons", "reasons", "retry_summary",
-    }
+    assert len(reviewer.requests) == 1
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
@@ -880,26 +856,17 @@ def test_reviewer_has_no_default_deadline() -> None:
     assert verifier.reviewer_timeout_seconds is None
     result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
     assert result.ok
-    assert len(reviewer.requests) == 2  # factual and quality checks
+    assert len(reviewer.requests) == 1  # one unified factual/quality review
 
 
 def test_reviewer_recovers_after_two_invalid_outputs() -> None:
-    valid = json.dumps({
-        "evidence_verdict": "supported",
-        "alignment_verdict": "aligned",
-        "coverage_verdict": "sufficient",
-        "coverage_reasons": [],
-        "reasons": [],
-        "claims": [],
-        "action_verdict": "not_applicable",
-        "retry_summary": "No correction needed.",
-    })
-    factual = json.loads(valid)
-    for field in ("alignment_verdict", "coverage_verdict", "coverage_reasons"):
-        factual.pop(field)
-    quality = json.dumps({"alignment_verdict": "aligned", "coverage_verdict": "sufficient",
-                          "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed."})
-    reviewer = SequenceAdapter(["not-json", "{}", json.dumps(factual), quality])
+    valid = json.dumps(_UnifiedReviewPayload(
+        numeric_verdict="supported", numeric_reason="No numeric discrepancy.",
+        evidence_verdict="supported", claims=[], action_verdict="not_applicable",
+        alignment_verdict="aligned", coverage_verdict="sufficient",
+        coverage_reasons=[], reasons=[], retry_summary="No correction needed.",
+    ).model_dump(mode="json"))
+    reviewer = SequenceAdapter(["not-json", "{}", valid])
 
     result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
         candidate="설명",
@@ -908,7 +875,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
     ))
 
     assert result.ok
-    assert len(reviewer.requests) == 4
+    assert len(reviewer.requests) == 3  # two invalid unified outputs followed by one valid output
 
 
 @pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
@@ -1047,7 +1014,7 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
 
     assert result.content == "이제 근거에 맞는 답변입니다."
     assert result.model_rounds == 6
-    assert len(reviewer.requests) == 7  # six factual rounds plus final quality review
+    assert len(reviewer.requests) == 6  # one unified review per candidate
 
 
 

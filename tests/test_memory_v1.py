@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from mai.memory.graph.repository import MemoryGraphRepository
-from mai.memory.working import WorkingGraph
+from mcp_memorizer.memory.graph.repository import MemoryGraphRepository
+from mcp_memorizer.memory.working import WorkingGraph
 
 NOW = datetime(2026, 8, 27, 15, 24, tzinfo=timezone.utc)
 

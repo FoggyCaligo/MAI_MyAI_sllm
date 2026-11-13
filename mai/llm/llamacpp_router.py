@@ -246,13 +246,44 @@ class SingleResidentRouter:
         if not isinstance(result, dict) or result.get("success") is not True:
             raise RouterModelTransitionError(f"Router refused model load: {model} response={str(result)[:800]}")
         deadline = time.monotonic() + self.load_timeout_seconds
+        last_poll_error: httpx.TransportError | None = None
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if last_poll_error is not None:
+                    raise RouterModelTransitionError(
+                        f"Model load status polling timed out: {model} "
+                        f"last_error={type(last_poll_error).__name__}: {last_poll_error}"
+                    ) from last_poll_error
+                raise RouterModelTransitionError(
+                    f"Model load confirmation timed out: {model}"
+                )
             try:
-                response = await client.get(self.host + "/models", timeout=5.0)
+                response = await client.get(self.host + "/models", timeout=min(5.0, remaining))
                 response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise RouterModelTransitionError(
+                    f"Router load-status rejected model={model} "
+                    f"http_status={exc.response.status_code}"
+                ) from exc
+            except httpx.TransportError as exc:
+                last_poll_error = exc
+                # An in-progress llama.cpp load may briefly interrupt status polling.
+                # Never resend /models/load; only retry the read until the load deadline.
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RouterModelTransitionError(
+                        f"Model load status polling timed out: {model} "
+                        f"last_error={type(exc).__name__}: {exc}"
+                    ) from exc
+                await asyncio.sleep(min(self.poll_interval_seconds, remaining))
+                continue
+            try:
                 payload = response.json()
-            except (httpx.HTTPError, ValueError) as exc:
-                raise RouterModelTransitionError(f"Cannot poll model load: {model}") from exc
+            except ValueError as exc:
+                raise RouterModelTransitionError(
+                    f"Invalid router load-status JSON: {model}"
+                ) from exc
             models = payload.get("data") if isinstance(payload, dict) else None
             if not isinstance(models, list):
                 raise RouterModelTransitionError("Router load-status response lacks model list")

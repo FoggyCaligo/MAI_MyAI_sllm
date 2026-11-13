@@ -5,9 +5,15 @@ import asyncio
 import json
 
 import pytest
-from mai.agent.verification import FinalGroundingVerifier
+from mai.agent.verification import FinalGroundingVerifier, _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
-from tests.reviewer_fixtures import reviewer_payload
+
+
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
 
 
 class Reviewer:
@@ -30,7 +36,13 @@ class Reviewer:
             "reasons": ["Evidence classification from reviewer"],
             "retry_summary": "Examine evidence.",
         }
-        content = json.dumps(reviewer_payload(payload, request))
+        payload.update({
+            "numeric_verdict": "supported", "numeric_reason": "",
+            "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+        })
+        assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+        content = json.dumps(_UnifiedReviewPayload.model_validate(payload).model_dump(mode="json"))
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 

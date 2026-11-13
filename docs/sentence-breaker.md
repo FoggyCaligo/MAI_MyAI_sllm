@@ -13,7 +13,7 @@ Sentence_Breaker는 사실 문장을 개념 조각으로 나누기 위한 별도
 
 MAI는 반환된 조각 중 공백뿐인 조각을 버린다. 그래프에 넣을 때 조각 양끝 공백을 제거한다. 조각 내부 공백은 그대로 남는다.
 
-별도 누적 상태 DB의 MAI 기본 경로는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 프로젝트 본체의 이전 `data/` 경로와 혼동하지 않는다.
+별도 누적 상태 DB의 MAI 기본 경로는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3`다. 프로젝트 본체의 이전 `data/` 경로와 혼동하지 않는다.
 
 ## 2. 별도 데이터베이스
 

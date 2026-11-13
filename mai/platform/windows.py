@@ -39,7 +39,7 @@ def git_bash_executable() -> Path:
     git = shutil.which("git.exe")
     if git:
         executable = Path(git).resolve()
-        if executable.parent.name.lower() == "cmd":
+        if executable.parent.name.lower() in {"cmd", "bin"}:
             candidates.append(executable.parent.parent / "bin" / "bash.exe")
     for candidate in candidates:
         if candidate.is_file():

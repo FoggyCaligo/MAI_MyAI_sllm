@@ -65,7 +65,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MAI Memory repository offline data migration")
     root = Path(__file__).resolve().parents[1]
     parser.add_argument("--source", type=Path, default=root / "data")
-    parser.add_argument("--destination", type=Path, default=root / "MAI_MEMORY")
+    parser.add_argument("--destination", type=Path, default=root / "mai" / "mcp_tools" / "mcp_memorizer" / "MAI_MEMORY")
     parser.add_argument("--apply", action="store_true", help="copy data after reviewing the plan")
     args = parser.parse_args()
     plan = migration_plan(args.source, args.destination)

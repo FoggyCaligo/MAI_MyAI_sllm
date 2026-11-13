@@ -1,4 +1,4 @@
-"""Remote-worker parity, per-call selection, and persistent session checks."""
+"""Remote-worker parity, workspace selection, and persistent session checks."""
 import asyncio
 
 import pytest
@@ -6,6 +6,7 @@ import pytest
 from mai.remote.python_worker import RemoteWorker, build_registry
 from mai.remote.routing import register_routed_service_tools
 from mai.remote.session import RemoteExecutionError
+from mai.mcp_tools.workspace import WorkspaceContext
 from mai.tools.browser import BrowserSessionManager
 from mai.tools.registry import ToolRegistry
 
@@ -22,10 +23,10 @@ def test_worker_exposes_all_worker_portable_services():
         assert not worker.has(name)
 
 
-def test_host_and_worker_service_schemas_are_exact_except_at_remote_pc():
+def test_host_and_worker_portable_service_schemas_are_exact():
     host = ToolRegistry()
     register_routed_service_tools(
-        host, owner_id="owner", browser_manager=BrowserSessionManager(),
+        host, workspace=WorkspaceContext(owner_id="owner"), browser_manager=BrowserSessionManager(),
     )
     worker = build_registry()
     for definition in host.definitions():
@@ -35,25 +36,23 @@ def test_host_and_worker_service_schemas_are_exact_except_at_remote_pc():
             assert not worker.has(definition.name)
         else:
             worker_fields = set(worker.get(definition.name).input_model.model_fields)
-            assert remote_fields == worker_fields | {"at_remote_pc"}
+            assert remote_fields == worker_fields
 
 
 def test_remote_service_without_connection_fails_and_does_not_run_locally():
+    workspace = WorkspaceContext(owner_id="owner-with-no-remote-session")
     host = ToolRegistry()
     register_routed_service_tools(
-        host, owner_id="owner-with-no-remote-session",
+        host, workspace=workspace,
         browser_manager=BrowserSessionManager(),
     )
 
     async def exercise():
-        local = await host.get("calculator").invoke(
-            {"expression": "12+8"}
-        )
+        local = await host.get("calculator").invoke({"expression": "12+8"})
         assert local["result"] == "20"
-        with pytest.raises(RemoteExecutionError, match="active remote session"):
-            await host.get("calculator").invoke(
-                {"expression": "12+8", "at_remote_pc": True}
-            )
+        with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
+            workspace.switch("remote")
+        assert workspace.target == "local"
     asyncio.run(exercise())
 
 
@@ -77,58 +76,57 @@ def test_remote_worker_rejects_web_and_browser_calls():
 
 def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
     from types import SimpleNamespace
+    from mai.mcp_tools import workspace as workspace_module
     from mai.remote import routing
 
+    owner_id = "valid-owner"
+    session = SimpleNamespace(session_id="authenticated-session", owner_id=owner_id, connected=True)
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
+    monkeypatch.setattr(workspace_module.remote_sessions, "get", lambda session_id: session)
+    workspace = WorkspaceContext(owner_id=owner_id)
     host = ToolRegistry()
-    register_routed_service_tools(
-        host, owner_id="valid-owner", browser_manager=BrowserSessionManager(),
-    )
+    register_routed_service_tools(host, workspace=workspace, browser_manager=BrowserSessionManager())
+    workspace.switch("remote")
     routed = []
-    monkeypatch.setattr(
-        routing.remote_sessions, "owner_session",
-        lambda owner_id: SimpleNamespace(session_id="authenticated-session"),
-    )
 
-    async def fake_execute(self, operation, arguments, *, at_remote_pc):
-        routed.append((self.owner_id, self.remote_session_id, operation, arguments, at_remote_pc))
+    async def fake_execute(self, operation, arguments, *, timeout):
+        routed.append((self.owner_id, self.remote_session_id, operation, arguments, timeout))
         return {"value": {"expression": "7+5", "result": "REMOTE-12"}}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", fake_execute)
 
     async def exercise():
-        value = await host.get("calculator").invoke(
-            {"expression": "7+5", "at_remote_pc": True}
-        )
+        value = await host.get("calculator").invoke({"expression": "7+5"})
         assert value["result"] == "REMOTE-12"
     asyncio.run(exercise())
     assert routed == [(
-        "valid-owner", "authenticated-session", "native.invoke",
-        {"name": "calculator", "arguments": {"expression": "7+5"}}, True,
+        owner_id, session.session_id, "native.invoke",
+        {"name": "calculator", "arguments": {"expression": "7+5"}}, 600,
     )]
 
 
 def test_remote_transport_missing_value_envelope_fails(monkeypatch):
     from types import SimpleNamespace
+    from mai.mcp_tools import workspace as workspace_module
     from mai.remote import routing
 
+    owner_id = "valid-owner"
+    session = SimpleNamespace(session_id="authenticated-session", owner_id=owner_id, connected=True)
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
+    monkeypatch.setattr(workspace_module.remote_sessions, "get", lambda session_id: session)
+    workspace = WorkspaceContext(owner_id=owner_id)
     host = ToolRegistry()
-    register_routed_service_tools(
-        host, owner_id="valid-owner", browser_manager=BrowserSessionManager(),
-    )
-    monkeypatch.setattr(
-        routing.remote_sessions, "owner_session",
-        lambda owner_id: SimpleNamespace(session_id="authenticated-session"),
-    )
+    register_routed_service_tools(host, workspace=workspace, browser_manager=BrowserSessionManager())
+    workspace.switch("remote")
 
-    async def invalid_result(self, operation, arguments, *, at_remote_pc):
+    async def invalid_result(self, operation, arguments, *, timeout):
         return {"result": "old worker protocol"}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", invalid_result)
+
     async def exercise():
         with pytest.raises(RemoteExecutionError, match="invalid tool-result envelope"):
-            await host.get("calculator").invoke(
-                {"expression": "1+2", "at_remote_pc": True}
-            )
+            await host.get("calculator").invoke({"expression": "1+2"})
     asyncio.run(exercise())
 
 

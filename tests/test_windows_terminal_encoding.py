@@ -24,7 +24,7 @@ def test_powershell_launch_contract_uses_text_output():
 def test_cmd_multiline_unicode_and_cleanup(tmp_path: Path):
     work = tmp_path / "한글 작업"
     work.mkdir()
-    result = asyncio.run(_run_command("echo 첫째\necho 둘째\necho 셋째", work, 15, shell="cmd"))
+    result = asyncio.run(_run_command("echo 첫째\necho 둘째\necho 셋째", work, shell="cmd"))
     assert "첫째" in result["stdout"]
     assert "둘째" in result["stdout"]
     assert "셋째" in result["stdout"]
@@ -33,17 +33,21 @@ def test_cmd_multiline_unicode_and_cleanup(tmp_path: Path):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows CMD integration test")
 def test_cmd_nonzero_exit_is_not_hidden(tmp_path: Path):
-    result = asyncio.run(_run_command("echo 시작\nexit /b 7", tmp_path, 15, shell="cmd"))
+    result = asyncio.run(_run_command("echo 시작\nexit /b 7", tmp_path, shell="cmd"))
     assert "시작" in result["stdout"]
     assert result["returncode"] == 7
+    with pytest.raises(TerminalCommandError) as failure:
+        from mai.tools.terminal import terminal_run
+        asyncio.run(terminal_run(command="exit /b 7", cwd=str(tmp_path), shell="cmd"))
+    assert failure.value.result["returncode"] == 7
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell integration test")
 def test_powershell_unicode_and_native_failure(tmp_path: Path):
-    result = asyncio.run(_run_command("Write-Output '한글 결과'", tmp_path, 15, shell="powershell"))
+    result = asyncio.run(_run_command("Write-Output '한글 결과'", tmp_path, shell="powershell"))
     assert "한글 결과" in result["stdout"]
     assert result["returncode"] == 0
-    failure = asyncio.run(_run_command("cmd.exe /c exit 9", tmp_path, 15, shell="powershell"))
+    failure = asyncio.run(_run_command("cmd.exe /c exit 9", tmp_path, shell="powershell"))
     assert failure["returncode"] == 9
 
 
@@ -68,6 +72,6 @@ def test_terminal_decode_failure_remains_explicit():
 @pytest.mark.skipif(os.name != "nt", reason="Windows Git Bash integration test")
 def test_git_bash_python_stdout_unicode_roundtrip(tmp_path: Path):
     command = "printf '한글 경로 ✓'"
-    result = asyncio.run(_run_command(command, tmp_path, 15, shell="bash"))
+    result = asyncio.run(_run_command(command, tmp_path, shell="bash"))
     assert result["stdout"] == "한글 경로 ✓"
     assert result["stdout_encoding"] == "utf-8-sig"

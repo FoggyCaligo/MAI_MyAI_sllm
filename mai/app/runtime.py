@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 import time
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from ..llm.models import ModelConfig, model_generation_limit
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.cloud_api import CloudAPIAdapter, configured_models
 from ..llm.llamacpp_router import SingleResidentRouter
-from ..memory.admission import (
+from ..mcp_tools.mcp_memorizer.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
@@ -36,15 +37,15 @@ from mcp_memorizer.memory.index import SqliteFtsConceptIndex
 from mcp_memorizer.memory.recall.service import RecallService
 from mcp_memorizer.memory.runtime import MemoryRuntime
 from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter
-from ..memory.tools import register_memory_tools
-from mcp_memorizer.memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
+from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
+from ..mcp_tools.workspace import WorkspaceContext
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -79,15 +80,13 @@ You are running inside the MAI local personal-agent runtime.
 
 Answer the current request fully; do not assume the user knows prior answers or omit information without the user's request. Respond in the current user's language unless explicitly instructed otherwise; tool outputs and internal reasoning do not set the response language.
 
-Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all native schemas: activate required tools by exact name and use their native schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: memory for user context, local tools for local resources, and information tools for external facts.
+Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all tool schemas: activate required tools by exact name and use their declared schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: local tools for local resources and information tools for external facts; follow the registered schema and description of any other tool.
 
-MAI's owner-authorized remote connection lets native tools execute on another connected Windows or Linux computer. First activate required tools with tool_manual and follow their next-round native schemas; there is no CodeAct or execute_code tool. For every applicable native call, choose at_remote_pc=true when the user's request targets the connected remote worker and at_remote_pc=false (or omit) when it targets the MAI host. The model selects that target from the user's intent and observed context, not substring rules. Tool activation does not select the target. Web search, web fetch and browser tools are always MAI-host-only and have no at_remote_pc argument. For remote filesystem access, terminal commands, PC administration and any other tools whose schemas declare at_remote_pc, select the requested target consistently. Remote paths and shell syntax belong to the worker's operating system (Linux uses Bash; terminal_run defaults to Bash, but Windows system administration commands should use shell=powershell with PowerShell pipelines exclusively). Do not mix CMD and Bash syntax, or nest cmd.exe /c with Bash pipelines. Host memory_search, tool_result_read and file_download_link remain host-only and never acquire at_remote_pc. The runtime resolves the account's active remote session; never supply its ID as a tool argument. If the remote session is unavailable or a tool is unsupported on that worker, report the failure; never substitute local execution.
-
-Use persistent-memory retrieval for missing user context. Activate the appropriate tool and read its schema before choosing arguments. Bounded or empty results are not exhaustive proof of absence.
+MAI's owner-authorized remote connection lets workspace-capable tools execute on a connected Windows or Linux worker. Each new agent task starts in the local workspace. Before operating on the remote PC, activate remote__switch_workspace with tool_manual, then call remote__switch_workspace(target="remote"). After a successful switch, subsequent filesystem, terminal, and other workspace-capable tools operate on the selected worker without per-tool location arguments. To return to the MAI host, call remote__switch_workspace(target="local"). A failed remote switch leaves the previous workspace unchanged; remote disconnection causes explicit tool failure and must never silently fall back to local. The workspace is per agent task and never changes another task. Web, browser, persistent memory and host control tools remain MAI-host-only regardless of workspace. Remote paths and shell syntax belong to the worker operating system (Linux uses Bash; terminal_run defaults to Bash; Windows-specific administration may explicitly use shell=powershell). Do not mix CMD and Bash syntax or nest cmd.exe /c with Bash pipelines. In functional MCP mode, use each exact server__tool name from the catalog (such as mai_terminal_run__terminal_run), not its old unprefixed Native name. The runtime resolves the authenticated account's worker session; never supply its session ID or credentials as tool arguments. Remote worker download, installation and pairing are host-managed, not model tools.
 
 Pretrained knowledge supports reasoning, not factual evidence. Before presenting a factual claim, distinguish observed user/tool evidence from pretrained recollection; confidence and familiarity do not count as evidence. If adequate observed evidence is missing, verify the claim with the appropriate tool or explicitly leave it unverified. Preserve original values, definitions, units, aggregation levels, time ranges, and the distinction between observations and derived calculations. Do not silently change or round source values; transform them only at the user's request or under an evidenced rule. Treat related metrics as distinct unless the evidence establishes equivalence, and do not assert unsupported causal explanations or reconciliations; acknowledge unresolved uncertainty.
 
-For arithmetic that materially affects an answer, activate and use the calculator rather than mental arithmetic, including sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step comparisons.
+For arithmetic that materially affects an answer, activate and use the exact calculator tool listed in the catalog (in functional MCP mode: mai_utilities__calculator) rather than mental arithmetic, including sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step comparisons.
 
 The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through file_read. The owner can use document_edit for explicitly supported changes to existing structured files, including PDF page operations; arbitrary PDF text edits are unsupported. There are no separate file_create or model-visible document_read native tools.
 
@@ -138,7 +137,7 @@ class MAIRuntime:
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
-        upload_root: str | Path = "./mai_uploads",
+        upload_root: str | Path = "./mai/mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
     ) -> None:
@@ -298,32 +297,44 @@ class MAIRuntime:
     def _registry_for(
         self,
         principal: AccessPrincipal,
-        working: WorkingGraph,
         tool_result_store: ToolResultStore,
         browser_manager: BrowserSessionManager,
         remote_session_id: str | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
-        register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
-        if principal.role is AccessRole.OWNER:
+        workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
+        registry.workspace = workspace
+        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
+        configured_mcp_mode = (
+            json.loads(Path(mcp_config).read_text(encoding="utf-8")).get("functional_mode", False)
+            if mcp_config and principal.role is AccessRole.OWNER else False
+        )
+        if not isinstance(configured_mcp_mode, bool):
+            raise ValueError("MCP functional_mode must be a boolean")
+        functional_mcp = (
+            principal.role is AccessRole.OWNER and bool(mcp_config) and
+            _env_bool("MAI_MCP_FUNCTIONAL_TOOLS", configured_mcp_mode)
+        )
+        if principal.role is AccessRole.OWNER and not functional_mcp:
             register_routed_service_tools(
-                registry, owner_id=principal.db_id, browser_manager=browser_manager,
+                registry, workspace=workspace, browser_manager=browser_manager,
             )
-        else:
+        elif principal.role is AccessRole.TRIAL:
             register_time_tools(registry)
             register_calculator_tools(registry)
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
         if principal.role is AccessRole.OWNER:
-            register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
-            register_restart_tool(registry)
-            registry.add(
-                name="file_download_link",
-                description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
-                input_model=FileDownloadLinkInput,
-                handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
-                category="filesystem",
-            )
+            if not functional_mcp:
+                register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
+                register_restart_tool(registry)
+                registry.add(
+                    name="file_download_link",
+                    description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
+                    input_model=FileDownloadLinkInput,
+                    handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
+                    category="filesystem",
+                )
         elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
                 registry,
@@ -332,7 +343,17 @@ class MAIRuntime:
             )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
-        register_tool_result_tools(registry, tool_result_store)
+        if not functional_mcp:
+            register_tool_result_tools(registry, tool_result_store)
+        if mcp_config and principal.role is AccessRole.OWNER:
+            manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
+                                           workspace=workspace,
+                                           host_download_links=self.download_links,
+                                           host_tool_result_store=tool_result_store)
+            # Disabled groups are genuinely unavailable: never restore their
+            # old native counterpart behind the operator's back.
+            manager.register(registry)
+            registry.mcp_manager = manager
         return registry
 
     async def run_user_message(
@@ -373,10 +394,9 @@ class MAIRuntime:
         verifier_adapter = adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
-        working = WorkingGraph()
         tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
         browser_manager = BrowserSessionManager()
-        registry = self._registry_for(principal, working, tool_result_store, browser_manager, remote_session_id)
+        registry = self._registry_for(principal, tool_result_store, browser_manager, remote_session_id)
 
         max_identical_failures = int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5"))
         agent = AgentRuntime(
@@ -426,7 +446,11 @@ class MAIRuntime:
                     ),
                 )
         finally:
-            await browser_manager.close_all()
+            try:
+                if registry.mcp_manager is not None:
+                    await registry.mcp_manager.close()
+            finally:
+                await browser_manager.close_all()
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions

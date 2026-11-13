@@ -58,6 +58,6 @@ def test_verifier_ui_uses_server_configuration() -> None:
     from mai.app.server import ChatRequest
 
     html = Path("mai/app/static/index.html").read_text(encoding="utf-8")
-    assert '<input type="checkbox" id="verify-toggle" />' in html
+    assert '<input type="checkbox" id="verify-toggle" aria-label="Verify answers" />' in html
     assert "document.getElementById(\'verify-toggle\').checked=data.verifier_default_enabled" in html
     assert ChatRequest(message="테스트", verify=True).verify is True

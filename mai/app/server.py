@@ -28,6 +28,7 @@ from .login_rate_limit import LoginRateLimiter
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
+from ..mcp_tools.mcp_servers import MCPConnectionManager, ensure_default_mcp_config
 from ..hosting import HostingError, create_hosting
 from .uploads import principal_upload_directory
 from .voice import MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, VoiceService
@@ -64,10 +65,10 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # Keep database path defaults in one place. Paths supplied by the
 # environment retain their existing semantics (relative to the process CWD).
 _DB_PATH_DEFAULTS = {
-    "MEMORY_DB_PATH": "./MAI_MEMORY/memory.sqlite3",
-    "SENTENCE_BREAKER_DB_PATH": "./MAI_MEMORY/sentence_breaker.sqlite3",
-    "CHAT_DB_PATH": "./MAI_MEMORY/chat.sqlite3",
-    "LOG_DB_PATH": "./MAI_MEMORY/log.sqlite3",
+    "MEMORY_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3",
+    "SENTENCE_BREAKER_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3",
+    "CHAT_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/chat.sqlite3",
+    "LOG_DB_PATH": "./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3",
 }
 
 
@@ -174,6 +175,11 @@ async def _remote_idle_reaper() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global _runtime, _access_policy, _chat_session_store, _hosting, _hosting_provider, _voice_service, _login_rate_limiter
+    # Standalone run_server.py starts without Portable launcher: migrate before DB open.
+    from portable.runtime_data_paths import migrate, normalize_legacy_environment
+    project_root = Path(__file__).resolve().parents[2]
+    migrate(project_root)
+    normalize_legacy_environment(project_root)
     _voice_service = VoiceService()
     host = os.environ.get("MAI_HOST", "127.0.0.1")
     port = int(os.environ.get("MAI_PORT", "8000"))
@@ -189,19 +195,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     for previous_id, db_id in _access_policy.user_to_db_ids().items():
         _chat_session_store.migrate_db_id(previous_id=previous_id, db_id=db_id)
 
+    configured_path = os.environ.get("MAI_MCP_CONFIG", "").strip()
+    if configured_path:
+        mcp_config_path = Path(configured_path).expanduser().resolve()
+    else:
+        mcp_config_path = ensure_default_mcp_config(
+            memory_db_path=_db_path("MEMORY_DB_PATH"),
+            sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
+        )
+    # At startup, discover only enabled MCPs. The discovery connections are
+    # closed immediately; real tool sessions open lazily upon tool_manual.
+    startup_discovery_started = time.monotonic()
+    logger.info("MAI startup phase=mcp_discovery status=starting")
+    discovery = MCPConnectionManager(mcp_config_path, memory_user_id="catalog-discovery")
+    discovered_tools = await discovery.refresh_catalog()
+    logger.info("MAI startup phase=mcp_discovery status=completed elapsed_seconds=%.3f",
+                time.monotonic() - startup_discovery_started)
+    os.environ["MAI_MCP_CONFIG"] = str(mcp_config_path)
+    logger.info("MAI MCP startup catalog enabled_servers=%d tools=%d names=%s",
+                len(discovery.servers), len(discovered_tools), discovered_tools)
+
+    runtime_started = time.monotonic()
+    logger.info("MAI startup phase=runtime_initialization status=starting")
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", ""),
         llm_backend=os.environ.get("LLM_BACKEND", "llamacpp"),
         llamacpp_host=os.environ.get("LLAMACPP_HOST", "http://127.0.0.1:8080"),
         memory_db_path=_db_path("MEMORY_DB_PATH"),
         sentence_breaker_db_path=_db_path("SENTENCE_BREAKER_DB_PATH"),
-        upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai_uploads"),
+        upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai/mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
+    logger.info("MAI startup phase=runtime_initialization status=completed elapsed_seconds=%.3f",
+                time.monotonic() - runtime_started)
     print(f"MAI local: http://{host}:{port}", flush=True)
     _hosting_provider = os.environ.get("REMOTE_HOSTING_PROVIDER", "tailscale").strip().lower()
     _hosting = create_hosting(provider=_hosting_provider, port=port)
     if _hosting is not None:
+        hosting_started = time.monotonic()
+        logger.info("MAI startup phase=remote_hosting status=starting")
         try:
             status_text = _hosting.start()
         except (HostingError, RuntimeError, OSError):
@@ -209,6 +241,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _hosting = None
         else:
             print(f"MAI remote hosting ({_hosting_provider}): {status_text}", flush=True)
+        finally:
+            logger.info("MAI startup phase=remote_hosting status=finished elapsed_seconds=%.3f",
+                        time.monotonic() - hosting_started)
     else:
         print("MAI remote hosting: disabled", flush=True)
     idle_reaper = asyncio.create_task(_remote_idle_reaper())

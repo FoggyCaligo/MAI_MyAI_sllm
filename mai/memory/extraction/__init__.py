@@ -1,1 +1,0 @@
-"""Durable-memory extraction pipeline."""

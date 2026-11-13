@@ -109,6 +109,6 @@ Owner로 로그인한 MAI 화면에서 마이크를 눌렀을 때의 안내 메�
 
 화자 식별만을 위한 `speakeronnx` 및 WeSpeaker ResNet34 모델, `VOICE_MATCH_THRESHOLD`, `VOICE_PROFILE_DIR`, 목소리 등록 UI/API/코드를 제거했다. `vadonnx`·Silero VAD는 발화 감지와 5초 종료 판단에 필요하고, `faster-whisper`, `numpy`, `scipy`는 로컬 음성인식에 계속 필요하다.
 
-기존 `MAI_MEMORY/voice_profiles/` 사용자 파일, 이미 설치된 Python 패키지와 공유 모델 캐시는 자동 삭제하지 않는다. 환경을 확인한 후 별도 패키지 정리가 필요하면 `python -m pip uninstall speakeronnx`를 사용할 수 있지만, 다른 프로젝트의 사용 여부도 먼저 확인해야 한다.
+기존 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/voice_profiles/` 사용자 파일, 이미 설치된 Python 패키지와 공유 모델 캐시는 자동 삭제하지 않는다. 환경을 확인한 후 별도 패키지 정리가 필요하면 `python -m pip uninstall speakeronnx`를 사용할 수 있지만, 다른 프로젝트의 사용 여부도 먼저 확인해야 한다.
 
 로컬 Whisper는 완성된 녹음을 서버로 전송한 뒤 변환하므로 Web Speech처럼 실시간 부분 전사를 표시하지 않는다. 다만 **메시지 입력창 위의 초기 듣기 안내 문구는 두 모드에서 동일**하게 표시한다.
