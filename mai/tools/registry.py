@@ -141,6 +141,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._definitions: dict[str, ToolDefinition] = {}
+        self.mcp_manager: Any | None = None
         self._shared_model_contexts: dict[str, dict[str, Any]] = {}
         self._shared_model_context_tools: dict[str, frozenset[str]] = {}
 
