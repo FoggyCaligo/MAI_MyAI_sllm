@@ -95,6 +95,29 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
         temp = path.with_suffix(".workspace.tmp")
         temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
+    # Functional tool servers are provisioned as disabled, opt-in entries
+    # during compatibility staging. Existing native registrations remain
+    # authoritative until the schema/remote-routing cutover is validated.
+    # In particular, do not change an operator's existing enabled flags.
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    if existing.get("schema_version", 1) < 3:
+        from .native_groups import GROUPS
+        installed = {entry["id"] for entry in existing["servers"]}
+        for group in GROUPS:
+            if group not in installed:
+                existing["servers"].append({
+                    "id": group, "enabled": False,
+                    "command": sys.executable,
+                    "args": ["-m", "mai.mcp_tools.native_groups", "--group", group],
+                    "env": {"MAI_CWD": str(Path(__file__).resolve().parents[2])},
+                })
+        existing["schema_version"] = 3
+        backup = path.with_name("mcp_servers.pre-functional-groups.json")
+        if not backup.exists():
+            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        temp = path.with_suffix(".functional-groups.tmp")
+        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
     return path
 
 
