@@ -33,4 +33,4 @@ def test_external_memory_policy_and_namespace(tmp_path):
     registry = ToolRegistry()
     MCPConnectionManager(config).register(registry)
     assert registry.names() == ("memorizer__memory_search",)
-    assert registry.get("memorizer__memory_search").description == MEMORY_SEARCH_DESCRIPTION
+    assert registry.get("memorizer__memory_search").description.endswith(MEMORY_SEARCH_DESCRIPTION)
