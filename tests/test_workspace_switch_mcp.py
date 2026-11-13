@@ -103,8 +103,9 @@ def test_default_config_adds_host_only_remote_controller(tmp_path):
     )
     config = json.loads(path.read_text("utf-8"))
     assert {"memorizer", "remote"}.issubset({s["id"] for s in config["servers"]})
-    assert all(not s["enabled"] for s in config["servers"] if s["id"].startswith("mai_"))
-    assert config["schema_version"] == 3
+    assert all(s["enabled"] for s in config["servers"] if s["id"].startswith("mai_"))
+    assert config["schema_version"] == 4
+    assert config["functional_mode"] is True
     config["servers"][1]["enabled"] = False
     path.write_text(json.dumps(config), encoding="utf-8")
     assert ensure_default_mcp_config(
