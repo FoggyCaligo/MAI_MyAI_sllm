@@ -8,8 +8,8 @@
 
 ```text
 portable/portable-models/gguf/
-├── Ornith-1.5-9B/
-│   ├── Ornith-1.5-9B-Q4_K_M.gguf
+├── ornith_1.5_9b_Q8/
+│   ├── Ornith-1.5-9B-Q8_0.gguf
 │   └── mmproj-Ornith-1.5-9B-BF16.gguf
 ├── Gemma-4-E4B-Q4/
 │   ├── gemma-4-E4B-it-Q4_K_M.gguf
@@ -25,7 +25,7 @@ portable/portable-models/gguf/
 
 ```yaml
 LLAMACPP_GGUF_DIRECTORY: "portable/portable-models/gguf"
-LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/Ornith-1.5-9B/Ornith-1.5-9B-Q4_K_M.gguf"
+LLAMACPP_MAIN_GGUF_PATH: "portable/portable-models/gguf/ornith_1.5_9b_Q8/Ornith-1.5-9B-Q8_0.gguf"
 ```
 
 - 설정한 상위 폴더의 **직접 자식 폴더**만 모델 설치 디렉터리로 판단한다. `.cache`와 같은 숨김 폴더는 제외한다. 상위 폴더에 남은 평면 GGUF는 새 카탈로그 대상이 아니다.
