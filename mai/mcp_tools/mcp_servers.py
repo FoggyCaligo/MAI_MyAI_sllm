@@ -410,18 +410,22 @@ class MCPConnectionManager:
                 async def invoke(**kwargs):
                     return await self.call(name, kwargs)
                 return invoke
-            description = (f"Model-visible tool name: {model_name}. " +
-                           (record["description"] or f"Tool {record['name']} on MCP server {record['server']}"))
+            routing_note = ""
             if record["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
-                description += (
-                    " Execution location follows the current task's last successful "
-                    "remote__switch_workspace(target=host|client). The initial target is host; "
-                    "after selecting client, EVERY subsequent workspace-capable call runs on "
-                    "client until switched back to host or the task ends. "
-                    "Do not repeat the switch for each call or add per-tool location arguments."
+                routing_note = (
+                    "Execution location follows this task's last successful "
+                    "remote__switch_workspace(target=host|client). Initially host; "
+                    "after selecting client, EVERY subsequent workspace-capable call runs "
+                    "on client until another switch or task end. "
+                    "Never repeat switch per call or add location arguments. "
                 )
             elif record["server"] in HOST_ONLY_MCP_SERVERS:
-                description += " Host-only tool; switch_workspace never relocates this tool."
+                routing_note = "Host-only tool; workspace switching never relocates this tool. "
+            description = (
+                f"Model-visible tool name: {model_name}. "
+                + routing_note
+                + (record["description"] or f"Tool {record['name']} on MCP server {record['server']}")
+            )
             registry.add(name=model_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
                          timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
