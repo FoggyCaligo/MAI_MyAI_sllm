@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from mai.memory.recall.service import RecallService
-from mai.memory.graph.models import GraphNeighborhood
-from mai.memory.index.base import ConceptHit
+from mcp_memorizer.memory.recall.service import RecallService
+from mcp_memorizer.memory.graph.models import GraphNeighborhood
+from mcp_memorizer.memory.index.base import ConceptHit
 from mai.agent.verification import _review_payload
 
 
