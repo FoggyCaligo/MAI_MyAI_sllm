@@ -40,6 +40,6 @@ def register_restart_tool(registry: ToolRegistry) -> None:
         metadata={"model_context": {
             "authorization": "The owner's current natural-language or spoken instruction is approval if it expressly requests the restart or applying finished changes to the running MAI. Otherwise ask in chat before calling restart. Never use substring matching as proof of consent.",
             "scope": "MAI host only; not the connected remote worker.",
-            "execution": "A separate process performs stop -> optional dev pull -> start of MAI and its model runtime. The old agent process ends but this is not a permanent shutdown. In-flight operations are interrupted, not resumed. Accepted means handoff, not completed; inspect MAI_MEMORY/restart.log after reconnecting.",
+            "execution": "A separate process performs stop -> optional dev pull -> start of MAI and its model runtime. The old agent process ends but this is not a permanent shutdown. In-flight operations are interrupted, not resumed. Accepted means handoff, not completed; inspect mai/mcp_tools/mcp_memorizer/MAI_MEMORY/restart.log after reconnecting.",
         }},
     )
