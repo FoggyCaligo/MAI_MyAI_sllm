@@ -1,5 +1,5 @@
-from mai.memory.working import WorkingGraph
-from mai.memory.graph.models import MemoryNode, MemoryEdge
+from mcp_memorizer.memory.working import WorkingGraph
+from mcp_memorizer.memory.graph.models import MemoryNode, MemoryEdge
 
 
 def test_model_snapshot_keeps_content_and_excludes_graph_metadata():
