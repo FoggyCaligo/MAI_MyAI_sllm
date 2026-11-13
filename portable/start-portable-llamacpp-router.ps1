@@ -113,7 +113,7 @@ try {
         }
         & $benchmarkLauncher -ServerOnly
     } else {
-        & $python run_server.py
+        & $python scripts/run_server.py
         if ($LASTEXITCODE -ne 0) { throw "MAI exited with code $LASTEXITCODE" }
     }
 } finally {
