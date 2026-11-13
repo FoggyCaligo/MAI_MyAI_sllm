@@ -205,12 +205,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
     # At startup, discover only enabled MCPs. The discovery connections are
     # closed immediately; real tool sessions open lazily upon tool_manual.
+    startup_discovery_started = time.monotonic()
+    logger.info("MAI startup phase=mcp_discovery status=starting")
     discovery = MCPConnectionManager(mcp_config_path, memory_user_id="catalog-discovery")
     discovered_tools = await discovery.refresh_catalog()
+    logger.info("MAI startup phase=mcp_discovery status=completed elapsed_seconds=%.3f",
+                time.monotonic() - startup_discovery_started)
     os.environ["MAI_MCP_CONFIG"] = str(mcp_config_path)
     logger.info("MAI MCP startup catalog enabled_servers=%d tools=%d names=%s",
                 len(discovery.servers), len(discovered_tools), discovered_tools)
 
+    runtime_started = time.monotonic()
+    logger.info("MAI startup phase=runtime_initialization status=starting")
     _runtime = MAIRuntime(
         model=os.environ.get("MAIN_MODEL", ""),
         llm_backend=os.environ.get("LLM_BACKEND", "llamacpp"),
@@ -220,10 +226,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         upload_root=os.environ.get("MAI_UPLOAD_ROOT", "./mai/mai_uploads"),
         cwd=os.environ.get("MAI_CWD") or None,
     )
+    logger.info("MAI startup phase=runtime_initialization status=completed elapsed_seconds=%.3f",
+                time.monotonic() - runtime_started)
     print(f"MAI local: http://{host}:{port}", flush=True)
     _hosting_provider = os.environ.get("REMOTE_HOSTING_PROVIDER", "tailscale").strip().lower()
     _hosting = create_hosting(provider=_hosting_provider, port=port)
     if _hosting is not None:
+        hosting_started = time.monotonic()
+        logger.info("MAI startup phase=remote_hosting status=starting")
         try:
             status_text = _hosting.start()
         except (HostingError, RuntimeError, OSError):
@@ -231,6 +241,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _hosting = None
         else:
             print(f"MAI remote hosting ({_hosting_provider}): {status_text}", flush=True)
+        finally:
+            logger.info("MAI startup phase=remote_hosting status=finished elapsed_seconds=%.3f",
+                        time.monotonic() - hosting_started)
     else:
         print("MAI remote hosting: disabled", flush=True)
     idle_reaper = asyncio.create_task(_remote_idle_reaper())
