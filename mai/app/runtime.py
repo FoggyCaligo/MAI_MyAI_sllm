@@ -303,17 +303,22 @@ class MAIRuntime:
         registry = ToolRegistry()
         workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
         registry.workspace = workspace
-        if principal.role is AccessRole.OWNER:
+        functional_mcp = (
+            principal.role is AccessRole.OWNER and
+            _env_bool("MAI_MCP_FUNCTIONAL_TOOLS", False)
+        )
+        if principal.role is AccessRole.OWNER and not functional_mcp:
             register_routed_service_tools(
                 registry, workspace=workspace, browser_manager=browser_manager,
             )
-        else:
+        elif principal.role is AccessRole.TRIAL:
             register_time_tools(registry)
             register_calculator_tools(registry)
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
         if principal.role is AccessRole.OWNER:
-            register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
+            if not functional_mcp:
+                register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
             register_restart_tool(registry)
             registry.add(
                 name="file_download_link",
@@ -335,6 +340,14 @@ class MAIRuntime:
         if mcp_config and principal.role is AccessRole.OWNER:
             manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
                                            workspace=workspace)
+            if functional_mcp:
+                from ..mcp_tools.native_groups import GROUPS
+                missing = set(GROUPS).difference(manager.servers)
+                if missing:
+                    raise RuntimeError(
+                        "Functional MCP tools requested but their MCP servers are disabled: "
+                        + ", ".join(sorted(missing))
+                    )
             manager.register(registry)
             registry.mcp_manager = manager
         return registry
