@@ -36,7 +36,6 @@ from mcp_memorizer.memory.index import SqliteFtsConceptIndex
 from mcp_memorizer.memory.recall.service import RecallService
 from mcp_memorizer.memory.runtime import MemoryRuntime
 from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter
-from mcp_memorizer.memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
@@ -296,7 +295,6 @@ class MAIRuntime:
     def _registry_for(
         self,
         principal: AccessPrincipal,
-        working: WorkingGraph,
         tool_result_store: ToolResultStore,
         browser_manager: BrowserSessionManager,
         remote_session_id: str | None = None,
@@ -375,10 +373,9 @@ class MAIRuntime:
         verifier_adapter = adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
-        working = WorkingGraph()
         tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
         browser_manager = BrowserSessionManager()
-        registry = self._registry_for(principal, working, tool_result_store, browser_manager, remote_session_id)
+        registry = self._registry_for(principal, tool_result_store, browser_manager, remote_session_id)
 
         max_identical_failures = int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5"))
         agent = AgentRuntime(
