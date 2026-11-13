@@ -425,7 +425,7 @@ def test_semantic_verification_retries_are_bounded() -> None:
 
     assert result.content.startswith("세 번째 답변은")
     assert result.model_rounds == 3
-    assert len(reviewer.requests) == 6  # three factual and three quality reviews
+    assert len(reviewer.requests) == 3  # one unified review for each candidate
 
 
 def test_small_bare_counts_are_not_treated_as_material_numeric_hallucinations() -> None:
@@ -640,15 +640,13 @@ def test_reviewer_request_uses_structured_output_schema() -> None:
     assert isinstance(schema, dict)
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
+    assert schema == _UnifiedReviewPayload.model_json_schema()
     assert set(schema["required"]) == {
-        "evidence_verdict", "reasons", "claims", "action_verdict", "retry_summary",
+        "numeric_verdict", "numeric_reason", "evidence_verdict", "claims",
+        "action_verdict", "alignment_verdict", "coverage_verdict",
+        "coverage_reasons", "reasons", "retry_summary",
     }
-    assert "claims" in schema["properties"]
-    assert "action_verdict" in schema["properties"]
-    quality_schema = reviewer.requests[1].response_format
-    assert set(quality_schema["required"]) == {
-        "alignment_verdict", "coverage_verdict", "coverage_reasons", "reasons", "retry_summary",
-    }
+    assert len(reviewer.requests) == 1
 
 
 def test_scope_expansion_and_unverified_action_are_rejected_then_narrowed_to_partial_answer() -> None:
