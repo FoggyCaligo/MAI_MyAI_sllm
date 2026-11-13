@@ -22,7 +22,7 @@ Memorizer enabled and a command pointing to MAI's own Portable Python.
 The file is **never overwritten** by later starts, so settings survive.
 An explicit `MAI_MCP_CONFIG` absolute path overrides that default for
 advanced configurations. The resolved catalog is stored beside the
-config as `mcp_catalog.json`. Both default files stay in the untracked `mai/mcp_tools/` directory; database files remain in `MAI_MEMORY/`.
+config as `mcp_catalog.json`. Both default files stay in the untracked `mai/mcp_tools/` directory; database files remain in `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`.
 
 Example configuration:
 
@@ -34,7 +34,7 @@ Example configuration:
       "id": "memorizer",
       "enabled": true,
       "command": "D:/path/to/MAI/portable/portable-runtimes/python/python.exe",
-      "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
+      "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
       "env": {
         "MEMORIZER_USER_ID": "{memory_user_id}",
         "MEMORIZER_DATA_DIR": "D:/path/to/MAI/MAI_MEMORY"
@@ -52,8 +52,8 @@ Example configuration:
 
 The model cannot change `enabled` or supply the `memory_user_id`.
 MAI supplies the authenticated principal on connection. The memory
-server uses the existing `MAI_MEMORY/memory.sqlite3` and
-`MAI_MEMORY/sentence_breaker.sqlite3`. The chat database remains owned
+server uses the existing `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3` and
+`mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3`. The chat database remains owned
 by MAI. Do not copy private DBs into a public repository or run a second
 writer against the same DB without explicit concurrency validation.
 
