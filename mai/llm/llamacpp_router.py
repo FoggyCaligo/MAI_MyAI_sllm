@@ -246,9 +246,15 @@ class SingleResidentRouter:
         if not isinstance(result, dict) or result.get("success") is not True:
             raise RouterModelTransitionError(f"Router refused model load: {model} response={str(result)[:800]}")
         deadline = time.monotonic() + self.load_timeout_seconds
+        last_poll_error: httpx.TransportError | None = None
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                if last_poll_error is not None:
+                    raise RouterModelTransitionError(
+                        f"Model load status polling timed out: {model} "
+                        f"last_error={type(last_poll_error).__name__}: {last_poll_error}"
+                    ) from last_poll_error
                 raise RouterModelTransitionError(
                     f"Model load confirmation timed out: {model}"
                 )
@@ -261,6 +267,7 @@ class SingleResidentRouter:
                     f"http_status={exc.response.status_code}"
                 ) from exc
             except httpx.TransportError as exc:
+                last_poll_error = exc
                 # An in-progress llama.cpp load may briefly interrupt status polling.
                 # Never resend /models/load; only retry the read until the load deadline.
                 remaining = deadline - time.monotonic()
