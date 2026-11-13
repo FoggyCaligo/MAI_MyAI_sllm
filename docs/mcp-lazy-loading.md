@@ -4,7 +4,7 @@
 
 MAI uses **one MCP integration branch**, `feature/mcp-lazy-manager`.
 The old native `memory_search` tool has been removed. The model accesses
-`memorizer.memory_search` only through the configured MCP server.
+`memorizer__memory_search` only through the configured MCP server.
 
 On MAI startup, enabled MCP servers are briefly connected for
 `initialize` / `tools/list`. The resulting tool catalog is atomically
@@ -79,7 +79,7 @@ toggling enabled flags never installs or redownloads packages.
 ## Native tool migration
 
 The old in-process `mai/memory/tools.py` registration has been deleted.
-Memory is shown to the model only as `memorizer.memory_search`, which
+Memory is shown to the model only as `memorizer__memory_search`, which
 offers three input modes: `keyword` (optional `limit`), `limit` only
 (1..50 recent memories), or `node_id` only (one-hop expansion). Invalid
 selector combinations are rejected by the MCP JSON schema and server.
