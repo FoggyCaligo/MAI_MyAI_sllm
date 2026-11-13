@@ -201,7 +201,9 @@ class MCPConnectionManager:
         try:
             for server in self.servers:
                 session = await self._connect(server)
-                fresh.extend(self._live_records(server, await session.list_tools()))
+                fresh.extend(self._live_records(server, await asyncio.wait_for(
+                    session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
+                )))
             body = {"version": 1, "tools": fresh}
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             temp = self.cache_path.with_suffix(".tmp")
@@ -226,6 +228,7 @@ class MCPConnectionManager:
             description = record["description"] or f"Tool {record['name']} on MCP server {record['server']}"
             registry.add(name=full_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
+                         timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
                          category="mcp", metadata={
                              "mcp_input_schema": record["schema"],
                              "catalog_hint": (description[:350] + " (MCP server " + record["server"] + ")"),
@@ -237,7 +240,9 @@ class MCPConnectionManager:
         # Check all selected contracts before returning activation success.
         for server in sorted(servers):
             session = await self._connect(server)
-            actual = {x["name"]: x for x in self._live_records(server, await session.list_tools())}
+            actual = {x["name"]: x for x in self._live_records(server, await asyncio.wait_for(
+                session.list_tools(), timeout=float(self.servers[server].get("list_timeout", 30))
+            ))}
             for name in names:
                 cached = self.catalog.get(name)
                 if cached is None or cached["server"] != server:
