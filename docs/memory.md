@@ -83,7 +83,7 @@
 | 영구 그래프 | `mcp_memorizer/memory/graph/schema.py`, `repository.py` |
 | 원문·사실 저장 | `mcp_memorizer/memory/runtime.py`, `extraction/service.py` |
 | 개념·검색 | `mcp_memorizer/memory/segmenter.py`, `index/sqlite_fts.py`, `recall/service.py` |
-| 모델 출력·도구 | `mcp_memorizer/memory/working.py`, `mcp_memorizer/mcp_server.py`, `mai/tools/mcp_connection.py` |
+| 모델 출력·도구 | `mcp_memorizer/memory/working.py`, `mcp_memorizer/mcp_server.py`, `mai/mcp_tools/mcp_servers.py` |
 | 저장 순서·비동기 처리 | `mai/app/runtime.py` |
 
 기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 사용자 데이터 보관 경로이며 공개 소스 Git에서 제외해야 하고, [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
