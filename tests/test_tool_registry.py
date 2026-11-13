@@ -7,7 +7,6 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from mai.llm.models import NativeToolCall
-from mai.memory.tools import register_memory_tools
 from mai.tools.registry import (
     DuplicateModelContextError,
     DuplicateToolError,
@@ -142,24 +141,12 @@ def test_scoped_context_rejects_invalid_registration_without_partial_state():
         registry.model_context(names=["missing"])
 
 
-def test_memory_tools_register_one_temporal_precedence_context() -> None:
-    registry = ToolRegistry()
+def test_external_memorizer_policy_is_reusable() -> None:
+    from mcp_memorizer.policy import MEMORY_MODEL_CONTEXT, MEMORY_SEARCH_DESCRIPTION
+    assert MEMORY_MODEL_CONTEXT["kind"] == "temporal_precedence"
+    assert "created_at" in MEMORY_MODEL_CONTEXT["instruction"]
+    assert "keyword" in MEMORY_SEARCH_DESCRIPTION
 
-    register_memory_tools(
-        registry,
-        memory=object(),
-        working=object(),
-        user_id="test-user",
-        include_recall_entry=False,
-    )
-
-    contexts = registry.model_context()
-    assert len(contexts) == 1
-    assert contexts[0]["source"] == "persistent_memory_temporal_precedence"
-    instruction = contexts[0]["context"]["instruction"]
-    assert "past conversations or past known state" in instruction
-    assert "current message and current tool results" in instruction
-    assert "take precedence" in instruction
 
 
 def test_unknown_tool_fails_visibly() -> None:
