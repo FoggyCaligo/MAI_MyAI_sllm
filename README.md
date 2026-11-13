@@ -64,9 +64,9 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 
 ## Windows EXE 배포 폴더
 
-별도 배포 프로젝트는 [`배포/README.md`](%EB%B0%B0%ED%8F%AC/README.md)에 있다.
-Windows + .NET 8 SDK에서 `powershell -ExecutionPolicy Bypass -File ./배포/build.ps1`을 실행하면
-`배포/MAI/MAI.exe`와 기존 MAI 소스·실행 스크립트를 배포 구조로 조립한다.
+별도 배포 프로젝트는 [`MAI_light_instant_runner/README.md`](%EB%B0%B0%ED%8F%AC/README.md)에 있다.
+Windows + .NET 8 SDK에서 `powershell -ExecutionPolicy Bypass -File ./MAI_light_instant_runner/build.ps1`을 실행하면
+`MAI_light_instant_runner/MAI/MAI.exe`와 기존 MAI 소스·실행 스크립트를 배포 구조로 조립한다.
 Portable 런타임은 `-IncludeRuntime`, GGUF 파일은 `-IncludeModels` 옵션을 사용해야 포함된다.
 개인 데이터(.env, MAI_MEMORY, 업로드)는 절대 기본 배포에 포함하지 않는다.
 GitHub Actions의 `Windows MAI EXE Distribution` 워크플로에서도 실행기를 빌드하여 결과물을 제공한다.
