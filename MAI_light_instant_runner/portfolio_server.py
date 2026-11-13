@@ -121,9 +121,9 @@ async def _model_ids() -> list[str]:
 @app.get("/models")
 async def models():
     names = await _model_ids()
-    return {"models": [{"id": name, "name": name} for name in names],
-            "selected": current_model or (names[0] if names else None),
-            "data": [{"id": name} for name in names]}
+    return {"backend": "llamacpp", "models": names,
+            "current": current_model or (names[0] if names else None),
+            "labels": {name: name for name in names}, "locked": False}
 
 
 @app.post("/models/select")
@@ -133,7 +133,7 @@ async def select_model(request: ModelSelect):
     if request.model not in names:
         raise HTTPException(400, "Unknown GGUF model")
     current_model = request.model
-    return {"ok": True, "model": current_model}
+    return {"ok": True, "model": current_model, "status": "loaded"}
 
 
 def _registry() -> ToolRegistry:
@@ -141,10 +141,10 @@ def _registry() -> ToolRegistry:
     register_calculator_tools(registry)
     register_time_tools(registry)
 
-    def search(node_id=None, keyword=None, limit=None):
+    async def search(node_id=None, keyword=None, limit=None):
         if memory is None:
             raise RuntimeError("Memorizer has not started")
-        # This read-only call is the same public contract as MCP_memorizer.
+        # Use the canonical MCP_memorizer read-only search contract.
         return memory.search(node_id=node_id, keyword=keyword, limit=limit)
 
     registry.add(name="memorizer__memory_search", description=MEMORY_SEARCH_DESCRIPTION,
