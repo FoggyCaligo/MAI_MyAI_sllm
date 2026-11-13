@@ -1,19 +1,13 @@
-"""MAI delegates all long-term memory guidance to MCP_memorizer."""
+"""MAI delegates long-term memory guidance to the MCP server."""
 from mai.app.runtime import AGENT_SYSTEM_PROMPT
-from mai.memory.tools import MEMORY_SEARCH_DESCRIPTION, _MEMORY_MODEL_CONTEXT
-from mcp_memorizer.integrations.mai_tools import register_memory_tools
-from mcp_memorizer.policy import (
-    MEMORY_SEARCH_DESCRIPTION as EXTERNAL_DESCRIPTION,
-    MEMORY_MODEL_CONTEXT as EXTERNAL_CONTEXT,
-)
+from mcp_memorizer.policy import MEMORY_SEARCH_DESCRIPTION, MEMORY_MODEL_CONTEXT
+from mai.tools.mcp_connection import MCPConnectionManager
 from mai.tools.registry import ToolRegistry
+import hashlib
+import json
 
 
-class FakeMemory:
-    pass
-
-
-def test_maimain_does_not_duplicate_memory_policy():
+def test_main_prompt_omits_native_memory_guidance():
     prompt = AGENT_SYSTEM_PROMPT.lower()
     assert "persistent-memory retrieval" not in prompt
     assert "memory_search" not in prompt
@@ -21,11 +15,22 @@ def test_maimain_does_not_duplicate_memory_policy():
     assert "bounded or empty results" not in prompt
 
 
-def test_memory_context_and_tool_in_external_dependency():
-    assert MEMORY_SEARCH_DESCRIPTION == EXTERNAL_DESCRIPTION
-    assert _MEMORY_MODEL_CONTEXT == EXTERNAL_CONTEXT
-    reg = ToolRegistry()
-    register_memory_tools(reg, FakeMemory(), object(), user_id="local-user")
-    assert reg.get("memory_search").description == EXTERNAL_DESCRIPTION
-    assert any(x["source"] == "persistent_memory_temporal_precedence"
-               for x in reg.model_context())
+def test_external_memory_policy_and_namespace(tmp_path):
+    assert "keyword" in MEMORY_SEARCH_DESCRIPTION
+    assert "created_at" in MEMORY_MODEL_CONTEXT["instruction"]
+    config = tmp_path / "servers.json"
+    config.write_text(json.dumps({"servers": [
+        {"id": "memorizer", "enabled": True, "command": "example-python"}
+    ]}))
+    schema = {"type": "object", "properties": {}, "additionalProperties": False}
+    digest = hashlib.sha256(json.dumps(
+        schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    (tmp_path / "mcp_catalog.json").write_text(json.dumps({"version": 1, "tools": [{
+        "server": "memorizer", "name": "memory_search",
+        "description": MEMORY_SEARCH_DESCRIPTION,
+        "schema": schema, "schema_hash": digest,
+    }]}))
+    registry = ToolRegistry()
+    MCPConnectionManager(config).register(registry)
+    assert registry.names() == ("memorizer.memory_search",)
+    assert registry.get("memorizer.memory_search").description == MEMORY_SEARCH_DESCRIPTION
