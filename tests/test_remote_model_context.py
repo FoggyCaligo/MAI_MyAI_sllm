@@ -12,7 +12,7 @@ def test_remote_target_is_task_scoped_not_per_tool(tmp_path):
     assert "at_remote_pc" not in model.model_fields
     assert "path" in model.model_fields
     assert not registry.has("remote_file_read")
-    assert workspace.target == "local"
+    assert workspace.target == "host"
 
 def test_no_remote_context_without_pc_registration():
     registry = ToolRegistry()

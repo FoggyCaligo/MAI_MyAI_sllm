@@ -109,9 +109,9 @@ def test_functional_mcp_workspace_remote_execution_without_local_fallback(tmp_pa
     class FakeWorkspace:
         owner_id = "owner-1"
         def snapshot(self):
-            return SimpleNamespace(target="remote")
+            return SimpleNamespace(target="client")
         def validate_remote(self, snapshot):
-            assert snapshot.target == "remote"
+            assert snapshot.target == "client"
             return "session-bound-to-owner"
     config = tmp_path / "mcp_servers.json"
     config.write_text(json.dumps({"schema_version": 3, "servers": [

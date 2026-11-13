@@ -28,7 +28,7 @@ def _add_routed_definitions(
     for definition in definitions.definitions():
         if definition.category in host_only_categories:
             # External search and browser sessions always belong to the MAI
-            # host, regardless of the selected workspace.
+            # host, regardless of the selected host/client workspace.
             registry.add(
                 name=definition.name,
                 description=definition.description,
@@ -41,7 +41,7 @@ def _add_routed_definitions(
             continue
         async def invoke(_definition=definition, **kwargs: Any) -> Any:
             snapshot = workspace.snapshot()
-            if snapshot.target == "local":
+            if snapshot.target == "host":
                 return await _definition.invoke(kwargs)
             session_id = workspace.validate_remote(snapshot)
             target = ExecutionTarget(owner_id=workspace.owner_id, remote_session_id=session_id)

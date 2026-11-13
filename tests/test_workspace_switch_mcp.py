@@ -21,18 +21,18 @@ def _fake_session(*, owner="owner", connected=True):
     return SimpleNamespace(owner_id=owner, session_id="session-1", connected=connected)
 
 
-def test_local_default_and_failed_switch_does_not_mutate(monkeypatch):
+def test_host_default_and_failed_switch_does_not_mutate(monkeypatch):
     workspace = WorkspaceContext(owner_id="owner")
-    assert workspace.target == "local"
+    assert workspace.target == "host"
     monkeypatch.setattr("mai.mcp_tools.workspace.remote_sessions.owner_session", lambda owner: None)
     with pytest.raises(RemoteExecutionError, match="No authenticated"):
-        workspace.switch("remote")
-    assert workspace.target == "local"
+        workspace.switch("client")
+    assert workspace.target == "host"
     monkeypatch.setattr("mai.mcp_tools.workspace.remote_sessions.owner_session",
                         lambda owner: _fake_session(connected=False))
     with pytest.raises(RemoteExecutionError):
-        workspace.switch("remote")
-    assert workspace.target == "local"
+        workspace.switch("client")
+    assert workspace.target == "host"
 
 
 def test_switch_and_snapshot_are_run_scoped(monkeypatch):
@@ -43,14 +43,14 @@ def test_switch_and_snapshot_are_run_scoped(monkeypatch):
     monkeypatch.setattr("mai.mcp_tools.workspace.remote_sessions.get",
                         lambda ident: _fake_session())
     previous = one.snapshot()
-    assert one.switch("remote")["workspace"] == "remote"
-    assert previous.target == "local"
-    assert two.target == "local"
+    assert one.switch("client")["workspace"] == "client"
+    assert previous.target == "host"
+    assert two.target == "host"
     pinned = one.snapshot()
-    assert one.switch("local")["workspace"] == "local"
-    assert pinned.target == "remote"
+    assert one.switch("host")["workspace"] == "host"
+    assert pinned.target == "client"
     assert one.validate_remote(pinned) == "session-1"
-    assert one.target == "local"
+    assert one.target == "host"
 
 
 def test_portable_tool_schema_has_no_remote_argument(tmp_path):
@@ -64,7 +64,7 @@ def test_portable_tool_schema_has_no_remote_argument(tmp_path):
         registry.get("file_read").validate_arguments({"path": "test", "at_remote_pc": True})
 
 
-def test_remote_target_is_frozen_for_started_call(tmp_path, monkeypatch):
+def test_client_target_is_frozen_for_started_call(tmp_path, monkeypatch):
     import mai.remote.routing as routing
     context = WorkspaceContext(owner_id="owner")
     file = tmp_path / "before.txt"
@@ -84,9 +84,9 @@ def test_remote_target_is_frozen_for_started_call(tmp_path, monkeypatch):
     monkeypatch.setattr(routing.ExecutionTarget, "execute", remote_execute)
     async def run():
         assert (await registry.get("file_read").invoke({"path": str(file)}))["content"] == "local-data"
-        context.switch("remote")
+        context.switch("client")
         assert (await registry.get("file_read").invoke({"path": str(file)}))["content"] == "remote-data"
-        context.switch("local")
+        context.switch("host")
     asyncio.run(run())
     assert len(remote_called) == 1
     assert remote_called[0][1]["arguments"]["path"] == str(file)
@@ -154,13 +154,13 @@ def test_actual_mcp_remote_controller_and_host_workspace_transition(tmp_path, mo
             assert registry.names() == ("remote__switch_workspace",)
             assert "at_remote_pc" not in registry.get("remote__switch_workspace").native_schema()["function"]["parameters"].get("properties", {})
             await manager.activate(["remote__switch_workspace"])
-            selected = await registry.get("remote__switch_workspace").invoke({"target": "local"})
-            assert selected["workspace"] == "local"
+            selected = await registry.get("remote__switch_workspace").invoke({"target": "host"})
+            assert selected["workspace"] == "host"
             monkeypatch.setattr("mai.mcp_tools.workspace.remote_sessions.owner_session",
                                 lambda owner: _fake_session())
-            selected = await registry.get("remote__switch_workspace").invoke({"target": "remote"})
-            assert selected["workspace"] == "remote"
-            assert workspace.target == "remote"
+            selected = await registry.get("remote__switch_workspace").invoke({"target": "client"})
+            assert selected["workspace"] == "client"
+            assert workspace.target == "client"
         finally:
             await manager.close()
     asyncio.run(exercise())

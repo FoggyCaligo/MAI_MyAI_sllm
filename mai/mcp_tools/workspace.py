@@ -1,6 +1,6 @@
 """Per-agent-run workspace execution context.
 
-The target is never global or user-selectable through tool arguments. A switch
+The target belongs to one agent run, not a global setting or individual tool argument. A switch
 is committed only after the authenticated owner worker is available. Every
 tool call captures its target before the first await, so concurrent calls
 cannot change an already-started invocation's destination.
@@ -12,7 +12,7 @@ from typing import Literal
 
 from mai.remote.session import RemoteExecutionError, remote_sessions
 
-WorkspaceName = Literal["local", "remote"]
+WorkspaceName = Literal["host", "client"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +24,7 @@ class WorkspaceSnapshot:
 class WorkspaceContext:
     def __init__(self, *, owner_id: str):
         self.owner_id = owner_id
-        self._current = WorkspaceSnapshot("local", None)
+        self._current = WorkspaceSnapshot("host", None)
 
     @property
     def target(self) -> WorkspaceName:
@@ -35,8 +35,8 @@ class WorkspaceContext:
         return self._current
 
     def switch(self, target: WorkspaceName) -> dict[str, object]:
-        if target not in ("local", "remote"):
-            raise ValueError("workspace target must be 'local' or 'remote'")
+        if target not in ("host", "client"):
+            raise ValueError("workspace target must be 'host' or 'client'")
         if target == self._current.target:
             return {
                 "ok": True,
@@ -44,21 +44,21 @@ class WorkspaceContext:
                 "changed": False,
                 "message": f"이미 {target}에 있습니다.",
             }
-        if target == "local":
-            self._current = WorkspaceSnapshot("local", None)
-            return {"ok": True, "workspace": "local"}
+        if target == "host":
+            self._current = WorkspaceSnapshot("host", None)
+            return {"ok": True, "workspace": "host", "changed": True}
         session = remote_sessions.owner_session(self.owner_id)
         if session is None or not session.connected:
             # Do not change the workspace on failed selection.
             raise RemoteExecutionError("No authenticated connected remote worker for this owner")
-        self._current = WorkspaceSnapshot("remote", session.session_id)
-        return {"ok": True, "workspace": "remote", "platform": "remote-worker"}
+        self._current = WorkspaceSnapshot("client", session.session_id)
+        return {"ok": True, "workspace": "client", "changed": True, "platform": "remote-worker"}
 
     def validate_remote(self, snapshot: WorkspaceSnapshot) -> str:
         """Revalidate the pinned session at execution time; never fall back."""
-        if snapshot.target != "remote" or not snapshot.remote_session_id:
-            raise RemoteExecutionError("Remote workspace was not selected")
+        if snapshot.target != "client" or not snapshot.remote_session_id:
+            raise RemoteExecutionError("Client workspace was not selected")
         session = remote_sessions.get(snapshot.remote_session_id)
         if session.owner_id != self.owner_id or not session.connected:
-            raise RemoteExecutionError("Selected remote worker disconnected or is not owned by this account")
+            raise RemoteExecutionError("Selected client worker disconnected or is not owned by this account")
         return session.session_id

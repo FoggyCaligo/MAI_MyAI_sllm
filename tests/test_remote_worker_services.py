@@ -51,8 +51,8 @@ def test_remote_service_without_connection_fails_and_does_not_run_locally():
         local = await host.get("calculator").invoke({"expression": "12+8"})
         assert local["result"] == "20"
         with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
-            workspace.switch("remote")
-        assert workspace.target == "local"
+            workspace.switch("client")
+        assert workspace.target == "host"
     asyncio.run(exercise())
 
 
@@ -86,7 +86,7 @@ def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
     workspace = WorkspaceContext(owner_id=owner_id)
     host = ToolRegistry()
     register_routed_service_tools(host, workspace=workspace, browser_manager=BrowserSessionManager())
-    workspace.switch("remote")
+    workspace.switch("client")
     routed = []
 
     async def fake_execute(self, operation, arguments, *, timeout):
@@ -117,7 +117,7 @@ def test_remote_transport_missing_value_envelope_fails(monkeypatch):
     workspace = WorkspaceContext(owner_id=owner_id)
     host = ToolRegistry()
     register_routed_service_tools(host, workspace=workspace, browser_manager=BrowserSessionManager())
-    workspace.switch("remote")
+    workspace.switch("client")
 
     async def invalid_result(self, operation, arguments, *, timeout):
         return {"result": "old worker protocol"}
@@ -158,7 +158,7 @@ def test_remote_transport_budget_covers_terminal_execution():
     assert timeout > 240 * 2
 
 
-def test_switch_to_already_selected_local_workspace_is_noop(monkeypatch):
+def test_switch_to_already_selected_host_workspace_is_noop(monkeypatch):
     from mai.mcp_tools import workspace as workspace_module
 
     def unexpected_lookup(owner_id):
@@ -166,43 +166,43 @@ def test_switch_to_already_selected_local_workspace_is_noop(monkeypatch):
 
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", unexpected_lookup)
     workspace = WorkspaceContext(owner_id="owner")
-    assert workspace.switch("local") == {
+    assert workspace.switch("host") == {
         "ok": True,
-        "workspace": "local",
+        "workspace": "host",
         "changed": False,
-        "message": "이미 local에 있습니다.",
+        "message": "이미 host에 있습니다.",
     }
-    assert workspace.target == "local"
+    assert workspace.target == "host"
 
 
-def test_switch_to_already_selected_remote_workspace_is_noop(monkeypatch):
+def test_switch_to_already_selected_client_workspace_is_noop(monkeypatch):
     from types import SimpleNamespace
     from mai.mcp_tools import workspace as workspace_module
 
     session = SimpleNamespace(session_id="session-1", connected=True)
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
     workspace = WorkspaceContext(owner_id="owner")
-    assert workspace.switch("remote")["workspace"] == "remote"
+    assert workspace.switch("client")["workspace"] == "client"
     original_snapshot = workspace.snapshot()
 
     def unexpected_lookup(owner_id):
         raise AssertionError("worker lookup should not occur for an unchanged target")
 
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", unexpected_lookup)
-    assert workspace.switch("remote") == {
+    assert workspace.switch("client") == {
         "ok": True,
-        "workspace": "remote",
+        "workspace": "client",
         "changed": False,
-        "message": "이미 remote에 있습니다.",
+        "message": "이미 client에 있습니다.",
     }
     assert workspace.snapshot() is original_snapshot
 
 
-def test_switch_to_remote_still_fails_without_worker(monkeypatch):
+def test_switch_to_client_still_fails_without_worker(monkeypatch):
     from mai.mcp_tools import workspace as workspace_module
 
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: None)
     workspace = WorkspaceContext(owner_id="owner")
     with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
-        workspace.switch("remote")
-    assert workspace.target == "local"
+        workspace.switch("client")
+    assert workspace.target == "host"

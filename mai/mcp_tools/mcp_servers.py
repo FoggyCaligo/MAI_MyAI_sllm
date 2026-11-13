@@ -25,6 +25,12 @@ from .workspace import WorkspaceContext
 
 _LOG = logging.getLogger(__name__)
 
+# Exact MCP server groups whose registered tools follow the per-task workspace.
+WORKSPACE_CAPABLE_MCP_SERVERS = frozenset({
+    "mai_file", "mai_code", "mai_docs", "mai_terminal_run", "mai_utilities",
+})
+HOST_ONLY_MCP_SERVERS = frozenset({"mai_internet", "mai_browser", "memorizer", "host", "remote"})
+
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
                               sentence_breaker_db_path: str | Path,
@@ -404,8 +410,20 @@ class MCPConnectionManager:
                 async def invoke(**kwargs):
                     return await self.call(name, kwargs)
                 return invoke
-            description = (f"Model-visible tool name: {model_name}. " +
-                           (record["description"] or f"Tool {record['name']} on MCP server {record['server']}"))
+            routing_note = ""
+            if record["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
+                routing_note = (
+                    "Workspace-capable: host by default; after switch_workspace(client), "
+                    "this and all later eligible tools run on client until switch(host) "
+                    "or task end. No per-tool location arguments or repeated switches. "
+                )
+            elif record["server"] in HOST_ONLY_MCP_SERVERS:
+                routing_note = "Host-only tool; workspace switching never relocates this tool. "
+            description = (
+                f"Model-visible tool name: {model_name}. "
+                + routing_note
+                + (record["description"] or f"Tool {record['name']} on MCP server {record['server']}")
+            )
             registry.add(name=model_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
                          timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
@@ -446,13 +464,9 @@ class MCPConnectionManager:
         # Workspace selection is host-owned.  Compatible tools use their
         # original native tool names on the authenticated worker, without
         # changing public MCP schemas or leaking a session token to the model.
-        workspace_groups = frozenset({
-            "mai_file", "mai_code", "mai_docs",
-            "mai_terminal_run", "mai_utilities",
-        })
-        if self.workspace is not None and entry["server"] in workspace_groups:
+        if self.workspace is not None and entry["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
             snapshot = self.workspace.snapshot()
-            if snapshot.target == "remote":
+            if snapshot.target == "client":
                 from ..remote.target import ExecutionTarget
                 from ..remote.session import RemoteExecutionError
                 session_id = self.workspace.validate_remote(snapshot)
@@ -502,7 +516,7 @@ class MCPConnectionManager:
                 raise MCPConnectionError("Workspace control unavailable for this agent run")
             # Never accept the target from a result produced by an untrusted
             # server: the registered input is the sole requested target.
-            if set(arguments) != {"target"} or arguments["target"] not in ("local", "remote"):
+            if set(arguments) != {"target"} or arguments["target"] not in ("host", "client"):
                 raise MCPConnectionError("Invalid workspace selection contract")
             return self.workspace.switch(arguments["target"])
         result = (
