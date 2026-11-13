@@ -168,10 +168,15 @@ def test_model_can_correct_terminal_command_after_five_distinct_failures() -> No
     assert [execution.ok for execution in result.tool_executions if execution.name == "terminal_run"] == [False, False, False, False, False, True]
     assert all(execution.handler_started for execution in result.tool_executions)
     for request_index, failed_command in enumerate(failed_commands, start=2):
-        tool_message = adapter.requests[request_index].messages[-1]
-        assert tool_message["role"] == "tool"
-        assert tool_message["tool_name"] == "terminal_run"
-        payload = json.loads(tool_message["content"])
+        # Progress metadata can follow the tool result in the next request.
+        # Assert the latest actual tool observation without assuming it is
+        # the final message in the request.
+        tool_messages = [
+            message for message in adapter.requests[request_index].messages
+            if message["role"] == "tool" and message.get("tool_name") == "terminal_run"
+        ]
+        assert tool_messages, "terminal failure must remain visible to the model"
+        payload = json.loads(tool_messages[-1]["content"])
         assert payload["ok"] is False
         assert payload["error_type"] == "RuntimeError"
         assert failed_command in payload["message"]
