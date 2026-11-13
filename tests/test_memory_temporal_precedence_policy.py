@@ -1,7 +1,7 @@
 """Keep historical memory-conflict precedence aligned across model and verifier."""
 
 from mai.agent.verification import _FACTUAL_REVIEW_SYSTEM
-from mai.memory.tools import _MEMORY_MODEL_CONTEXT
+from mcp_memorizer.policy import MEMORY_MODEL_CONTEXT as _MEMORY_MODEL_CONTEXT
 
 
 def test_model_memory_context_prioritizes_newest_conflicting_fact():
