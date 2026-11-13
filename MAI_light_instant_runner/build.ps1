@@ -67,6 +67,7 @@ foreach ($path in $core) {
     '"""Light portfolio tools: calculator, time and memory only."""' + [Environment]::NewLine,
     (New-Object Text.UTF8Encoding($false))
 )
+New-Item -ItemType Directory -Force -Path (Join-Path $output 'scripts') | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portfolio_server.py') -Destination (Join-Path $output 'scripts/portfolio_server.py')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portfolio-mai.ps1') -Destination (Join-Path $output 'mai.ps1')
 
