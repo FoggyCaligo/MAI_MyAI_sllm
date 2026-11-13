@@ -35,7 +35,7 @@ Example configuration:
       "id": "memorizer",
       "enabled": true,
       "command": "D:/path/to/MAI/portable/portable-runtimes/python/python.exe",
-      "args": ["-m", "mcp_memorizer.mcp_server"],
+      "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
       "env": {
         "MEMORIZER_USER_ID": "{memory_user_id}",
         "MEMORIZER_DATA_DIR": "D:/path/to/MAI/MAI_MEMORY"
