@@ -321,9 +321,9 @@ class AgentLoop:
                         "role": "system",
                         "content": "Current task workspace (host-verified): "
                                    + workspace.target
-                                   + ". Workspace-capable tools use this target; "
-                                   "host-only tools remain on the MAI host. "
-                                   "To change location use remote__switch_workspace, "
+                                   + ". This target persists for ALL subsequent workspace-capable tools in this task until another successful switch; "
+                                   "web, browser, memory, restart, and host tools always run on host. "
+                                   "To change target use remote__switch_workspace(target=host|client), "
                                    "not a per-tool remote argument.",
                     })
                 _insert_tool_catalog(model_history, self.registry, activated_order)
