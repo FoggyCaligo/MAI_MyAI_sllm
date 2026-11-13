@@ -261,7 +261,7 @@ OpenClaw 어댑터에는 MAI 전용 `--server`, `--model`, `--user`, `--verify`,
 
 보호 `true`: MAI/OpenClaw → `127.0.0.1:8080` 게이트웨이 → `127.0.0.1:8081` Router. 보호 `false`: Router가 `127.0.0.1:8080`에 직접 바인딩. **두 경우 모두 외부 클라이언트는 8080을 사용한다.** 8081 직접 호출은 보호 계층을 우회하므로 비교 실험에 사용하지 않는다.
 
-현재 구현은 새 요청의 RAM 검사와 로딩 전 VRAM 추정치를 확인하며, 추론 중 RAM을 기록하지만 실행 중 하드웨어 메모리 할당량을 강제 제한하거나 추론을 강제 중단하지는 않는다. 사용량 로그는 `MAI_MEMORY/gpu_ram_safety.jsonl`이다. 비교 실험에서는 MAI·OpenClaw 모두 보호 기능의 ON/OFF 및 최소 RAM·VRAM 값을 동일하게 맞춘다.
+현재 구현은 새 요청의 RAM 검사와 로딩 전 VRAM 추정치를 확인하며, 추론 중 RAM을 기록하지만 실행 중 하드웨어 메모리 할당량을 강제 제한하거나 추론을 강제 중단하지는 않는다. 사용량 로그는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl`이다. 비교 실험에서는 MAI·OpenClaw 모두 보호 기능의 ON/OFF 및 최소 RAM·VRAM 값을 동일하게 맞춘다.
 
 ### Portable Windows Router 런처 스위치
 
