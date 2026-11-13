@@ -54,8 +54,10 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                 pass
             # Continue to schema-v2 migration below so MCP_remote is
             # registered on this first start even with a legacy config.
+        from .native_groups import GROUPS
         config = {
-            "schema_version": 2,
+            "schema_version": 5,
+            "functional_mode": True,
             "catalog_path": "mcp_catalog.json",
             "servers": [{
                 "id": "memorizer",
@@ -71,7 +73,16 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                 "enabled": True,
                 "command": sys.executable,
                 "args": ["-m", "mai.mcp_tools.MCP_remote.server"],
-            }],
+            }, {
+                "id": "host",
+                "enabled": True,
+                "command": sys.executable,
+                "args": ["-m", "mai.mcp_tools.MCP_host"],
+            }] + [{
+                "id": group, "enabled": True, "command": sys.executable,
+                "args": ["-m", "mai.mcp_tools.native_groups", "--group", group],
+                "env": {"MAI_CWD": str(Path(__file__).resolve().parents[2])},
+            } for group in GROUPS],
         }
         # Exclusive creation avoids clobbering a concurrently customized config.
         try:
@@ -132,6 +143,20 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
         if not backup.exists():
             backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         temp = path.with_suffix(".functional-mode.tmp")
+        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    if existing.get("schema_version", 1) < 5:
+        if not any(entry.get("id") == "host" for entry in existing["servers"]):
+            existing["servers"].append({
+                "id": "host", "enabled": True, "command": sys.executable,
+                "args": ["-m", "mai.mcp_tools.MCP_host"],
+            })
+        existing["schema_version"] = 5
+        backup = path.with_name("mcp_servers.pre-host-control.json")
+        if not backup.exists():
+            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        temp = path.with_suffix(".host-control.tmp")
         temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
     return path
