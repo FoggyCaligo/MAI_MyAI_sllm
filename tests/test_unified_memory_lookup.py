@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from mai.memory.tools import MemorySearchInput
+from mcp_memorizer.manager import MemorySearchInput
 from mai.memory.admission import MEMORY_RECALL_TOOL_NAMES
 
 
@@ -38,5 +38,5 @@ def test_overview_requires_bounded_limit():
 
 
 def test_unified_lookup_excluded_from_new_fact_evidence():
-    assert "memory_search" in MEMORY_RECALL_TOOL_NAMES
+    assert "memorizer.memory_search" in MEMORY_RECALL_TOOL_NAMES
     assert "memory_recall" not in MEMORY_RECALL_TOOL_NAMES
