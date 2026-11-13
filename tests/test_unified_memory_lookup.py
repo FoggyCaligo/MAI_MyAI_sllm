@@ -38,5 +38,5 @@ def test_overview_requires_bounded_limit():
 
 
 def test_unified_lookup_excluded_from_new_fact_evidence():
-    assert "memorizer.memory_search" in MEMORY_RECALL_TOOL_NAMES
+    assert "memorizer__memory_search" in MEMORY_RECALL_TOOL_NAMES
     assert "memory_recall" not in MEMORY_RECALL_TOOL_NAMES
