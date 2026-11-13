@@ -26,7 +26,7 @@ AgentRuntime / AgentLoop
 | 추론 | `mai/llm/llamacpp.py` | llama.cpp OpenAI 호환 API 요청 |
 | 모델 상주·전환 | `mai/llm/llamacpp_router.py` | 모델 상태 조회·언로드·로드 확인 |
 | 검증 | `mai/agent/verification.py` | 수치·사실·선택적 품질 검토 |
-| 기억 | 독립 `MCP_memorizer` 패키지 + `mai/mcp_tools/mcp_memorizer/` 어댑터 | 추출, 그래프, SQLite FTS5 검색 |
+| 기억 | 독립 [`MCP_memorizer`](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md) 패키지 + `mai/mcp_tools/mcp_memorizer/` 어댑터 | 엔진은 추출·그래프·SQLite FTS5 검색을 소유, MAI는 작업 생명주기를 소유 |
 | 도구 | `mai/tools/`, `mai/agent/tool_results.py` | 로컬 작업 및 결과 원문·페이지네이션 |
 | 원격 PC | `mai/remote/` | 인증된 원격 Native 워커 호출 |
 | 실행·설치 | `mai.sh`, `mai.ps1`, `portable/` | OS별 설치·실행 및 GGUF 카탈로그 |
@@ -80,7 +80,7 @@ AgentRuntime / AgentLoop
 | 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
 | 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-**Workspace 실행 대상:** 새 Agent 작업은 `local`로 시작한다. Owner는 `tool_manual`로 `remote__switch_workspace`를 활성화하고 `target="remote"`로 인증된 워커에 전환한다. 이후 호환되는 파일·터미널·PC 도구는 별도 `at_remote_pc` 인자 없이 선택한 위치에서 실행된다. `target="local"`로 복귀한다. 원격 미연결·미지원 시 로컬로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI 호스트에서 실행한다.
+**Workspace 실행 대상:** 새 Agent 작업은 `host`에서 시작한다. Owner는 `tool_manual`로 `remote__switch_workspace`를 활성화하고 `target="client"`로 인증된 워커를 선택할 수 있다. 전환에 성공하면 **해당 작업의 이후 모든 Workspace 지원 도구**가 다른 전환이나 작업 종료까지 계속 client에서 실행된다. `target="host"`로 복귀한다. 도구별 `at_remote_pc` 인자는 없고, client 연결 실패 시 host로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI host에서 실행한다.
 
 **웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 
@@ -103,7 +103,7 @@ AgentRuntime / AgentLoop
 - **기억 검색:** 필요할 때 MCP 도구 `memorizer__memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
 - **보안:** `.env`, 업로드, 개인 SQLite, 원격 인증 키는 Git에 올리지 않음.
 
-참조: [기억](memory.md), [별도 Memory Git 저장소](memory-repository.md), [로그인 제한](login-ip-lockout.md).
+참조: [MAI 기억 연동](memory.md), [MCP_memorizer 원본 구조](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md), [별도 Memory Git 저장소](memory-repository.md), [로그인 제한](login-ip-lockout.md).
 
 ## 6. 실행·설정·검증
 
