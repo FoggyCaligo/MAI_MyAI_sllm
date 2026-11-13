@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Net.Http;
 using System.Windows.Forms;
 
 namespace MAILauncher;
@@ -30,6 +31,8 @@ internal sealed class MainWindow : Form
     private readonly object processSync = new();
     private Process? active;
     private readonly List<Button> commandButtons = [];
+    private readonly HttpClient healthClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private bool launchedBrowser;
 
     public MainWindow()
     {
@@ -57,6 +60,8 @@ internal sealed class MainWindow : Form
         WriteLine("MAI launcher folder: " + root);
         if (!File.Exists(Path.Combine(root, "mai.ps1")))
             WriteLine("ERROR: mai.ps1 not found next to MAI.exe. Run the distribution builder.");
+        else
+            Shown += async (_, _) => await RunCommandAsync("start");
     }
 
     private void WriteLine(string message)
@@ -68,6 +73,41 @@ internal sealed class MainWindow : Form
             return;
         }
         log.AppendText(message + Environment.NewLine);
+    }
+
+    private async Task OpenBrowserWhenReadyAsync(Process expectedProcess)
+    {
+        // Never open an arbitrary already-running listener. Only visit the
+        // loopback UI while the process started by this launcher is alive.
+        for (var attempt = 0; attempt < 90 && !IsDisposed; attempt++)
+        {
+            if (expectedProcess.HasExited) return;
+            try
+            {
+                using var response = await healthClient.GetAsync("http://127.0.0.1:8000/health");
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    if (!json.Contains("\"local_only\":true") &&
+                        !json.Contains("\"local_only\": true"))
+                    {
+                        WriteLine("Port 8000 answered but is not the local portfolio server.");
+                        return;
+                    }
+                    if (!launchedBrowser)
+                    {
+                        launchedBrowser = true;
+                        Process.Start(new ProcessStartInfo("http://127.0.0.1:8000") { UseShellExecute = true });
+                        WriteLine("Opened MAI chat automatically.");
+                    }
+                    return;
+                }
+            }
+            catch (HttpRequestException) { }
+            catch (TaskCanceledException) { }
+            await Task.Delay(1000);
+        }
+        WriteLine("Local MAI chat was not ready; inspect server logs.");
     }
 
     private async Task RunCommandAsync(string command)
@@ -113,6 +153,8 @@ internal sealed class MainWindow : Form
             process.BeginErrorReadLine();
             WriteLine("Command: " + command);
             status.Text = "Running: " + command;
+            if (command == "start")
+                _ = OpenBrowserWhenReadyAsync(process);
             // Start may remain running for the lifetime of the MAI server;
             // do not block the UI thread waiting for it.
             await process.WaitForExitAsync();
