@@ -516,6 +516,11 @@ async def models(authorization: str | None = Header(default=None)) -> dict[str, 
     labels = runtime.model_labels()
     if labels and set(visible) != set(labels):
         raise HTTPException(status_code=500, detail="GGUF catalog differs from running llama.cpp router; restart MAI")
+    if runtime.selected_model not in visible:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Previously selected model is no longer registered: {runtime.selected_model}",
+        )
     return {"models": visible, "current": runtime.selected_model, "locked": False, "labels": labels,
             "backend": runtime.llm_backend}
 
@@ -759,7 +764,7 @@ async def chat(
         _append_session_message(principal, request.session_id, role="user", content=request.message,
                                 metadata={"attachments": attachments} if attachments else None,
                                 created_at=user_created_at)
-        active_model = selected_model or runtime.model
+        active_model = selected_model or (runtime.model if principal.role is AccessRole.TRIAL else runtime.selected_model)
         result = await runtime.run_user_message(
             request.message,
             principal=principal,
