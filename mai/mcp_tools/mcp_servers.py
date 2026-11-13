@@ -39,6 +39,19 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
             else Path(__file__).with_name("mcp_servers.json"))
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
+        # The initial feature branch stored operator settings beside the DB.
+        # Preserve any existing toggles when adopting mai/mcp_tools layout.
+        legacy_path = root / "mcp_servers.json"
+        if legacy_path != path and legacy_path.is_file():
+            previous = json.loads(legacy_path.read_text(encoding="utf-8"))
+            if not isinstance(previous, dict) or not isinstance(previous.get("servers"), list):
+                raise ValueError("invalid legacy MCP config; refusing to replace operator settings")
+            try:
+                with path.open("x", encoding="utf-8") as fp:
+                    json.dump(previous, fp, ensure_ascii=False, indent=2)
+            except FileExistsError:
+                pass
+            return path
         config = {
             "catalog_path": "mcp_catalog.json",
             "servers": [{
