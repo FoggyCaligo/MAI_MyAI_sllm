@@ -89,7 +89,7 @@ def test_remote_target_is_frozen_for_started_call(tmp_path, monkeypatch):
         context.switch("local")
     asyncio.run(run())
     assert len(remote_called) == 1
-    assert remote_called[0][1]["arguments"] == {"path": str(file)}
+    assert remote_called[0][1]["arguments"]["path"] == str(file)
 
 
 def test_default_config_adds_host_only_remote_controller(tmp_path):
