@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from mai.memory.graph.repository import MemoryGraphRepository
-from mai.memory.index import SqliteFtsConceptIndex
+from mcp_memorizer.memory.graph.repository import MemoryGraphRepository
+from mcp_memorizer.memory.index import SqliteFtsConceptIndex
 
 NOW = datetime(2026, 8, 28, tzinfo=timezone.utc)
 
