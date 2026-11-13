@@ -1,12 +1,15 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "catalog_path": "mcp_catalog.json",
   "servers": [
     {
       "id": "memorizer",
       "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
-      "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
+      "args": [
+        "-m",
+        "mai.mcp_tools.mcp_memorizer.server"
+      ],
       "env": {
         "MEMORIZER_USER_ID": "{memory_user_id}",
         "MEMORIZER_DATA_DIR": "D:/REPLACE_WITH_PRIVATE_TEST_MEMORY_PATH"
@@ -16,7 +19,108 @@
       "id": "remote",
       "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
-      "args": ["-m", "mai.mcp_tools.MCP_remote.server"]
+      "args": [
+        "-m",
+        "mai.mcp_tools.MCP_remote.server"
+      ]
+    },
+    {
+      "id": "mai_internet",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_internet"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
+    },
+    {
+      "id": "mai_browser",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_browser"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
+    },
+    {
+      "id": "mai_file",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_file"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
+    },
+    {
+      "id": "mai_code",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_code"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
+    },
+    {
+      "id": "mai_terminal_run",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_terminal_run"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
+    },
+    {
+      "id": "mai_docs",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_docs"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
+    },
+    {
+      "id": "mai_utilities",
+      "enabled": false,
+      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
+      "args": [
+        "-m",
+        "mai.mcp_tools.native_groups",
+        "--group",
+        "mai_utilities"
+      ],
+      "env": {
+        "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
+      }
     }
   ]
 }
