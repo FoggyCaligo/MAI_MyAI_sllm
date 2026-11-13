@@ -61,3 +61,12 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 파일 변경과 터미널 명령은 실제 컴퓨터에 반영된다. Owner 접근 자격 증명과 원격 세션 키, 개인 DB·모델 파일은 공개 저장소에 올리지 않는다. 과거 `data/`에 이미 Git 추적된 SQLite 파일은 별도 정리 대상이며 `.gitignore`만으로 Git 기록에서 삭제되지는 않는다.
 
 최초 개발자: 신재용. `Copyright (C) 2026 신재용`. 저작권자가 라이선스할 권한을 가진 코드는 **AGPL-3.0-only**를 따른다. [LICENSE](LICENSE), [NOTICE](NOTICE) 참조.
+
+## Windows EXE 배포 폴더
+
+별도 배포 프로젝트는 [`배포/README.md`](%EB%B0%B0%ED%8F%AC/README.md)에 있다.
+Windows + .NET 8 SDK에서 `powershell -ExecutionPolicy Bypass -File ./배포/build.ps1`을 실행하면
+`배포/MAI/MAI.exe`와 기존 MAI 소스·실행 스크립트를 배포 구조로 조립한다.
+Portable 런타임은 `-IncludeRuntime`, GGUF 파일은 `-IncludeModels` 옵션을 사용해야 포함된다.
+개인 데이터(.env, MAI_MEMORY, 업로드)는 절대 기본 배포에 포함하지 않는다.
+GitHub Actions의 `Windows MAI EXE Distribution` 워크플로에서도 실행기를 빌드하여 결과물을 제공한다.
