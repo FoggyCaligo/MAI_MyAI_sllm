@@ -18,7 +18,7 @@ os.chdir(ROOT)
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,6 +28,7 @@ from mai.llm.models import ModelConfig
 from mai.tools.registry import ToolRegistry
 from mai.tools.calculator import register_calculator_tools
 from mai.tools.time import register_time_tools
+from portable.restart_mai import register_server, unregister_server
 from mcp_memorizer.manager import Memorizer, MemorySearchInput
 from mcp_memorizer.extraction.service import ModelFactExtractor
 from mcp_memorizer.integrations.mai import MAIExtractionAdapter
@@ -73,10 +74,10 @@ async def restrict_local(request: Request, call_next):
     # prevent DNS rebinding and cross-origin POSTs.
     host = request.headers.get("host", "").split(":")[0].lower()
     if host not in {"localhost", "127.0.0.1"}:
-        raise HTTPException(status_code=403, detail="Loopback host required")
+        return JSONResponse({"detail": "Loopback host required"}, status_code=403)
     origin = request.headers.get("origin")
     if origin and origin not in {"http://127.0.0.1:8000", "http://localhost:8000"}:
-        raise HTTPException(status_code=403, detail="Cross-origin request denied")
+        return JSONResponse({"detail": "Cross-origin request denied"}, status_code=403)
     return await call_next(request)
 
 
@@ -209,7 +210,11 @@ async def chat(body: ChatInput):
 
 def main():
     # Only loopback. No Tailscale, Cloudflare, login, remote listeners.
-    uvicorn.run(app, host="127.0.0.1", port=8000, workers=1)
+    register_server()
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=8000, workers=1)
+    finally:
+        unregister_server()
 
 
 if __name__ == "__main__":
