@@ -16,11 +16,9 @@ class ExecutionTarget:
     owner_id: str
     remote_session_id: str | None = None
 
-    async def execute(self, operation: str, arguments: dict[str, Any], *, at_remote_pc: bool, timeout: float | None = 600) -> dict[str, Any]:
-        if not at_remote_pc:
-            raise ValueError("ExecutionTarget.execute is only for explicit remote calls")
+    async def execute(self, operation: str, arguments: dict[str, Any], *, timeout: float | None = 600) -> dict[str, Any]:
         if self.remote_session_id is None:
-            raise RemoteExecutionError("at_remote_pc=true requires an active owner remote session")
+            raise RemoteExecutionError("Remote workspace requires an active owner remote session")
         return await remote_sessions.execute(
             self.owner_id,
             self.remote_session_id,
