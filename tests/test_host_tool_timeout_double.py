@@ -5,6 +5,7 @@ import asyncio
 
 from mai.remote.python_worker import build_registry
 from mai.remote.routing import register_routed_pc_tools, register_routed_service_tools
+from mai.mcp_tools.workspace import WorkspaceContext
 from mai.tools.browser import BrowserSessionManager
 from mai.tools.local import register_local_pc_tools, register_readonly_local_tools
 from mai.tools.registry import ToolRegistry
@@ -20,7 +21,7 @@ def test_owner_host_pc_timeouts_are_doubled(tmp_path):
     assert local.get("terminal_run").timeout_seconds is None
 
     routed = ToolRegistry()
-    register_routed_pc_tools(routed, owner_id="owner", cwd=str(tmp_path))
+    register_routed_pc_tools(routed, workspace=WorkspaceContext(owner_id="owner"), cwd=str(tmp_path))
     assert routed.has("terminal_run")
     assert routed.get("file_read").timeout_seconds is None
 
@@ -35,7 +36,7 @@ def test_host_readonly_tools_use_same_doubled_timeouts(tmp_path):
 def test_remote_service_timeout_is_twice_current_local_service_timeout():
     host = ToolRegistry()
     register_routed_service_tools(
-        host, owner_id="owner", browser_manager=BrowserSessionManager(),
+        host, workspace=WorkspaceContext(owner_id="owner"), browser_manager=BrowserSessionManager(),
     )
     worker = build_registry()
     # Host's routed wrapper defers its timeout to its inner local tool.
@@ -71,7 +72,7 @@ def test_terminal_has_no_execution_budget_on_host_or_worker(tmp_path, monkeypatc
     monkeypatch.setattr(terminal, "terminal_run", fake_terminal_run)
     monkeypatch.setenv("TERMINAL_TIMEOUT_SECONDS", "73")
     host = ToolRegistry()
-    register_routed_pc_tools(host, owner_id="owner", cwd=str(tmp_path))
+    register_routed_pc_tools(host, workspace=WorkspaceContext(owner_id="owner"), cwd=str(tmp_path))
     worker = build_registry(cwd=tmp_path)
     asyncio.run(host.get("terminal_run").invoke({"command": "echo hello"}))
     asyncio.run(worker.get("terminal_run").invoke({"command": "echo hello"}))
@@ -96,7 +97,7 @@ def test_owner_web_search_has_independent_180_second_timeout(monkeypatch):
     monkeypatch.setattr(routing, "register_external_information_tools", capture_external_tools)
     owner = ToolRegistry()
     routing.register_routed_service_tools(
-        owner, owner_id="owner", browser_manager=BrowserSessionManager(),
+        owner, workspace=WorkspaceContext(owner_id="owner"), browser_manager=BrowserSessionManager(),
     )
     assert registered == [{"web_timeout_seconds": 180, "market_timeout_seconds": 60}]
     # The routed wrapper's timeout is delegated to the inner registry.
