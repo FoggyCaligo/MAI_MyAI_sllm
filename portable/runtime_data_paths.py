@@ -51,7 +51,11 @@ def _relocate(old: Path, new: Path) -> bool:
 
 
 def _update_memorizer_config(root: Path) -> bool:
-    config_file = root / "mai/mcp_tools/mcp_servers.json"
+    preferred = root / "mai/mcp_tools/mcp_servers.json"
+    # An older version placed the MCP config inside the old memory folder;
+    # after relocation it will be inside the new memory folder until the
+    # first-start config helper copies it into mai/mcp_tools.
+    config_file = preferred if preferred.is_file() else root / MEMORY_RELATIVE / "mcp_servers.json"
     if not config_file.is_file():
         return False
     config = json.loads(config_file.read_text(encoding="utf-8"))
