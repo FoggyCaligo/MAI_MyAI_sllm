@@ -1,4 +1,4 @@
-"""Factual-first verification; quality can be switched off without changing grounding."""
+"""Unified factual/quality review; quality toggle preserves factual grounding."""
 import asyncio
 import json
 
