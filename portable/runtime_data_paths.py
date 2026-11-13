@@ -87,6 +87,29 @@ def _update_memorizer_config(root: Path) -> bool:
     return changed
 
 
+def normalize_legacy_environment(root: Path) -> dict[str, str]:
+    """Redirect only canonical old MAI paths; preserve intentional custom paths."""
+    root = root.expanduser().resolve()
+    mapping = {
+        "MAI_UPLOAD_ROOT": (root / "mai_uploads", root / UPLOAD_RELATIVE),
+        "MEMORY_DB_PATH": (root / "MAI_MEMORY/memory.sqlite3",
+                           root / MEMORY_RELATIVE / "memory.sqlite3"),
+        "SENTENCE_BREAKER_DB_PATH": (root / "MAI_MEMORY/sentence_breaker.sqlite3",
+                                     root / MEMORY_RELATIVE / "sentence_breaker.sqlite3"),
+        "CHAT_DB_PATH": (root / "MAI_MEMORY/chat.sqlite3",
+                         root / MEMORY_RELATIVE / "chat.sqlite3"),
+        "LOG_DB_PATH": (root / "MAI_MEMORY/log.sqlite3",
+                        root / MEMORY_RELATIVE / "log.sqlite3"),
+    }
+    changed = {}
+    for key, (old, destination) in mapping.items():
+        current = os.environ.get(key)
+        if current and Path(current).expanduser().resolve() == old.resolve():
+            os.environ[key] = str(destination)
+            changed[key] = str(destination)
+    return changed
+
+
 def migrate(root: Path) -> dict[str, bool]:
     root = root.expanduser().resolve()
     if not (root / "mai").is_dir():
