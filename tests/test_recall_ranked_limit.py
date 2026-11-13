@@ -57,13 +57,13 @@ def test_verifier_does_not_truncate_selected_tool_evidence():
     long_result = "x" * 12000
     payload = _review_payload(
         candidate="Response", messages=[{"role": "user", "content": "Question"}],
-        tool_results=[("memory_search", True, None, long_result)],
+        tool_results=[("memorizer.memory_search", True, None, long_result)],
     )
     assert payload["tool_results_in_execution_order"][0]["result"] == long_result
 
 
 def test_recall_tool_schema_exposes_optional_limit_to_model():
-    from mai.memory.tools import MemorySearchInput
+    from mcp_memorizer.manager import MemorySearchInput
     schema = MemorySearchInput.model_json_schema()
     assert "limit" in schema["properties"]
     assert "limit" not in schema.get("required", [])
