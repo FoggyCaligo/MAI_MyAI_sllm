@@ -386,11 +386,31 @@ class MCPConnectionManager:
             if set(arguments) != {"target"} or arguments["target"] not in ("local", "remote"):
                 raise MCPConnectionError("Invalid workspace selection contract")
             return self.workspace.switch(arguments["target"])
-        if response.structuredContent is not None:
-            return response.structuredContent
-        return [
-            getattr(block, "text", str(block)) for block in response.content
-        ]
+        result = (
+            response.structuredContent if response.structuredContent is not None
+            else [getattr(block, "text", str(block)) for block in response.content]
+        )
+        # A standalone filesystem MCP process has its own ContextVars.
+        # Synchronize actual successful lifecycle results with MAI's per-turn
+        # host artifact ledger, so temporary files still get cleaned up.
+        if entry["server"] == "mai_file" and isinstance(result, dict):
+            from ..tools.artifacts import (
+                register_temporary_artifact, discard_temporary_artifact,
+                move_temporary_artifact,
+            )
+            operation = entry["name"]
+            if (operation == "file_write" and result.get("created") is True
+                    and result.get("lifecycle") == "temporary"
+                    and isinstance(result.get("path"), str)):
+                register_temporary_artifact(result["path"])
+            elif operation == "file_delete" and result.get("deleted") is True:
+                if isinstance(result.get("path"), str):
+                    discard_temporary_artifact(result["path"])
+            elif operation == "file_move":
+                if (isinstance(result.get("source"), str)
+                        and isinstance(result.get("destination"), str)):
+                    move_temporary_artifact(result["source"], result["destination"])
+        return result
 
     async def close(self) -> None:
         for server in reversed(list(self._stacks)):
