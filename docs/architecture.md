@@ -26,7 +26,7 @@ AgentRuntime / AgentLoop
 | 추론 | `mai/llm/llamacpp.py` | llama.cpp OpenAI 호환 API 요청 |
 | 모델 상주·전환 | `mai/llm/llamacpp_router.py` | 모델 상태 조회·언로드·로드 확인 |
 | 검증 | `mai/agent/verification.py` | 수치·사실·선택적 품질 검토 |
-| 기억 | 독립 `MCP_memorizer` 패키지 + `mai/mcp_tools/MCP_memorizer/` 어댑터 | 추출, 그래프, SQLite FTS5 검색 |
+| 기억 | 독립 `MCP_memorizer` 패키지 + `mai/mcp_tools/mcp_memorizer/` 어댑터 | 추출, 그래프, SQLite FTS5 검색 |
 | 도구 | `mai/tools/`, `mai/agent/tool_results.py` | 로컬 작업 및 결과 원문·페이지네이션 |
 | 원격 PC | `mai/remote/` | 인증된 원격 Native 워커 호출 |
 | 실행·설치 | `mai.sh`, `mai.ps1`, `portable/` | OS별 설치·실행 및 GGUF 카탈로그 |
@@ -90,11 +90,11 @@ AgentRuntime / AgentLoop
 
 | 데이터 | 기본 경로 |
 |---|---|
-| 장기기억 | `MAI_MEMORY/memory.sqlite3` |
-| 분해기 누적 데이터 | `MAI_MEMORY/sentence_breaker.sqlite3` |
-| 대화 | `MAI_MEMORY/chat.sqlite3` |
-| 감사 | `MAI_MEMORY/log.sqlite3` |
-| 업로드 | `mai_uploads/` |
+| 장기기억 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3` |
+| 분해기 누적 데이터 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3` |
+| 대화 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/chat.sqlite3` |
+| 감사 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3` |
+| 업로드 | `mai/mai_uploads/` |
 
 - **Owner:** 호스트 파일·터미널 및 승인된 원격 Native 도구 사용.
 - **체험 계정:** 허용된 읽기 기능과 자기 업로드 영역의 제한적 쓰기. Owner 모델 선택·원격 관리 불가.
