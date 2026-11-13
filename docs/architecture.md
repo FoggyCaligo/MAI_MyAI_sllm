@@ -26,7 +26,7 @@ AgentRuntime / AgentLoop
 | 추론 | `mai/llm/llamacpp.py` | llama.cpp OpenAI 호환 API 요청 |
 | 모델 상주·전환 | `mai/llm/llamacpp_router.py` | 모델 상태 조회·언로드·로드 확인 |
 | 검증 | `mai/agent/verification.py` | 수치·사실·선택적 품질 검토 |
-| 기억 | `mai/memory/` | 추출, 그래프, SQLite FTS5 검색 |
+| 기억 | 독립 `MCP_memorizer` 패키지 + `mai/mcp_tools/MCP_memorizer/` 어댑터 | 추출, 그래프, SQLite FTS5 검색 |
 | 도구 | `mai/tools/`, `mai/agent/tool_results.py` | 로컬 작업 및 결과 원문·페이지네이션 |
 | 원격 PC | `mai/remote/` | 인증된 원격 Native 워커 호출 |
 | 실행·설치 | `mai.sh`, `mai.ps1`, `portable/` | OS별 설치·실행 및 GGUF 카탈로그 |
@@ -100,7 +100,7 @@ AgentRuntime / AgentLoop
 - **체험 계정:** 허용된 읽기 기능과 자기 업로드 영역의 제한적 쓰기. Owner 모델 선택·원격 관리 불가.
 - **계정 식별:** 로그인 ID와 데이터 소유 식별자 `db_id` 분리.
 - **기억 저장:** 승인 후 사용자 진술 및 허용된 성공 도구 결과에서 사실 추출 → 사용자별 그래프·개념 색인. 별도 비동기 작업.
-- **기억 검색:** 필요할 때 `memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
+- **기억 검색:** 필요할 때 MCP 도구 `memorizer__memory_search`로 호출. 매 사용자 턴에 기억 전체를 자동 삽입하지 않음.
 - **보안:** `.env`, 업로드, 개인 SQLite, 원격 인증 키는 Git에 올리지 않음.
 
 참조: [기억](memory.md), [별도 Memory Git 저장소](memory-repository.md), [로그인 제한](login-ip-lockout.md).
