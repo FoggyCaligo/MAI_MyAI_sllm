@@ -83,3 +83,25 @@ def test_redirects_only_exact_old_default_env_paths(tmp_path, monkeypatch):
     assert new_values["MAI_UPLOAD_ROOT"] == str(root / UPLOAD_RELATIVE)
     assert "CHAT_DB_PATH" not in new_values
     assert (root / "mai").is_dir()
+
+
+def test_legacy_mcp_config_inside_old_memory_folder_is_updated(tmp_path):
+    root = _root(tmp_path)
+    old_data = root / "MAI_MEMORY"
+    old_data.mkdir()
+    (old_data / "memory.sqlite3").write_bytes(b"old-memory")
+    legacy_config = old_data / "mcp_servers.json"
+    legacy_config.write_text(json.dumps({"servers": [{
+        "id": "memorizer", "enabled": False,
+        "command": "python",
+        "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
+        "env": {"MEMORIZER_DATA_DIR": str(old_data)},
+    }]}), encoding="utf-8")
+    outcome = migrate(root)
+    assert outcome["memory"] is True
+    assert outcome["memorizer_config_updated"] is True
+    migrated = root / MEMORY_RELATIVE / "mcp_servers.json"
+    result = json.loads(migrated.read_text(encoding="utf-8"))["servers"][0]
+    assert result["enabled"] is False
+    assert result["env"]["MEMORIZER_DATA_DIR"] == str(root / MEMORY_RELATIVE)
+    assert result["args"][-1] == "mai.mcp_tools.mcp_memorizer.server"
