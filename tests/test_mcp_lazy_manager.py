@@ -106,7 +106,7 @@ def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
         "servers": [{
             "id": "memorizer",
             "command": sys.executable,
-            "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
+            "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
             "env": {
                 "MEMORIZER_DATA_DIR": str(data_dir),
                 "MEMORIZER_USER_ID": "{memory_user_id}",
