@@ -40,7 +40,7 @@ def test_smaller_default_web_and_memory_results_preserve_explicit_bounds():
     assert WebSearchInput(query="test").max_results == 10
     assert WebFetchInput(url="https://example.com").max_chars == 33333
     assert MemorySearchInput(limit=8).limit == 8
-    with pytest.raises(ValueError, match="limit is required"):
+    with pytest.raises(ValueError, match="overview requires limit 1 to 50"):
         MemorySearchInput()
     assert DEFAULT_ANCHOR_FACT_LIMIT == 5
 
