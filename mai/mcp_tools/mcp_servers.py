@@ -413,11 +413,9 @@ class MCPConnectionManager:
             routing_note = ""
             if record["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
                 routing_note = (
-                    "Execution location follows this task's last successful "
-                    "remote__switch_workspace(target=host|client). Initially host; "
-                    "after selecting client, EVERY subsequent workspace-capable call runs "
-                    "on client until another switch or task end. "
-                    "Never repeat switch per call or add location arguments. "
+                    "Workspace-capable: host by default; after switch_workspace(client), "
+                    "this and all later eligible tools run on client until switch(host) "
+                    "or task end. No per-tool location arguments or repeated switches. "
                 )
             elif record["server"] in HOST_ONLY_MCP_SERVERS:
                 routing_note = "Host-only tool; workspace switching never relocates this tool. "
