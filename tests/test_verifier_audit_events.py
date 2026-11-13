@@ -22,6 +22,13 @@ def as_turn(payload):
     )
 
 
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
+
+
 class Reviewer:
     def __init__(self, *, reject=False, fail=False):
         self.calls = []
