@@ -43,6 +43,7 @@ from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
+from ..tools.mcp_connection import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from pydantic import BaseModel, ConfigDict
@@ -331,6 +332,11 @@ class MAIRuntime:
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
         register_tool_result_tools(registry, tool_result_store)
+        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
+        if mcp_config and principal.role is AccessRole.OWNER:
+            manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id)
+            manager.register(registry)
+            registry.mcp_manager = manager
         return registry
 
     async def run_user_message(
@@ -424,7 +430,11 @@ class MAIRuntime:
                     ),
                 )
         finally:
-            await browser_manager.close_all()
+            try:
+                if registry.mcp_manager is not None:
+                    await registry.mcp_manager.close()
+            finally:
+                await browser_manager.close_all()
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions
