@@ -18,6 +18,8 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 
 `check`는 필수 파일과 GGUF 카탈로그를 확인하지만 GPU 추론 성공을 보장하지 않는다. `start`는 llama.cpp의 단일 상주 모델 라우터를 실행한 뒤 MAI 웹 서버를 시작한다. 기본 웹 주소는 `http://127.0.0.1:8000`이다.
 
+장기기억 엔진의 내부 구조·검색·추출 알고리즘은 [독립 MCP_memorizer](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md)에서, 문자 경로 분해 알고리즘은 [Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)에서 관리한다. MAI의 사용자별 호출·작업 수명주기는 [MAI 기억 연동](docs/memory.md)을 참고한다.
+
 ## 기억·대화 데이터 백업
 
 에이전트의 장기기억과 대화 기록은 기본적으로 저장소 루트의 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/` 폴더에 **SQLite (`.sqlite3`) 파일**로 보관된다. 기억을 백업하거나 다른 컴퓨터로 옮기려면 **MAI를 완전히 종료한 뒤 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/` 폴더 전체를 복사**하면 된다. `memory.sqlite3`는 장기기억, `chat.sqlite3`는 대화 기록, `log.sqlite3`는 실행 로그를 저장한다. `sentence_breaker.sqlite3`는 문장 분리용 데이터다.
