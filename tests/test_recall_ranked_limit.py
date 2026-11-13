@@ -57,7 +57,7 @@ def test_verifier_does_not_truncate_selected_tool_evidence():
     long_result = "x" * 12000
     payload = _review_payload(
         candidate="Response", messages=[{"role": "user", "content": "Question"}],
-        tool_results=[("memorizer.memory_search", True, None, long_result)],
+        tool_results=[("memorizer__memory_search", True, None, long_result)],
     )
     assert payload["tool_results_in_execution_order"][0]["result"] == long_result
 
