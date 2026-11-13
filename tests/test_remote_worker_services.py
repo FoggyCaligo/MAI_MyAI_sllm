@@ -156,3 +156,53 @@ def test_remote_transport_budget_covers_terminal_execution():
     timeout = inspect.signature(RemoteSessionManager.execute).parameters["timeout"].default
     assert timeout == 600
     assert timeout > 240 * 2
+
+
+def test_switch_to_already_selected_local_workspace_is_noop(monkeypatch):
+    from mai.mcp_tools import workspace as workspace_module
+
+    def unexpected_lookup(owner_id):
+        raise AssertionError("worker lookup should not occur for an unchanged target")
+
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", unexpected_lookup)
+    workspace = WorkspaceContext(owner_id="owner")
+    assert workspace.switch("local") == {
+        "ok": True,
+        "workspace": "local",
+        "changed": False,
+        "message": "이미 local에 있습니다.",
+    }
+    assert workspace.target == "local"
+
+
+def test_switch_to_already_selected_remote_workspace_is_noop(monkeypatch):
+    from types import SimpleNamespace
+    from mai.mcp_tools import workspace as workspace_module
+
+    session = SimpleNamespace(session_id="session-1", connected=True)
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
+    workspace = WorkspaceContext(owner_id="owner")
+    assert workspace.switch("remote")["workspace"] == "remote"
+    original_snapshot = workspace.snapshot()
+
+    def unexpected_lookup(owner_id):
+        raise AssertionError("worker lookup should not occur for an unchanged target")
+
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", unexpected_lookup)
+    assert workspace.switch("remote") == {
+        "ok": True,
+        "workspace": "remote",
+        "changed": False,
+        "message": "이미 remote에 있습니다.",
+    }
+    assert workspace.snapshot() is original_snapshot
+
+
+def test_switch_to_remote_still_fails_without_worker(monkeypatch):
+    from mai.mcp_tools import workspace as workspace_module
+
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: None)
+    workspace = WorkspaceContext(owner_id="owner")
+    with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
+        workspace.switch("remote")
+    assert workspace.target == "local"
