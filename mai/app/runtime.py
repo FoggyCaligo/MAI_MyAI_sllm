@@ -36,7 +36,6 @@ from mcp_memorizer.memory.index import SqliteFtsConceptIndex
 from mcp_memorizer.memory.recall.service import RecallService
 from mcp_memorizer.memory.runtime import MemoryRuntime
 from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter
-from mcp_memorizer.integrations.mai_tools import register_memory_tools
 from mcp_memorizer.memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
@@ -303,7 +302,6 @@ class MAIRuntime:
         remote_session_id: str | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
-        register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         if principal.role is AccessRole.OWNER:
             register_routed_service_tools(
                 registry, owner_id=principal.db_id, browser_manager=browser_manager,
