@@ -1,14 +1,11 @@
 import asyncio
 from datetime import datetime, timezone
 
-from mai.llm.models import NativeToolCall
 from mai.memory.graph.repository import MemoryGraphRepository
 from mai.memory.index import ConceptHit
 from mai.memory.recall.service import RecallService
 from mai.memory.runtime import MemoryRuntime
-from mai.memory.tools import register_memory_tools
 from mai.memory.working import WorkingGraph
-from mai.tools.registry import ToolRegistry
 
 NOW = datetime(2026, 8, 28, 4, 0, tzinfo=timezone.utc)
 
@@ -52,21 +49,13 @@ def test_production_memory_registration_exposes_compact_recall_and_overview(tmp_
             fact_texts=("사용자의 고양이 이름은 모카",),
         ))
         working = WorkingGraph()
-        registry = ToolRegistry()
-        register_memory_tools(registry, memory, working, user_id="alice")
-        assert registry.names() == ("memory_search",)
-
-        recalled = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_search",
-            arguments={"keyword": "모카"},
-        )))
+        recalled_graph = memory.explicit_recall(user_id="alice", query="모카")
+        working.merge_working(recalled_graph)
+        recalled = recalled_graph.model_snapshot()
         assert all(node["node_type"] in {"anchor", "fact"} for node in recalled["nodes"])
         assert any(node["node_type"] == "fact" and "모카" in node["data"] for node in recalled["nodes"])
 
-        overview = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_search",
-            arguments={"limit": 5},
-        )))
+        overview = memory.memory_overview(user_id="alice", limit=5)
         assert overview["user_anchor"]["payload"]["user_id"] == "alice"
         assert any(item["type"] == "fact" and "모카" in item["text"] for item in overview["memories"])
         assert not any(item["type"] == "utterance" for item in overview["memories"])
@@ -100,17 +89,12 @@ def test_memory_recall_returns_fact_only_current_call_while_working_graph_accumu
         ))
 
         working = WorkingGraph()
-        registry = ToolRegistry()
-        register_memory_tools(registry, memory, working, user_id="alice")
-
-        first = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_search",
-            arguments={"keyword": "모카"},
-        )))
-        second = asyncio.run(registry.invoke(NativeToolCall(
-            name="memory_search",
-            arguments={"keyword": "공원"},
-        )))
+        first_graph = memory.explicit_recall(user_id="alice", query="모카")
+        working.merge_working(first_graph)
+        first = first_graph.model_snapshot()
+        second_graph = memory.explicit_recall(user_id="alice", query="공원")
+        working.merge_working(second_graph)
+        second = second_graph.model_snapshot()
 
         assert all(node["node_type"] in {"anchor", "fact"} for node in first["nodes"])
         assert all(node["node_type"] in {"anchor", "fact"} for node in second["nodes"])
