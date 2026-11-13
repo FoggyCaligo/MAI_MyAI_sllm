@@ -54,6 +54,7 @@ reasoning_preserve_flag="--no-reasoning-preserve"
 if [[ "$reasoning_preserve" == true ]]; then reasoning_preserve_flag="--reasoning-preserve"; fi
 export LLM_BACKEND=llamacpp MAIN_MODEL="$default_model"
 export LLAMACPP_HOST=http://127.0.0.1:8080 LLAMACPP_MAIN_VISION="$main_vision"
+"$python" -m portable.runtime_data_paths --root "$root"
 export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
 export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
 export MAI_CWD="$root" MAI_UPLOAD_ROOT="$root/mai/mai_uploads"
