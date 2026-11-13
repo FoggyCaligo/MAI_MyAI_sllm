@@ -25,7 +25,10 @@ def test_cmd_wrapper_propagates_powershell_exit_code():
 
 def test_powershell_entry_point_integrates_setup_and_uses_llamacpp():
     text = (ROOT / "mai.ps1").read_text(encoding="utf-8")
-    assert "[ValidateSet('start', 'setup', 'check', 'update', 'update-python')]" in text
+    assert "[ValidateSet('start', 'restart', 'end', 'setup', 'check', 'update', 'update-python')]" in text
+    assert "'restart' {" in text
+    assert "'end' {" in text
+    assert "restart_mai.py" in text
     assert "$root = $PSScriptRoot" in text
     assert "start-portable-llamacpp-router.ps1" in text
     assert "Invoke-MaiSetup" in text
