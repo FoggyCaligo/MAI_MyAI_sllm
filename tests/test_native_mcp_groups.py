@@ -234,6 +234,7 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
 @pytest.mark.parametrize("group", GROUPS)
 def test_every_group_starts_as_independent_stdio_server(group):
     import asyncio
+    import os
     import sys
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -242,6 +243,10 @@ def test_every_group_starts_as_independent_stdio_server(group):
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "mai.mcp_tools.native_groups", "--group", group],
+            # The MCP stdio client uses a restricted default child environment.
+            # Preserve explicit host dependencies (e.g. MAI_GIT_BASH_PATH)
+            # just as the production MCPConnectionManager._server_env does.
+            env=os.environ.copy(),
         )
         async with stdio_client(params) as (reader, writer):
             async with ClientSession(reader, writer) as session:
