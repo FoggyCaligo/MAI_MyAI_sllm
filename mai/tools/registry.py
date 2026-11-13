@@ -85,18 +85,33 @@ class ToolDefinition:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.input_model.model_json_schema(),
+                "parameters": self.metadata.get("mcp_input_schema", self.input_model.model_json_schema()),
             },
         }
 
-    def validate_arguments(self, arguments: Mapping[str, Any]) -> BaseModel:
-        """Validate one model-produced argument object without coercive repair."""
-
+    def validate_arguments(self, arguments: Mapping[str, Any]) -> BaseModel | dict[str, Any]:
+        """Validate native or MCP input without implicit argument repair."""
+        if "mcp_input_schema" in self.metadata:
+            from jsonschema import Draft202012Validator
+            schema = self.metadata["mcp_input_schema"]
+            try:
+                Draft202012Validator(schema).validate(dict(arguments))
+            except Exception as exc:
+                raise ToolArgumentsError(
+                    f"invalid arguments for MCP tool '{self.name}': {exc.message if hasattr(exc, 'message') else exc}"
+                ) from exc
+            return dict(arguments)
         try:
             return self.input_model.model_validate(dict(arguments), strict=True)
         except ValidationError as exc:
+            # The model needs the actual invalid field and contract to correct
+            # a wrong selector such as query=... instead of keyword=....
+            detail = "; ".join(
+                f"{'.'.join(map(str, item['loc'])) or '<root>'}: {item['msg']}"
+                for item in exc.errors(include_url=False)[:6]
+            )
             raise ToolArgumentsError(
-                f"invalid arguments for native tool '{self.name}'"
+                f"invalid arguments for native tool '{self.name}': {detail}"
             ) from exc
 
     async def invoke(self, arguments: Mapping[str, Any]) -> Any:
@@ -109,7 +124,7 @@ class ToolDefinition:
         """
 
         validated = self.validate_arguments(arguments)
-        kwargs = validated.model_dump()
+        kwargs = validated if isinstance(validated, dict) else validated.model_dump()
 
         async def execute() -> Any:
             if inspect.iscoroutinefunction(self.handler):
