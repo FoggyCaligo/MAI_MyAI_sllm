@@ -21,23 +21,23 @@ class Execution:
 
 def test_successful_memory_recall_tools_detects_persistent_memory_reads() -> None:
     executions = (
-        Execution("memorizer.memory_search", True),
+        Execution("memorizer__memory_search", True),
         Execution("file_search", True),
         Execution("file_read", False),
     )
 
     assert successful_memory_recall_tools(executions) == (
-        "memorizer.memory_search",
+        "memorizer__memory_search",
     )
     assert successful_tool_names(executions) == (
         "file_search",
-        "memorizer.memory_search",
+        "memorizer__memory_search",
     )
 
 
 def test_successful_non_recall_tool_results_excludes_recall_results() -> None:
     executions = (
-        Execution("memorizer.memory_search", True, "old persistent memory"),
+        Execution("memorizer__memory_search", True, "old persistent memory"),
         Execution("document_read", True, "new document evidence"),
         Execution("web_search", True, "new web evidence"),
         Execution("calculator", False, "failed calculation"),
@@ -51,8 +51,8 @@ def test_successful_non_recall_tool_results_excludes_recall_results() -> None:
 
 def test_pure_recall_with_no_new_facts_is_skipped() -> None:
     executions = (
-        Execution("memorizer.memory_search", True, "old memories"),
-        Execution("memorizer.memory_search", True, "expanded old memories"),
+        Execution("memorizer__memory_search", True, "old memories"),
+        Execution("memorizer__memory_search", True, "expanded old memories"),
     )
     assert should_skip_recall_without_new_facts(
         executions,
@@ -62,7 +62,7 @@ def test_pure_recall_with_no_new_facts_is_skipped() -> None:
 
 
 def test_recall_only_tool_usage_does_not_drop_new_user_fact() -> None:
-    executions = (Execution("memorizer.memory_search", True, "old memory"),)
+    executions = (Execution("memorizer__memory_search", True, "old memory"),)
     assert should_skip_recall_without_new_facts(
         executions,
         extracted_facts=("사용자는 최근 목표를 Y로 변경했다",),
@@ -72,7 +72,7 @@ def test_recall_only_tool_usage_does_not_drop_new_user_fact() -> None:
 
 def test_recall_plus_non_recall_tool_can_store_extracted_fact() -> None:
     executions = (
-        Execution("memorizer.memory_search", True, "old memory"),
+        Execution("memorizer__memory_search", True, "old memory"),
         Execution("document_read", True, "new document evidence"),
     )
     assert should_skip_recall_without_new_facts(
@@ -83,7 +83,7 @@ def test_recall_plus_non_recall_tool_can_store_extracted_fact() -> None:
 
 
 def test_extraction_failure_fails_safe_and_preserves_recall_turn() -> None:
-    executions = (Execution("memorizer.memory_search", True, "old memory"),)
+    executions = (Execution("memorizer__memory_search", True, "old memory"),)
     assert should_skip_recall_without_new_facts(
         executions,
         extracted_facts=(),
