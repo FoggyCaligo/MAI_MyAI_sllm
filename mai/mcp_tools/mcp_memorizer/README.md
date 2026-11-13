@@ -1,7 +1,7 @@
 # MCP_memorizer adapter
 
-The canonical MCP memory engine lives in
-[the independent MCP_memorizer repository](https://github.com/FoggyCaligo/MCP_memorizer).
+The canonical MCP memory engine and its implementation documents live in
+[the independent MCP_memorizer repository](https://github.com/FoggyCaligo/MCP_memorizer). See its [engine architecture](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md), [recall](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md), [extraction](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/extraction.md), and [Sentence_Breaker integration](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/sentence-breaker.md). Sentence_Breaker is also independently authored in [FoggyCaligo/Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md).
 MAI depends on its pinned Python package and does **not** vendor its graph
 index, extraction prompt, Sentence_Breaker, or DB implementation here.
 

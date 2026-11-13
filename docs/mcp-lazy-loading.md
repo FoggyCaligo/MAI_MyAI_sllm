@@ -3,6 +3,8 @@
 ## Startup and toggling
 
 MAI uses **one MCP integration branch**, `feature/mcp-lazy-manager`.
+메모리 그래프·색인·검색·추출의 **원본 기능 명세**는 [MCP_memorizer](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md), 검색 입력·회수 규칙은 [검색 명세](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md)에서 관리한다. 이 문서는 MAI의 MCP 연결·도구 활성화 수명주기를 설명한다.
+
 The old native `memory_search` tool has been removed. The model accesses
 `memorizer__memory_search` only through the configured MCP server.
 

@@ -1,91 +1,42 @@
-# MAI 장기기억 — 구조와 동작
+# MAI의 장기기억 연동과 실행 수명주기
 
-2026-11-13 갱신. 기억 엔진은 독립 MCP_memorizer 패키지를 사용하고, 검색은 MCP 전용 도구로 연결한다. 요청 전체 흐름은 [실행 구조](architecture.md), 도구 결과 전달은 [도구 결과 전달](TOOL_RESULT_PAGINATION.md)을 따른다.
+MAI는 **장기기억 엔진을 직접 구현하지 않고**, 별도 저장소 [MCP_memorizer](https://github.com/FoggyCaligo/MCP_memorizer)의 설치된 Python 패키지와 검색 전용 MCP 도구를 사용한다. 이 문서는 MAI가 메모리 엔진을 **언제·어떤 사용자 권한과 근거로 호출하는지**를 설명한다.
 
-## 기억의 종류와 저장 구조
+엔진 자체의 그래프·사실 추출·Concept·SQLite 검색·랭킹 알고리즘은 [MCP_memorizer 엔진 문서](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md), [회수 계약](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md), [추출 계약](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/extraction.md)을 원본으로 삼는다. 문자 경로 분해 알고리즘의 원본은 같은 개발자가 운영하는 [Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)다.
 
-최근 대화는 이어서 대화하기 위한 기록이고, 장기기억은 이후에도 참고할 사실을 구조화한 저장소다. 현재 사실검증 Verifier는 이번 요청의 성공한 `memorizer__memory_search` 결과를 **호출별 실행 순서대로** 받고, 해당 호출 인수도 근거 항목에 별도로 포함한다. 검색 결과의 의미상 유사 노드를 툴별로 병합하거나 자동 중복 제거하지 않는다. 감사 로그는 장애 확인용이며 기억이나 답변 근거로 자동 주입하지 않는다.
+## MAI가 소유하는 것
 
-```text
-사용자 기준점(anchor) → 사실(fact) → 검색용 개념(concept)
-                     asserted_fact   mentions
-사용자 원문 → 별도 evidence 표
-```
+- **계정·권한:** 로그인 사용자 식별자와 데이터 소유자 `db_id`를 분리하고, 현재 계정의 `db_id`를 메모리 사용자 식별자로 전달한다. 모델이 임의로 다른 사용자 ID를 선택하지 못하게 한다.
+- **최종 답변 결정:** Main 및 필요 시 Verifier의 작업이 끝나고 답변 전달이 확정된 이후에만 사실 추출·저장을 진행한다. Verifier 기본 활성화 여부는 배포 설정 `MAI_VERIFIER_ENABLED`가 정한다.
+- **추출용 모델:** 같은 선택 모델을 별도 요청으로 사용한다. 사실 추출 프롬프트 및 JSON 계약 자체는 MCP_memorizer 패키지가 소유한다.
+- **추출 입력 선택:** 최신 사용자 원문, 직전 도우미 메시지, 확정된 최종 답변, 성공한 비기억조회 도구 결과의 첫 `context_content`를 추출 호출에 제공한다. 실패한 실행과 기억 조회 결과를 신규 사실 근거로 재주입하지 않는다.
+- **실행 수명주기:** 추출·저장을 비동기 후처리로 관리하고, 같은 사용자의 다음 요청 전에 앞선 후처리 완료를 기다린다. 서버 종료 시 취소될 수 있으며 서버 재시작 후 자동 이어받는 영속 큐는 아니다.
+- **검증 근거:** 성공한 `memorizer__memory_search` 출력과 호출 인수를 실행 순서대로 Verifier에 제공한다. 검색 호출을 임의로 병합하거나 중복 제거한 새 근거로 위장하지 않는다.
 
-- 원문 근거는 사용자가 실제 입력한 문장이다.
-- 사실은 모델이 원문과 허용된 근거에서 추출한 재사용 가능한 서술이다.
-- 개념은 Sentence_Breaker가 사실을 나눈 정규화 조각이며 검색 좌표다.
-- 연결은 런타임이 정한 방향·종류·출처를 가진다. 모델이 임의로 만든 관계를 그대로 실행하지 않는다.
+추출 결과에 기억이 없을 때 검색 자체를 이유로 원문 발화를 새 사실로 승격시키지 않는다. 기억만 묻는 질문에서는 Facts가 비어 있을 수 있다. 이미 알고 있는 사실의 반복 조회와 새로운 사용자 직접 진술을 구분하는 정책은 [MCP_memorizer 추출 문서](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/extraction.md)를 따른다.
 
-주요 표는 `nodes`, `user_anchors`, `edges`, `evidence`, `memory_concept_exact`, `memory_concept_fts`다. 현재 계정의 `db_id`를 `memory_user_id`로 사용하며, 기준점 식별 키는 `anchor:user:<memory_user_id>`다. 연결은 `(from_node_id, to_node_id, relation)` 중복을 방지한다.
+## 모델에 제공되는 검색 도구
 
-새 사실에서 원문 Evidence 번호로 가는 직접 연결은 현재 저장하지 않는다. 따라서 원문 보관은 모든 사실의 출처를 완전히 역추적할 수 있다는 뜻이 아니다. 옛 `utterance` 노드와 관계 유형, 벡터 색인 표가 남아 있을 수 있지만 매 발화마다 새 Utterance를 만들거나 이전 표를 자동 삭제하지 않는다.
+MAI는 `memorizer__memory_search`라는 **MCP 서버별 이름**으로 도구를 공개한다. 모델은 `tool_manual`에서 활성화하고, 활성화 후 제공되는 구조화 스키마로 호출한다. 이전 네이티브 `memory_search`를 별도로 등록하지 않는다.
 
-## 답변 후 저장
+엔진의 `keyword`·`limit`·`node_id` 입력과 실제 검색/정렬/확장 규칙은 [MCP_memorizer 검색 계약](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md)을 참고한다. MAI는 전체 장기기억을 매 턴 무조건 프롬프트에 넣지 않는다.
 
-1. 검증이 켜진 요청에서는 최종 답변이 검증을 통과하고, 기본 검증 비활성 요청에서는 답변 전달이 확정된다. 배포 설정의 `MAI_VERIFIER_ENABLED` 기본값은 `false`다.
-2. 같은 선택 모델을 도구 없이 `think=False`로 호출해 `{"facts": [string, ...]}`를 추출한다.
-3. 추출 형식과 빈 문장을 검사하고 저장 생략 여부를 정한다.
-4. 생략 대상이 아니면 사용자 원문을 별도 근거로 보관한다.
-5. 사실을 사용자 기준점의 `asserted_fact`로 연결한다.
-6. Sentence_Breaker로 사실을 분할해 개념과 `mentions` 연결 및 색인을 만든다.
+현재 작업에서 `remote__switch_workspace(target="client")`를 선택했더라도 **메모리·인터넷·브라우저·호스트 제어 도구는 MAI 서버인 host에서 실행**한다. 선택은 작업별 Workspace 호환 도구에만 적용된다.
 
-추출 입력은 최신 사용자 원문, 직전 도우미 메시지, 승인된 최종 답변, 성공한 비기억조회 도구의 최초 `context_content`다. 실패한 실행과 `memorizer__memory_search` 결과는 제외하며, 성공한 `tool_manual`·`tool_result_read`는 현재 별도 제외하지 않는다. 출처 번호를 사실마다 검사하는 절차는 없다.
+## 정정과 시간 범위
 
-기억 조회만 했고 새 사실이 없으면 영구 저장을 생략할 수 있다. 조회와 함께 새로운 직접 진술이 있으면 도구 사용 자체가 새 사실 저장을 막지 않는다. 과거 기억을 다시 읽었다는 이유로 새 사실처럼 증폭 저장하지 않는다.
+현재 사용자의 직접 발화와 이번에 성공한 도구 결과는 과거 기억보다 우선한다. 같은 대상·속성·시간 범위에서 충돌하면 `created_at`과 사실의 유효 범위를 비교하도록 Main/Verifier에 지시한다. 조회 순위, 저장 횟수, `last_seen_at`만으로 현재 사실을 확정하지 않는다.
 
-추출 실패는 경고로 기록하고 사용자 원문 보관을 시도한다. 실패를 원문 자체의 사실화로 대신하지 않는다. 저장은 서버 비동기 작업이며 같은 사용자의 다음 요청은 이전 작업을 기다린다. 서버 종료 시 취소되고 재시작 후 이어지는 영속 큐는 아니다.
+옛 사실을 자동 삭제하거나 의미상 모순을 해결하는 별도 엔진이 완성됐다고 주장하지 않는다. 기억 검색 결과가 비어도 실제 기억 부재를 단정하지 않는다.
 
-## 개념 동일성과 검색
+## 데이터 보관·설치·검증
 
-저장 시 Sentence_Breaker가 정한 동일한 정규화 조각은 같은 개념을 재사용한다. 사실의 동일성도 현재 정확 문자열을 기준으로 하며 의미가 비슷하다는 이유만으로 합치지 않는다. 문장 분해기의 별도 누적 DB와 알고리즘 재현 조건은 [문장 분해기](sentence-breaker.md)에 모았다.
+MAI 기본 개인 데이터 디렉터리는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`다. 메모리와 분해기 누적 DB는 그 아래의 `memory.sqlite3`, `sentence_breaker.sqlite3`를 사용한다. **이 위치는 MAI 호스트의 설정**이며 독립 패키지의 기본 경로와 다르다.
 
-검색 시에는 Sentence_Breaker를 다시 호출하지 않는다.
+- 개인 DB 저장소와 경로 이전: [MAI 데이터 저장소 관리](memory-repository.md)
+- MCP 연결·활성화: [MCP 지연 로딩](mcp-lazy-loading.md)
+- 전체 요청 실행 흐름: [MAI 실행 구조](architecture.md)
+- 모델·Portable 설치: [설치 안내](../setup.md), [Portable 안내](../portable/README.md)
+- MAI 회귀 테스트: `tests/test_external_memorizer_integration.py`, `tests/test_unified_memory_lookup.py`, `tests/test_recall_ranked_limit.py`
 
-```text
-검색어 공백 분리 → 정확 일치 해시·SQLite FTS5 → 개념 후보 → 사용자 소유 사실
-```
-
-임베딩 의미 유사도 검색이 아닌 어휘 검색이다. 표현이 크게 다르면 검색어를 바꾸거나 주변 노드를 더 탐색해야 한다. 검색 결과는 개념의 동일성을 바꾸지 않는다. 시작 시 영구 개념의 색인 누락을 비파괴적으로 동기화한다. FTS5 불능이나 식별 충돌을 다른 검색 성공으로 숨기지 않는다.
-
-## 모델이 사용하는 `memorizer__memory_search` (MCP 전용)
-
-장기기억 전체를 매번 자동으로 넣지 않는다. MAI는 과거 네이티브 `memory_search`를 등록하지 않는다. 시작 시 활성화된 MCP 서버의 도구 목록을 수집해 `memorizer__memory_search`로 노출하고, 모델은 `tool_manual`에서 활성화한 뒤 단일 도구의 세 모드 중 하나를 호출한다.
-
-| 입력 | 동작 |
-|---|---|
-| `keyword`, 선택적 양수 `limit` | 주제 검색, 최종 사실 수 제한 |
-| 선택자 없이 `limit` | 최근 목록, 필수 1~50, 기본값 없음 |
-| `node_id`만 | 한 단계 이웃과 현재 사용자 기준점까지 경로 확장 |
-
-주제 검색은 중복 검색어 조각을 제거하고 조각별·전체 개념 후보를 기본 최대 12개로 제한한다. 해당 개념의 한 단계 이웃에서 현재 사용자 소유 사실을 모은다. 사실 점수는 연결된 후보의 최고 점수이며 동점은 발견 순서를 유지한다. 선택적 `limit`은 최종 사실 순위에 적용하며 생략 시 일치 사실 전체가 대상이다. 기본 사용자 사실 목록을 검색 결과에 임의로 덧붙이지 않는다.
-
-최근 목록은 기준점에 `spoke` 또는 `asserted_fact`로 직접 연결된 항목을 `last_seen_at DESC, id DESC`로 읽는다. 옛 발화도 포함될 수 있으며 제한된 목록이 전체 기억을 뜻하지 않는다.
-
-자기 기준점 확장은 기존 검색 동작을 유지한다. MCP_memorizer는 사용자별 소유 범위를 검증한다. 다중 사용자 격리와 모든 그래프 경계의 보안 감사는 계속 필요하다. `node_id`에 `keyword`나 `limit`을 함께 지정할 수 없다.
-
-요청별 작업 그래프는 조회 결과를 내부 누적한다. 모델에는 사실·옛 발화의 `node_id`, `node_type`, `data`, `created_at`, `provenance`, `evidence_id`를 보여주고 개념·내부 연결은 숨긴다. 새 사실의 `evidence_id`는 현재 보통 비어 있다. 내부 메서드 이름과 모델에 노출된 도구 이름은 구분한다.
-
-## 정정·시간·검색 누락
-
-현재 사용자 발화와 이번 실제 도구 결과가 과거 기억보다 우선한다. 동일한 대상·속성·시간 범위에서 충돌하면 `created_at`이 최신인 사실을 우선하도록 모델과 검증기에 지시한다. 발생 횟수, 검색 순위, 도구 순서나 `last_seen_at`이 최신 사실의 우선권을 대신하지 않는다.
-
-서로 다른 역사적 시점의 사실은 단순히 나중에 저장됐다는 이유로 삭제하지 않는다. 시각·출처를 비교할 수 없으면 충돌을 드러낸다. 이는 의미 충돌을 자동 해결하거나 과거 정정 사실을 물리적으로 삭제하는 전용 엔진이 완성됐다는 뜻은 아니다.
-
-검색 결과가 비었다고 기억 자체가 없음을 확정하지 않는다. 개수 제한, 어휘 차이, 개념 후보 상한, 다른 사용자 범위 때문에 나오지 않을 수 있다.
-
-예를 들어 “만년필을 좋아한다”가 저장된 뒤 “요즘은 쓰지 않는다”를 말하면 새 사실을 추출할 수 있다. 과거 취향과 현재 사용 여부는 다른 속성·시점일 수 있으므로 단순 문자열 규칙으로 이전 사실을 삭제하지 않는다. 검색·답변 시 해당 범위를 함께 판단해야 한다.
-
-## 파일·검증 위치
-
-| 범위 | 구현 |
-|---|---|
-| 영구 그래프 | `mcp_memorizer/memory/graph/schema.py`, `repository.py` |
-| 원문·사실 저장 | `mcp_memorizer/memory/runtime.py`, `extraction/service.py` |
-| 개념·검색 | `mcp_memorizer/memory/segmenter.py`, `index/sqlite_fts.py`, `recall/service.py` |
-| 모델 출력·도구 | `mcp_memorizer/memory/working.py`, `mcp_memorizer/mcp_server.py`, `mai/mcp_tools/mcp_servers.py` |
-| 저장 순서·비동기 처리 | `mai/app/runtime.py` |
-
-기억 DB는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 사용자 데이터 보관 경로이며 공개 소스 Git에서 제외해야 하고, [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
-
-MCP 서버 토글, 자동 카탈로그 초기화, 외부 플러그인 연결 방법은 [MCP 지연 로딩](mcp-lazy-loading.md)을 참고한다.
+메모리 엔진 내부의 그래프 스키마·색인·Sentence_Breaker 알고리즘 변경은 **MAI 본체 문서가 아닌 원본 프로젝트의 코드·문서에서 관리**한다.

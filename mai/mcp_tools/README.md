@@ -11,7 +11,7 @@ catalog**, and **tool_manual** discovery/activation policy.
 - `tool_manual.py` owns the model-facing initial catalog text and native
   activation schema shared by MCP and non-MCP tools.
 - `mcp_memorizer/` is a **local launcher/manifest**, not a second vendored
-  copy of the independent MCP_memorizer GitHub repository. It runs the
+  copy of the independent MCP_memorizer GitHub repository. The [memory-engine specification](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md), [search contract](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md), and [fact extraction](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/extraction.md) belong to that repository. It runs the
   installed `mcp-memorizer` Python dependency as a separate stdio MCP
   process. This avoids duplicate sources and makes package upgrades explicit.
 
