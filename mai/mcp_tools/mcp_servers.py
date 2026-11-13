@@ -21,7 +21,8 @@ from ..tools.registry import ToolRegistry, ToolRegistryError
 
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
-                              sentence_breaker_db_path: str | Path) -> Path:
+                              sentence_breaker_db_path: str | Path,
+                              config_path: str | Path | None = None) -> Path:
     """Create an editable private MCP config once, never overwrite user toggles.
 
     The built-in memorizer is configured with MAI's existing DB directory.
@@ -34,7 +35,9 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
     if root != segmenter_parent:
         raise ValueError("MCP_memorizer requires memory and segmenter DBs in the same directory")
     root.mkdir(parents=True, exist_ok=True)
-    path = root / "mcp_servers.json"
+    path = (Path(config_path).expanduser().resolve() if config_path is not None
+            else Path(__file__).with_name("mcp_servers.json"))
+    path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         config = {
             "catalog_path": "mcp_catalog.json",
