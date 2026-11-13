@@ -43,12 +43,12 @@ foreach ($port in @(8080, 8081)) {
 $env:PYTHONNOUSERSITE = '1'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:MAI_CWD = $root
-$env:MAI_UPLOAD_ROOT = Join-Path $root 'mai_uploads'
+$env:MAI_UPLOAD_ROOT = Join-Path $root 'mai/mai_uploads'
 $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $root 'portable/portable-runtimes/playwright-browsers'
-$env:MEMORY_DB_PATH = Join-Path $root 'MAI_MEMORY/memory.sqlite3'
-$env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'MAI_MEMORY/sentence_breaker.sqlite3'
-$env:CHAT_DB_PATH = Join-Path $root 'MAI_MEMORY/chat.sqlite3'
-$env:LOG_DB_PATH = Join-Path $root 'MAI_MEMORY/log.sqlite3'
+$env:MEMORY_DB_PATH = Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3'
+$env:SENTENCE_BREAKER_DB_PATH = Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3'
+$env:CHAT_DB_PATH = Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/chat.sqlite3'
+$env:LOG_DB_PATH = Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3'
 $guardEnabled = [bool]$catalog.memory_guard_enabled
 $routerPort = if ($guardEnabled) { 8081 } else { 8080 }
 $env:LLAMACPP_MEMORY_GUARD_ENABLED = if ($guardEnabled) { 'true' } else { 'false' }
@@ -84,7 +84,7 @@ try {
             '--port', '8080',
             '--min-free-vram-mib', [string]$catalog.min_free_vram_mib,
             '--min-available-ram-mib', [string]$catalog.min_available_ram_mib,
-            '--telemetry-path', ('"' + (Join-Path $root 'MAI_MEMORY/gpu_ram_safety.jsonl') + '"'))
+            '--telemetry-path', ('"' + (Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl') + '"'))
         $gateway = Start-Process -FilePath $python -ArgumentList $gatewayArgs -WorkingDirectory $root -PassThru -NoNewWindow
         $gatewayReady = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
