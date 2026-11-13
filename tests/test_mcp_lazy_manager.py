@@ -158,7 +158,8 @@ def test_default_memory_mcp_config_is_created_once_and_preserved(tmp_path):
     from mai.mcp_tools.mcp_servers import ensure_default_mcp_config
     path = ensure_default_mcp_config(
         memory_db_path=tmp_path / "memory.sqlite3",
-        sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3")
+        sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3",
+        config_path=tmp_path / "mcp_servers.json")
     body = json.loads(path.read_text(encoding="utf-8"))
     assert body["servers"][0]["enabled"] is True
     assert body["servers"][0]["id"] == "memorizer"
@@ -167,7 +168,8 @@ def test_default_memory_mcp_config_is_created_once_and_preserved(tmp_path):
     path.write_text(json.dumps(body), encoding="utf-8")
     assert ensure_default_mcp_config(
         memory_db_path=tmp_path / "memory.sqlite3",
-        sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3") == path
+        sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3",
+        config_path=tmp_path / "mcp_servers.json") == path
     assert json.loads(path.read_text(encoding="utf-8"))["servers"][0]["enabled"] is False
 
 
