@@ -23,7 +23,7 @@ dependencies = [
   "scipy>=1.13",
   "faster-whisper>=1.1",
   "numpy>=1.24",
-  "mcp-memorizer @ git+https://github.com/FoggyCaligo/MCP_memorizer.git@923a1fcdb9bbdffd92ad68252471307c294a3080",
+  "mcp-memorizer @ git+https://github.com/FoggyCaligo/MCP_memorizer.git@1742c95c4a7815a6bd9ab5c94daa6d9c826fae3f",
   "tree-sitter>=0.25,<0.27",
   "tree-sitter-javascript>=0.23",
   "tree-sitter-typescript>=0.23",
