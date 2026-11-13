@@ -315,6 +315,17 @@ class AgentLoop:
                                    }, ensure_ascii=False, separators=(",", ":"))
                                    + ". Refer to original tool outputs or tool_result_read for factual claims.",
                     })
+                workspace = getattr(self.registry, "workspace", None)
+                if workspace is not None:
+                    model_history.append({
+                        "role": "system",
+                        "content": "Current task workspace (host-verified): "
+                                   + workspace.target
+                                   + ". Workspace-capable tools use this target; "
+                                   "host-only tools remain on the MAI host. "
+                                   "To change location use remote__switch_workspace, "
+                                   "not a per-tool remote argument.",
+                    })
                 _insert_tool_catalog(model_history, self.registry, activated_order)
                 active_tools = (manual_schema, *self.registry.native_schemas(activated_order))
                 active_tool_names = frozenset({"tool_manual", *activated_order})
@@ -637,6 +648,11 @@ class AgentLoop:
                                 available_tool_names=active_tool_names,
                                 activated_tool_names=activated_tool_names,
                             )
+                            if call.name == "remote__switch_workspace" and execution.ok:
+                                # Location changes invalidate read results and
+                                # permanent failures from the previous workspace.
+                                read_cache.clear()
+                                permanent_failure_cache.clear()
                             if _permanent_read_failure(call.name, execution):
                                 permanent_failure_cache[call_fp] = execution
                             if reuse_enabled and cacheable and execution.ok and execution.handler_started:
