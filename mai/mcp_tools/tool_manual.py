@@ -52,7 +52,7 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, s
     model_history.insert(catalog_position, {
         "role": "system",
         "content": (
-            "Native tool activation contract: the tool catalog below lists tools "
+            "Tool activation contract: the tool catalog below lists tools "
             "available in this run, but their parameter schemas are not initially exposed. "
             "Call tool_manual with exact tool names to activate them. "
             "On the next round, the activated tools can be called directly. "
