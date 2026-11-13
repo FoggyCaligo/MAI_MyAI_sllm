@@ -86,6 +86,6 @@
 | 모델 출력·도구 | `mcp_memorizer/memory/working.py`, `mcp_memorizer/mcp_server.py`, `mai/mcp_tools/mcp_servers.py` |
 | 저장 순서·비동기 처리 | `mai/app/runtime.py` |
 
-기억 DB는 `MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 사용자 데이터 보관 경로이며 공개 소스 Git에서 제외해야 하고, [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
+기억 DB는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3`, 분해기 상태는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3`다. 이 폴더는 사용자 데이터 보관 경로이며 공개 소스 Git에서 제외해야 하고, [저장소 분리·이전 안내](memory-repository.md)에서 별도로 관리한다. 백업·계정 초기화·대화 DB 경로는 [설치](../setup.md)와 [Portable 백업](../portable/README.md)을 따른다. 검사는 `tests/test_memory_*.py`, `test_unified_memory_lookup.py`, `test_recall_ranked_limit.py`, `test_sqlite_fts_index.py`를 참고한다.
 
 MCP 서버 토글, 자동 카탈로그 초기화, 외부 플러그인 연결 방법은 [MCP 지연 로딩](mcp-lazy-loading.md)을 참고한다.
