@@ -192,7 +192,11 @@ class MCPConnectionManager:
 
     def __init__(self, config_path: str | Path, *,
                  memory_user_id: str | None = None,
-                 workspace: WorkspaceContext | None = None) -> None:
+                 workspace: WorkspaceContext | None = None,
+                 host_download_links: Any | None = None,
+                 host_tool_result_store: Any | None = None) -> None:
+        self.host_download_links = host_download_links
+        self.host_tool_result_store = host_tool_result_store
         self.config_path = Path(config_path).expanduser().resolve()
         self.memory_user_id = memory_user_id
         self.workspace = workspace
@@ -422,6 +426,30 @@ class MCPConnectionManager:
         response = await self._sessions[entry["server"]].call_tool(entry["name"], dict(arguments))
         if response.isError:
             raise MCPConnectionError(f"MCP tool {name} returned an error: {response.content}")
+        if entry["server"] == "host":
+            # Stateful owner-only actions must never run inside an MCP child.
+            # Ignore child-provided result fields; execute only the validated,
+            # model-supplied arguments on the MAI host.
+            action = entry["name"]
+            if action == "file_download_link":
+                if self.host_download_links is None or set(arguments) != {"path"}:
+                    raise MCPConnectionError("host file download control unavailable")
+                return self.host_download_links.create(
+                    arguments["path"], base_url=os.environ.get("MAI_PUBLIC_BASE_URL", ""),
+                )
+            if action == "tool_result_read":
+                if self.host_tool_result_store is None or set(arguments) != {"result_id", "offset", "limit"}:
+                    raise MCPConnectionError("host tool result control unavailable")
+                return self.host_tool_result_store.read(**dict(arguments))
+            if action == "restart":
+                if set(arguments) != {"update"} or type(arguments["update"]) is not bool:
+                    raise MCPConnectionError("invalid host restart request")
+                from portable.restart_mai import detach
+                return await asyncio.wait_for(
+                    asyncio.to_thread(detach, update=arguments["update"], await_handoff=True),
+                    timeout=15,
+                )
+            raise MCPConnectionError(f"unsupported host MCP action: {action}")
         if entry["server"] == "remote" and entry["name"] == "switch_workspace":
             if self.workspace is None:
                 raise MCPConnectionError("Workspace control unavailable for this agent run")
