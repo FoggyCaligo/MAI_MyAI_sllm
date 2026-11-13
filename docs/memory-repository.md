@@ -19,7 +19,7 @@ MAI 저장소 루트의 Git Bash에서 다음을 실행한다.
 git clone https://github.com/FoggyCaligo/MAI_MEMORY.git mai/mcp_tools/mcp_memorizer/MAI_MEMORY
 ```
 
-이미 이전 이름인 `MAI_MyAI_sllm_Memory/`로 클론했다면 다시 클론하지 않고 Git Bash에서 `mv MAI_MyAI_sllm_Memory MAI_MEMORY`로 디렉터리 이름을 변경할 수 있다. 다만 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`가 이미 있다면 덮어쓰지 않는다. 저장소 자체 이름도 GitHub에서 `MAI_MEMORY`로 변경되었으므로 기존 체크아웃에서는 `git -C MAI_MEMORY remote set-url origin https://github.com/FoggyCaligo/MAI_MEMORY.git`로 origin 주소를 갱신한다. 비공개 저장소이므로 GitHub 접근 권한과 인증이 필요하다.
+이미 이전 이름인 `MAI_MyAI_sllm_Memory/`로 클론했다면 다시 클론하지 않고 Git Bash에서 `mv MAI_MyAI_sllm_Memory mai/mcp_tools/mcp_memorizer/MAI_MEMORY`로 디렉터리 이름을 변경할 수 있다. 다만 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`가 이미 있다면 덮어쓰지 않는다. 저장소 자체 이름도 GitHub에서 `MAI_MEMORY`로 변경되었으므로 기존 체크아웃에서는 `git -C mai/mcp_tools/mcp_memorizer/MAI_MEMORY remote set-url origin https://github.com/FoggyCaligo/MAI_MEMORY.git`로 origin 주소를 갱신한다. 비공개 저장소이므로 GitHub 접근 권한과 인증이 필요하다.
 
 ## 2. 기존 data 폴더 이전 (필요한 경우에만)
 
