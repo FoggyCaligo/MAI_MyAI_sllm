@@ -26,11 +26,11 @@ MAI 프로젝트의 깃허브 레포를 클론(다운로드)한다.
 클론한 레포에 해당하는 폴더로 이동한다.
 **./mai.sh setup** 
 MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 묶은 설치스크립트를 실행한다.( 다운로드 하는 모든 목록은 3번에서 상세하게 설명한다.)
-`setup`은 시스템 RAM 용량과 관계없이 기본 Ornith 1.5 9B Q4_K_M 및 mmproj를 `portable/portable-models/gguf/ornith_1.5_9b_Q4/`에 자동 설치한다. 두 파일의 SHA-256을 검증하고 정상 파일은 재사용하며 손상된 파일을 덮어쓰지 않는다. Gemma 4는 별도 선택 가능한 모델로 유지하며 필요한 경우 `portable/install_default_model.py --gemma`로 설치할 수 있다.
+`setup`은 시스템 RAM 용량과 관계없이 기본 Ornith 1.5 9B Q8_0 및 mmproj를 `portable/portable-models/gguf/ornith_1.5_9b_Q8/`에 자동 설치한다. 두 파일의 SHA-256을 검증하고 정상 파일은 재사용하며 손상된 파일을 덮어쓰지 않는다. Gemma 4는 별도 선택 가능한 모델로 유지하며 필요한 경우 `portable/install_default_model.py --gemma`로 설치할 수 있다.
 
 #### 3. 설치 스크립트가 하는 것
 - Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
-- 기본 Ornith 1.5 9B Q4_K_M 및 mmproj 다운로드 (RAM 용량 무관, 공식 Hugging Face SHA-256 검증); Gemma 4는 선택적 다운로드
+- 기본 Ornith 1.5 9B Q8_0 및 mmproj 다운로드 (RAM 용량 무관, 공식 Hugging Face SHA-256 검증); Gemma 4는 선택적 다운로드
 - 프로젝트 루트에 있는 `pyproject.toml`의 기본·개발 의존성, Playwright Chromium 다운로드
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
