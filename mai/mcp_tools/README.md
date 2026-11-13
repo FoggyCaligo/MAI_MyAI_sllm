@@ -16,7 +16,7 @@ catalog**, and **tool_manual** discovery/activation policy.
   process. This avoids duplicate sources and makes package upgrades explicit.
 
 To enable or disable any server, edit
-`MAI_MEMORY/mcp_servers.json` and restart MAI. No uninstallation or
+`mai/mcp_tools/mcp_servers.json` and restart MAI. No uninstallation or
 download is needed when toggling `enabled`. Private memory databases
 remain under `MAI_MEMORY/`, never here.
 
