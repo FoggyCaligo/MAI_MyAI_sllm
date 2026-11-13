@@ -17,13 +17,12 @@ tool calls remain lazy: only the server selected through `tool_manual`
 is reconnected, its live schema is verified, and its native schema is
 then exposed to the model.
 
-The first start automatically creates `MAI_MEMORY/mcp_servers.json` with
+The first start automatically creates `mai/mcp_tools/mcp_servers.json` with
 Memorizer enabled and a command pointing to MAI's own Portable Python.
 The file is **never overwritten** by later starts, so settings survive.
 An explicit `MAI_MCP_CONFIG` absolute path overrides that default for
 advanced configurations. The resolved catalog is stored beside the
-config as `mcp_catalog.json`. Both default files stay in the untracked
-private `MAI_MEMORY` directory.
+config as `mcp_catalog.json`. Both default files stay in the untracked `mai/mcp_tools/` directory; database files remain in `MAI_MEMORY/`.
 
 Example configuration:
 
