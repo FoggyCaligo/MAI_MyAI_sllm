@@ -37,8 +37,6 @@ $exe = Join-Path $publish 'MAI.exe'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'MAI.exe was not produced.' }
 
 New-Item -ItemType Directory -Force -Path $output | Out-Null
-$placeholder = Join-Path $output '.gitkeep'
-if (Test-Path -LiteralPath $placeholder) { Remove-Item -LiteralPath $placeholder -Force }
 Copy-Item -LiteralPath $exe -Destination (Join-Path $output 'MAI.exe')
 
 # Never copy untracked credentials or data; include only source under known paths.
