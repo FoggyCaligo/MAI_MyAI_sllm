@@ -452,7 +452,7 @@ class MCPConnectionManager:
         })
         if self.workspace is not None and entry["server"] in workspace_groups:
             snapshot = self.workspace.snapshot()
-            if snapshot.target == "remote":
+            if snapshot.target == "client":
                 from ..remote.target import ExecutionTarget
                 from ..remote.session import RemoteExecutionError
                 session_id = self.workspace.validate_remote(snapshot)
@@ -502,7 +502,7 @@ class MCPConnectionManager:
                 raise MCPConnectionError("Workspace control unavailable for this agent run")
             # Never accept the target from a result produced by an untrusted
             # server: the registered input is the sole requested target.
-            if set(arguments) != {"target"} or arguments["target"] not in ("local", "remote"):
+            if set(arguments) != {"target"} or arguments["target"] not in ("host", "client"):
                 raise MCPConnectionError("Invalid workspace selection contract")
             return self.workspace.switch(arguments["target"])
         result = (
