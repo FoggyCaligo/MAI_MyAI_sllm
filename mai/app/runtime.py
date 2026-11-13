@@ -29,14 +29,15 @@ from ..memory.admission import (
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from ..memory.extraction.service import ModelFactExtractor
-from ..memory.graph.repository import MemoryGraphRepository
-from ..memory.index import SqliteFtsConceptIndex
-from ..memory.recall.service import RecallService
-from ..memory.runtime import MemoryRuntime
-from ..memory.segmenter import SentenceBreakerSegmenter
+from mcp_memorizer.extraction.service import ModelFactExtractor
+from mcp_memorizer.integrations.mai import MAIExtractionAdapter
+from mcp_memorizer.memory.graph.repository import MemoryGraphRepository
+from mcp_memorizer.memory.index import SqliteFtsConceptIndex
+from mcp_memorizer.memory.recall.service import RecallService
+from mcp_memorizer.memory.runtime import MemoryRuntime
+from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter
 from ..memory.tools import register_memory_tools
-from ..memory.working import WorkingGraph
+from mcp_memorizer.memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
@@ -188,7 +189,7 @@ class MAIRuntime:
             yield
 
     async def _postprocess_memory_with_model_scope(self, **kwargs):
-        adapter = getattr(kwargs.get("fact_extractor"), "adapter", None)
+        adapter = getattr(getattr(kwargs.get("fact_extractor"), "adapter", None), "llm_adapter", None)
         if isinstance(adapter, CloudAPIAdapter):
             await self._postprocess_memory(**kwargs)
         else:
@@ -230,7 +231,7 @@ class MAIRuntime:
                     ModelConfig(model=clean_model, host=self.llamacpp_host, think=False),
                     router=self._llamacpp_router,
                 )
-            extractor = ModelFactExtractor(adapter)
+            extractor = ModelFactExtractor(MAIExtractionAdapter(adapter))
             self._fact_extractors[clean_model] = extractor
         return extractor
 
