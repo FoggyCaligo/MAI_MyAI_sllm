@@ -198,7 +198,7 @@ def main() -> None:
     parser.add_argument("--lock-wait-timeout-seconds", type=float, default=30.0)
     parser.add_argument("--min-free-vram-mib", type=int, default=1024)
     parser.add_argument("--min-available-ram-mib", type=int, default=6144)
-    parser.add_argument("--telemetry-path", type=Path, default=Path("MAI_MEMORY/gpu_ram_safety.jsonl"))
+    parser.add_argument("--telemetry-path", type=Path, default=Path("mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl"))
     args = parser.parse_args()
     uvicorn.run(create_app(
         upstream=args.upstream,
