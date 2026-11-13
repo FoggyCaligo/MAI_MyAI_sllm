@@ -6,15 +6,15 @@
 
 ## 검증 순서와 설정
 
-Main·Verifier·기억 추출은 현재 UI에서 선택한 동일 llama.cpp GGUF를 사용한다. 서로 다른 모델을 지정하는 `VERIFIER_MODEL` 구성은 폐기했다. 수치 의미검증과 최종 사실검증은 **같은 모델의 별도 호출**이며 각각의 프롬프트·출력 스키마를 유지한다. 배포 `settings.yaml`에는 `MAI_VERIFIER_BLOCKING_MODE: critical`이 지정되어 있다. `critical`은 입증된 중대한 문제 위주로 차단하고 `strict`는 모든 유효한 이슈를 차단한다. 직접 `FinalGroundingVerifier`를 생성하면 기본 모드는 `strict`다. 모델의 문맥 상한은 llama.cpp 런처 설정을 따르며 추가 백엔드로 fallback하지 않는다.
+Main·Verifier·기억 추출은 현재 UI에서 선택한 동일 llama.cpp GGUF를 사용한다. 서로 다른 모델을 지정하는 `VERIFIER_MODEL` 구성은 폐기했다. 검증 초안마다 **단일 구조화 모델 호출**로 활성화된 수치·사실·작업 근거·품질 프롬프트를 통합한다. Python 수치 사전 검사는 모델 호출 없이 먼저 실행된다. 배포 `settings.yaml`에는 `MAI_VERIFIER_BLOCKING_MODE: critical`이 지정되어 있다. `critical`은 입증된 중대한 문제 위주로 차단하고 `strict`는 모든 유효한 이슈를 차단한다. 직접 `FinalGroundingVerifier`를 생성하면 기본 모드는 `strict`다. 모델의 문맥 상한은 llama.cpp 런처 설정을 따르며 추가 백엔드로 fallback하지 않는다.
 
-1. **수치 사전 검사:** Python이 `conversation_context`의 유저 발화와 현재 요청의 성공한 도구 결과에서 수치·날짜를 대조한다. 단순 표기 불일치는 독립 숫자검증 모델 호출로 보내며 Python 예외는 오류로 유지한다.
-2. **최종 사실검토:** 별도 호출에서 현재 답변 후보의 주장, 근거 범위, 날짜, 외부 작업 성공 여부를 확인한다. 수치검증 프롬프트나 수치 전용 응답 스키마를 이 호출에 섞지 않는다.
-3. **선택적 답변 품질 검토:** 앞 단계가 통과한 경우에만 요청 부합도·정보 충족도·정직한 부분 답변 여부를 검사한다. 초안, 대화 요청, 사실 검토 결과를 받으며 도구 원문 전체는 받지 않는다.
+1. **수치 사전 검사:** Python이 `conversation_context`의 유저 발화와 현재 요청의 성공한 도구 결과에서 수치·날짜를 대조한다. 단순 표기 불일치는 통합 모델 요청 내 수치검증 기준으로 보내며 Python 예외는 오류로 유지한다.
+2. **통합 최종 검토:** 단일 호출에서 현재 답변 후보의 주장, 근거 범위, 날짜, 외부 작업 성공 여부를 확인한다. 수치검증 프롬프트나 수치 전용 응답 스키마를 이 호출에 섞지 않는다.
+3. **독립 설정:** `MAI_VERIFIER_NUMERIC`, `MAI_VERIFIER_FACTUAL`, `MAI_VERIFIER_ACTION_GROUNDING`, `MAI_ANSWER_QUALITY_REVIEW`를 각각 true/false로 설정한다. `mai/agent/verifier_prompts/`의 해당 md 파일만 통합 프롬프트에 포함한다. 요청당 정상 모델 검증 호출은 1회이고 형식·통신 재시도는 예외다.
 
 수치 정규화는 `Decimal`의 문맥 정밀도에 의존하지 않는다. 큰 정수·긴 소수의 유효 자릿수를 유지하고, `만·억` 환산은 십진 지수만 이동한다. 소수부 끝의 불필요한 0만 제거하며 큰 숫자를 생략하거나 정규화 예외를 성공으로 처리하지 않는다.
 
-`MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성해도 기본값은 `false`다. 명시적으로 `true`로 설정하면 기존 Quality Review를 활성화할 수 있다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 품질 검토는 사실 검증 통과 뒤 추가 모델 호출을 수행하므로 응답 지연이 발생할 수 있다. 기존 `.env` 또는 프로세스 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 배포 기본값보다 우선한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
+`MAI_ANSWER_QUALITY_REVIEW=true`면 품질 검토를 실행하고 `false`면 생략한다. 배포 `settings.yaml`은 `false`이며 설정을 로드하지 않고 검증기를 직접 생성해도 기본값은 `false`다. 명시적으로 `true`로 설정하면 기존 Quality Review를 활성화할 수 있다. 환경변수 > `.env` > YAML 순이며 대소문자를 제외한 정확한 `true`·`false`만 허용한다. 품질 검토는 통합 모델 호출의 검증 기준에 포함되며 추가 정상 모델 호출을 발생시키지 않는다. 기존 `.env` 또는 프로세스 환경변수에 `MAI_ANSWER_QUALITY_REVIEW=false`가 있으면 배포 기본값보다 우선한다. 이 설정으로 수치·사실 검사를 끌 수 없다.
 
 사실 검토의 필수 결과는 `evidence_verdict`, `action_verdict`, `claims`, `reasons`, `retry_summary`다. 수치 사전 검사의 의미 검토는 별도의 `numeric_verdict` 및 `reason` 구조화 응답을 사용하며, 최종 사실검토에는 수치 전용 필드가 없다. 품질 검토는 `alignment_verdict`, `coverage_verdict`, `coverage_reasons` 등을 반환한다. 주장 결함은 `scope_expansion`, `contradiction`, `unsupported_inference`, `missing_evidence`로 구분한다.
 
