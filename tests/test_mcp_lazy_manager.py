@@ -201,3 +201,22 @@ def test_refresh_only_starts_enabled_servers_and_replaces_stale_catalog(tmp_path
     registry = ToolRegistry()
     MCPConnectionManager(manager.config_path).register(registry)
     assert registry.names() == ("first__memory_search",)
+
+
+def test_existing_legacy_mcp_toggle_is_migrated_without_overwrite(tmp_path):
+    from mai.mcp_tools.mcp_servers import ensure_default_mcp_config
+    data = tmp_path / "MAI_MEMORY"
+    data.mkdir()
+    legacy = data / "mcp_servers.json"
+    legacy.write_text(json.dumps({"servers": [{
+        "id": "memorizer", "enabled": False, "command": "prior-portable-python"
+    }]}), encoding="utf-8")
+    new_path = tmp_path / "mai" / "mcp_tools" / "mcp_servers.json"
+    result = ensure_default_mcp_config(
+        memory_db_path=data / "memory.sqlite3",
+        sentence_breaker_db_path=data / "sentence_breaker.sqlite3",
+        config_path=new_path,
+    )
+    assert result == new_path
+    assert json.loads(new_path.read_text(encoding="utf-8"))["servers"][0]["enabled"] is False
+    assert legacy.exists()
