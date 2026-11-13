@@ -41,3 +41,8 @@ dist/
 # Local MCP runtime configuration and discovered catalogs (private)
 /mcp_servers.json
 /mcp_catalog.json
+
+# Editable MCP config and generated catalog, colocated with MCP manager
+/mai/mcp_tools/mcp_servers.json
+/mai/mcp_tools/mcp_catalog.json
+/mai/mcp_tools/*.tmp
