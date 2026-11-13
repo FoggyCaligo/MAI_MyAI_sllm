@@ -138,3 +138,8 @@ python scripts/audit_codebase.py
 정적 코드 분석은 **미사용 확정 또는 테스트 커버리지 측정이 아님**. 이전 정적 감사 원본: [.old/REFERENCE_AUDIT.md](.old/REFERENCE_AUDIT.md).
 
 **검증 한계:** 코드에 구현된 기능과 실제 Windows/Linux GPU·네트워크·브라우저·원격 워커에서 정상 동작한 기능은 구분한다. 테스트 실패를 정상 상태로 간주하지 않는다.
+
+
+
+### Function-group MCP tool boundary
+기능별 MCP 구조와 전체 하위 도구 매핑, 실행 위치, Lazy activation, schema-v5 마이그레이션은 [MCP 문서](mcp-lazy-loading.md)를 참고한다. Owner는 기본으로 기능별 서버를 사용하고, Trial 축소 도구 권한은 기존 Native 레지스트리로 격리한다.
