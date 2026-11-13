@@ -1,11 +1,11 @@
 import asyncio
 from datetime import datetime, timezone
 
-from mai.memory.graph.repository import MemoryGraphRepository
-from mai.memory.index import ConceptHit
-from mai.memory.recall.service import RecallService
-from mai.memory.runtime import MemoryRuntime
-from mai.memory.working import WorkingGraph
+from mcp_memorizer.memory.graph.repository import MemoryGraphRepository
+from mcp_memorizer.memory.index import ConceptHit
+from mcp_memorizer.memory.recall.service import RecallService
+from mcp_memorizer.memory.runtime import MemoryRuntime
+from mcp_memorizer.memory.working import WorkingGraph
 
 NOW = datetime(2026, 8, 27, 15, 24, tzinfo=timezone.utc)
 
