@@ -22,6 +22,6 @@ def test_mcp_sources_are_only_in_common_package():
     assert (ROOT / "mai" / "mcp_tools" / "mcp_servers.example.json").exists()
 
 def test_memory_prompt_has_one_canonical_owner():
-    assert "latest_user_message" in _FACT_EXTRACTION_SYSTEM
+    assert "durable, user-grounded facts" in _FACT_EXTRACTION_SYSTEM
     assert "created_at" in MEMORY_MODEL_CONTEXT["instruction"]
     assert callable(memory_launcher.main)
