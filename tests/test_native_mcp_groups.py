@@ -190,7 +190,9 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
         "schema_version": 3,
         "catalog_path": "mcp_catalog.json",
         "servers": [{"id": group, "enabled": True,
-                     "command": "python", "args": []} for group in groups]
+                     "command": "python", "args": []} for group in groups] +
+                   [{"id": "host", "enabled": True,
+                     "command": "python", "args": []}]
     }), encoding="utf-8")
     entries = []
     for group in groups:
@@ -202,6 +204,11 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
             "description": definition.description, "schema": schema,
             "schema_hash": _checksum(schema), "instructions": "",
         })
+    host_schema = {"type": "object", "properties": {"update": {"type": "boolean"}},
+                   "required": ["update"]}
+    entries.append({"server": "host", "name": "restart", "description": "Restart host",
+                    "schema": host_schema, "schema_hash": _checksum(host_schema),
+                    "instructions": ""})
     (tmp_path / "mcp_catalog.json").write_text(json.dumps(
         {"version": 1, "tools": entries}), encoding="utf-8")
     monkeypatch.setenv("MAI_MCP_FUNCTIONAL_TOOLS", "true")
@@ -216,7 +223,10 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
     assert registry.mcp_manager is not None
     assert all(registry.has(group + "__" + record["name"])
                for group, record in zip(groups, entries))
-    assert registry.has("restart_mai") or registry.has("restart")
+    assert registry.has("host__restart")
+    assert not registry.has("restart")
+    assert not registry.has("tool_result_read")
+    assert not registry.has("file_download_link")
     assert not registry.has("calculator")
     assert not registry.has("web_search")
 
@@ -243,4 +253,52 @@ def test_every_group_starts_as_independent_stdio_server(group):
                 assert names == expected
                 assert all(tool.inputSchema.get("type") == "object"
                            for tool in listed.tools)
+    asyncio.run(run())
+
+
+def test_host_mcp_actions_keep_ownership_of_state(tmp_path):
+    import asyncio
+    import sys
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager
+    from mai.tools.registry import ToolRegistry
+    from mai.llm.models import NativeToolCall
+
+    class DownloadLinks:
+        def create(self, path, *, base_url):
+            return {"markdown_link": f"[file]({path})", "base_url": base_url}
+
+    class ResultStore:
+        def read(self, *, result_id, offset, limit):
+            return f"{result_id}:{offset}:{limit}"
+
+    async def run():
+        config = tmp_path / "mcp_servers.json"
+        config.write_text(json.dumps({
+            "schema_version": 5,
+            "functional_mode": True,
+            "servers": [{"id": "host", "enabled": True,
+                         "command": sys.executable,
+                         "args": ["-m", "mai.mcp_tools.MCP_host"]}],
+        }), encoding="utf-8")
+        manager = MCPConnectionManager(
+            config, host_download_links=DownloadLinks(),
+            host_tool_result_store=ResultStore(),
+        )
+        names = await manager.refresh_catalog()
+        assert "host.file_download_link" in names
+        assert "host.tool_result_read" in names
+        assert "host.restart" in names
+        registry = ToolRegistry()
+        manager.register(registry)
+        await manager.activate(["host__file_download_link", "host__tool_result_read"])
+        response = await registry.invoke(NativeToolCall(
+            name="host__file_download_link", arguments={"path": "a.txt"}
+        ))
+        assert response["markdown_link"] == "[file](a.txt)"
+        page = await registry.invoke(NativeToolCall(
+            name="host__tool_result_read", arguments={
+                "result_id": "test", "offset": 12, "limit": 20}
+        ))
+        assert page == "test:12:20"
+        await manager.close()
     asyncio.run(run())
