@@ -39,21 +39,21 @@ def test_catalog_is_lazy_and_namespaced(tmp_path):
     registry = ToolRegistry()
     manager.register(registry)
     assert manager._sessions == {}
-    assert registry.names() == ("first.memory_search", "second.memory_search")
+    assert registry.names() == ("first__memory_search", "second__memory_search")
     history = [{"role": "user", "content": "Find my plans."}]
     _insert_tool_catalog(history, registry)
     catalog = json.loads(history[0]["content"].split("Tool catalog (JSON): ", 1)[1])
-    assert catalog[0]["name"] == "first.memory_search"
+    assert catalog[0]["name"] == "first__memory_search"
     assert "Keyword memory search" in catalog[0]["description"]
     assert "parameters" not in history[0]["content"]
-    schema = registry.native_schemas(["first.memory_search"])[0]
+    schema = registry.native_schemas(["first__memory_search"])[0]
     assert schema["function"]["parameters"] == records[0]["schema"]
 
 def test_json_schema_rejects_unknown_argument(tmp_path):
     manager, _ = make_manager(tmp_path)
     registry = ToolRegistry()
     manager.register(registry)
-    definition = registry.get("first.memory_search")
+    definition = registry.get("first__memory_search")
     assert definition.validate_arguments({"keyword": "MAI", "limit": 3}) == {"keyword": "MAI", "limit": 3}
     with pytest.raises(ToolArgumentsError, match="Additional properties"):
         definition.validate_arguments({"query": "MAI", "keyword": "MAI"})
@@ -76,12 +76,12 @@ def test_activation_connects_only_selected_server_and_detects_schema_changes(tmp
         manager._sessions[server] = Session(server)
         return manager._sessions[server]
     manager._connect = connect
-    asyncio.run(manager.activate(["first.memory_search"]))
+    asyncio.run(manager.activate(["first__memory_search"]))
     assert connected == ["first"]
     assert "second" not in manager._sessions
     records[0]["schema"] = {"type": "object", "properties": {}, "additionalProperties": False}
     with pytest.raises(MCPConnectionError, match="contract changed"):
-        asyncio.run(manager.activate(["first.memory_search"]))
+        asyncio.run(manager.activate(["first__memory_search"]))
 
 def test_missing_catalog_means_no_process_started(tmp_path):
     config = tmp_path / "servers.json"
@@ -122,9 +122,9 @@ def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
         manager.register(registry)
         assert manager._sessions == {}
         try:
-            await manager.activate(["memorizer.memory_search"])
+            await manager.activate(["memorizer__memory_search"])
             output = await registry.invoke(NativeToolCall(
-                name="memorizer.memory_search", arguments={"limit": 5}))
+                name="memorizer__memory_search", arguments={"limit": 5}))
             assert output is not None
             assert "memorizer" in manager._sessions
         finally:
@@ -143,14 +143,14 @@ def test_disabled_server_not_listed_and_toggle_without_reinstall(tmp_path):
     disabled = MCPConnectionManager(config)
     registry = ToolRegistry()
     disabled.register(registry)
-    assert registry.names() == ("first.memory_search",)
+    assert registry.names() == ("first__memory_search",)
     assert "second" not in disabled.servers
     body["servers"][1]["enabled"] = True
     config.write_text(json.dumps(body), encoding="utf-8")
     enabled = MCPConnectionManager(config)
     registry = ToolRegistry()
     enabled.register(registry)
-    assert registry.names() == ("first.memory_search", "second.memory_search")
+    assert registry.names() == ("first__memory_search", "second__memory_search")
 
 
 def test_default_memory_mcp_config_is_created_once_and_preserved(tmp_path):
@@ -194,4 +194,4 @@ def test_refresh_only_starts_enabled_servers_and_replaces_stale_catalog(tmp_path
     assert started == ["first"]
     registry = ToolRegistry()
     MCPConnectionManager(manager.config_path).register(registry)
-    assert registry.names() == ("first.memory_search",)
+    assert registry.names() == ("first__memory_search",)
