@@ -69,7 +69,7 @@ def test_critical_keeps_missing_evidence_as_audit_warning():
     assert result.ok
     assert not result.issues
     assert result.review_details["nonblocking_warnings"][0]["code"] == "claim_grounding_failed"
-    assert "FACTUAL VERIFICATION:" in reviewer.calls[0].messages[0]["content"]
+    assert "critical-error reviewer" in reviewer.calls[0].messages[0]["content"]
 
 
 def test_critical_blocks_observed_contradiction():
