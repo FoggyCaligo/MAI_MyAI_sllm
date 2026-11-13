@@ -10,7 +10,7 @@ catalog**, and **tool_manual** discovery/activation policy.
   its schema, and exposes only selected tool schemas.
 - `tool_manual.py` owns the model-facing initial catalog text and native
   activation schema shared by MCP and non-MCP tools.
-- `MCP_memorizer/` is a **local launcher/manifest**, not a second vendored
+- `mcp_memorizer/` is a **local launcher/manifest**, not a second vendored
   copy of the independent MCP_memorizer GitHub repository. It runs the
   installed `mcp-memorizer` Python dependency as a separate stdio MCP
   process. This avoids duplicate sources and makes package upgrades explicit.
