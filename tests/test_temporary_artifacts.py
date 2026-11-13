@@ -251,3 +251,51 @@ def test_mcp_failed_command_still_registers_scratch(tmp_path: Path) -> None:
             }))
         ledger.cleanup()
     assert not scratch.exists()
+
+
+def test_mcp_client_temporary_write_is_rejected_without_execution(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager
+    from mai.remote.session import RemoteExecutionError
+
+    class ShouldNotRunSession:
+        async def call_tool(self, name, arguments):
+            raise AssertionError("client temporary file must not execute on host")
+
+    manager = MCPConnectionManager.__new__(MCPConnectionManager)
+    manager.workspace = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(target="client"),
+    )
+    manager.catalog = {
+        "mai_file.file_write": {"server": "mai_file", "name": "file_write"},
+    }
+    manager._sessions = {"mai_file": ShouldNotRunSession()}
+    manager.servers = {"mai_file": {"env": {"MAI_CWD": str(tmp_path)}}}
+
+    with pytest.raises(RemoteExecutionError, match="remote scratch cleanup is not implemented"):
+        run(manager.call("mai_file.file_write", {
+            "path": str(tmp_path / "client-temp.ps1"),
+            "content": "test",
+            "lifecycle": "temporary",
+        }))
+    assert not (tmp_path / "client-temp.ps1").exists()
+
+
+def test_native_client_temporary_write_is_rejected(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+    from mai.remote.routing import register_routed_pc_tools
+    from mai.remote.session import RemoteExecutionError
+
+    workspace = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(target="client"),
+    )
+    registry = ToolRegistry()
+    register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
+
+    with pytest.raises(RemoteExecutionError, match="remote scratch cleanup is not implemented"):
+        run(registry.get("file_write").invoke({
+            "path": str(tmp_path / "client-temp.py"),
+            "content": "test",
+            "lifecycle": "temporary",
+        }))
+    assert not (tmp_path / "client-temp.py").exists()
