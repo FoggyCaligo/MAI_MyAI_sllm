@@ -106,7 +106,7 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
         for group in GROUPS:
             if group not in installed:
                 existing["servers"].append({
-                    "id": group, "enabled": False,
+                    "id": group, "enabled": True,
                     "command": sys.executable,
                     "args": ["-m", "mai.mcp_tools.native_groups", "--group", group],
                     "env": {"MAI_CWD": str(Path(__file__).resolve().parents[2])},
@@ -116,6 +116,24 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
         if not backup.exists():
             backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         temp = path.with_suffix(".functional-groups.tmp")
+        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    if existing.get("schema_version", 1) < 4:
+        # New installations use the function-group MCP registry by default.
+        # A staging config with *all* groups intentionally disabled keeps its
+        # native tool path until its owner explicitly enables functional_mode.
+        from .native_groups import GROUPS
+        enabled_groups = {
+            entry["id"] for entry in existing["servers"]
+            if entry.get("enabled") is True
+        }
+        existing["functional_mode"] = bool(enabled_groups.intersection(GROUPS))
+        existing["schema_version"] = 4
+        backup = path.with_name("mcp_servers.pre-functional-mode.json")
+        if not backup.exists():
+            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        temp = path.with_suffix(".functional-mode.tmp")
         temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
     return path
@@ -158,6 +176,9 @@ class MCPConnectionManager:
         config = json.loads(self.config_path.read_text(encoding="utf-8"))
         if not isinstance(config, dict) or not isinstance(config.get("servers", []), list):
             raise ValueError("MCP config must contain servers array")
+        self.functional_mode = config.get("functional_mode", False)
+        if not isinstance(self.functional_mode, bool):
+            raise ValueError("MCP functional_mode must be boolean")
         self.servers: dict[str, dict[str, Any]] = {}
         for entry in config.get("servers", []):
             if not isinstance(entry, dict):
