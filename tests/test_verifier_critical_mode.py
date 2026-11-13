@@ -9,6 +9,13 @@ from mai.agent.verification import FinalGroundingVerifier, _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
 
 
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
+
+
 class Reviewer:
     def __init__(self, claim, *, action="not_applicable"):
         self.claim = claim
