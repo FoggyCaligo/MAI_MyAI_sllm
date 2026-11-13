@@ -64,3 +64,36 @@ def test_utilities_stdio_mcp_tool_list_and_call():
                 assert not result.isError
                 assert any("5" in item.text for item in result.content if hasattr(item, "text"))
     asyncio.run(run())
+
+
+def test_manager_activation_preserves_original_contract(tmp_path):
+    import asyncio
+    import sys
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager
+    from mai.tools.registry import ToolRegistry
+    from mai.llm.models import NativeToolCall
+
+    async def run():
+        config = tmp_path / "mcp_servers.json"
+        config.write_text(json.dumps({
+            "schema_version": 3,
+            "servers": [{"id": "mai_utilities", "enabled": True,
+                         "command": sys.executable,
+                         "args": ["-m", "mai.mcp_tools.native_groups",
+                                  "--group", "mai_utilities"]}],
+        }), encoding="utf-8")
+        manager = MCPConnectionManager(config)
+        assert "mai_utilities.calculator" in await manager.refresh_catalog()
+        registry = ToolRegistry()
+        manager.register(registry)
+        registry.mcp_manager = manager
+        definition = registry.get("mai_utilities__calculator")
+        schema = definition.metadata["mcp_input_schema"]
+        assert "expression" in schema["properties"]
+        await manager.activate(["mai_utilities__calculator"])
+        result = await registry.invoke(NativeToolCall(
+            name="mai_utilities__calculator", arguments={"expression": "7*8"}
+        ))
+        assert "56" in json.dumps(result)
+        await manager.close()
+    asyncio.run(run())
