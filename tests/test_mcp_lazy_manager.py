@@ -62,6 +62,7 @@ def test_json_schema_rejects_unknown_argument(tmp_path):
 
 def test_activation_connects_only_selected_server_and_detects_schema_changes(tmp_path):
     manager, records = make_manager(tmp_path)
+    manager.register(ToolRegistry())
     connected = []
     class Session:
         def __init__(self, server):
