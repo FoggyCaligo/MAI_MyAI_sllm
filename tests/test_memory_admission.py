@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from mai.mcp_tools.MCP_memorizer.admission import (
+from mai.mcp_tools.mcp_memorizer.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
