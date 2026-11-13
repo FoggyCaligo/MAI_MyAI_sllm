@@ -247,7 +247,8 @@ class MCPConnectionManager:
                 async def invoke(**kwargs):
                     return await self.call(name, kwargs)
                 return invoke
-            description = record["description"] or f"Tool {record['name']} on MCP server {record['server']}"
+            description = (f"Model-visible tool name: {model_name}. " +
+                           (record["description"] or f"Tool {record['name']} on MCP server {record['server']}"))
             registry.add(name=model_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
                          timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
