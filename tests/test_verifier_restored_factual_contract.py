@@ -12,6 +12,7 @@ from mai.agent.verification import (
     _ClaimReviewPayload,
     _NumericReviewPayload,
     _FactualReviewPayload,
+    _UnifiedReviewPayload,
     _FACTUAL_REVIEW_SYSTEM,
 )
 from mai.llm.models import ModelTurn
@@ -27,6 +28,18 @@ def response(**kwargs):
     }
     payload.update(kwargs)
     return payload
+
+
+def unified(**overrides):
+    payload = {
+        "numeric_verdict": "supported", "numeric_reason": "",
+        "evidence_verdict": "supported", "claims": [],
+        "action_verdict": "not_applicable",
+        "alignment_verdict": "skipped", "coverage_verdict": "skipped",
+        "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed.",
+    }
+    payload.update(overrides)
+    return _UnifiedReviewPayload.model_validate(payload).model_dump(mode="json")
 
 
 class Reviewer:
@@ -67,7 +80,7 @@ def test_removed_response_fields_are_schema_violations(unexpected_key, unexpecte
 
 
 def test_claim_only_factual_review_is_accepted_without_citation_gate():
-    reviewer = Reviewer(response(claims=[{
+    reviewer = Reviewer(unified(claims=[{
         "claim": "A was stated.", "verdict": "supported",
         "defect": "none", "reason": "",
     }]))
@@ -89,34 +102,22 @@ def test_claim_only_factual_review_is_accepted_without_citation_gate():
     assert "tool_results_in_execution_order" in sent
 
 
-def test_numeric_subtask_uses_independent_review_before_factual_review():
-    class TwoStageReviewer:
-        def __init__(self):
-            self.calls = []
-
-        async def chat(self, request):
-            self.calls.append(request)
-            if len(self.calls) == 1:
-                payload = {"numeric_verdict": "supported", "reason": "Equivalent numeric value."}
-            else:
-                payload = response()
-            body = json.dumps(payload)
-            return ModelTurn(body, "", (), {"role": "assistant", "content": body})
-
-    reviewer = TwoStageReviewer()
+def test_numeric_and_factual_verdicts_are_reviewed_in_one_request():
+    reviewer = Reviewer(unified(
+        numeric_verdict="supported", numeric_reason="Equivalent numeric value.",
+    ))
     result = asyncio.run(FinalGroundingVerifier(
         reviewer_adapter=reviewer, quality_review_enabled=False,
     ).verify(candidate="The value is 1,000 units.", messages=[
         {"role": "user", "content": "The value is one thousand."},
     ], tool_results=[]))
     assert result.ok
-    assert len(reviewer.calls) == 2
-    assert reviewer.calls[0].response_format == _NumericReviewPayload.model_json_schema()
-    assert reviewer.calls[1].response_format == _FactualReviewPayload.model_json_schema()
-    factual_input = json.loads(reviewer.calls[1].messages[1]["content"])
-    assert "verified_prior_conversation" not in factual_input
-    assert "user_evidence" not in factual_input
-    assert "flagged_numeric_or_date_values" not in factual_input
+    assert len(reviewer.calls) == 1
+    assert reviewer.calls[0].response_format == _UnifiedReviewPayload.model_json_schema()
+    review_input = json.loads(reviewer.calls[0].messages[1]["content"])
+    assert "verified_prior_conversation" not in review_input
+    assert "user_evidence" not in review_input
+    assert "flagged_numeric_or_date_values" in review_input
 
 
 def test_main_grounding_instructions_retained_without_citation_or_unit_contract():
