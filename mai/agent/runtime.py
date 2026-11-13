@@ -80,20 +80,23 @@ class AgentRuntime:
                 "content": TOOL_RUNTIME_CONTEXT_CONTRACT + "\n" + json.dumps(runtime_context, ensure_ascii=False, separators=(",", ":")),
             })
         with temporary_artifact_scope() as artifacts:
-            result = await self.loop.run(
-                effective_messages,
-                think=think,
-                options=options,
-                on_tool_execution=on_tool_execution,
-                on_model_turn=on_model_turn,
-            on_round_timing=on_round_timing,
-                on_model_timeout_diagnostic=on_model_timeout_diagnostic,
-            on_model_stream_progress=on_model_stream_progress,
-                on_verification_rejection=on_verification_rejection,
-                on_verification_audit=on_verification_audit,
-            )
-            artifacts.cleanup()
-            return result
+            try:
+                return await self.loop.run(
+                    effective_messages,
+                    think=think,
+                    options=options,
+                    on_tool_execution=on_tool_execution,
+                    on_model_turn=on_model_turn,
+                    on_round_timing=on_round_timing,
+                    on_model_timeout_diagnostic=on_model_timeout_diagnostic,
+                    on_model_stream_progress=on_model_stream_progress,
+                    on_verification_rejection=on_verification_rejection,
+                    on_verification_audit=on_verification_audit,
+                )
+            finally:
+                # Also clean up when the run fails or is cancelled.
+                # Cleanup errors remain visible instead of being hidden.
+                artifacts.cleanup()
 
     async def run_user_message(
         self,
