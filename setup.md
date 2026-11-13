@@ -115,7 +115,7 @@ move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/port
 ./mai.sh check
 ./mai.sh start
 ```
-`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. 서버 시작 시 `LLAMACPP_MAIN_GGUF_PATH`에 지정된 Ornith를 기본 GGUF로 선택하며, 사용자가 이후 모델 선택 UI에서 다른 모델로 변경하는 것은 자유롭다. 선택된 모델 파일이 없거나 손상되면 다른 모델로 자동 우회하지 않고 오류를 표시한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
+`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. 서버 시작 시 **사용자가 선택한 모델 기록이 없으면** `LLAMACPP_MAIN_GGUF_PATH`의 Ornith Q8을 기본 GGUF로 사용한다. 모델 선택 UI에서 다른 모델로 전환에 성공하면 그 선택을 `selected_model.json`에 저장하며, 이후 MAI를 다시 켜도 마지막 선택을 유지한다. 기존 Q4 선택 기록이 있으면 설정 파일의 새 Q8 기본값보다 그 기록이 우선한다. 선택된 모델 파일이 없거나 손상되면 다른 모델로 자동 우회하지 않고 오류를 표시한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
 
 | 환경 | 설치 | 실행 |
 |---|---|---|
