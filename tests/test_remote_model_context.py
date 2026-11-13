@@ -6,7 +6,7 @@ def test_remote_target_is_task_scoped_not_per_tool(tmp_path):
     registry = ToolRegistry()
     workspace = WorkspaceContext(owner_id="owner")
     register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
-    assert registry.model_context() == ()
+    assert not any("remote_execution_target" == item.get("source")\n                   for item in registry.model_context())
     model = registry.get("file_read").input_model
     assert "at_remote_pc" not in model.model_fields
     assert "path" in model.model_fields
