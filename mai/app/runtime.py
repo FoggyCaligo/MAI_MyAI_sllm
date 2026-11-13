@@ -50,6 +50,7 @@ from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
+from .selected_model import SelectedModelStore
 from .uploads import principal_upload_directory
 from .main_model_images import prepare_main_image_input
 
@@ -154,7 +155,8 @@ class MAIRuntime:
         self.llm_backend = llm_backend
         self.llamacpp_host = llamacpp_host
         self.model = model
-        self.selected_model = model
+        self._selected_model_store = SelectedModelStore(memory_db_path)
+        self.selected_model = self._selected_model_store.read(configured_default=model)
         self.max_inline_tool_result_chars = max_inline_tool_result_chars
         self.upload_root = Path(upload_root).expanduser().resolve(strict=False)
         self.upload_root.mkdir(parents=True, exist_ok=True)
@@ -277,6 +279,7 @@ class MAIRuntime:
         individual model transaction.
         """
         if model in configured_models():
+            self._selected_model_store.write(model)
             self.selected_model = model
             return model
         if self.llm_backend != "llamacpp" or self._llamacpp_router is None:
@@ -291,6 +294,7 @@ class MAIRuntime:
         async with self._llamacpp_model_scope():
             async with httpx.AsyncClient(timeout=15.0) as client:
                 await self._llamacpp_router.prepare(model, client)
+            self._selected_model_store.write(model)
             self.selected_model = model
         return model
 
@@ -381,7 +385,9 @@ class MAIRuntime:
 
         previous_assistant_message = _previous_assistant_message(prior_messages)
 
-        selected_model = self.model if model is None else model.strip()
+        selected_model = (
+            self.model if principal.role is AccessRole.TRIAL else self.selected_model
+        ) if model is None else model.strip()
         if selected_model not in await self.list_models():
             raise ValueError(f"Requested model is not registered: {selected_model}")
         model_prompt, inline_images = await prepare_main_image_input(
