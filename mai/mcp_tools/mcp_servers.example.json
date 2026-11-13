@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "catalog_path": "mcp_catalog.json",
   "servers": [
     {
@@ -26,7 +26,7 @@
     },
     {
       "id": "mai_internet",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -40,7 +40,7 @@
     },
     {
       "id": "mai_browser",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -54,7 +54,7 @@
     },
     {
       "id": "mai_file",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -68,7 +68,7 @@
     },
     {
       "id": "mai_code",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -82,7 +82,7 @@
     },
     {
       "id": "mai_terminal_run",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -96,7 +96,7 @@
     },
     {
       "id": "mai_docs",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -110,7 +110,7 @@
     },
     {
       "id": "mai_utilities",
-      "enabled": false,
+      "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -122,5 +122,6 @@
         "MAI_CWD": "D:/REPLACE_WITH_MAI_PATH"
       }
     }
-  ]
+  ],
+  "functional_mode": true
 }
