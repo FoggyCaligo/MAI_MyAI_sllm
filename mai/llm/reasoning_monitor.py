@@ -88,6 +88,7 @@ class ReasoningMonitor:
     _status: str = field(default="insufficient_data", init=False)
     _similarity: float = field(default=0.0, init=False)
     _repetition_mode: str | None = field(default=None, init=False)
+    _previous_adjacent_signature: set[tuple[str, ...]] | None = field(default=None, init=False)
     _previous_content_chars: int = field(default=0, init=False)
     _previous_ready_calls: int = field(default=0, init=False)
 
@@ -113,6 +114,7 @@ class ReasoningMonitor:
             self._status = "output_progress"
             self._similarity = 0.0
             self._repetition_mode = None
+            self._previous_adjacent_signature = None
             return self.snapshot(chars, content_chars, tool_fragment_count, tool_call_ready_count)
 
         # A started, incomplete tool call is not yet executable. Do not interrupt
@@ -122,6 +124,7 @@ class ReasoningMonitor:
             self._status = "tool_assembly"
             self._similarity = 0.0
             self._repetition_mode = None
+            self._previous_adjacent_signature = None
             return self.snapshot(chars, content_chars, tool_fragment_count, tool_call_ready_count)
 
         if chars - self._last_checked_chars < self.minimum_check_chars and self._status != "insufficient_data":
@@ -146,10 +149,26 @@ class ReasoningMonitor:
                         else "long_cycle" if long_period >= self.long_cycle_similarity
                         else None)
         self._similarity = nearby if matched_mode == "adjacent" else long_period
-        if matched_mode is not None:
+        if matched_mode == "adjacent":
+            # Five-character shingle sets can saturate within unrelated but
+            # internally repetitive data (for example, different encoded
+            # blobs). Require the actual recurring tail pattern to remain
+            # stable across advancing checks before interrupting generation.
+            signature_size = min(width, max(8, width // 4))
+            signature = _shingles(units[-width:], size=signature_size)
+            stable = (
+                self._repetition_mode == "adjacent"
+                and self._previous_adjacent_signature is not None
+                and _similarity(signature, self._previous_adjacent_signature) >= self.high_similarity
+            )
+            self._repeat_checks = self._repeat_checks + 1 if stable else 1
+            self._previous_adjacent_signature = signature
+        elif matched_mode == "long_cycle":
             self._repeat_checks = self._repeat_checks + 1 if self._repetition_mode == matched_mode else 1
+            self._previous_adjacent_signature = None
         else:
             self._repeat_checks = 0
+            self._previous_adjacent_signature = None
         self._repetition_mode = matched_mode
 
         if self._repeat_checks >= 2:
