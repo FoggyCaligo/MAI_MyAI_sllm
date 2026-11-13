@@ -44,6 +44,7 @@ from ..tools.registry import ToolRegistry
 from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
+from ..mcp_tools.workspace import WorkspaceContext
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
@@ -80,7 +81,7 @@ Answer the current request fully; do not assume the user knows prior answers or 
 
 Use only capabilities and permissions declared by the runtime. The first round exposes tool_manual and a tool catalog, not all tool schemas: activate required tools by exact name and use their declared schemas in later rounds. Invoke only activated tools with valid arguments, and report only outcomes supported by actual execution; never invent capabilities, access, arguments, or results. Use relevant tools when needed information is absent: local tools for local resources and information tools for external facts; follow the registered schema and description of any other tool.
 
-MAI's owner-authorized remote connection lets native tools execute on another connected Windows or Linux computer. First activate required tools with tool_manual and follow their next-round schemas; there is no CodeAct or execute_code tool. For every applicable native call, choose at_remote_pc=true when the user's request targets the connected remote worker and at_remote_pc=false (or omit) when it targets the MAI host. The model selects that target from the user's intent and observed context, not substring rules. Tool activation does not select the target. Web search, web fetch and browser tools are always MAI-host-only and have no at_remote_pc argument. For remote filesystem access, terminal commands, PC administration and any other tools whose schemas declare at_remote_pc, select the requested target consistently. Remote paths and shell syntax belong to the worker's operating system (Linux uses Bash; terminal_run defaults to Bash, but Windows system administration commands should use shell=powershell with PowerShell pipelines exclusively). Do not mix CMD and Bash syntax, or nest cmd.exe /c with Bash pipelines. Host-only tools remain on the host and never acquire at_remote_pc unless their registered schema explicitly provides it. The runtime resolves the account's active remote session; never supply its ID as a tool argument. If the remote session is unavailable or a tool is unsupported on that worker, report the failure; never substitute local execution.
+MAI's owner-authorized remote connection lets workspace-capable tools execute on a connected Windows or Linux worker. Each new agent task starts in the local workspace. Before operating on the remote PC, activate remote__switch_workspace with tool_manual, then call remote__switch_workspace(target="remote"). After a successful switch, subsequent filesystem, terminal, and other workspace-capable tools operate on the selected worker without per-tool location arguments. To return to the MAI host, call remote__switch_workspace(target="local"). A failed remote switch leaves the previous workspace unchanged; remote disconnection causes explicit tool failure and must never silently fall back to local. The workspace is per agent task and never changes another task. Web, browser, persistent memory and host control tools remain MAI-host-only regardless of workspace. Remote paths and shell syntax belong to the worker operating system (Linux uses Bash; terminal_run defaults to Bash; Windows-specific administration may explicitly use shell=powershell). Do not mix CMD and Bash syntax or nest cmd.exe /c with Bash pipelines. The runtime resolves the authenticated account's worker session; never supply its session ID or credentials as tool arguments. Remote worker download, installation and pairing are host-managed, not model tools.
 
 Pretrained knowledge supports reasoning, not factual evidence. Before presenting a factual claim, distinguish observed user/tool evidence from pretrained recollection; confidence and familiarity do not count as evidence. If adequate observed evidence is missing, verify the claim with the appropriate tool or explicitly leave it unverified. Preserve original values, definitions, units, aggregation levels, time ranges, and the distinction between observations and derived calculations. Do not silently change or round source values; transform them only at the user's request or under an evidenced rule. Treat related metrics as distinct unless the evidence establishes equivalence, and do not assert unsupported causal explanations or reconciliations; acknowledge unresolved uncertainty.
 
@@ -300,9 +301,11 @@ class MAIRuntime:
         remote_session_id: str | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
+        workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
+        registry.workspace = workspace
         if principal.role is AccessRole.OWNER:
             register_routed_service_tools(
-                registry, owner_id=principal.db_id, browser_manager=browser_manager,
+                registry, workspace=workspace, browser_manager=browser_manager,
             )
         else:
             register_time_tools(registry)
@@ -310,7 +313,7 @@ class MAIRuntime:
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
         if principal.role is AccessRole.OWNER:
-            register_routed_pc_tools(registry, owner_id=principal.db_id, cwd=str(self.cwd))
+            register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
             register_restart_tool(registry)
             registry.add(
                 name="file_download_link",
@@ -330,7 +333,8 @@ class MAIRuntime:
         register_tool_result_tools(registry, tool_result_store)
         mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
         if mcp_config and principal.role is AccessRole.OWNER:
-            manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id)
+            manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
+                                           workspace=workspace)
             manager.register(registry)
             registry.mcp_manager = manager
         return registry
