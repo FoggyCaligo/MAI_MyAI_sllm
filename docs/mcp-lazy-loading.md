@@ -85,7 +85,7 @@ selector combinations are rejected by the MCP JSON schema and server.
 Long-term memory extraction after the final response remains host
 controlled and does not expose a memory-save model tool.
 
-The built-in `remote__switch_workspace(target="local"|"remote")` is provided by `mai/mcp_tools/MCP_remote/`. It controls only the current Agent run, with `local` as the initial value. The host checks authenticated worker ownership before changing state; an unavailable remote never falls back to local. Workspace-capable native tools no longer expose `at_remote_pc` and follow the selected location. Web, browser, memory and host-control tools remain host-local.
+The built-in `remote__switch_workspace(target="host"|"client")` is provided by `mai/mcp_tools/MCP_remote/`. Each new agent run starts on `host`. A successful `client` selection persists for every subsequent workspace-capable tool in that same run until another successful switch (no per-tool location parameter); `host` restores the MAI server PC. Internet, browser, memory, and host-control tools always execute on host regardless of selection. A disconnected client raises an explicit error without falling back to host.
 
 Other MAI tools remain native until migrated into separate MCP servers.
 Each additional MCP tool is internally namespaced `server_id.tool_name`; the model-facing callable alias is `server_id__tool_name` (compatible with function-call name requirements).
@@ -117,10 +117,9 @@ Owner 실행에서 `MAI_MCP_CONFIG`의 `functional_mode: true`가 기본값이�
 MCP 도구 이름은 `server_id__tool_name` 형식으로 모델에 등록된다.
 기존 Pydantic의 *각 도구별* 입력 JSON Schema를 공개하며,
 공통 JSON 문자열 인자나 `at_remote_pc`를 추가하지 않는다.
-기본 Workspace는 Local이다. 원격 전환 후 `mai_file`/`mai_code`/
-`mai_docs`/`mai_terminal_run`/`mai_utilities`가 기존 인증된 워커
-`native.invoke`를 사용한다. 명시적 원격 실패는 로컬 자동 재실행을 금지한다.
-기억, 인터넷, 브라우저, 호스트 관리는 Workspace와 무관하게 호스트 전용이다.
+Workspace 대상은 `host`(MAI 서버 PC)와 `client`(인증된 연결 워커 PC) 두 값만 허용한다. 매 새 에이전트 작업의 시작 대상은 `host`다.
+`remote__switch_workspace(target="client")` 호출에 성공하면 **그 작업에서 이후 호출되는 모든 Workspace 지원 도구**(`mai_file`/`mai_code`/`mai_docs`/`mai_terminal_run`/`mai_utilities`)는 별도 위치 인자나 추가 switch 없이 계속 client에서 `native.invoke`로 실행한다. `remote__switch_workspace(target="host")`가 성공하면 이후 지원 도구는 계속 host에서 실행한다. 선택은 모델 라운드와 도구 활성화를 넘어 현재 작업이 끝나거나 다시 switch할 때까지 유지되지만, 다음 사용자 작업에는 계승되지 않는다.
+인터넷, 브라우저, 기억, 재시작, 다운로드 및 호스트 관리 도구는 client 선택 중에도 항상 host에서 실행되며 전환 상태를 바꾸지 않는다. client 연결이 실패하면 상태를 유지하고, 실행이 실패하면 명시적으로 실패한다. host로 자동 재실행하지 않는다.
 
 Startup은 활성화된 서버만 짧게 연결해 `tools/list`를 캐시에 저장한다.
 요청에서 `tool_manual(tools=[...])`가 선택한 서버만 실제 작업 동안
