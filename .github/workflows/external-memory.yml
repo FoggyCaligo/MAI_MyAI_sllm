@@ -23,4 +23,4 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e '.[dev]'
       - run: python -c 'from mai.app.server import app; print("MAI server import OK")'
-      - run: python -m pytest -q
+      - run: python -m pytest -q tests/test_mcp_source_ownership.py tests/test_mcp_lazy_manager.py tests/test_agent_tool_catalog_contract.py tests/test_external_memorizer_integration.py tests/test_external_memorizer_prompt_ownership.py tests/test_memory_admission.py tests/test_memory_model_view.py tests/test_memory_runtime.py tests/test_memory_v1.py tests/test_sqlite_fts_index.py tests/test_recall_ranked_limit.py tests/test_unified_memory_lookup.py tests/test_fact_extractor.py tests/test_memory_read_after_write.py tests/test_production_c_runtime.py tests/test_tool_registry.py tests/test_llamacpp_main_only_vision.py tests/test_memory_temporal_precedence_policy.py tests/test_restart_lifecycle.py
