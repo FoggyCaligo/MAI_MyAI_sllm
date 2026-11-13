@@ -30,6 +30,8 @@ from mai.tools.calculator import register_calculator_tools
 from mai.tools.time import register_time_tools
 from portable.restart_mai import register_server, unregister_server
 from mcp_memorizer.manager import Memorizer, MemorySearchInput
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from mcp_memorizer.extraction.service import ModelFactExtractor
 from mcp_memorizer.integrations.mai import MAIExtractionAdapter
 from mcp_memorizer.policy import MEMORY_MODEL_CONTEXT, MEMORY_MODEL_CONTEXT_KEY, MEMORY_SEARCH_DESCRIPTION
@@ -143,10 +145,27 @@ def _registry() -> ToolRegistry:
     register_time_tools(registry)
 
     async def search(node_id=None, keyword=None, limit=None):
-        if memory is None:
-            raise RuntimeError("Memorizer has not started")
-        # Use the canonical MCP_memorizer read-only search contract.
-        return memory.search(node_id=node_id, keyword=keyword, limit=limit)
+        # The model's search genuinely uses the independent MCP stdio server.
+        # Storage remains host-owned and is invoked only after final response.
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "mcp_memorizer.mcp_server"],
+            env={**os.environ, "MEMORIZER_DATA_DIR": str(DATA_DIR),
+                 "MEMORIZER_USER_ID": USER_ID},
+        )
+        arguments = {key: value for key, value in {
+            "node_id": node_id, "keyword": keyword, "limit": limit
+        }.items() if value is not None}
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await asyncio.wait_for(session.initialize(), timeout=30)
+                response = await asyncio.wait_for(
+                    session.call_tool("memory_search", arguments), timeout=120)
+                if response.isError:
+                    raise RuntimeError("MCP memory_search failed: " + str(response.content))
+                if response.structuredContent is not None:
+                    return response.structuredContent
+                return [getattr(item, "text", str(item)) for item in response.content]
 
     registry.add(name="memorizer__memory_search", description=MEMORY_SEARCH_DESCRIPTION,
                  input_model=MemorySearchInput, handler=search,
