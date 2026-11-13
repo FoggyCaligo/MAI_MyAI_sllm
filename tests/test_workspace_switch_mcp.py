@@ -77,8 +77,8 @@ def test_remote_target_is_frozen_for_started_call(tmp_path, monkeypatch):
                         lambda ident: _fake_session())
     remote_called = []
 
-    async def remote_execute(self, operation, args, *, at_remote_pc, timeout):
-        remote_called.append((operation, args, at_remote_pc))
+    async def remote_execute(self, operation, args, *, timeout):
+        remote_called.append((operation, args))
         return {"value": {"content": "remote-data"}}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", remote_execute)
