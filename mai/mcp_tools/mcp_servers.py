@@ -342,11 +342,19 @@ class MCPConnectionManager:
                     _LOG.exception("MAI MCP discovery failed server=%s elapsed_seconds=%.3f",
                                    server, time.monotonic() - server_started)
                     raise
+                finally:
+                    # MCP stdio transports create AnyIO cancel scopes owned by
+                    # the task entering them. Close within this same task.
+                    stack = self._stacks.pop(server, None)
+                    self._sessions.pop(server, None)
+                    self._server_instructions.pop(server, None)
+                    if stack is not None:
+                        await stack.aclose()
 
         try:
             servers = list(self.servers)
-            # return_exceptions ensures all child tasks settle before closing
-            # their async context stacks, even if one server has failed.
+            # Each worker closes its own MCP transport before gather returns,
+            # including after a failed discovery. Preserve server ordering.
             results = await asyncio.gather(
                 *(discover_one(server) for server in servers), return_exceptions=True
             )
@@ -364,7 +372,9 @@ class MCPConnectionManager:
                       len(servers), len(fresh), time.monotonic() - started)
             return list(self.catalog)
         finally:
-            await self.close()
+            # Worker-owned stdio contexts must never be closed by this parent task.
+            # Once gather exits every worker has released its own connections.
+            pass
 
     @staticmethod
     def _model_tool_name(server: str, tool: str) -> str:
