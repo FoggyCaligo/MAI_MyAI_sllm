@@ -219,3 +219,28 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
     assert registry.has("restart_mai") or registry.has("restart")
     assert not registry.has("calculator")
     assert not registry.has("web_search")
+
+
+@pytest.mark.parametrize("group", GROUPS)
+def test_every_group_starts_as_independent_stdio_server(group):
+    import asyncio
+    import sys
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    async def run():
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "mai.mcp_tools.native_groups", "--group", group],
+        )
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await asyncio.wait_for(session.initialize(), timeout=30)
+                listed = await asyncio.wait_for(session.list_tools(), timeout=30)
+                names = {tool.name for tool in listed.tools}
+                local, _ = build_registry(group)
+                expected = {definition.name for definition in local.definitions()}
+                assert names == expected
+                assert all(tool.inputSchema.get("type") == "object"
+                           for tool in listed.tools)
+    asyncio.run(run())
