@@ -12,7 +12,7 @@ def test_pc_tool_names_are_unified_and_default_local(tmp_path):
     assert all(registry.has(x) for x in ("file_read", "file_write", "terminal_run", "document_edit"))
     assert not registry.has("remote_file_read")
     assert "at_remote_pc" not in registry.get("file_read").input_model.model_fields
-    assert workspace.target == "local"
+    assert workspace.target == "host"
 
 def test_unconnected_remote_switch_fails_without_touching_local_file(tmp_path, monkeypatch):
     file = tmp_path / "example.txt"
@@ -22,7 +22,7 @@ def test_unconnected_remote_switch_fails_without_touching_local_file(tmp_path, m
     register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
     monkeypatch.setattr("mai.mcp_tools.workspace.remote_sessions.owner_session", lambda owner: None)
     with pytest.raises(RemoteExecutionError, match="connected remote worker"):
-        workspace.switch("remote")
+        workspace.switch("client")
     with pytest.raises(ToolArgumentsError):
         registry.get("file_write").validate_arguments({
             "path": str(file), "content": "modified", "at_remote_pc": True})
