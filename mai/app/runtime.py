@@ -23,7 +23,7 @@ from ..llm.models import ModelConfig, model_generation_limit
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.cloud_api import CloudAPIAdapter, configured_models
 from ..llm.llamacpp_router import SingleResidentRouter
-from ..mcp_tools.MCP_memorizer.admission import (
+from ..mcp_tools.mcp_memorizer.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
@@ -135,7 +135,7 @@ class MAIRuntime:
         llamacpp_host: str = "http://127.0.0.1:8080",
         memory_db_path: str | Path,
         sentence_breaker_db_path: str | Path,
-        upload_root: str | Path = "./mai_uploads",
+        upload_root: str | Path = "./mai/mai_uploads",
         cwd: str | Path | None = None,
         max_inline_tool_result_chars: int | None = None,
     ) -> None:
