@@ -2,9 +2,18 @@
 import asyncio
 import json
 
+import pytest
+
 from mai.agent.verification import FinalGroundingVerifier
 from mai.agent.verification import _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
+
+
+@pytest.fixture(autouse=True)
+def enable_factual_review_for_contract_tests(monkeypatch):
+    monkeypatch.setenv("MAI_VERIFIER_NUMERIC", "true")
+    monkeypatch.setenv("MAI_VERIFIER_FACTUAL", "true")
+    monkeypatch.setenv("MAI_VERIFIER_ACTION_GROUNDING", "true")
 
 
 class Reviewer:
