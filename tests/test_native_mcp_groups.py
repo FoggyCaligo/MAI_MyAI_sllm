@@ -174,3 +174,48 @@ def test_temporary_artifact_cleanup_survives_mcp_process_boundary(tmp_path):
             assert not (tmp_path / "moved.txt").exists()
         await manager.close()
     asyncio.run(run())
+
+
+def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_path, monkeypatch):
+    from mai.app.access import AccessPrincipal, AccessRole
+    from mai.app.downloads import DownloadLinkStore
+    from mai.app.runtime import MAIRuntime
+    from mai.agent.tool_results import ToolResultStore
+    from mai.mcp_tools.mcp_servers import _checksum
+    from mai.tools.browser import BrowserSessionManager
+
+    groups = list(GROUPS)
+    config = tmp_path / "mcp_servers.json"
+    config.write_text(json.dumps({
+        "schema_version": 3,
+        "catalog_path": "mcp_catalog.json",
+        "servers": [{"id": group, "enabled": True,
+                     "command": "python", "args": []} for group in groups]
+    }), encoding="utf-8")
+    entries = []
+    for group in groups:
+        registry, _ = build_registry(group, cwd=tmp_path)
+        definition = registry.definitions()[0]
+        schema = definition.input_model.model_json_schema()
+        entries.append({
+            "server": group, "name": definition.name,
+            "description": definition.description, "schema": schema,
+            "schema_hash": _checksum(schema), "instructions": "",
+        })
+    (tmp_path / "mcp_catalog.json").write_text(json.dumps(
+        {"version": 1, "tools": entries}), encoding="utf-8")
+    monkeypatch.setenv("MAI_MCP_FUNCTIONAL_TOOLS", "true")
+    monkeypatch.setenv("MAI_MCP_CONFIG", str(config))
+    runtime = object.__new__(MAIRuntime)
+    runtime.cwd = tmp_path
+    runtime.download_links = DownloadLinkStore()
+    runtime.upload_root = tmp_path
+    owner = AccessPrincipal(user_id="owner", db_id="local-owner", role=AccessRole.OWNER)
+    registry = runtime._registry_for(owner, ToolResultStore(max_inline_chars=1024),
+                                     BrowserSessionManager())
+    assert registry.mcp_manager is not None
+    assert all(registry.has(group + "__" + record["name"])
+               for group, record in zip(groups, entries))
+    assert registry.has("restart_mai") or registry.has("restart")
+    assert not registry.has("calculator")
+    assert not registry.has("web_search")
