@@ -2,6 +2,10 @@
 
 ## 목적과 현재 구현 범위
 
+LongMemEval 평가 데이터 재생·MAI/OpenClaw 비교·채점과 실험 격리는 **MAI 벤치마크 코드의 책임**으로 이 문서에 유지한다. 독립 기억 엔진의 그래프·검색·사실 추출 동작 자체는 [MCP_memorizer 원본 문서](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md)와 [검색 명세](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md)를 따른다. 평가 어댑터의 호출 구조와 메모리 엔진의 API 계약을 혼동하지 않는다.
+
+
+
 LongMemEval은 GAIA와 달리 **질문에 앞서 주어진 과거 대화 전체를 기억에 적재**해야 한다. 단순히 질문에 과거 대화를 복사해서 붙여 넣으면 장기기억 시스템이 아닌 긴 문맥 입력 능력을 평가하게 된다.
 
 이 첫 단계에서는 MAI의 기존 `ChatSessionStore`, `MemoryRuntime.extract_facts`, `record_raw_user_evidence`, `finish_turn`, `run_user_message`를 그대로 사용해 **원본 대화를 순서대로 오프라인 재생하는 실행기**를 구현했다. 기억 전용 DB, 대화 DB, 문장 분리 DB, 작업 디렉터리는 질문마다 별도로 생성된다. 과거 대화가 다른 문항의 점수에 영향을 주지 않게 하기 위함이다.
