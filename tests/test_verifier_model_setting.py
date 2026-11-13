@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from mai.app import runtime as runtime_module
-from tests.reviewer_fixtures import reviewer_payload
+from mai.agent.verification import _UnifiedReviewPayload
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.llm.models import ModelTurn
 
@@ -28,12 +28,13 @@ def test_production_verifies_with_the_selected_main_model(
             content = "알겠습니다."
         else:
             assert request.tools == () and request.think is False
-            content = json.dumps(reviewer_payload({
-                "evidence_verdict": "supported",
-                "action_verdict": "not_applicable",
-                "reasons": [], "claims": [],
-                "retry_summary": "No correction needed.",
-            }, request))
+            assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+            content = json.dumps(_UnifiedReviewPayload(
+                numeric_verdict="supported", numeric_reason="",
+                evidence_verdict="supported", claims=[], action_verdict="not_applicable",
+                alignment_verdict="skipped", coverage_verdict="skipped",
+                coverage_reasons=[], reasons=[], retry_summary="No correction needed.",
+            ).model_dump(mode="json"))
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 
