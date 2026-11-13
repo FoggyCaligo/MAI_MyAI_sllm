@@ -179,24 +179,34 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
         "케이씨텍은 72,000원에 팔았습니다.",
         "케이씨텍은 70,000원에 팔았습니다.",
     ])
-    reviewer = StructuredReviewerAdapter([
-        {
-            "evidence_verdict": "supported",
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [],
-            "action_verdict": "not_applicable",
-            "numeric_verdict": "unsupported",
-            "numeric_reason": "The evidence says 70,000, not 72,000."
-        },
-        {
-            "evidence_verdict": "supported",
-            "alignment_verdict": "aligned",
-            "reasons": [],
-            "claims": [],
-            "action_verdict": "not_applicable",
-        },
-    ])
+    class UnifiedNumericReviewerAdapter:
+        def __init__(self):
+            self.requests = []
+            self.numeric_verdicts = [
+                ("unsupported", "The evidence says 70,000, not 72,000."),
+                ("supported", "Equivalent to the provided price."),
+            ]
+
+        async def chat(self, request):
+            from mai.agent.verification import _UnifiedReviewPayload
+            self.requests.append(deepcopy(request))
+            assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+            verdict, reason = self.numeric_verdicts.pop(0)
+            return turn(json.dumps({
+                "numeric_verdict": verdict,
+                "numeric_reason": reason,
+                "evidence_verdict": "supported",
+                "claims": [],
+                "action_verdict": "not_applicable",
+                "alignment_verdict": "aligned",
+                "coverage_verdict": "sufficient",
+                "coverage_reasons": [],
+                "reasons": [],
+                "retry_summary": "Correct the numeric discrepancy." if verdict == "unsupported"
+                                 else "No correction needed.",
+            }, ensure_ascii=False))
+
+    reviewer = UnifiedNumericReviewerAdapter()
     verifier = FinalGroundingVerifier(reviewer_adapter=reviewer)
     runtime = AgentRuntime(main, ToolRegistry(), final_verifier=verifier)
 
@@ -206,7 +216,7 @@ def test_numeric_grounding_rejects_changed_material_number_and_retries() -> None
     assert result.model_rounds == 2
     assert "numeric_grounding_failed" in main.requests[1].messages[-1]["content"]
     assert "72000" in main.requests[1].messages[-1]["content"]
-    assert len(reviewer.requests) == 4  # numeric + factual rejection, then factual + quality
+    assert len(reviewer.requests) == 2  # one unified review per candidate
     rejected = "케이씨텍은 72,000원에 팔았습니다."
     assert not any(message.get("role") == "assistant" and message.get("content") == rejected for message in main.requests[1].messages)
     correction_messages = [m for m in main.requests[1].messages if m.get("role") == "system" and "rejected_provisional_answer" in m.get("content", "")]
