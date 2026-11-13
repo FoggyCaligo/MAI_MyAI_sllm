@@ -42,7 +42,7 @@ from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..tools.mcp_connection import MCPConnectionManager
+from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from pydantic import BaseModel, ConfigDict
