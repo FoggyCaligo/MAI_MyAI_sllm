@@ -12,10 +12,10 @@ ARTIFACTS = (
     ("gemma-4-12b-it-qat-q4_0.gguf", "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b"),
     ("mmproj-gemma-4-12b-it-qat-q4_0.gguf", "cb018338a7538a9814d994bfe54644c71eb7ed54e31eae2f721e45fd3c260da7"),
 )
-ORNITH_DIRECTORY = Path("portable/portable-models/gguf/ornith_1.5_9b_Q4")
+ORNITH_DIRECTORY = Path("portable/portable-models/gguf/ornith_1.5_9b_Q8")
 ORNITH_BASE_URL = "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main"
 ORNITH_ARTIFACTS = (
-    ("Ornith-1.5-9B-Q4_K_M.gguf", "70c112196e0b7023803c9762752e46d29e612a92c83f995bc3ba1ceb07e8fab6"),
+    ("Ornith-1.5-9B-Q8_0.gguf", "22086870b009dbe9815ee752c48a82de930118a7c5ce5599590892ae03b8b010"),
     ("mmproj-Ornith-1.5-9B-BF16.gguf", "626f9f90627402a6bf4a999111d0fbd69b5fcca7aa8ba089d69e5f10e8858e1d"),
 )
 CHUNK_SIZE = 1024 * 1024
