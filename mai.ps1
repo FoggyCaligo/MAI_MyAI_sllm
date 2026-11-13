@@ -220,7 +220,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
     if ($LASTEXITCODE -ne 0) { throw 'Portable Chromium installation failed' }
     Initialize-MaiOwnerEnv
     & $python (Join-Path $portable 'install_default_model.py') --root $root
-    if ($LASTEXITCODE -ne 0) { throw 'Default Gemma 4 GGUF installation failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'Default Ornith Q8 GGUF installation failed' }
     Write-Host "MAI llama.cpp Portable setup complete: $root"
 }
 
