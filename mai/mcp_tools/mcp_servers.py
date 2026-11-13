@@ -481,6 +481,13 @@ class MCPConnectionManager:
         if self.workspace is not None and entry["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
             snapshot = self.workspace.snapshot()
             if snapshot.target == "client":
+                if (entry["server"] == "mai_file" and entry["name"] == "file_write"
+                        and arguments.get("lifecycle") == "temporary"):
+                    from ..remote.session import RemoteExecutionError
+                    raise RemoteExecutionError(
+                        "temporary file_write on client is not supported; "
+                        "remote scratch cleanup is not implemented"
+                    )
                 from ..remote.target import ExecutionTarget
                 from ..remote.session import RemoteExecutionError
                 session_id = self.workspace.validate_remote(snapshot)
