@@ -1,4 +1,4 @@
-"""Startup catalog discovery is bounded, concurrent, and fail-closed."""
+"""Startup catalog discovery is bounded, deterministic, and task-safe."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -27,6 +27,16 @@ def test_startup_discovery_bounded_and_deterministic(tmp_path, monkeypatch):
     manager = _manager(tmp_path, servers)
     active = 0
     peak = 0
+    closed = []
+
+    class Stack:
+        def __init__(self, server):
+            self.server = server
+            self.owner = asyncio.current_task()
+
+        async def aclose(self):
+            assert asyncio.current_task() is self.owner
+            closed.append(self.server)
 
     class Session:
         def __init__(self, name):
@@ -45,42 +55,51 @@ def test_startup_discovery_bounded_and_deterministic(tmp_path, monkeypatch):
                 active -= 1
 
     async def connect(server):
-        return Session(server)
-
-    async def close():
-        pass
+        manager._stacks[server] = Stack(server)
+        manager._sessions[server] = Session(server)
+        return manager._sessions[server]
 
     monkeypatch.setattr(manager, "_connect", connect)
-    monkeypatch.setattr(manager, "close", close)
     names = asyncio.run(manager.refresh_catalog())
     assert names == [f"{server}.execute" for server in servers]
     assert peak == 2
+    assert sorted(closed) == sorted(servers)
+    assert not manager._stacks and not manager._sessions
     assert [entry["server"] for entry in json.loads(
         manager.cache_path.read_text(encoding="utf-8")
     )["tools"]] == servers
 
 
-def test_startup_discovery_failure_does_not_replace_catalog(tmp_path, monkeypatch):
+def test_startup_discovery_failure_closes_connections_without_replacing_catalog(tmp_path, monkeypatch):
     manager = _manager(tmp_path, ["alpha", "beta"])
     original = '{"version":1,"tools":[]}'
     manager.cache_path.write_text(original, encoding="utf-8")
-    closed = False
+    closed = []
+
+    class Stack:
+        def __init__(self, server):
+            self.server = server
+            self.owner = asyncio.current_task()
+
+        async def aclose(self):
+            assert asyncio.current_task() is self.owner
+            closed.append(self.server)
 
     async def connect(server):
+        manager._stacks[server] = Stack(server)
         if server == "beta":
             raise RuntimeError("MCP handshake failed")
-        return SimpleNamespace(list_tools=async_list_tools)
+        session = SimpleNamespace(list_tools=async_list_tools)
+        manager._sessions[server] = session
+        return session
 
     async def async_list_tools():
+        await asyncio.sleep(0.005)
         return SimpleNamespace(tools=[])
 
-    async def close():
-        nonlocal closed
-        closed = True
-
     monkeypatch.setattr(manager, "_connect", connect)
-    monkeypatch.setattr(manager, "close", close)
     with pytest.raises(RuntimeError, match="MCP handshake failed"):
         asyncio.run(manager.refresh_catalog())
-    assert closed
+    assert sorted(closed) == ["alpha", "beta"]
+    assert not manager._stacks and not manager._sessions
     assert manager.cache_path.read_text(encoding="utf-8") == original
