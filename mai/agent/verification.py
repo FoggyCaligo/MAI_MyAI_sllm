@@ -51,7 +51,7 @@ def _prompt(name: str) -> str:
 
 _NUMERIC_REVIEW_SYSTEM = _prompt("numeric")
 _FACTUAL_REVIEW_SYSTEM = _prompt("factual")
-_CRITICAL_FACTUAL_REVIEW_SYSTEM = _FACTUAL_REVIEW_SYSTEM + "\n\n" + "You are a final-answer critical-error reviewer, not an exhaustive citation auditor.\nJudge only the current candidate_final using the current user request and actual\nuser/tool evidence. Do not call tools, rewrite, or demand optional completeness.\nReturn the required _FactualReviewPayload schema with concise reasons.\n\nUse claim verdicts supported / unsupported / uncertain and defect values\nnone / contradiction / scope_expansion / unsupported_inference / missing_evidence.\nMark contradiction ONLY when observed evidence directly refutes the actual claim,\nnot because a claim is absent from a search result. Do not invent counter-evidence.\nA factual statement lacking explicit evidence can be missing_evidence or uncertain,\nnot a proven contradiction. Do not expand a claim beyond the candidate text.\nPreserve quantities, dates, units, scope, user statements and tool outcomes.\nTreat model knowledge and the reviewer's guesses as neither proof nor counterproof.\nFor arithmetic/date equivalence leave independent numeric checking to its stage.\nDo not reject translations because of transliterated names or harmless phrasing.\n\nFor an explicitly requested external change, action_verdict is:\nnot_applicable if no completed action was claimed;\nverified only if tool results establish that exact completed outcome;\nunverified if completion was claimed beyond observed success;\ncontradicted only if observed results directly show failure.\nDo not claim an action was done merely because it was planned.\nIf no tool or external action was requested, use not_applicable.\n\nList only material claims, avoid insignificant wording differences, and keep\nretry_summary actionable and short. Do not judge task completeness, coverage,\nstyle, or optional research. Evidence verdict is unsupported if any material\nclaim is unsupported; uncertainty must remain uncertainty."
+_CRITICAL_FACTUAL_REVIEW_SYSTEM = _FACTUAL_REVIEW_SYSTEM + "\n\n" + "You are a final-answer critical-error reviewer, not an exhaustive citation auditor.\nJudge only the current candidate_final using the current user request and actual\nuser/tool evidence. Do not call tools, rewrite, or demand optional completeness.\nReturn the single combined structured response schema with concise reasons.\n\nUse claim verdicts supported / unsupported / uncertain and defect values\nnone / contradiction / scope_expansion / unsupported_inference / missing_evidence.\nMark contradiction ONLY when observed evidence directly refutes the actual claim,\nnot because a claim is absent from a search result. Do not invent counter-evidence.\nA factual statement lacking explicit evidence can be missing_evidence or uncertain,\nnot a proven contradiction. Do not expand a claim beyond the candidate text.\nPreserve quantities, dates, units, scope, user statements and tool outcomes.\nTreat model knowledge and the reviewer's guesses as neither proof nor counterproof.\nFor arithmetic/date equivalence leave independent numeric checking to its stage.\nDo not reject translations because of transliterated names or harmless phrasing.\n\nFor an explicitly requested external change, action_verdict is:\nnot_applicable if no completed action was claimed;\nverified only if tool results establish that exact completed outcome;\nunverified if completion was claimed beyond observed success;\ncontradicted only if observed results directly show failure.\nDo not claim an action was done merely because it was planned.\nIf no tool or external action was requested, use not_applicable.\n\nList only material claims, avoid insignificant wording differences, and keep\nretry_summary actionable and short. Do not judge task completeness, coverage,\nstyle, or optional research. Evidence verdict is unsupported if any material\nclaim is unsupported; uncertainty must remain uncertainty."
 _QUALITY_REVIEW_SYSTEM = _prompt("quality_review")
 _ACTION_REVIEW_SYSTEM = _prompt("action_grounding")
 
@@ -323,13 +323,13 @@ class FinalGroundingVerifier:
                 issues.append(VerificationIssue(code="evidence_grounding_failed", message=reason))
 
         if action_active and review.action_verdict == "unverified":
-                reason = "; ".join(review.reasons) or (
+            reason = "; ".join(review.reasons) or (
                     "The candidate claims a requested state-changing outcome was completed, but resulting-state evidence "
                     "does not establish that outcome."
                 )
                 issues.append(VerificationIssue(code="action_outcome_unverified", message=reason))
         elif action_active and review.action_verdict == "contradicted":
-                reason = "; ".join(review.reasons) or (
+            reason = "; ".join(review.reasons) or (
                     "Resulting-state evidence contradicts the candidate's claim that the requested action outcome completed."
                 )
                 issues.append(VerificationIssue(code="action_outcome_contradicted", message=reason))
@@ -446,30 +446,6 @@ class FinalGroundingVerifier:
                 "These material numeric values do not appear in the user evidence or observed tool results: "
                 + ", ".join(unsupported)
             ),
-        )
-
-    async def _review_numeric_grounding(
-        self, *, candidate: str, messages: Sequence[Mapping[str, Any]],
-        tool_results: Sequence[ToolVerificationResult],
-        tool_arguments: Sequence[Mapping[str, Any]] | None,
-        unsupported_facts: Sequence[str],
-        on_audit_event: VerificationAuditObserver | None = None,
-    ) -> _NumericReviewPayload:
-        """Run the historical independent numeric/date equivalence reviewer."""
-        payload = _review_payload(
-            candidate=candidate, messages=messages, tool_results=tool_results,
-            tool_arguments=tool_arguments,
-        )
-        payload["flagged_numeric_or_date_values"] = list(unsupported_facts)
-        request = ChatRequest(
-            messages=(
-                {"role": "system", "content": _NUMERIC_REVIEW_SYSTEM},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ),
-            tools=(), think=False, response_format=_NumericReviewPayload.model_json_schema(),
-        )
-        return await self._request_structured_review(
-            request, _NumericReviewPayload, label="numeric", on_audit_event=on_audit_event,
         )
 
     async def _review_final(
