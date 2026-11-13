@@ -41,7 +41,7 @@ class WorkspaceContext:
             self._current = WorkspaceSnapshot("local", None)
             return {"ok": True, "workspace": "local"}
         session = remote_sessions.owner_session(self.owner_id)
-        if session is None:
+        if session is None or not session.connected:
             # Do not change the workspace on failed selection.
             raise RemoteExecutionError("No authenticated connected remote worker for this owner")
         self._current = WorkspaceSnapshot("remote", session.session_id)
