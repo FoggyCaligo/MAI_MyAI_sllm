@@ -80,7 +80,7 @@ AgentRuntime / AgentLoop
 | 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
 | 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-**원격 Native 도구:** Owner가 `at_remote_pc=true`로 호출하면 인증된 Windows/Linux 워커에서 실행. 생략하거나 `false`이면 MAI 호스트에서 실행. 원격 미연결·미지원 시 로컬로 자동 대체하지 않음.
+**Workspace 실행 대상:** 새 Agent 작업은 `local`로 시작한다. Owner는 `tool_manual`로 `remote__switch_workspace`를 활성화하고 `target="remote"`로 인증된 워커에 전환한다. 이후 호환되는 파일·터미널·PC 도구는 별도 `at_remote_pc` 인자 없이 선택한 위치에서 실행된다. `target="local"`로 복귀한다. 원격 미연결·미지원 시 로컬로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI 호스트에서 실행한다.
 
 **웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 
@@ -96,7 +96,7 @@ AgentRuntime / AgentLoop
 | 감사 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3` |
 | 업로드 | `mai/mai_uploads/` |
 
-- **Owner:** 호스트 파일·터미널 및 승인된 원격 Native 도구 사용.
+- **Owner:** 작업별 Workspace를 선택하여 호스트 및 인증된 원격 워커의 파일·터미널 기능 사용.
 - **체험 계정:** 허용된 읽기 기능과 자기 업로드 영역의 제한적 쓰기. Owner 모델 선택·원격 관리 불가.
 - **계정 식별:** 로그인 ID와 데이터 소유 식별자 `db_id` 분리.
 - **기억 저장:** 승인 후 사용자 진술 및 허용된 성공 도구 결과에서 사실 추출 → 사용자별 그래프·개념 색인. 별도 비동기 작업.
