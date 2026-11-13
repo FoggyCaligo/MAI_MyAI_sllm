@@ -137,3 +137,40 @@ def test_functional_mcp_workspace_remote_execution_without_local_fallback(tmp_pa
     assert result == {"content": "remote evidence"}
     assert called == [("owner-1", "session-bound-to-owner", "native.invoke",
                        {"name": "file_read", "arguments": {"path": "test.txt"}})]
+
+
+def test_temporary_artifact_cleanup_survives_mcp_process_boundary(tmp_path):
+    import asyncio
+    import sys
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager
+    from mai.tools.artifacts import temporary_artifact_scope
+
+    async def run():
+        config = tmp_path / "mcp_servers.json"
+        config.write_text(json.dumps({
+            "schema_version": 3,
+            "servers": [{"id": "mai_file", "enabled": True,
+                         "command": sys.executable,
+                         "args": ["-m", "mai.mcp_tools.native_groups",
+                                  "--group", "mai_file"],
+                         "env": {"MAI_CWD": str(tmp_path)}}],
+        }), encoding="utf-8")
+        manager = MCPConnectionManager(config)
+        await manager.refresh_catalog()
+        await manager.activate(["mai_file.file_write", "mai_file.file_move"])
+        with temporary_artifact_scope() as ledger:
+            created = await manager.call("mai_file.file_write", {
+                "path": "scratch.txt", "content": "ephemeral",
+                "lifecycle": "temporary",
+            })
+            assert created["created"] is True
+            assert (tmp_path / "scratch.txt").read_text() == "ephemeral"
+            moved = await manager.call("mai_file.file_move", {
+                "source": "scratch.txt", "destination": "moved.txt",
+            })
+            assert (tmp_path / "moved.txt").exists()
+            assert str(tmp_path / "moved.txt") in {str(p) for p in ledger.paths}
+            ledger.cleanup()
+            assert not (tmp_path / "moved.txt").exists()
+        await manager.close()
+    asyncio.run(run())
