@@ -1,4 +1,4 @@
-"""Remote-worker parity, per-call selection, and persistent session checks."""
+"""Remote-worker parity, workspace selection, and persistent session checks."""
 import asyncio
 
 import pytest
@@ -23,7 +23,7 @@ def test_worker_exposes_all_worker_portable_services():
         assert not worker.has(name)
 
 
-def test_host_and_worker_service_schemas_are_exact_except_at_remote_pc():
+def test_host_and_worker_portable_service_schemas_are_exact():
     host = ToolRegistry()
     register_routed_service_tools(
         host, workspace=WorkspaceContext(owner_id="owner"), browser_manager=BrowserSessionManager(),
