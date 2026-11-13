@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_settings_define_default_ornith_for_auto_catalog():
     config = read_config(ROOT / "settings.yaml")
-    assert "Ornith-1.5-9B-Q4_K_M.gguf" in str(config["LLAMACPP_MAIN_GGUF_PATH"])
+    assert "Ornith-1.5-9B-Q8_0.gguf" in str(config["LLAMACPP_MAIN_GGUF_PATH"])
     assert config["LLAMACPP_GGUF_DIRECTORY"] == "portable/portable-models/gguf"
 
 

@@ -14,7 +14,7 @@ MAI는 로컬 llama.cpp 추론 서버에 연결해 대화, 도구 실행, 장기
 
 Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 start`, CMD에서는 `mai.cmd`를 사용할 수 있다. 저장소 안의 `mai/`는 Python 패키지 디렉터리이므로 `./mai` 실행 파일은 존재하지 않는다.
 
-`setup`은 공식 배포자 SHA-256으로 고정한 Python·uv·llama.cpp 런타임을 준비하고 `pyproject.toml`의 본체·개발 의존성을 설치한다. 첫 설치 시 Owner 로그인 정보를 요청해 `.env`를 만들며 기존 파일은 덮어쓰지 않는다. 지속 DB의 기본 경로는 `./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`이며, 폴더나 DB가 없으면 최초 실행 시 자동 생성된다. 기존 `.env`에서 DB 경로를 변경했다면 설정값을 확인한다. Linux 실행 파일과 Python 환경은 Linux 호스트 캐시에 설치된다. **GGUF 모델 파일과 일치하는 projector는 사용자가 별도로 확보해야 한다.**
+`setup`은 공식 배포자 SHA-256으로 고정한 Python·uv·llama.cpp 런타임을 준비하고 `pyproject.toml`의 본체·개발 의존성을 설치한다. 첫 설치 시 Owner 로그인 정보를 요청해 `.env`를 만들며 기존 파일은 덮어쓰지 않는다. 지속 DB의 기본 경로는 `./mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`이며, 폴더나 DB가 없으면 최초 실행 시 자동 생성된다. 기존 `.env`에서 DB 경로를 변경했다면 설정값을 확인한다. Linux 실행 파일과 Python 환경은 Linux 호스트 캐시에 설치된다. **기본 Ornith Q8 GGUF와 대응 BF16 projector는 `setup`으로 SHA-256을 확인해 설치한다.** 다른 모델과 projector는 별도로 준비해야 한다.
 
 `check`는 필수 파일과 GGUF 카탈로그를 확인하지만 GPU 추론 성공을 보장하지 않는다. `start`는 llama.cpp의 단일 상주 모델 라우터를 실행한 뒤 MAI 웹 서버를 시작한다. 기본 웹 주소는 `http://127.0.0.1:8000`이다.
 

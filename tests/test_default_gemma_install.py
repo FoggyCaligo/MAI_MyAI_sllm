@@ -6,6 +6,20 @@ import pytest
 from portable import install_default_model as installer
 
 
+def test_ornith_q8_default_matches_settings_and_verified_manifest():
+    from portable.resolve_llamacpp_settings import read_config
+
+    settings = read_config(Path(__file__).resolve().parents[1] / "settings.yaml")
+    default = Path(settings["LLAMACPP_MAIN_GGUF_PATH"])
+    assert default.parent == installer.ORNITH_DIRECTORY
+    assert default.name == installer.ORNITH_ARTIFACTS[0][0]
+    assert installer.ORNITH_ARTIFACTS[0] == (
+        "Ornith-1.5-9B-Q8_0.gguf",
+        "22086870b009dbe9815ee752c48a82de930118a7c5ce5599590892ae03b8b010",
+    )
+    assert installer.ORNITH_ARTIFACTS[1][0] == "mmproj-Ornith-1.5-9B-BF16.gguf"
+
+
 def test_download_then_reuse(monkeypatch, tmp_path: Path):
     data = {name: b"GGUF" + name.encode() for name, _ in installer.ORNITH_ARTIFACTS}
     monkeypatch.setattr(installer, "ORNITH_ARTIFACTS", tuple(

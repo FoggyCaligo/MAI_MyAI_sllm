@@ -26,11 +26,11 @@ MAI 프로젝트의 깃허브 레포를 클론(다운로드)한다.
 클론한 레포에 해당하는 폴더로 이동한다.
 **./mai.sh setup** 
 MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 묶은 설치스크립트를 실행한다.( 다운로드 하는 모든 목록은 3번에서 상세하게 설명한다.)
-`setup`은 시스템 RAM 용량과 관계없이 기본 Ornith 1.5 9B Q4_K_M 및 mmproj를 `portable/portable-models/gguf/ornith_1.5_9b_Q4/`에 자동 설치한다. 두 파일의 SHA-256을 검증하고 정상 파일은 재사용하며 손상된 파일을 덮어쓰지 않는다. Gemma 4는 별도 선택 가능한 모델로 유지하며 필요한 경우 `portable/install_default_model.py --gemma`로 설치할 수 있다.
+`setup`은 시스템 RAM 용량과 관계없이 기본 Ornith 1.5 9B Q8_0 및 mmproj를 `portable/portable-models/gguf/ornith_1.5_9b_Q8/`에 자동 설치한다. 두 파일의 SHA-256을 검증하고 정상 파일은 재사용하며 손상된 파일을 덮어쓰지 않는다. Gemma 4는 별도 선택 가능한 모델로 유지하며 필요한 경우 `portable/install_default_model.py --gemma`로 설치할 수 있다.
 
 #### 3. 설치 스크립트가 하는 것
 - Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
-- 기본 Ornith 1.5 9B Q4_K_M 및 mmproj 다운로드 (RAM 용량 무관, 공식 Hugging Face SHA-256 검증); Gemma 4는 선택적 다운로드
+- 기본 Ornith 1.5 9B Q8_0 및 mmproj 다운로드 (RAM 용량 무관, 공식 Hugging Face SHA-256 검증); Gemma 4는 선택적 다운로드
 - 프로젝트 루트에 있는 `pyproject.toml`의 기본·개발 의존성, Playwright Chromium 다운로드
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
@@ -115,7 +115,7 @@ move_gguf "portable/portable-models/gguf/LFM2.5-2.6B-Q4_K_M.gguf" "portable/port
 ./mai.sh check
 ./mai.sh start
 ```
-`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. 서버 시작 시 `LLAMACPP_MAIN_GGUF_PATH`에 지정된 Ornith를 기본 GGUF로 선택하며, 사용자가 이후 모델 선택 UI에서 다른 모델로 변경하는 것은 자유롭다. 선택된 모델 파일이 없거나 손상되면 다른 모델로 자동 우회하지 않고 오류를 표시한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
+`check`는 필수 실행 파일과 모델 카탈로그를 검사한다. 서버 시작 시 **사용자가 선택한 모델 기록이 없으면** `LLAMACPP_MAIN_GGUF_PATH`의 Ornith Q8을 기본 GGUF로 사용한다. 모델 선택 UI에서 다른 모델로 전환에 성공하면 그 선택을 `selected_model.json`에 저장하며, 이후 MAI를 다시 켜도 마지막 선택을 유지한다. 기존 Q4 선택 기록이 있으면 설정 파일의 새 Q8 기본값보다 그 기록이 우선한다. 선택된 모델 파일이 없거나 손상되면 다른 모델로 자동 우회하지 않고 오류를 표시한다. `start`는 llama.cpp 라우터(기본 `127.0.0.1:8080`)와 MAI 웹 서버를 실행한다. 브라우저 접속 주소는 **http://127.0.0.1:8000**이다. 종료는 해당 실행 터미널에서 `Ctrl+C` 또는 `./mai.sh end`를 사용한다.
 
 | 환경 | 설치 | 실행 |
 |---|---|---|
