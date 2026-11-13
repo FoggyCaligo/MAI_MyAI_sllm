@@ -202,3 +202,30 @@ def test_windows_launcher_uses_hidden_console_not_detached_process(monkeypatch):
     assert flags & subprocess.CREATE_NO_WINDOW
     assert flags & subprocess.DETACHED_PROCESS == 0
     assert restart_mai.launcher_creation_flags("linux") == 0
+
+
+def test_stop_clears_stale_registration_when_all_ports_closed(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    module.IDENTITY.write_text(json.dumps({
+        "schema": 1, "pid": 12345, "identity": "matching-process",
+        "root": str(tmp_path.resolve()),
+    }))
+    monkeypatch.setattr(module, "process_identity", lambda pid: "matching-process")
+    monkeypatch.setattr(module, "listening", lambda port: False)
+    monkeypatch.setattr(os, "kill", lambda *args: pytest.fail("Must not kill processes"))
+    module.stop_registered_server()
+    assert not module.IDENTITY.exists()
+
+
+def test_stop_reports_orphaned_gateway_without_killing(monkeypatch, tmp_path):
+    module = configure_paths(monkeypatch, tmp_path)
+    module.IDENTITY.write_text(json.dumps({
+        "schema": 1, "pid": 12345, "identity": "matching-process",
+        "root": str(tmp_path.resolve()),
+    }))
+    monkeypatch.setattr(module, "process_identity", lambda pid: "matching-process")
+    monkeypatch.setattr(module, "listening", lambda port: port == 8080)
+    monkeypatch.setattr(os, "kill", lambda *args: pytest.fail("Must not kill processes"))
+    with pytest.raises(RuntimeError, match="companion ports remain occupied"):
+        module.stop_registered_server()
+    assert module.IDENTITY.exists()
