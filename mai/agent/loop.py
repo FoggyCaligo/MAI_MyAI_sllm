@@ -103,7 +103,12 @@ def _insert_tool_catalog(model_history: list[Message], registry: ToolRegistry, s
             "You may activate multiple tools in one tool_manual call. "
             "Tool catalog (JSON): "
             + json.dumps([
-                {"name": definition.name, "category": definition.category}
+                dict({"name": definition.name, "category": definition.category}, **(
+                    {"description": definition.metadata["catalog_hint"]}
+                    if isinstance(definition.metadata.get("catalog_hint"), str)
+                    and definition.metadata["catalog_hint"].strip()
+                    else {}
+                ))
                 for definition in registry.definitions()
             ], ensure_ascii=False, separators=(",", ":"))
         ),
