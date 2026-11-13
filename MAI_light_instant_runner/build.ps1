@@ -119,7 +119,7 @@ if ($IncludeRuntime) {
     # Re-link the installed package, which might still reference the original checkout.
     & $python -m pip install --disable-pip-version-check --no-build-isolation --no-deps -e $output
     if ($LASTEXITCODE -ne 0) { throw 'Portable Python package relinking failed. Do not distribute.' }
-    & $python -c 'import mai.agent.runtime, mai.tools.calculator, mcp_memorizer; print("portfolio imports OK")'
+    & $python -c 'import mai.agent.runtime, mai.tools.calculator, mcp_memorizer'
     if ($LASTEXITCODE -ne 0) { throw 'Trimmed MAI package import check failed. Do not distribute.' }
 }
 if ($IncludeModels) {
