@@ -25,5 +25,5 @@ def test_llamacpp_uses_main_model_only_for_vision(monkeypatch):
     instance._llamacpp_router = None
 
     principal = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
-    registry = instance._registry_for(principal, object(), object(), object())
+    registry = instance._registry_for(principal, object(), object())
     assert not registry.has("image_analyze")
