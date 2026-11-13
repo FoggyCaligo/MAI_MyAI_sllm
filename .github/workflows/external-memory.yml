@@ -7,6 +7,13 @@ on:
       - 'mai/app/runtime.py'
       - 'mai/mcp_tools/**'
       - 'tests/test_host_client_workspace_routing.py'
+      - 'mai/agent/runtime.py'
+      - 'mai/agent/**'
+      - 'mai/tools/artifacts.py'
+      - 'mai/tools/terminal.py'
+      - 'mai/remote/routing.py'
+      - 'tests/test_temporary_artifacts.py'
+      - 'tests/test_turn_temporary_artifacts.py'
       - 'pyproject.toml'
       - 'tests/test_external_memorizer_integration.py'
       - 'settings.yaml'
@@ -28,4 +35,4 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e '.[dev]'
       - run: python -c 'from mai.app.server import app; print("MAI server import OK")'
-      - run: python -m pytest -q tests/test_native_mcp_groups.py tests/test_workspace_switch_mcp.py tests/test_host_client_workspace_routing.py tests/test_remote_execution_target.py tests/test_remote_error_identity.py tests/test_remote_unified_routing.py tests/test_remote_service_routing.py tests/test_remote_model_context.py tests/test_runtime_data_path_migration.py tests/test_mcp_source_ownership.py tests/test_mcp_lazy_manager.py tests/test_agent_tool_catalog_contract.py tests/test_external_memorizer_integration.py tests/test_external_memorizer_prompt_ownership.py tests/test_memory_admission.py tests/test_memory_model_view.py tests/test_memory_runtime.py tests/test_memory_v1.py tests/test_sqlite_fts_index.py tests/test_recall_ranked_limit.py tests/test_unified_memory_lookup.py tests/test_fact_extractor.py tests/test_memory_read_after_write.py tests/test_production_c_runtime.py tests/test_tool_registry.py tests/test_llamacpp_main_only_vision.py tests/test_memory_temporal_precedence_policy.py tests/test_restart_lifecycle.py tests/test_default_gemma_install.py tests/test_env_example_defaults.py tests/test_llamacpp_shared_model_alias.py tests/test_single_resident_portable.py tests/test_last_selected_model.py
+      - run: python -m pytest -q tests/test_native_mcp_groups.py tests/test_workspace_switch_mcp.py tests/test_host_client_workspace_routing.py tests/test_remote_execution_target.py tests/test_remote_error_identity.py tests/test_remote_unified_routing.py tests/test_remote_service_routing.py tests/test_remote_model_context.py tests/test_runtime_data_path_migration.py tests/test_mcp_source_ownership.py tests/test_mcp_lazy_manager.py tests/test_agent_tool_catalog_contract.py tests/test_external_memorizer_integration.py tests/test_external_memorizer_prompt_ownership.py tests/test_memory_admission.py tests/test_memory_model_view.py tests/test_memory_runtime.py tests/test_memory_v1.py tests/test_sqlite_fts_index.py tests/test_recall_ranked_limit.py tests/test_unified_memory_lookup.py tests/test_fact_extractor.py tests/test_memory_read_after_write.py tests/test_production_c_runtime.py tests/test_tool_registry.py tests/test_llamacpp_main_only_vision.py tests/test_memory_temporal_precedence_policy.py tests/test_restart_lifecycle.py tests/test_temporary_artifacts.py tests/test_turn_temporary_artifacts.py tests/test_windows_terminal_encoding.py tests/test_remote_worker_services.py tests/test_default_gemma_install.py tests/test_env_example_defaults.py tests/test_llamacpp_shared_model_alias.py tests/test_single_resident_portable.py tests/test_last_selected_model.py
