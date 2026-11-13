@@ -18,6 +18,7 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict
 
 from ..tools.registry import ToolRegistry, ToolRegistryError
+from .workspace import WorkspaceContext
 
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
@@ -53,6 +54,7 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                 pass
             return path
         config = {
+            "schema_version": 2,
             "catalog_path": "mcp_catalog.json",
             "servers": [{
                 "id": "memorizer",
@@ -63,6 +65,11 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                     "MEMORIZER_USER_ID": "{memory_user_id}",
                     "MEMORIZER_DATA_DIR": str(root),
                 },
+            }, {
+                "id": "remote",
+                "enabled": True,
+                "command": sys.executable,
+                "args": ["-m", "mai.mcp_tools.MCP_remote.server"],
             }],
         }
         # Exclusive creation avoids clobbering a concurrently customized config.
@@ -71,6 +78,22 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                 json.dump(config, fp, ensure_ascii=False, indent=2)
         except FileExistsError:
             pass
+    # One-time migration for existing configurations. Subsequent edits to
+    # enabled/disabled entries are respected, including intentional removal.
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    if existing.get("schema_version", 1) < 2:
+        if not any(entry.get("id") == "remote" for entry in existing.get("servers", [])):
+            existing["servers"].append({
+                "id": "remote", "enabled": True, "command": sys.executable,
+                "args": ["-m", "mai.mcp_tools.MCP_remote.server"],
+            })
+        existing["schema_version"] = 2
+        backup = path.with_name("mcp_servers.pre-workspace.json")
+        if not backup.exists():
+            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        temp = path.with_suffix(".workspace.tmp")
+        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
     return path
 
 
@@ -103,9 +126,11 @@ class MCPConnectionManager:
     """
 
     def __init__(self, config_path: str | Path, *,
-                 memory_user_id: str | None = None) -> None:
+                 memory_user_id: str | None = None,
+                 workspace: WorkspaceContext | None = None) -> None:
         self.config_path = Path(config_path).expanduser().resolve()
         self.memory_user_id = memory_user_id
+        self.workspace = workspace
         config = json.loads(self.config_path.read_text(encoding="utf-8"))
         if not isinstance(config, dict) or not isinstance(config.get("servers", []), list):
             raise ValueError("MCP config must contain servers array")
@@ -302,6 +327,14 @@ class MCPConnectionManager:
         response = await self._sessions[entry["server"]].call_tool(entry["name"], dict(arguments))
         if response.isError:
             raise MCPConnectionError(f"MCP tool {name} returned an error: {response.content}")
+        if entry["server"] == "remote" and entry["name"] == "switch_workspace":
+            if self.workspace is None:
+                raise MCPConnectionError("Workspace control unavailable for this agent run")
+            # Never accept the target from a result produced by an untrusted
+            # server: the registered input is the sole requested target.
+            if set(arguments) != {"target"} or arguments["target"] not in ("local", "remote"):
+                raise MCPConnectionError("Invalid workspace selection contract")
+            return self.workspace.switch(arguments["target"])
         if response.structuredContent is not None:
             return response.structuredContent
         return [
