@@ -24,7 +24,7 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
     assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2
     for name in (
         "file_read", "file_write", "code_read",
-        "web_search", "browser_open", "browser_click",
+        "code_search", "document_edit",
     ):
         local_timeout = local.get(name).timeout_seconds
         remote_timeout = remote.get(name).timeout_seconds
@@ -32,6 +32,8 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
         assert remote_timeout == 2 * local_timeout, (
             f"{name} local={local_timeout} remote={remote_timeout}"
         )
+    for name in ("web_search", "web_fetch", "browser_open", "browser_click"):
+        assert not remote.has(name)
     from mai.tools import terminal
     seen = []
     async def fake_terminal_run(**kwargs):
