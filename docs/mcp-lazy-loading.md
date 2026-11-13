@@ -18,7 +18,7 @@ is reconnected, its live schema is verified, and its native schema is
 then exposed to the model.
 
 The first start automatically creates `mai/mcp_tools/mcp_servers.json` with
-Memorizer enabled and a command pointing to MAI's own Portable Python.
+Memorizer and host-only MCP_remote enabled and a command pointing to MAI's own Portable Python.
 The file is **never overwritten** by later starts, so settings survive.
 An explicit `MAI_MCP_CONFIG` absolute path overrides that default for
 advanced configurations. The resolved catalog is stored beside the
@@ -85,7 +85,9 @@ selector combinations are rejected by the MCP JSON schema and server.
 Long-term memory extraction after the final response remains host
 controlled and does not expose a memory-save model tool.
 
-All other MAI tools remain native until migrated into separate MCP servers.
+The built-in `remote__switch_workspace(target="local"|"remote")` is provided by `mai/mcp_tools/MCP_remote/`. It controls only the current Agent run, with `local` as the initial value. The host checks authenticated worker ownership before changing state; an unavailable remote never falls back to local. Workspace-capable native tools no longer expose `at_remote_pc` and follow the selected location. Web, browser, memory and host-control tools remain host-local.
+
+Other MAI tools remain native until migrated into separate MCP servers.
 Each additional MCP tool is internally namespaced `server_id.tool_name`; the model-facing callable alias is `server_id__tool_name` (compatible with function-call name requirements).
 This implementation supports stdio MCP servers and owner access only.
 Startup discovery failure is reported as an error instead of silently
