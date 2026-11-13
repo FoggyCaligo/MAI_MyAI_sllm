@@ -28,7 +28,7 @@ from .login_rate_limit import LoginRateLimiter
 from .chat_sessions import ChatSessionStore
 from .audit_log import AuditLogStore
 from .runtime import MAIRuntime
-from ..tools.mcp_connection import MCPConnectionManager, ensure_default_mcp_config
+from ..mcp_tools.mcp_servers import MCPConnectionManager, ensure_default_mcp_config
 from ..hosting import HostingError, create_hosting
 from .uploads import principal_upload_directory
 from .voice import MAX_RECORDING_BYTES, MAX_RECORDING_SECONDS, VoiceService
