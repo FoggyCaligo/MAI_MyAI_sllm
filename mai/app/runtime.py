@@ -329,12 +329,12 @@ class MAIRuntime:
                 register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
                 register_restart_tool(registry)
                 registry.add(
-                name="file_download_link",
-                description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
-                input_model=FileDownloadLinkInput,
-                handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
-                category="filesystem",
-            )
+                    name="file_download_link",
+                    description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
+                    input_model=FileDownloadLinkInput,
+                    handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
+                    category="filesystem",
+                )
         elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
                 registry,
