@@ -97,3 +97,43 @@ def test_manager_activation_preserves_original_contract(tmp_path):
         assert "56" in json.dumps(result)
         await manager.close()
     asyncio.run(run())
+
+
+def test_functional_mcp_workspace_remote_execution_without_local_fallback(tmp_path, monkeypatch):
+    import asyncio
+    import sys
+    from types import SimpleNamespace
+    from mai.mcp_tools.mcp_servers import MCPConnectionManager
+    from mai.remote.target import ExecutionTarget
+
+    class FakeWorkspace:
+        owner_id = "owner-1"
+        def snapshot(self):
+            return SimpleNamespace(target="remote")
+        def validate_remote(self, snapshot):
+            assert snapshot.target == "remote"
+            return "session-bound-to-owner"
+    config = tmp_path / "mcp_servers.json"
+    config.write_text(json.dumps({"schema_version": 3, "servers": [
+        {"id": "mai_file", "enabled": True, "command": sys.executable,
+         "args": ["-m", "mai.mcp_tools.native_groups", "--group", "mai_file"]}
+    ]}), encoding="utf-8")
+    manager = MCPConnectionManager(config, workspace=FakeWorkspace())
+    manager.catalog["mai_file.file_read"] = {
+        "server": "mai_file", "name": "file_read",
+        "description": "", "instructions": "",
+        "schema": {"type": "object"},
+        "schema_hash": "",
+    }
+    manager._sessions["mai_file"] = object()
+    called = []
+
+    async def fake_execute(self, operation, arguments, *, timeout):
+        called.append((self.owner_id, self.remote_session_id, operation, arguments))
+        return {"value": {"content": "remote evidence"}}
+    monkeypatch.setattr(ExecutionTarget, "execute", fake_execute)
+
+    result = asyncio.run(manager.call("mai_file.file_read", {"path": "test.txt"}))
+    assert result == {"content": "remote evidence"}
+    assert called == [("owner-1", "session-bound-to-owner", "native.invoke",
+                       {"name": "file_read", "arguments": {"path": "test.txt"}})]
