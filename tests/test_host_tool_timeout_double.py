@@ -39,21 +39,29 @@ def test_remote_service_timeout_is_twice_current_local_service_timeout():
         host, workspace=WorkspaceContext(owner_id="owner"), browser_manager=BrowserSessionManager(),
     )
     worker = build_registry()
-    # Host's routed wrapper defers its timeout to its inner local tool.
-    # Remote worker receives twice the effective local execution limit.
+    # Portable services have twice their local execution budget on workers.
     for name, remote_timeout in {
         "current_time": 40,
         "calculator": 40,
-        "web_search": 120,
-        "web_fetch": 120,
         "market_data": 120,
-        "browser_open": 240,
-        "browser_snapshot": 120,
-        "browser_click": 160,
-        "browser_close": 80,
     }.items():
         assert worker.get(name).timeout_seconds == remote_timeout
         assert host.has(name)
+        assert host.get(name).timeout_seconds is None
+
+    # Web and Chromium sessions are deliberately host-only; they must not be
+    # advertised or executable through a remote worker registry.
+    for name, host_timeout in {
+        "web_search": 180,
+        "web_fetch": 180,
+        "browser_open": 120,
+        "browser_snapshot": 60,
+        "browser_click": 80,
+        "browser_close": 40,
+    }.items():
+        assert not worker.has(name)
+        assert host.has(name)
+        assert host.get(name).timeout_seconds == host_timeout
 
 
 def test_remote_pc_limits_double_current_local(tmp_path):
@@ -100,7 +108,8 @@ def test_owner_web_search_has_independent_180_second_timeout(monkeypatch):
         owner, workspace=WorkspaceContext(owner_id="owner"), browser_manager=BrowserSessionManager(),
     )
     assert registered == [{"web_timeout_seconds": 180, "market_timeout_seconds": 60}]
-    # The routed wrapper's timeout is delegated to the inner registry.
+    # Host-only web tools retain their actual local timeout budgets.
     assert owner.has("web_search")
-    assert owner.get("web_search").timeout_seconds is None
+    assert owner.get("web_search").timeout_seconds == 180
     assert owner.has("web_fetch")
+    assert owner.get("web_fetch").timeout_seconds == 180
