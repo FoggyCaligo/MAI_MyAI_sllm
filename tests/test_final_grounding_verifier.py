@@ -495,7 +495,7 @@ def test_numeric_semantic_review_accepts_equivalent_date_phrasing() -> None:
     ))
 
     assert result.ok is True
-    assert len(reviewer.requests) == 3  # numeric, factual, quality
+    assert len(reviewer.requests) == 1  # one unified numeric/factual/quality review
     numeric_payload = json.loads(reviewer.requests[0].messages[1]["content"])
     assert numeric_payload["flagged_numeric_or_date_values"] == ["2026"]
     assert reviewer.requests[0].response_format["properties"]["numeric_verdict"]
@@ -852,26 +852,17 @@ def test_reviewer_has_no_default_deadline() -> None:
     assert verifier.reviewer_timeout_seconds is None
     result = run(verifier.verify(candidate="설명", messages=[{"role": "user", "content": "설명해줘"}], tool_results=()))
     assert result.ok
-    assert len(reviewer.requests) == 2  # factual and quality checks
+    assert len(reviewer.requests) == 1  # one unified factual/quality review
 
 
 def test_reviewer_recovers_after_two_invalid_outputs() -> None:
-    valid = json.dumps({
-        "evidence_verdict": "supported",
-        "alignment_verdict": "aligned",
-        "coverage_verdict": "sufficient",
-        "coverage_reasons": [],
-        "reasons": [],
-        "claims": [],
-        "action_verdict": "not_applicable",
-        "retry_summary": "No correction needed.",
-    })
-    factual = json.loads(valid)
-    for field in ("alignment_verdict", "coverage_verdict", "coverage_reasons"):
-        factual.pop(field)
-    quality = json.dumps({"alignment_verdict": "aligned", "coverage_verdict": "sufficient",
-                          "coverage_reasons": [], "reasons": [], "retry_summary": "No correction needed."})
-    reviewer = SequenceAdapter(["not-json", "{}", json.dumps(factual), quality])
+    valid = json.dumps(_UnifiedReviewPayload(
+        numeric_verdict="supported", numeric_reason="No numeric discrepancy.",
+        evidence_verdict="supported", claims=[], action_verdict="not_applicable",
+        alignment_verdict="aligned", coverage_verdict="sufficient",
+        coverage_reasons=[], reasons=[], retry_summary="No correction needed.",
+    ).model_dump(mode="json"))
+    reviewer = SequenceAdapter(["not-json", "{}", valid])
 
     result = run(FinalGroundingVerifier(reviewer_adapter=reviewer).verify(
         candidate="설명",
@@ -880,7 +871,7 @@ def test_reviewer_recovers_after_two_invalid_outputs() -> None:
     ))
 
     assert result.ok
-    assert len(reviewer.requests) == 4
+    assert len(reviewer.requests) == 3  # two invalid unified outputs followed by one valid output
 
 
 @pytest.mark.parametrize("status, attempts", [(429, 3), (503, 3), (404, 1)])
@@ -1019,7 +1010,7 @@ def test_evidence_verification_allows_five_corrections_before_exhaustion() -> No
 
     assert result.content == "이제 근거에 맞는 답변입니다."
     assert result.model_rounds == 6
-    assert len(reviewer.requests) == 7  # six factual rounds plus final quality review
+    assert len(reviewer.requests) == 6  # one unified review per candidate
 
 
 
