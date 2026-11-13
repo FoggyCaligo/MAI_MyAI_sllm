@@ -5,9 +5,8 @@ import asyncio
 import json
 
 import pytest
-from mai.agent.verification import FinalGroundingVerifier
+from mai.agent.verification import FinalGroundingVerifier, _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
-from tests.reviewer_fixtures import reviewer_payload
 
 
 class Reviewer:
@@ -30,7 +29,13 @@ class Reviewer:
             "reasons": ["Evidence classification from reviewer"],
             "retry_summary": "Examine evidence.",
         }
-        content = json.dumps(reviewer_payload(payload, request))
+        payload.update({
+            "numeric_verdict": "supported", "numeric_reason": "",
+            "alignment_verdict": "aligned", "coverage_verdict": "sufficient",
+            "coverage_reasons": [],
+        })
+        assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+        content = json.dumps(_UnifiedReviewPayload.model_validate(payload).model_dump(mode="json"))
         return ModelTurn(content=content, thinking="", tool_calls=(),
                          assistant_message={"role": "assistant", "content": content})
 
@@ -57,7 +62,7 @@ def test_critical_keeps_missing_evidence_as_audit_warning():
     assert result.ok
     assert not result.issues
     assert result.review_details["nonblocking_warnings"][0]["code"] == "claim_grounding_failed"
-    assert "critical-error reviewer" in reviewer.calls[0].messages[0]["content"]
+    assert "FACTUAL VERIFICATION:" in reviewer.calls[0].messages[0]["content"]
 
 
 def test_critical_blocks_observed_contradiction():
