@@ -81,7 +81,7 @@ internal sealed class MainWindow : Form
         }
         lock (processSync)
         {
-            if (active is { HasExited: false })
+            if (command is not ("end" or "restart") && active is { HasExited: false })
             {
                 WriteLine("Another MAI launcher command is still running. Close it only after the command finishes.");
                 return;
@@ -108,7 +108,7 @@ internal sealed class MainWindow : Form
 
         try
         {
-            lock (processSync) active = process;
+            if (command == "start") lock (processSync) active = process;
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
