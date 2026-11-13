@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .artifacts import declare_temporary_outputs
 from .registry import ToolRegistry
 from ..platform import current_platform
 from ..platform.windows import windows_cmd_args, powershell_command
@@ -21,6 +22,7 @@ class TerminalRunInput(BaseModel):
     command: str = Field(min_length=1)
     cwd: str | None = None
     shell: Literal['bash', 'cmd', 'powershell'] = 'bash'
+    temporary_outputs: list[str] = Field(default_factory=list)
 
 
 class TerminalShellContractError(ValueError):
@@ -188,6 +190,7 @@ async def terminal_run(
     cwd: str | None = None,
     default_cwd: str | Path | None = None,
     shell: Literal["bash", "cmd", "powershell"] = "bash",
+    temporary_outputs: list[str] | None = None,
 ) -> dict[str, Any]:
     _validate_shell_contract(command, shell)
     base = cwd if cwd is not None else default_cwd
@@ -197,6 +200,8 @@ async def terminal_run(
     if not resolved_cwd.is_dir():
         raise NotADirectoryError(str(resolved_cwd))
 
+    if temporary_outputs:
+        declare_temporary_outputs(temporary_outputs, cwd=resolved_cwd)
     result = await _run_command(command, resolved_cwd, shell=shell)
     if result["returncode"] != 0:
         raise TerminalCommandError("terminal command exited with a non-zero return code", result)
@@ -215,11 +220,13 @@ def register_terminal_tools(
         command: str,
         cwd: str | None = None,
         shell: Literal["bash", "cmd", "powershell"] = "bash",
+        temporary_outputs: list[str] | None = None,
     ) -> dict[str, Any]:
         return await terminal_run(
             command=command,
             cwd=cwd,
             shell=shell,
+            temporary_outputs=temporary_outputs,
             default_cwd=register_default_cwd,
         )
 
@@ -264,6 +271,12 @@ def register_terminal_tools(
             "For independent queries do not chain expected no-matches using &&; "
             "inspect their specific results and preserve unexpected errors and their nonzero exit codes. "
             "Do not globally coerce return codes to zero or hide stderr. "
+            "If a shell command must create scratch files, explicitly list each NEW path in "
+            "temporary_outputs; MAI deletes only those new paths after the task (including failures). "
+            "Never declare an existing file or a user-requested deliverable as temporary. "
+            "Prefer file_write(lifecycle=temporary) for scripts used across tool calls. "
+            "Shell output files not declared are persistent and are NOT auto-deleted. "
+            "Client workspace temporary_outputs is unsupported until remote cleanup is implemented. "
             "Nonzero exits and output limit violations fail visibly. "
             "Windows terminal output is decoded as UTF-8 strictly; stderr contents "
             "are not used as a heuristic to determine success."

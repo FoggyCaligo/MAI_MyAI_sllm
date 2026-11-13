@@ -43,6 +43,16 @@ def _add_routed_definitions(
             snapshot = workspace.snapshot()
             if snapshot.target == "host":
                 return await _definition.invoke(kwargs)
+            if _definition.name == "file_write" and kwargs.get("lifecycle") == "temporary":
+                raise RemoteExecutionError(
+                    "temporary file_write on client is not supported; "
+                    "remote scratch cleanup is not implemented"
+                )
+            if _definition.category == "terminal" and kwargs.get("temporary_outputs"):
+                raise RemoteExecutionError(
+                    "temporary_outputs on client workspace is not supported; "
+                    "remote scratch cleanup is not implemented"
+                )
             session_id = workspace.validate_remote(snapshot)
             target = ExecutionTarget(owner_id=workspace.owner_id, remote_session_id=session_id)
             response = await target.execute(

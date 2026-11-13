@@ -461,12 +461,33 @@ class MCPConnectionManager:
         if name not in self.catalog or self.catalog[name]["server"] not in self._sessions:
             raise MCPConnectionError(f"MCP tool {name} is not activated")
         entry = self.catalog[name]
+        if entry["server"] == "mai_terminal_run" and entry["name"] == "terminal_run":
+            declared = arguments.get("temporary_outputs", [])
+            if declared:
+                if not isinstance(declared, list):
+                    raise ValueError("temporary_outputs must be a list of new paths")
+                if self.workspace is not None and self.workspace.snapshot().target == "client":
+                    raise MCPConnectionError(
+                        "temporary_outputs on client workspace is not supported; "
+                        "remote scratch cleanup is not implemented"
+                    )
+                from ..tools.artifacts import declare_temporary_outputs
+                configured_cwd = self.servers[entry["server"]].get("env", {}).get("MAI_CWD")
+                effective_cwd = arguments.get("cwd") or configured_cwd or Path.cwd()
+                declare_temporary_outputs(declared, cwd=effective_cwd)
         # Workspace selection is host-owned.  Compatible tools use their
         # original native tool names on the authenticated worker, without
         # changing public MCP schemas or leaking a session token to the model.
         if self.workspace is not None and entry["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
             snapshot = self.workspace.snapshot()
             if snapshot.target == "client":
+                if (entry["server"] == "mai_file" and entry["name"] == "file_write"
+                        and arguments.get("lifecycle") == "temporary"):
+                    from ..remote.session import RemoteExecutionError
+                    raise RemoteExecutionError(
+                        "temporary file_write on client is not supported; "
+                        "remote scratch cleanup is not implemented"
+                    )
                 from ..remote.target import ExecutionTarget
                 from ..remote.session import RemoteExecutionError
                 session_id = self.workspace.validate_remote(snapshot)
