@@ -132,3 +132,66 @@ def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
         assert manager._sessions == {}
 
     asyncio.run(exercise())
+
+
+def test_disabled_server_not_listed_and_toggle_without_reinstall(tmp_path):
+    manager, records = make_manager(tmp_path)
+    config = manager.config_path
+    body = json.loads(config.read_text(encoding="utf-8"))
+    body["servers"][1]["enabled"] = False
+    config.write_text(json.dumps(body), encoding="utf-8")
+    disabled = MCPConnectionManager(config)
+    registry = ToolRegistry()
+    disabled.register(registry)
+    assert registry.names() == ("first.memory_search",)
+    assert "second" not in disabled.servers
+    body["servers"][1]["enabled"] = True
+    config.write_text(json.dumps(body), encoding="utf-8")
+    enabled = MCPConnectionManager(config)
+    registry = ToolRegistry()
+    enabled.register(registry)
+    assert registry.names() == ("first.memory_search", "second.memory_search")
+
+
+def test_default_memory_mcp_config_is_created_once_and_preserved(tmp_path):
+    from mai.tools.mcp_connection import ensure_default_mcp_config
+    path = ensure_default_mcp_config(
+        memory_db_path=tmp_path / "memory.sqlite3",
+        sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    assert body["servers"][0]["enabled"] is True
+    assert body["servers"][0]["id"] == "memorizer"
+    assert body["servers"][0]["env"]["MEMORIZER_DATA_DIR"] == str(tmp_path)
+    body["servers"][0]["enabled"] = False
+    path.write_text(json.dumps(body), encoding="utf-8")
+    assert ensure_default_mcp_config(
+        memory_db_path=tmp_path / "memory.sqlite3",
+        sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3") == path
+    assert json.loads(path.read_text(encoding="utf-8"))["servers"][0]["enabled"] is False
+
+
+def test_refresh_only_starts_enabled_servers_and_replaces_stale_catalog(tmp_path):
+    manager, records = make_manager(tmp_path)
+    body = json.loads(manager.config_path.read_text(encoding="utf-8"))
+    body["servers"][1]["enabled"] = False
+    manager.config_path.write_text(json.dumps(body), encoding="utf-8")
+    manager = MCPConnectionManager(manager.config_path)
+    started = []
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(
+                name="memory_search", description="updated enabled memory search",
+                inputSchema=records[0]["schema"])])
+    async def connect(server):
+        started.append(server)
+        return Session()
+    manager._connect = connect
+    async def close():
+        return None
+    manager.close = close
+    discovered = asyncio.run(manager.refresh_catalog())
+    assert discovered == ["first.memory_search"]
+    assert started == ["first"]
+    registry = ToolRegistry()
+    MCPConnectionManager(manager.config_path).register(registry)
+    assert registry.names() == ("first.memory_search",)
