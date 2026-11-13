@@ -48,8 +48,8 @@ dist/
 /mai/mcp_tools/*.tmp
 
 # Generated Windows MAI distribution / C# intermediate build
-/배포/.launcher-build/
-/배포/launcher/bin/
-/배포/launcher/obj/
-/배포/MAI/*
-!/배포/MAI/.gitkeep
+/MAI_light_instant_runner/.launcher-build/
+/MAI_light_instant_runner/launcher/bin/
+/MAI_light_instant_runner/launcher/obj/
+/MAI_light_instant_runner/MAI/*
+!/MAI_light_instant_runner/MAI/.gitkeep
