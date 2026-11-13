@@ -1,4 +1,4 @@
-"""Independent numeric and factual reviews retain their own structured contracts."""
+"""Numeric and factual checks share one strict structured reviewer contract."""
 from __future__ import annotations
 
 import asyncio
