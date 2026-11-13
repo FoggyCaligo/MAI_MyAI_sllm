@@ -37,6 +37,13 @@ class WorkspaceContext:
     def switch(self, target: WorkspaceName) -> dict[str, object]:
         if target not in ("local", "remote"):
             raise ValueError("workspace target must be 'local' or 'remote'")
+        if target == self._current.target:
+            return {
+                "ok": True,
+                "workspace": target,
+                "changed": False,
+                "message": f"이미 {target}에 있습니다.",
+            }
         if target == "local":
             self._current = WorkspaceSnapshot("local", None)
             return {"ok": True, "workspace": "local"}
