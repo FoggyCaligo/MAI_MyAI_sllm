@@ -90,4 +90,4 @@ if [[ "$guard_enabled" == true ]]; then
   [[ "$gateway_ready" == 1 ]] || { echo "Memory gateway not ready" >&2; exit 1; }
 fi
 echo "MAI Linux llama.cpp router ready; shared memory guard: $guard_enabled."
-"$python" "$root/run_server.py"
+"$python" "$root/scripts/run_server.py"
