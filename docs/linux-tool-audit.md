@@ -97,4 +97,4 @@ python -m pytest -q
 
 **문자 인코딩:** Linux Bash 자식 프로세스는 `C.UTF-8`, Python은 UTF-8 출력으로 구성하고, 터미널 수신 바이트는 UTF-8 우선 후 명시된 한국어 구형 인코딩을 순서대로 시도한다. [운영체제 경계](platform-boundary.md)를 참고한다.
 
-**지속 DB:** 기본 경로는 별도 Git 저장소 `MAI_MEMORY/`이며, 본체 Git에 남은 과거 `data/` 파일의 정리는 별도 작업이다.
+**지속 DB:** 기본 경로는 별도 Git 저장소 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`이며, 본체 Git에 남은 과거 `data/` 파일의 정리는 별도 작업이다.
