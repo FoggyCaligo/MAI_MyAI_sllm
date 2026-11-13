@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 import time
 from dataclasses import dataclass
@@ -303,9 +304,16 @@ class MAIRuntime:
         registry = ToolRegistry()
         workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
         registry.workspace = workspace
+        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
+        configured_mcp_mode = (
+            json.loads(Path(mcp_config).read_text(encoding="utf-8")).get("functional_mode", False)
+            if mcp_config and principal.role is AccessRole.OWNER else False
+        )
+        if not isinstance(configured_mcp_mode, bool):
+            raise ValueError("MCP functional_mode must be a boolean")
         functional_mcp = (
-            principal.role is AccessRole.OWNER and
-            _env_bool("MAI_MCP_FUNCTIONAL_TOOLS", False)
+            principal.role is AccessRole.OWNER and bool(mcp_config) and
+            _env_bool("MAI_MCP_FUNCTIONAL_TOOLS", configured_mcp_mode)
         )
         if principal.role is AccessRole.OWNER and not functional_mcp:
             register_routed_service_tools(
@@ -336,18 +344,11 @@ class MAIRuntime:
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
         register_tool_result_tools(registry, tool_result_store)
-        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
         if mcp_config and principal.role is AccessRole.OWNER:
             manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
                                            workspace=workspace)
-            if functional_mcp:
-                from ..mcp_tools.native_groups import GROUPS
-                missing = set(GROUPS).difference(manager.servers)
-                if missing:
-                    raise RuntimeError(
-                        "Functional MCP tools requested but their MCP servers are disabled: "
-                        + ", ".join(sorted(missing))
-                    )
+            # Disabled groups are genuinely unavailable: never restore their
+            # old native counterpart behind the operator's back.
             manager.register(registry)
             registry.mcp_manager = manager
         return registry
