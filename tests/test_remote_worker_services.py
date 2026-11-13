@@ -182,7 +182,7 @@ def test_switch_to_already_selected_client_workspace_is_noop(monkeypatch):
     session = SimpleNamespace(session_id="session-1", connected=True)
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
     workspace = WorkspaceContext(owner_id="owner")
-    assert workspace.switch("client")["workspace"] == "remote"
+    assert workspace.switch("client")["workspace"] == "client"
     original_snapshot = workspace.snapshot()
 
     def unexpected_lookup(owner_id):
