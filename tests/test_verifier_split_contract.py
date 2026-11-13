@@ -1,88 +1,70 @@
-"""Explicit regression checks for the split factual / quality reviewer contract."""
+"""Single-call factual and quality review contract."""
 from __future__ import annotations
 
 import asyncio
 import json
 
-from tests.reviewer_fixtures import reviewer_payload
-from mai.agent.verification import (
-    FinalGroundingVerifier,
-    _FactualReviewPayload,
-    _QualityReviewPayload,
-)
+from mai.agent.verification import FinalGroundingVerifier, _UnifiedReviewPayload
 from mai.llm.models import ModelTurn
 
 
-def _turn(value: dict[str, object]) -> ModelTurn:
+def _turn(value):
     content = json.dumps(value)
-    return ModelTurn(
-        content=content, thinking="", tool_calls=(),
-        assistant_message={"role": "assistant", "content": content},
-    )
+    return ModelTurn(content=content, thinking="", tool_calls=(),
+                     assistant_message={"role": "assistant", "content": content})
 
 
-class StrictSplitReviewer:
-    def __init__(self, *, evidence: str = "supported", alignment: str = "aligned"):
+class Reviewer:
+    def __init__(self, evidence="supported", alignment="aligned"):
         self.evidence = evidence
         self.alignment = alignment
-        self.schemas = []
+        self.requests = []
 
     async def chat(self, request):
-        self.schemas.append(request.response_format)
-        if request.response_format == _FactualReviewPayload.model_json_schema():
-            return _turn(reviewer_payload({
-                "evidence_verdict": self.evidence,
-                "reasons": [] if self.evidence == "supported" else ["Evidence missing"],
-                "claims": [] if self.evidence == "supported" else [{
-                    "claim": "An unsupported statement.", "verdict": "unsupported",
-                    "defect": "missing_evidence", "reason": "Evidence missing",
-                }],
-                "action_verdict": "not_applicable",
-                "retry_summary": "Obtain evidence" if self.evidence != "supported" else "No correction needed.",
-            }, request))
-        if request.response_format == _QualityReviewPayload.model_json_schema():
-            return _turn({
-                "alignment_verdict": self.alignment,
-                "coverage_verdict": "sufficient",
-                "coverage_reasons": [],
-                "reasons": [],
-                "retry_summary": "No correction needed.",
-            })
-        raise AssertionError("unexpected reviewer request schema")
+        self.requests.append(request)
+        assert request.response_format == _UnifiedReviewPayload.model_json_schema()
+        return _turn({
+            "numeric_verdict": "supported", "numeric_reason": "",
+            "evidence_verdict": self.evidence,
+            "claims": ([] if self.evidence == "supported" else [{
+                "claim": "Unsupported statement.", "verdict": "unsupported",
+                "defect": "missing_evidence", "reason": "No evidence",
+            }]),
+            "action_verdict": "not_applicable",
+            "alignment_verdict": self.alignment,
+            "coverage_verdict": "sufficient", "coverage_reasons": [],
+            "reasons": [] if self.evidence == "supported" else ["No evidence"],
+            "retry_summary": "No correction needed." if self.evidence == "supported" else "Obtain evidence.",
+        })
 
 
-def test_factual_pass_runs_quality_review() -> None:
-    reviewer = StrictSplitReviewer()
-    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=True).verify(
-        candidate="A supported statement.",
-        messages=({"role": "user", "content": "Summarize."},),
-        tool_results=(),
-    ))
-    assert result.ok
-    assert reviewer.schemas == [
-        _FactualReviewPayload.model_json_schema(),
-        _QualityReviewPayload.model_json_schema(),
-    ]
+def _verify(reviewer):
+    return asyncio.run(FinalGroundingVerifier(
+        reviewer_adapter=reviewer, quality_review_enabled=True, blocking_mode="strict",
+    ).verify(candidate="An answer.", messages=({"role": "user", "content": "Answer."},),
+             tool_results=()))
 
 
-def test_factual_rejection_does_not_run_quality_review() -> None:
-    reviewer = StrictSplitReviewer(evidence="unsupported")
-    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=True).verify(
-        candidate="An unsupported statement.",
-        messages=({"role": "user", "content": "Summarize."},),
-        tool_results=(),
-    ))
+def test_factual_and_quality_run_in_one_request():
+    reviewer = Reviewer()
+    assert _verify(reviewer).ok
+    assert len(reviewer.requests) == 1
+    prompt = reviewer.requests[0].messages[0]["content"]
+    assert "FACTUAL VERIFICATION:" in prompt
+    assert "ANSWER QUALITY VERIFICATION:" in prompt
+
+
+def test_factual_rejection_remains_visible_without_extra_call():
+    reviewer = Reviewer(evidence="unsupported")
+    result = _verify(reviewer)
     assert not result.ok
-    assert reviewer.schemas == [_FactualReviewPayload.model_json_schema()]
+    assert len(reviewer.requests) == 1
+    assert any(issue.code == "claim_grounding_failed" for issue in result.issues)
 
 
-def test_quality_misalignment_blocks_release_after_factual_pass() -> None:
-    reviewer = StrictSplitReviewer(alignment="misaligned")
-    result = asyncio.run(FinalGroundingVerifier(reviewer_adapter=reviewer, quality_review_enabled=True).verify(
-        candidate="Off-topic statement.",
-        messages=({"role": "user", "content": "Answer the question."},),
-        tool_results=(),
-    ))
+def test_quality_misalignment_blocks_release():
+    reviewer = Reviewer(alignment="misaligned")
+    result = _verify(reviewer)
     assert not result.ok
+    assert len(reviewer.requests) == 1
     assert any(issue.code == "task_alignment_failed" for issue in result.issues)
-    assert len(reviewer.schemas) == 2
