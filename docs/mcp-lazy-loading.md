@@ -86,7 +86,7 @@ Long-term memory extraction after the final response remains host
 controlled and does not expose a memory-save model tool.
 
 All other MAI tools remain native until migrated into separate MCP servers.
-Each additional MCP tool is namespaced `server_id.tool_name`.
+Each additional MCP tool is internally namespaced `server_id.tool_name`; the model-facing callable alias is `server_id__tool_name` (compatible with function-call name requirements).
 This implementation supports stdio MCP servers and owner access only.
 Startup discovery failure is reported as an error instead of silently
 running with a stale catalog. Remote HTTP MCP, durable shared MCP session
