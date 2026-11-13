@@ -1,8 +1,8 @@
 """Lazy MCP transport and persisted tool catalog for MAI.
 
-Startup reads locally cached metadata only. Remote/local MCP processes are
-started exclusively when tool_manual activates one of their namespaced tools.
-An explicit 'refresh' command is the only automatic discovery operation.
+At MAI startup, enabled MCP servers are briefly connected to discover their
+public tool schemas, then disconnected. Actual use connects lazily after
+tool_manual activation. Disabled servers are excluded from the catalog.
 """
 from __future__ import annotations
 
@@ -59,6 +59,9 @@ class MCPConnectionManager:
         for entry in config.get("servers", []):
             if not isinstance(entry, dict):
                 raise ValueError("invalid MCP server entry")
+            enabled = entry.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise ValueError("MCP server enabled must be a boolean")
             ident = entry.get("id")
             if not isinstance(ident, str) or not _valid_id(ident) or ident in self.servers:
                 raise ValueError(f"invalid/duplicate MCP server id: {ident!r}")
@@ -69,7 +72,8 @@ class MCPConnectionManager:
             raw_env = entry.get("env", {})
             if not isinstance(raw_env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k,v in raw_env.items()):
                 raise ValueError(f"invalid env for MCP server {ident}")
-            self.servers[ident] = dict(entry)
+            if enabled:
+                self.servers[ident] = dict(entry)
         cache_name = config.get("catalog_path", "mcp_catalog.json")
         if not isinstance(cache_name, str) or not cache_name:
             raise ValueError("catalog_path must be nonempty")
@@ -151,7 +155,10 @@ class MCPConnectionManager:
         return records
 
     async def refresh_catalog(self) -> list[str]:
-        """Explicit administrative action only. Never invoked during startup."""
+        """Discover enabled servers and atomically rebuild the catalog.
+
+        Used automatically once per MAI process startup, never per model turn.
+        """
         fresh = []
         try:
             for server in self.servers:
