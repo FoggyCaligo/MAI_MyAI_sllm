@@ -20,6 +20,44 @@ from pydantic import BaseModel, ConfigDict
 from .registry import ToolRegistry, ToolRegistryError
 
 
+def ensure_default_mcp_config(*, memory_db_path: str | Path,
+                              sentence_breaker_db_path: str | Path) -> Path:
+    """Create an editable private MCP config once, never overwrite user toggles.
+
+    The built-in memorizer is configured with MAI's existing DB directory.
+    Stdio executes the current MAI Portable Python interpreter. Disabling an
+    entry changes the next startup catalog without uninstalling anything.
+    """
+    import sys
+    root = Path(memory_db_path).expanduser().resolve().parent
+    segmenter_parent = Path(sentence_breaker_db_path).expanduser().resolve().parent
+    if root != segmenter_parent:
+        raise ValueError("MCP_memorizer requires memory and segmenter DBs in the same directory")
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "mcp_servers.json"
+    if not path.exists():
+        config = {
+            "catalog_path": "mcp_catalog.json",
+            "servers": [{
+                "id": "memorizer",
+                "enabled": True,
+                "command": sys.executable,
+                "args": ["-m", "mcp_memorizer.mcp_server"],
+                "env": {
+                    "MEMORIZER_USER_ID": "{memory_user_id}",
+                    "MEMORIZER_DATA_DIR": str(root),
+                },
+            }],
+        }
+        # Exclusive creation avoids clobbering a concurrently customized config.
+        try:
+            with path.open("x", encoding="utf-8") as fp:
+                json.dump(config, fp, ensure_ascii=False, indent=2)
+        except FileExistsError:
+            pass
+    return path
+
+
 class MCPConnectionError(ToolRegistryError):
     """MCP discovery, handshake or tool contract failed."""
 
