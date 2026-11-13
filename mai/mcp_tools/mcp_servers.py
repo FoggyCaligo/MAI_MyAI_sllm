@@ -58,7 +58,7 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                 "id": "memorizer",
                 "enabled": True,
                 "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
+                "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
                 "env": {
                     "MEMORIZER_USER_ID": "{memory_user_id}",
                     "MEMORIZER_DATA_DIR": str(root),
