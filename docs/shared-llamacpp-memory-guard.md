@@ -23,7 +23,7 @@ LLAMACPP_CONTEXT_SIZE: 65536
   remains at least the configured 1024 MiB. Missing or failed measurements
   block the request. These are *snapshots*, not real-time VRAM quotas.
 - **Monitoring:** During an accepted request the gateway records available
-  RAM samples every two seconds in `MAI_MEMORY/gpu_ram_safety.jsonl`.
+  RAM samples every two seconds in `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl`.
   Monitoring is diagnostic; it does not forcibly stop an in-flight inference.
 - **Concurrency:** Model-triggering requests and explicit unloads are
   serialized at the gateway to avoid cross-client unloads during inference.
@@ -47,7 +47,7 @@ Important limits:
   `http://127.0.0.1:8080/v1`. Do not switch clients to 8081.
 
 To verify after startup: query `http://127.0.0.1:8080/models` and inspect
-`MAI_MEMORY/gpu_ram_safety.jsonl` after a short inference.
+`mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl` after a short inference.
 
 
 ## 게이트웨이 POST 잠금 및 오류 진단
