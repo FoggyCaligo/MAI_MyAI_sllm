@@ -222,8 +222,8 @@ class MCPConnectionManager:
             await stack.aclose()
 
 
-async def _refresh_main(config_path: str) -> None:
-    manager = MCPConnectionManager(config_path)
+async def _refresh_main(config_path: str, memory_user_id: str) -> None:
+    manager = MCPConnectionManager(config_path, memory_user_id=memory_user_id)
     discovered = await manager.refresh_catalog()
     print(f"Cached {len(discovered)} MCP tools: " + ", ".join(discovered))
 
@@ -233,5 +233,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("refresh",))
     parser.add_argument("--config", required=True)
+    parser.add_argument("--memory-user-id", default="local-user",
+                        help="Administrative identity used only while refreshing server catalog")
     args = parser.parse_args()
-    asyncio.run(_refresh_main(args.config))
+    asyncio.run(_refresh_main(args.config, args.memory_user_id))
