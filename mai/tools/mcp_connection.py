@@ -103,7 +103,7 @@ class MCPConnectionManager:
         if entry.get("schema_hash") != _checksum(entry["schema"]):
             raise ValueError("MCP cached schema hash mismatch")
 
-    def _server_env(self, server: str) -> dict[str,str]:
+    def _server_env(self, server: str) -> dict[str, str]:
         entry = self.servers[server]
         env = dict(os.environ)
         for k,v in entry.get("env", {}).items():
@@ -173,13 +173,6 @@ class MCPConnectionManager:
         for full_name, record in self.catalog.items():
             if registry.has(full_name):
                 raise MCPConnectionError(f"conflicting MCP tool name: {full_name}")
-            async def call(_full_name=full_name, **kwargs):
-                return await self.call(_full_name, kwargs)
-            # _full_name cannot be an exposed model argument. Use a closure.
-            async def handler_factory_placeholder(**kwargs):
-                raise AssertionError("unreachable")
-            async def handler(**kwargs):
-                return await self.call(full_name, kwargs)
             # Each tool gets its own bound closure, never the loop variable.
             def bind(name):
                 async def invoke(**kwargs):
