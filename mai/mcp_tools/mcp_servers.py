@@ -25,6 +25,12 @@ from .workspace import WorkspaceContext
 
 _LOG = logging.getLogger(__name__)
 
+# Exact MCP server groups whose registered tools follow the per-task workspace.
+WORKSPACE_CAPABLE_MCP_SERVERS = frozenset({
+    "mai_file", "mai_code", "mai_docs", "mai_terminal_run", "mai_utilities",
+})
+HOST_ONLY_MCP_SERVERS = frozenset({"mai_internet", "mai_browser", "memorizer", "host", "remote"})
+
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
                               sentence_breaker_db_path: str | Path,
@@ -406,6 +412,16 @@ class MCPConnectionManager:
                 return invoke
             description = (f"Model-visible tool name: {model_name}. " +
                            (record["description"] or f"Tool {record['name']} on MCP server {record['server']}"))
+            if record["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
+                description += (
+                    " Execution location follows the current task's last successful "
+                    "remote__switch_workspace(target=host|client). The initial target is host; "
+                    "after selecting client, EVERY subsequent workspace-capable call runs on "
+                    "client until switched back to host or the task ends. "
+                    "Do not repeat the switch for each call or add per-tool location arguments."
+                )
+            elif record["server"] in HOST_ONLY_MCP_SERVERS:
+                description += " Host-only tool; switch_workspace never relocates this tool."
             registry.add(name=model_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
                          timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
@@ -446,11 +462,7 @@ class MCPConnectionManager:
         # Workspace selection is host-owned.  Compatible tools use their
         # original native tool names on the authenticated worker, without
         # changing public MCP schemas or leaking a session token to the model.
-        workspace_groups = frozenset({
-            "mai_file", "mai_code", "mai_docs",
-            "mai_terminal_run", "mai_utilities",
-        })
-        if self.workspace is not None and entry["server"] in workspace_groups:
+        if self.workspace is not None and entry["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
             snapshot = self.workspace.snapshot()
             if snapshot.target == "client":
                 from ..remote.target import ExecutionTarget
