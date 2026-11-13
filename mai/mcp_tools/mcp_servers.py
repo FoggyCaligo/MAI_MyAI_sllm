@@ -171,6 +171,10 @@ class MCPConnectionError(ToolRegistryError):
     """MCP discovery, handshake or tool contract failed."""
 
 
+class MCPToolExecutionError(ToolRegistryError):
+    """A connected MCP server explicitly rejected or failed a tool call."""
+
+
 class MCPInput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -468,7 +472,7 @@ class MCPConnectionManager:
                 return response["value"]
         response = await self._sessions[entry["server"]].call_tool(entry["name"], dict(arguments))
         if response.isError:
-            raise MCPConnectionError(f"MCP tool {name} returned an error: {response.content}")
+            raise MCPToolExecutionError(f"MCP tool {name} returned an error: {response.content}")
         if entry["server"] == "host":
             # Stateful owner-only actions must never run inside an MCP child.
             # Ignore child-provided result fields; execute only the validated,
