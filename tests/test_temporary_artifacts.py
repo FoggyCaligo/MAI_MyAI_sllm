@@ -259,21 +259,34 @@ def test_mcp_client_temporary_write_is_rejected_without_execution(tmp_path: Path
     assert not (tmp_path / "client-temp.ps1").exists()
 
 
-def test_native_client_temporary_write_is_rejected(tmp_path: Path) -> None:
+def test_native_client_temporary_write_routes_to_worker(tmp_path: Path, monkeypatch) -> None:
     from types import SimpleNamespace
-    from mai.remote.routing import register_routed_pc_tools
-    from mai.remote.session import RemoteExecutionError
+    from mai.mcp_tools.workspace import WorkspaceContext
+    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import routing
 
-    workspace = SimpleNamespace(
-        snapshot=lambda: SimpleNamespace(target="client"),
-    )
+    session = SimpleNamespace(session_id="worker-1", owner_id="owner", connected=True)
+    monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
+    monkeypatch.setattr(workspace_module.remote_sessions, "get", lambda session_id: session)
+    workspace = WorkspaceContext(owner_id="owner")
     registry = ToolRegistry()
-    register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
+    routing.register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
+    workspace.switch("client")
+    calls = []
 
-    with pytest.raises(RemoteExecutionError, match="remote scratch cleanup is not implemented"):
-        run(registry.get("file_write").invoke({
-            "path": str(tmp_path / "client-temp.py"),
-            "content": "test",
-            "lifecycle": "temporary",
-        }))
-    assert not (tmp_path / "client-temp.py").exists()
+    async def remote_execute(self, operation, arguments, *, timeout):
+        calls.append((operation, arguments))
+        return {"value": {"created": True}}
+
+    monkeypatch.setattr(routing.ExecutionTarget, "execute", remote_execute)
+    result = run(registry.get("file_write").invoke({
+        "path": "tmp/client-temp.py",
+        "content": "test",
+        "lifecycle": "temporary",
+    }))
+    assert result["created"] is True
+    assert calls[0][0] == "native.invoke"
+    assert calls[0][1]["name"] == "file_write"
+    assert calls[0][1]["arguments"]["lifecycle"] == "temporary"
+    assert workspace.used_client_session_ids == {"worker-1"}
+    assert not (tmp_path / "tmp" / "client-temp.py").exists()
