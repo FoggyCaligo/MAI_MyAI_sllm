@@ -13,6 +13,7 @@ dependencies = [
   "openpyxl>=3.1",
   "playwright>=1.55",
   "pydantic>=2.0",
+  "sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main",
   "jsonschema>=4.0",
   "pypdf>=5.0",
   "python-docx>=1.1",
