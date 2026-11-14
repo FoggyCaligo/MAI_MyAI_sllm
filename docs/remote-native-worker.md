@@ -37,7 +37,7 @@ Linux에는 Python 3.11 이상, `curl`, `unzip`, `sha256sum`, 작동하는 `pyth
 
 초기 연결 기한은 600초, 연결 상태 확인은 마지막 폴링 기준 180초다. 별도의 10시간 실제 작업 유휴 기한은 작업 발행 또는 인증된 작업 결과에 따라 갱신되며 **단순 heartbeat로 연장되지 않는다**.
 
-Windows·Linux 실기기에서 원격 워커의 종단간 정상 작동을 모두 검증했다는 기록은 없다. Linux의 Chromium 라이브러리, 네트워크·인증, 브라우저 파일 권한과 실제 도구 실행은 대상 환경에서 확인해야 한다. 원격 임시 파일은 호스트의 최종 답변 임시 산출물 정리 생명주기와 자동 연동되지 않는다.
+Windows·Linux 실기기에서 원격 워커의 종단간 정상 작동을 모두 검증했다는 기록은 없다. Linux의 Chromium 라이브러리, 네트워크·인증, 브라우저 파일 권한과 실제 도구 실행은 대상 환경에서 확인해야 한다. 원격 임시 파일은 작업별 워커 `./tmp/<run_id>/`에서 관리한다. `file_write(lifecycle="temporary")`는 상대 경로로 지정하면 워커가 해당 작업 디렉터리로 이동시키고, `terminal_run(temporary_outputs=[...])`는 상대 파일명을 지정하고 `cwd`를 생략하면 그 디렉터리에서 실행한다. 최종 답변·실패·취소 시 호스트는 `native.cleanup`을 보내 워커가 해당 작업 디렉터리만 삭제한다. 이후 정상적인 수신 확인이 없으면 오류를 반환하며, 연결이 끊기거나 프로세스가 강제 종료되면 자동 삭제를 보장할 수 없다. 다른 작업의 디렉터리와 `./tmp`에 원래 있던 파일은 건드리지 않는다.
 
 관련 검증 코드는 `tests/test_remote_python_worker.py`, `tests/test_remote_worker_bootstrap.py`, `tests/test_remote_unified_routing.py`, `tests/test_remote_idle_timeout.py`를 참고한다. 테스트 통과만으로 실제 운영체제·네트워크 환경 검증을 대체하지 않는다.
 
