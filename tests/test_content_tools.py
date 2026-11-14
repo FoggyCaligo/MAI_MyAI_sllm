@@ -8,7 +8,7 @@ from mai.tools.filesystem import document_read, register_filesystem_read_tools
 from mai.tools.registry import ToolRegistry
 
 
-def test_file_read_handles_docx_xlsx_and_csv(tmp_path):
+def test_document_read_handles_docx_xlsx_and_csv(tmp_path):
     docx_path = tmp_path / "sample.docx"
     doc = Document()
     doc.add_paragraph("hello document")
@@ -34,7 +34,7 @@ def test_file_read_handles_docx_xlsx_and_csv(tmp_path):
     assert "alpha\t10" in csv_result["content"]
 
 
-def test_file_read_csv_accepts_explicit_encoding(tmp_path):
+def test_document_read_csv_accepts_explicit_encoding(tmp_path):
     csv_path = tmp_path / "korean.csv"
     csv_path.write_text("이름,값\n테스트,10\n", encoding="cp949")
     result = document_read(path=str(csv_path), encoding="cp949")
@@ -42,7 +42,7 @@ def test_file_read_csv_accepts_explicit_encoding(tmp_path):
     assert "테스트\t10" in result["content"]
 
 
-def test_structured_document_parser_remains_available_for_file_read(tmp_path):
+def test_structured_document_parser_remains_available_for_document_read(tmp_path):
     csv_path = tmp_path / "sample.csv"
     csv_path.write_text("name,value\nalpha,10\n", encoding="utf-8-sig")
     result = parse_structured_document(path=str(csv_path))
@@ -50,7 +50,7 @@ def test_structured_document_parser_remains_available_for_file_read(tmp_path):
     assert "alpha\t10" in result["text"]
 
 
-def test_registry_exposes_one_file_read_interface_for_documents(tmp_path):
+def test_registry_exposes_only_document_read_for_documents(tmp_path):
     registry = ToolRegistry()
     register_filesystem_read_tools(registry, cwd=tmp_path)
     names = set(registry.names())

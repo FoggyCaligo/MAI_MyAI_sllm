@@ -74,7 +74,7 @@ def test_terminal_child_environments_use_explicit_utf8_without_mutating_parent(m
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux integration only")
-def test_linux_utf8_terminal_roundtrip_matches_file_read_write(tmp_path):
+def test_linux_utf8_terminal_roundtrip_matches_document_read_write(tmp_path):
     from mai.tools.filesystem import document_read, file_write
 
     target = tmp_path / "한글 경로.txt"

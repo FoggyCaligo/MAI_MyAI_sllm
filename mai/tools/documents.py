@@ -1,4 +1,4 @@
-"""Structured document readers used internally by the unified file_read tool."""
+"""Structured document readers used internally by the unified document_read tool."""
 from __future__ import annotations
 
 import csv
@@ -84,7 +84,7 @@ def document_read(
     encoding: str = "utf-8-sig",
     cwd: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Internal structured document parser used by file_read (not a native tool)."""
+    """Internal structured document parser used by document_read (not a native tool)."""
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))

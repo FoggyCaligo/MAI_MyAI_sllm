@@ -23,7 +23,7 @@ def test_remote_python_worker_reuses_local_native_schema():
     assert not registry.has("browser_click")
 
 
-def test_remote_python_worker_executes_existing_file_read(tmp_path):
+def test_remote_python_worker_executes_existing_document_read(tmp_path):
     target = tmp_path / "example.txt"
     target.write_text("remote parity", encoding="utf-8")
 
