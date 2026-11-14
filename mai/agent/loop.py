@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..llm.models import ChatRequest, Message, ModelTurn, NativeToolCall, ThinkSetting
 from ..llm.errors import ReasoningLoopDetected
 from ..tools.registry import ToolArgumentsError, ToolRegistry, UnknownToolError
-from ..mcp_tools.tool_manual import ToolManualInput, _tool_manual_schema, _insert_tool_catalog
+from ..tools.tool_manual import ToolManualInput, _tool_manual_schema, _insert_tool_catalog
 from .guards import (
     AgentGuard,
     AgentGuardError,
