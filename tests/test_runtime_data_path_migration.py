@@ -6,7 +6,7 @@ import pytest
 
 from portable.runtime_data_paths import (
     migrate, normalize_legacy_environment, DataPathMigrationError,
-    MEMORY_RELATIVE, UPLOAD_RELATIVE,
+    MEMORY_RELATIVE, LEGACY_MEMORY_RELATIVE, UPLOAD_RELATIVE,
 )
 
 def _root(tmp_path):
@@ -15,7 +15,7 @@ def _root(tmp_path):
 
 def test_moves_old_db_and_uploads_preserving_bytes(tmp_path):
     root = _root(tmp_path)
-    old_mem = root / "MAI_MEMORY"
+    old_mem = root / LEGACY_MEMORY_RELATIVE
     old_mem.mkdir()
     (old_mem / "memory.sqlite3").write_bytes(b"existing-memory-db")
     (old_mem / "sentence_breaker.sqlite3").write_bytes(b"existing-segmenter")
@@ -30,13 +30,13 @@ def test_moves_old_db_and_uploads_preserving_bytes(tmp_path):
     assert (root / MEMORY_RELATIVE / "memory.sqlite3").read_bytes() == b"existing-memory-db"
     assert (root / MEMORY_RELATIVE / "chat.sqlite3").read_bytes() == b"existing-chat"
     assert (root / UPLOAD_RELATIVE / "user123/photo.png").read_bytes() == b"private-user-file"
-    assert not (root / "MAI_MEMORY").exists()
+    assert not (root / LEGACY_MEMORY_RELATIVE).exists()
     assert not (root / "mai_uploads").exists()
     assert not migrate(root)["memory"]
 
 def test_refuses_collision_without_overwriting(tmp_path):
     root = _root(tmp_path)
-    old = root / "MAI_MEMORY"
+    old = root / LEGACY_MEMORY_RELATIVE
     old.mkdir()
     (old / "memory.sqlite3").write_bytes(b"old")
     destination = root / MEMORY_RELATIVE
@@ -51,7 +51,7 @@ def test_updates_only_known_old_memorizer_settings_preserves_flags(tmp_path):
     root = _root(tmp_path)
     config = root / "mai/mcp_tools/mcp_servers.json"
     config.parent.mkdir(parents=True)
-    old_data = root / "MAI_MEMORY"
+    old_data = root / LEGACY_MEMORY_RELATIVE
     old_data.mkdir()
     (old_data / "memory.sqlite3").write_bytes(b"sqlite")
     before = {
@@ -75,7 +75,7 @@ def test_updates_only_known_old_memorizer_settings_preserves_flags(tmp_path):
 
 def test_redirects_only_exact_old_default_env_paths(tmp_path, monkeypatch):
     root = _root(tmp_path)
-    monkeypatch.setenv("MEMORY_DB_PATH", str(root / "MAI_MEMORY/memory.sqlite3"))
+    monkeypatch.setenv("MEMORY_DB_PATH", str(root / LEGACY_MEMORY_RELATIVE / "memory.sqlite3"))
     monkeypatch.setenv("MAI_UPLOAD_ROOT", str(root / "mai_uploads"))
     monkeypatch.setenv("CHAT_DB_PATH", str(root / "elsewhere/chat.sqlite3"))
     new_values = normalize_legacy_environment(root)
@@ -87,7 +87,7 @@ def test_redirects_only_exact_old_default_env_paths(tmp_path, monkeypatch):
 
 def test_legacy_mcp_config_inside_old_memory_folder_is_updated(tmp_path):
     root = _root(tmp_path)
-    old_data = root / "MAI_MEMORY"
+    old_data = root / LEGACY_MEMORY_RELATIVE
     old_data.mkdir()
     (old_data / "memory.sqlite3").write_bytes(b"old-memory")
     legacy_config = old_data / "mcp_servers.json"
