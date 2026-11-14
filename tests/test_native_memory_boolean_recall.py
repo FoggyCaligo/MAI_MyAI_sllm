@@ -70,9 +70,9 @@ def test_native_boolean_recall_preserves_fact_utterance_and_user_boundary(tmp_pa
         query = asyncio.run(registry.get("memory_search").invoke({
             "query": "alpha AND NOT beta", "limit": 10,
         }))
-        assert any(x["id"] == only_a.id for x in query["nodes"])
+        assert any(x["node_id"] == only_a.id for x in query["nodes"])
         keyword = asyncio.run(registry.get("memory_search").invoke({"keyword": "gamma"}))
-        assert any(x["id"] == utterance.id for x in keyword["nodes"])
+        assert any(x["node_id"] == utterance.id for x in keyword["nodes"])
         assert MemorySearchInput.model_validate({"keyword": "alpha"}).keyword == "alpha"
     finally:
         index.close()
