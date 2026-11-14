@@ -100,7 +100,7 @@ def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
     asyncio.run(exercise())
     assert routed == [(
         owner_id, session.session_id, "native.invoke",
-        {"name": "document_read", "arguments": {"path": "probe.txt"}}, 600,
+        {"name": "document_read", "arguments": {"path": "probe.txt", "encoding": "utf-8-sig", "max_chars": None}}, 600,
     )]
 
 
