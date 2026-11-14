@@ -84,23 +84,23 @@ def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
     monkeypatch.setattr(workspace_module.remote_sessions, "get", lambda session_id: session)
     workspace = WorkspaceContext(owner_id=owner_id)
     host = ToolRegistry()
-    register_routed_service_tools(host, workspace=workspace, browser_manager=BrowserSessionManager())
+    routing.register_routed_pc_tools(host, workspace=workspace, cwd=".")
     workspace.switch("client")
     routed = []
 
     async def fake_execute(self, operation, arguments, *, timeout):
         routed.append((self.owner_id, self.remote_session_id, operation, arguments, timeout))
-        return {"value": {"symbol": "AAPL", "result": "REMOTE-12"}}
+        return {"value": {"content": "remote text"}}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", fake_execute)
 
     async def exercise():
-        value = await host.get("market_data").invoke({"symbol": "AAPL"})
-        assert value["result"] == "REMOTE-12"
+        value = await host.get("document_read").invoke({"path": "probe.txt"})
+        assert value["content"] == "remote text"
     asyncio.run(exercise())
     assert routed == [(
         owner_id, session.session_id, "native.invoke",
-        {"name": "market_data", "arguments": {"symbol": "AAPL"}}, 600,
+        {"name": "document_read", "arguments": {"path": "probe.txt"}}, 600,
     )]
 
 
@@ -115,7 +115,7 @@ def test_remote_transport_missing_value_envelope_fails(monkeypatch):
     monkeypatch.setattr(workspace_module.remote_sessions, "get", lambda session_id: session)
     workspace = WorkspaceContext(owner_id=owner_id)
     host = ToolRegistry()
-    register_routed_service_tools(host, workspace=workspace, browser_manager=BrowserSessionManager())
+    routing.register_routed_pc_tools(host, workspace=workspace, cwd=".")
     workspace.switch("client")
 
     async def invalid_result(self, operation, arguments, *, timeout):
@@ -125,7 +125,7 @@ def test_remote_transport_missing_value_envelope_fails(monkeypatch):
 
     async def exercise():
         with pytest.raises(RemoteExecutionError, match="invalid tool-result envelope"):
-            await host.get("market_data").invoke({"symbol": "AAPL"})
+            await host.get("document_read").invoke({"path": "probe.txt"})
     asyncio.run(exercise())
 
 
