@@ -142,10 +142,10 @@ def test_scoped_context_rejects_invalid_registration_without_partial_state():
 
 
 def test_external_memorizer_policy_is_reusable() -> None:
-    from mcp_memorizer.policy import MEMORY_MODEL_CONTEXT, MEMORY_SEARCH_DESCRIPTION
+    from mai.memory.policy import MEMORY_MODEL_CONTEXT, MEMORY_SEARCH_DESCRIPTION
     assert MEMORY_MODEL_CONTEXT["kind"] == "temporal_precedence"
     assert "created_at" in MEMORY_MODEL_CONTEXT["instruction"]
-    assert "keyword" in MEMORY_SEARCH_DESCRIPTION
+    assert "query" in MEMORY_SEARCH_DESCRIPTION
 
 
 

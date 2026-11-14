@@ -35,7 +35,7 @@ def test_groups_are_independent_and_no_duplicate_tool_names(tmp_path):
             found[definition.name] = group
     assert found["web_search"] == "mai_internet"
     assert found["browser_open"] == "mai_browser"
-    assert found["file_read"] == "mai_file"
+    assert found["document_read"] == "mai_file"
     assert found["code_read"] == "mai_code"
     assert found["terminal_run"] == "mai_terminal_run"
     assert found["document_edit"] == "mai_docs"
@@ -119,8 +119,8 @@ def test_functional_mcp_workspace_remote_execution_without_local_fallback(tmp_pa
          "args": ["-m", "mai.mcp_tools.native_groups", "--group", "mai_file"]}
     ]}), encoding="utf-8")
     manager = MCPConnectionManager(config, workspace=FakeWorkspace())
-    manager.catalog["mai_file.file_read"] = {
-        "server": "mai_file", "name": "file_read",
+    manager.catalog["mai_file.document_read"] = {
+        "server": "mai_file", "name": "document_read",
         "description": "", "instructions": "",
         "schema": {"type": "object"},
         "schema_hash": "",
@@ -133,10 +133,10 @@ def test_functional_mcp_workspace_remote_execution_without_local_fallback(tmp_pa
         return {"value": {"content": "remote evidence"}}
     monkeypatch.setattr(ExecutionTarget, "execute", fake_execute)
 
-    result = asyncio.run(manager.call("mai_file.file_read", {"path": "test.txt"}))
+    result = asyncio.run(manager.call("mai_file.document_read", {"path": "test.txt"}))
     assert result == {"content": "remote evidence"}
     assert called == [("owner-1", "session-bound-to-owner", "native.invoke",
-                       {"name": "file_read", "arguments": {"path": "test.txt"}})]
+                       {"name": "document_read", "arguments": {"path": "test.txt"}})]
 
 
 def test_temporary_artifact_cleanup_survives_mcp_process_boundary(tmp_path):
@@ -217,6 +217,7 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
     runtime.cwd = tmp_path
     runtime.download_links = DownloadLinkStore()
     runtime.upload_root = tmp_path
+    runtime.memory = object()  # Registry creation only; no database calls.
     owner = AccessPrincipal(user_id="owner", db_id="local-owner", role=AccessRole.OWNER)
     registry = runtime._registry_for(owner, ToolResultStore(max_inline_chars=1024),
                                      BrowserSessionManager())
@@ -227,6 +228,7 @@ def test_owner_registry_can_switch_to_mcp_groups_without_native_duplicates(tmp_p
     assert not registry.has("restart")
     assert not registry.has("tool_result_read")
     assert not registry.has("file_download_link")
+    assert registry.has("memory_search")
     assert not registry.has("calculator")
     assert not registry.has("web_search")
 
@@ -325,12 +327,13 @@ def test_default_functional_mcp_config_discovers_all_enabled_servers(tmp_path):
         manager = MCPConnectionManager(config, memory_user_id="local-owner")
         assert manager.functional_mode is True
         assert set(GROUPS).issubset(manager.servers)
-        assert {"memorizer", "remote", "host"}.issubset(manager.servers)
+        assert {"remote", "host"}.issubset(manager.servers)
+        assert "memorizer" not in manager.servers
         names = await manager.refresh_catalog()
-        assert "mai_file.file_read" in names
+        assert "mai_file.document_read" in names
         assert "mai_terminal_run.terminal_run" in names
         assert "mai_internet.web_search" in names
-        assert "memorizer.memory_search" in names
+        assert "memorizer.memory_search" not in names
         assert "remote.switch_workspace" in names
         assert "host.tool_result_read" in names
         await manager.close()

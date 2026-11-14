@@ -58,10 +58,10 @@ def test_portable_tool_schema_has_no_remote_argument(tmp_path):
     registry = ToolRegistry()
     register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
     assert registry.has("terminal_run")
-    assert registry.has("file_read")
-    assert "at_remote_pc" not in registry.get("file_read").input_model.model_fields
+    assert registry.has("document_read")
+    assert "at_remote_pc" not in registry.get("document_read").input_model.model_fields
     with pytest.raises(ToolArgumentsError):
-        registry.get("file_read").validate_arguments({"path": "test", "at_remote_pc": True})
+        registry.get("document_read").validate_arguments({"path": "test", "at_remote_pc": True})
 
 
 def test_client_target_is_frozen_for_started_call(tmp_path, monkeypatch):
@@ -83,9 +83,9 @@ def test_client_target_is_frozen_for_started_call(tmp_path, monkeypatch):
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", remote_execute)
     async def run():
-        assert (await registry.get("file_read").invoke({"path": str(file)}))["content"] == "local-data"
+        assert (await registry.get("document_read").invoke({"path": str(file)}))["content"] == "local-data"
         context.switch("client")
-        assert (await registry.get("file_read").invoke({"path": str(file)}))["content"] == "remote-data"
+        assert (await registry.get("document_read").invoke({"path": str(file)}))["content"] == "remote-data"
         context.switch("host")
     asyncio.run(run())
     assert len(remote_called) == 1
@@ -102,7 +102,8 @@ def test_default_config_adds_host_only_remote_controller(tmp_path):
         config_path=config_path,
     )
     config = json.loads(path.read_text("utf-8"))
-    assert {"memorizer", "remote", "host"}.issubset({s["id"] for s in config["servers"]})
+    assert {"remote", "host"}.issubset({s["id"] for s in config["servers"]})
+    assert "memorizer" not in {s["id"] for s in config["servers"]}
     assert all(s["enabled"] for s in config["servers"] if s["id"].startswith("mai_"))
     assert config["schema_version"] == 5
     assert config["functional_mode"] is True
@@ -130,8 +131,8 @@ def test_existing_config_upgrade_keeps_user_toggles(tmp_path):
         config_path=config_path,
     )
     upgraded = json.loads(config_path.read_text("utf-8"))
-    assert upgraded["servers"][0]["enabled"] is False
-    assert upgraded["servers"][1]["id"] == "remote"
+    assert upgraded["servers"][0]["id"] == "remote"
+    assert all(item["id"] != "memorizer" for item in upgraded["servers"])
     assert (tmp_path / "mcp_servers.pre-workspace.json").exists()
 
 

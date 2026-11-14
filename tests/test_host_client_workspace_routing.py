@@ -34,14 +34,14 @@ def test_client_selection_routes_multiple_tools_without_repeated_switch(tmp_path
 
     async def check():
         assert workspace.target == "host"
-        assert (await registry.get("file_read").invoke({"path": str(target)}))["content"] == "host-content"
+        assert (await registry.get("document_read").invoke({"path": str(target)}))["content"] == "host-content"
         assert workspace.switch("client")["workspace"] == "client"
         for _ in range(2):
-            result = await registry.get("file_read").invoke({"path": str(target)})
+            result = await registry.get("document_read").invoke({"path": str(target)})
             assert result["content"] == "client-content"
         assert workspace.target == "client"
         assert workspace.switch("host")["workspace"] == "host"
-        assert (await registry.get("file_read").invoke({"path": str(target)}))["content"] == "host-content"
+        assert (await registry.get("document_read").invoke({"path": str(target)}))["content"] == "host-content"
 
     asyncio.run(check())
     assert len(requests) == 2
