@@ -8,7 +8,7 @@ MCP_memorizer가 해당 분해기를 `SentenceBreakerSegmenter`로 호출하고 
 
 ## MAI가 설정하는 경계
 
-MAI는 분해 알고리즘 자체를 실행·수정하지 않는다. 메모리 패키지 실행 시 누적 분해 DB 경로를 제공한다. 기본 경로는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3`다.
+MAI는 분해 알고리즘 자체를 실행·수정하지 않는다. 메모리 패키지 실행 시 누적 분해 DB 경로를 제공한다. 기본 경로는 `MAI_MEMORY/sentence_breaker.sqlite3`다.
 
 누적 DB가 다르면 같은 문자열에 대해 다른 분해 결과가 나올 수 있으므로, 기존 기억 데이터를 이전할 때에는 **`memory.sqlite3`와 `sentence_breaker.sqlite3`를 함께 보존**해야 한다. 데이터 백업 및 이전 방법은 [MAI 개인 DB 저장소 문서](memory-repository.md)를 따른다.
 
