@@ -204,3 +204,39 @@ def test_switch_to_client_still_fails_without_worker(monkeypatch):
     with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
         workspace.switch("client")
     assert workspace.target == "host"
+
+
+def test_worker_scratch_cleanup_preserves_deliverables(tmp_path):
+    worker = RemoteWorker(cwd=tmp_path)
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    (scratch / "intermediate.txt").write_text("scratch")
+    (tmp_path / "deliverable.txt").write_text("keep")
+    result = asyncio.run(worker.cleanup_scratch())
+    assert result["cleaned"] is True
+    assert scratch.is_dir()
+    assert list(scratch.iterdir()) == []
+    assert (tmp_path / "deliverable.txt").read_text() == "keep"
+
+
+def test_worker_restricts_temporary_outputs_to_own_tmp(tmp_path):
+    worker = RemoteWorker(cwd=tmp_path)
+
+    async def check():
+        with pytest.raises(PermissionError, match="inside worker"):
+            await worker.execute_native("file_write", {
+                "path": "deliverable.txt", "content": "bad", "lifecycle": "temporary",
+            })
+        with pytest.raises(PermissionError, match="inside worker"):
+            await worker.execute_native("terminal_run", {
+                "command": "echo bad", "temporary_outputs": ["outside.txt"],
+            })
+        result = await worker.execute_native("file_write", {
+            "path": "tmp/scratch.txt", "content": "ok",
+            "create_parents": True, "lifecycle": "temporary",
+        })
+        assert result["created"] is True
+        await worker.cleanup_scratch()
+        assert not (tmp_path / "tmp" / "scratch.txt").exists()
+
+    asyncio.run(check())
