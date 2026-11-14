@@ -75,3 +75,18 @@ def test_catalog_presents_memory_search_modes_before_activation_without_full_sch
     assert "properties" not in history[0]["content"]
     activated = registry.native_schemas(names=["memory_search"])
     assert "keyword" in activated[0]["function"]["parameters"]["properties"]
+    assert "query" in activated[0]["function"]["parameters"]["properties"]
+    assert "AND/OR/NOT" in catalog[0]["description"]
+    assert "Fact/Utterance" in catalog[0]["description"]
+    assert "NOT > AND > OR" in catalog[0]["description"]
+    assert "토마토" in catalog[0]["description"]
+    assert "No automatic synonyms/semantic search" in catalog[0]["description"]
+
+    schema = activated[0]["function"]
+    assert "AND/OR/NOT" in schema["description"]
+    assert "NOT > AND > OR" in schema["description"]
+    assert "quoted multiword" in schema["parameters"]["properties"]["query"]["description"]
+    assert "토마토" in schema["parameters"]["properties"]["query"]["description"]
+    assert "recent overview" in schema["parameters"]["properties"]["limit"]["description"]
+    assert schema["parameters"]["additionalProperties"] is False
+
