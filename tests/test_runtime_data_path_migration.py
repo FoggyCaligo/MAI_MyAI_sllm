@@ -88,7 +88,7 @@ def test_redirects_only_exact_old_default_env_paths(tmp_path, monkeypatch):
 def test_legacy_mcp_config_inside_old_memory_folder_is_updated(tmp_path):
     root = _root(tmp_path)
     old_data = root / LEGACY_MEMORY_RELATIVE
-    old_data.mkdir()
+    old_data.mkdir(parents=True)
     (old_data / "memory.sqlite3").write_bytes(b"old-memory")
     legacy_config = old_data / "mcp_servers.json"
     legacy_config.write_text(json.dumps({"servers": [{
