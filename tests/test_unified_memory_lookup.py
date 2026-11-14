@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from mcp_memorizer.manager import MemorySearchInput
-from mai.mcp_tools.mcp_memorizer.admission import MEMORY_RECALL_TOOL_NAMES
+from mai.memory.tools import MemorySearchInput
+from mai.memory.admission import MEMORY_RECALL_TOOL_NAMES
 
 
 def test_lookup_query_with_limit():
@@ -23,7 +23,7 @@ def test_lookup_node_id():
     {"limit": 51},
     {"node_id": 584, "limit": 3},
     {"query": ""}, {"node_id": -1},
-    {"keyword": "취미"},
+    {"keyword": "취미", "query": "other"},
 ])
 def test_lookup_rejects_invalid_contract(payload):
     with pytest.raises(ValidationError):
@@ -38,5 +38,5 @@ def test_overview_requires_bounded_limit():
 
 
 def test_unified_lookup_excluded_from_new_fact_evidence():
-    assert "memorizer__memory_search" in MEMORY_RECALL_TOOL_NAMES
+    assert "memory_search" in MEMORY_RECALL_TOOL_NAMES
     assert "memory_recall" not in MEMORY_RECALL_TOOL_NAMES
