@@ -323,7 +323,7 @@ class AgentLoop:
                                    + workspace.target
                                    + ". This target persists for ALL subsequent workspace-capable tools in this task until another successful switch; "
                                    "web, browser, memory, restart, and host tools always run on host. "
-                                   "To change target use remote__switch_workspace(target=host|client), "
+                                   "To change target use switch_workspace(target=host|client), "
                                    "not a per-tool remote argument.",
                     })
                 _insert_tool_catalog(model_history, self.registry, activated_order)
@@ -648,7 +648,7 @@ class AgentLoop:
                                 available_tool_names=active_tool_names,
                                 activated_tool_names=activated_tool_names,
                             )
-                            if call.name == "remote__switch_workspace" and execution.ok:
+                            if call.name == "switch_workspace" and execution.ok:
                                 # Location changes invalidate read results and
                                 # permanent failures from the previous workspace.
                                 read_cache.clear()
