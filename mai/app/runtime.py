@@ -12,7 +12,7 @@ import logging
 import os
 from pathlib import Path
 from ..tools.tmp_cleanup import clean_tmp_contents
-from typing import Any, Mapping, Sequence, Callable
+from typing import Any, Mapping, Sequence, Callable, Literal
 
 import httpx
 
@@ -43,7 +43,6 @@ from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from ..mcp_tools.workspace import WorkspaceContext
@@ -76,6 +75,10 @@ def _previous_assistant_message(messages: Sequence[Mapping[str, Any]]) -> str | 
 
 
 
+class WorkspaceSwitchInput(BaseModel):
+    target: Literal["host", "client"]
+
+
 AGENT_SYSTEM_PROMPT = """
 You are running inside the MAI local personal-agent runtime.
 
@@ -86,8 +89,8 @@ Use only capabilities and permissions declared by the runtime. The first round e
 MAI uses two explicit execution targets for workspace-capable tools:
 - host: the MAI server PC. It is the default at the beginning of EACH NEW agent task.
 - client: the authenticated, connected owner-authorized Windows/Linux worker PC.
-To work on the client PC, first activate remote__switch_workspace via tool_manual, then call remote__switch_workspace(target="client") ONCE. After it succeeds, EVERY subsequent workspace-capable tool call in this SAME task (file, code, document, terminal, calculator/time/market utilities) executes on client automatically. Do NOT switch again before each tool call and do NOT add location arguments to individual tools. To return to the MAI server PC during this task, call remote__switch_workspace(target="host") ONCE; all subsequent workspace-capable calls then execute on host. The selected target is maintained across model rounds and tool activations until another successful switch or the current agent task ends. A new user task starts at host again; it is not a persistent conversation-wide or global preference.
-Host-only tools (internet/web, browser, memory, restart, downloads, tool-result reads and host control) ALWAYS execute on host, even when client is selected; they do not change the selected target. Switching to client requires an authenticated connected worker; a failed switch preserves the prior target and a disconnected client causes explicit failure, NEVER a silent fallback to host. Use the worker's own file paths and shell syntax when client is selected; terminal_run defaults to Bash on either OS, and Windows PowerShell must be explicitly requested. In functional MCP mode use each exact server__tool name from the catalog (e.g. mai_terminal_run__terminal_run), not its old unprefixed Native name. The MAI host resolves the worker session; never provide session IDs, credentials, pairing or installation arguments as tool inputs.
+To work on the client PC, first activate switch_workspace via tool_manual, then call switch_workspace(target="client") ONCE. After it succeeds, EVERY subsequent workspace-capable tool call in this SAME task (file, code, document, terminal and supported utilities) executes on client automatically. Do NOT switch again before each tool call and do NOT add location arguments to individual tools. To return to the MAI server PC during this task, call switch_workspace(target="host") ONCE; all subsequent workspace-capable calls then execute on host. The selected target is maintained across model rounds and tool activations until another successful switch or the current agent task ends. A new user task starts at host again; it is not a persistent conversation-wide or global preference.
+Host-only tools (internet/web, browser, memory, restart, downloads, tool-result reads and host control) ALWAYS execute on host, even when client is selected; they do not change the selected target. Switching to client requires an authenticated connected worker; a failed switch preserves the prior target and a disconnected client causes explicit failure, NEVER a silent fallback to host. Use the worker's own file paths and shell syntax when client is selected; terminal_run defaults to Bash on either OS, and Windows PowerShell must be explicitly requested. All model-facing tools are native and unprefixed; do not call or reference MCP servers. The MAI host resolves the worker session; never provide session IDs, credentials, pairing or installation arguments as tool inputs.
 
 For all temporary calculation/analysis code and generated intermediate files, use the ./tmp directory at the MAI host project root. Keep user-requested deliverables outside ./tmp. Use file_write(lifecycle="temporary") when appropriate. If terminal_run creates such scratch files directly through shell redirection or a script, declare each NEW output in terminal_run(temporary_outputs=[...]) before execution so MAI can remove it when this task ends, including failed or cancelled runs. The default file_write lifecycle is persistent and terminal outputs not declared temporary are NOT cleaned automatically. Never mark an existing file or a user-requested deliverable temporary. Scratch cleanup on client is not yet supported: do not claim that a client-created file will be removed automatically. Do not assume historical untracked files are safe to delete.
 
@@ -95,9 +98,9 @@ Pretrained knowledge supports reasoning, not factual evidence. Before presenting
 
 For calculations and analysis, use terminal_run with a deterministic program (e.g. Python), not mental arithmetic.
 
-The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through document_read. The owner can use document_edit for explicitly supported changes to existing structured files, including PDF page operations; arbitrary PDF text edits are unsupported. There is no separate file_create native tool. The model-visible document_read tool reads both plain-text and structured documents.
+The owner may use native terminal and filesystem tools subject to OS permissions. document_read supports plain-text and structured documents. Retired tools (file_list, file_search, file_delete, file_move, file_copy, code_read, code_search, calculator, current_time, csv_aggregate) are unavailable; use terminal_run for their operations.
 
-Intermediate scripts, probes, debug captures, and scratch files created only for the current user turn are temporary artifacts. Activate the file-writing tool and follow its declared temporary-artifact contract instead of using shell redirection. The runtime deletes newly created registered temporary artifacts after final answer verification and before returning the answer. Preserve user-requested files as persistent; never mark an existing file as temporary when overwriting it or delete user files during cleanup. Terminal-created files are not automatically registered as temporary.
+Temporary calculation/analysis scripts and intermediate outputs belong in ./tmp. The host clears its contents after memory postprocessing and retains the directory itself. Do not place persistent deliverables there. Client scratch cleanup is not supported.
 
 When ready to respond, produce a provisional answer for verification before delivery. If rejected, use the latest verifier feedback to correct unsupported claims through additional evidence or narrower statements; rejected drafts and verifier diagnoses are not factual evidence.
 
@@ -314,54 +317,36 @@ class MAIRuntime:
         registry = ToolRegistry()
         workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
         registry.workspace = workspace
-        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
-        configured_mcp_mode = (
-            json.loads(Path(mcp_config).read_text(encoding="utf-8")).get("functional_mode", False)
-            if mcp_config and principal.role is AccessRole.OWNER else False
-        )
-        if not isinstance(configured_mcp_mode, bool):
-            raise ValueError("MCP functional_mode must be a boolean")
-        functional_mcp = (
-            principal.role is AccessRole.OWNER and bool(mcp_config) and
-            _env_bool("MAI_MCP_FUNCTIONAL_TOOLS", configured_mcp_mode)
-        )
-        if principal.role is AccessRole.OWNER and not functional_mcp:
+        if principal.role is AccessRole.OWNER:
             register_routed_service_tools(
                 registry, workspace=workspace, browser_manager=browser_manager,
+            )
+            register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
+            register_restart_tool(registry)
+            registry.add(
+                name="switch_workspace",
+                description="Switch all subsequent workspace-capable native tools to host or authenticated client for this task. Default is host; switching is sticky until changed. Repeated selection returns 'already at target'.",
+                input_model=WorkspaceSwitchInput,
+                handler=lambda target: workspace.switch(target),
+                category="workspace",
+            )
+            registry.add(
+                name="file_download_link",
+                description="Create a one-hour download link for an accessible local file.",
+                input_model=FileDownloadLinkInput,
+                handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
+                category="filesystem",
             )
         elif principal.role is AccessRole.TRIAL:
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
-        if principal.role is AccessRole.OWNER:
-            if not functional_mcp:
-                register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
-                register_restart_tool(registry)
-                registry.add(
-                    name="file_download_link",
-                    description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
-                    input_model=FileDownloadLinkInput,
-                    handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
-                    category="filesystem",
-                )
-        elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
-                registry,
-                cwd=self.cwd,
+                registry, cwd=self.cwd,
                 upload_root=principal_upload_directory(self.upload_root, principal),
             )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
-        if not functional_mcp:
-            register_tool_result_tools(registry, tool_result_store)
-        if mcp_config and principal.role is AccessRole.OWNER:
-            manager = MCPConnectionManager(mcp_config,
-                                           workspace=workspace,
-                                           host_download_links=self.download_links,
-                                           host_tool_result_store=tool_result_store)
-            # Disabled groups are genuinely unavailable: never restore their
-            # old native counterpart behind the operator's back.
-            manager.register(registry)
-            registry.mcp_manager = manager
+        register_tool_result_tools(registry, tool_result_store)
         # Native memory is bound to the authenticated host user in both tool modes.
         register_memory_tools(registry, self.memory, WorkingGraph(),
                               user_id=principal.memory_user_id)
