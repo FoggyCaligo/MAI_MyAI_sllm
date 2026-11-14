@@ -1,0 +1,10 @@
+[package]
+name = "mai-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Minimal Rust MAI agent core"
+
+[lib]
+name = "mai_core"
+path = "src/lib.rs"
