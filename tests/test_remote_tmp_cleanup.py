@@ -80,7 +80,10 @@ def test_worker_rejects_temporary_path_escaping_scratch(tmp_path, name):
 def test_worker_rejects_symlinked_scratch_directory(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (tmp_path / "tmp").symlink_to(outside, target_is_directory=True)
+    try:
+        (tmp_path / "tmp").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation requires elevated Windows privileges")
     with pytest.raises(ValueError, match="symlink"):
         RemoteScratch(tmp_path)
 
@@ -102,7 +105,7 @@ def test_remote_terminal_outputs_are_placed_under_tmp_and_cleaned(tmp_path, monk
             {"command": "generate file", "temporary_outputs": ["generated.json"]},
             run_id=rid,
         )
-        assert Path(result["command"] if "cwd" not in result else result["cwd"])  # valid tool response
+        assert result["returncode"] == 0
         assert (tmp_path / "tmp" / rid / "generated.json").is_file()
         with pytest.raises(ValueError, match="cwd unset"):
             await worker.execute_native(
