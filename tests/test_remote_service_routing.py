@@ -1,7 +1,7 @@
 """Host-only web tools, workspaces for eligible services, no per-tool flag."""
 import pytest
 from mai.remote.routing import register_routed_service_tools
-from mai.mcp_tools.workspace import WorkspaceContext
+from mai.remote.workspace import WorkspaceContext
 from mai.tools.browser import BrowserSessionManager
 from mai.tools.registry import ToolRegistry, ToolArgumentsError
 
