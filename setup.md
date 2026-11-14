@@ -32,6 +32,8 @@ MAI에 필요한 기타 구성요소들을 자동으로 다운로드하도록 �
 - Python 3.11, uv, llama.cpp 다운로드 (공식 릴리스 URL·배포자 SHA-256에 근거)
 - 기본 Ornith 1.5 9B Q8_0 및 mmproj 다운로드 (RAM 용량 무관, 공식 Hugging Face SHA-256 검증); Gemma 4는 선택적 다운로드
 - 프로젝트 루트에 있는 `pyproject.toml`의 기본·개발 의존성, Playwright Chromium 다운로드
+  - 장기기억용 `Sentence_Breaker`는 **MAI의 직접 의존성**이다. `pyproject.toml`에서 `sentence-breaker @ git+https://github.com/FoggyCaligo/Sentence_Breaker.git@main`을 설치한다. 외부 `MCP_memorizer`의 설치 여부와 관계없다.
+  - 설치 직후 `sentence_breaker.LanguageGraph`와 `mai.memory.segmenter.SentenceBreakerSegmenter` import를 검증한다. 실패하면 setup이 오류를 내며, Native 기억 추출/저장에 필요한 문장 분해기가 준비되지 않은 상태로 간주한다.
 - .env 없으면 아이디/비번 입력받아 생성
 - 네이티브 실행환경 준비 (windows : 프로젝트 폴더에서 ./portable/portable-runtimes.  linux : 호스트의 `~/.cache/mai-portable/` 또는 `XDG_CACHE_HOME` 아래)
  
