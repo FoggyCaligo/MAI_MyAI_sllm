@@ -45,7 +45,7 @@ from ..tools.registry import ToolRegistry
 from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
-from ..mcp_tools.workspace import WorkspaceContext
+from ..remote.workspace import WorkspaceContext
 from pydantic import BaseModel, ConfigDict
 from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
