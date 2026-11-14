@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
-from typing import Any, Mapping, Sequence, Callable, Literal
+from typing import Any, Mapping, Sequence, Callable
 
 import httpx
 
@@ -44,6 +44,7 @@ from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
+from ..tools.switch_workspace import register_switch_workspace_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from ..remote.workspace import WorkspaceContext
 from pydantic import BaseModel, ConfigDict
@@ -86,7 +87,7 @@ Use only capabilities and permissions declared by the runtime. The first round e
 MAI uses two explicit execution targets for workspace-capable tools:
 - host: the MAI server PC. It is the default at the beginning of EACH NEW agent task.
 - client: the authenticated, connected owner-authorized Windows/Linux worker PC.
-To work on the client PC, first activate remote__switch_workspace via tool_manual, then call remote__switch_workspace(target="client") ONCE. After it succeeds, EVERY subsequent workspace-capable tool call in this SAME task (file, code, document, terminal, calculator/time utilities) executes on client automatically. Do NOT switch again before each tool call and do NOT add location arguments to individual tools. To return to the MAI server PC during this task, call remote__switch_workspace(target="host") ONCE; all subsequent workspace-capable calls then execute on host. The selected target is maintained across model rounds and tool activations until another successful switch or the current agent task ends. A new user task starts at host again; it is not a persistent conversation-wide or global preference.
+To work on the client PC, first activate switch_workspace via tool_manual, then call switch_workspace(target="client") ONCE. After it succeeds, EVERY subsequent workspace-capable tool call in this SAME task (file, code, document, terminal, calculator/time utilities) executes on client automatically. Do NOT switch again before each tool call and do NOT add location arguments to individual tools. To return to the MAI server PC during this task, call switch_workspace(target="host") ONCE; all subsequent workspace-capable calls then execute on host. The selected target is maintained across model rounds and tool activations until another successful switch or the current agent task ends. A new user task starts at host again; it is not a persistent conversation-wide or global preference.
 Host-only tools (internet/web, browser, memory, restart, downloads, tool-result reads and host control) ALWAYS execute on host, even when client is selected; they do not change the selected target. Switching to client requires an authenticated connected worker; a failed switch preserves the prior target and a disconnected client causes explicit failure, NEVER a silent fallback to host. Use the worker's own file paths and shell syntax when client is selected; terminal_run defaults to Bash on either OS, and Windows PowerShell must be explicitly requested. The built-in tools from mai/tools are native ToolRegistry functions (for example terminal_run and file_write); only the independent memory MCP tool retains its server namespace. The MAI host resolves the worker session; never provide session IDs, credentials, pairing or installation arguments as tool inputs.
 
 For temporary probes, debug scripts, generated intermediate JSON and command-output captures, use file_write(lifecycle="temporary") if a script is needed across tool calls. If terminal_run creates such scratch files directly through shell redirection or a script, declare each NEW output in terminal_run(temporary_outputs=[...]) before execution so MAI can remove it when this task ends, including failed or cancelled runs. The default file_write lifecycle is persistent and terminal outputs not declared temporary are NOT cleaned automatically. Never mark an existing file or a user-requested deliverable temporary. Scratch cleanup on client is not yet supported: do not claim that a client-created file will be removed automatically. Do not assume historical untracked files are safe to delete.
@@ -126,11 +127,6 @@ class MAIRunResult:
     model: str
     model_rounds: int
     tools: tuple[dict[str, object], ...]
-
-
-class WorkspaceSwitchInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    target: Literal["host", "client"]
 
 
 class FileDownloadLinkInput(BaseModel):
@@ -328,19 +324,7 @@ class MAIRuntime:
             )
             register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
             register_restart_tool(registry)
-            registry.add(
-                name="remote__switch_workspace",
-                description=(
-                    "Select host or client for all subsequent workspace-capable "
-                    "native tool calls within this task. Each new task starts on "
-                    "host. Client requires an authenticated connected worker; "
-                    "failed switching preserves the previous selection. "
-                    "Host-only tools never change location."
-                ),
-                input_model=WorkspaceSwitchInput,
-                handler=workspace.switch,
-                category="workspace",
-            )
+            register_switch_workspace_tool(registry, workspace=workspace)
             registry.add(
                 name="file_download_link",
                 description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
