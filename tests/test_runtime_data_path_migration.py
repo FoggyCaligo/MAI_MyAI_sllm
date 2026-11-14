@@ -1,5 +1,4 @@
 """Move legacy MAI data safely, preserving owner files and MCP toggles."""
-import json
 from pathlib import Path
 
 import pytest
@@ -47,31 +46,19 @@ def test_refuses_collision_without_overwriting(tmp_path):
     assert (old / "memory.sqlite3").read_bytes() == b"old"
     assert (destination / "memory.sqlite3").read_bytes() == b"new"
 
-def test_updates_only_known_old_memorizer_settings_preserves_flags(tmp_path):
+def test_unused_legacy_mcp_configuration_does_not_block_native_migration(tmp_path):
     root = _root(tmp_path)
     config = root / "mai/mcp_tools/mcp_servers.json"
     config.parent.mkdir(parents=True)
+    config.write_text("{invalid old MCP configuration", encoding="utf-8")
     old_data = root / LEGACY_MEMORY_RELATIVE
     old_data.mkdir(parents=True)
-    (old_data / "memory.sqlite3").write_bytes(b"sqlite")
-    before = {
-        "catalog_path": "mcp_catalog.json",
-        "servers": [
-            {"id": "memorizer", "enabled": False, "command": "python", 
-             "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
-             "env": {"MEMORIZER_DATA_DIR": str(old_data)}},
-            {"id": "other", "enabled": True, "command": "other",
-             "env": {"MEMORIZER_DATA_DIR": "custom"}},
-        ],
-    }
-    config.write_text(json.dumps(before), encoding="utf-8")
-    assert migrate(root)["memorizer_config_updated"]
-    after = json.loads(config.read_text(encoding="utf-8"))
-    assert after["servers"][0]["enabled"] is False
-    assert after["servers"][0]["args"][-1] == "mai.mcp_tools.mcp_memorizer.server"
-    assert after["servers"][0]["env"]["MEMORIZER_DATA_DIR"] == str(root / MEMORY_RELATIVE)
-    assert after["servers"][1] == before["servers"][1]
-    assert (config.parent / "mcp_servers.pre-data-path-migration.json").exists()
+    (old_data / "memory.sqlite3").write_bytes(b"old DB")
+    status = migrate(root)
+    assert status["memory"] is True
+    assert (root / MEMORY_RELATIVE / "memory.sqlite3").read_bytes() == b"old DB"
+    assert config.read_text(encoding="utf-8") == "{invalid old MCP configuration"
+
 
 def test_redirects_only_exact_old_default_env_paths(tmp_path, monkeypatch):
     root = _root(tmp_path)
@@ -85,23 +72,15 @@ def test_redirects_only_exact_old_default_env_paths(tmp_path, monkeypatch):
     assert (root / "mai").is_dir()
 
 
-def test_legacy_mcp_config_inside_old_memory_folder_is_updated(tmp_path):
+def test_legacy_mcp_config_inside_memory_dir_is_moved_but_not_rewritten(tmp_path):
     root = _root(tmp_path)
     old_data = root / LEGACY_MEMORY_RELATIVE
     old_data.mkdir(parents=True)
     (old_data / "memory.sqlite3").write_bytes(b"old-memory")
     legacy_config = old_data / "mcp_servers.json"
-    legacy_config.write_text(json.dumps({"servers": [{
-        "id": "memorizer", "enabled": False,
-        "command": "python",
-        "args": ["-m", "mai.mcp_tools.MCP_memorizer.server"],
-        "env": {"MEMORIZER_DATA_DIR": str(old_data)},
-    }]}), encoding="utf-8")
+    legacy_config.write_text("{invalid legacy MCP metadata", encoding="utf-8")
     outcome = migrate(root)
     assert outcome["memory"] is True
-    assert outcome["memorizer_config_updated"] is True
     migrated = root / MEMORY_RELATIVE / "mcp_servers.json"
-    result = json.loads(migrated.read_text(encoding="utf-8"))["servers"][0]
-    assert result["enabled"] is False
-    assert result["env"]["MEMORIZER_DATA_DIR"] == str(root / MEMORY_RELATIVE)
-    assert result["args"][-1] == "mai.mcp_tools.mcp_memorizer.server"
+    assert migrated.read_text(encoding="utf-8") == "{invalid legacy MCP metadata"
+    assert (root / MEMORY_RELATIVE / "memory.sqlite3").read_bytes() == b"old-memory"
