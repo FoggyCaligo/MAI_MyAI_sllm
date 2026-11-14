@@ -209,7 +209,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("MAI startup phase=mcp_discovery status=starting")
     discovery = MCPConnectionManager(
         mcp_config_path, memory_user_id="catalog-discovery",
-        allowed_server_ids=frozenset({"memorizer"}),
     )
     discovered_tools = await discovery.refresh_catalog()
     logger.info("MAI startup phase=mcp_discovery status=completed elapsed_seconds=%.3f",
