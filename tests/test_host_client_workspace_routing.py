@@ -6,14 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from mai.mcp_tools.workspace import WorkspaceContext
+from mai.remote.workspace import WorkspaceContext
 from mai.remote import routing
 from mai.remote.session import RemoteExecutionError
 from mai.tools.registry import ToolRegistry
 
 
 def test_client_selection_routes_multiple_tools_without_repeated_switch(tmp_path, monkeypatch):
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
 
     session = SimpleNamespace(session_id="worker-1", owner_id="owner", connected=True)
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
@@ -58,7 +58,7 @@ def test_legacy_target_values_fail_explicitly(obsolete_target):
 
 
 def test_failed_client_selection_keeps_host(monkeypatch):
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
 
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: None)
     workspace = WorkspaceContext(owner_id="owner")
