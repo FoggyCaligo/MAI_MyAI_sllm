@@ -118,7 +118,7 @@ class AgentGuard:
 
     def after_similar_failure(
         self, name: str, arguments: Mapping[str, Any], *, ok: bool,
-        error_type: str | None, threshold: int = 2,
+        error_type: str | None, threshold: int = 2, execution_target: str = "host",
     ) -> str | None:
         """Warn on a related *failure family*, never block a changed action.
 
@@ -128,7 +128,7 @@ class AgentGuard:
         """
         if ok or not error_type or threshold < 2:
             return None
-        target = str(arguments.get("at_remote_pc", False))
+        target = execution_target
         if name == "terminal_run":
             command = str(arguments.get("command", "")).strip().lower()
             # Strip common wrappers and use a command family, not entire
