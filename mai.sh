@@ -190,7 +190,7 @@ if [[ "$with_llamacpp" == 1 ]]; then "$cache/llamacpp/bin/llama-server" --versio
 # Never provision a Python environment on NTFS. Linux native packages live in host cache.
 echo "[Linux Portable] Installing MAI Python dependencies"
 UV_LINK_MODE=copy "$uv" pip install --python "$python" "$root[dev]"
-"$python" -c 'import fastapi, uvicorn, playwright, mai'
+"$python" -c 'import fastapi, uvicorn, playwright, mai; from sentence_breaker import LanguageGraph; from mai.memory.segmenter import SentenceBreakerSegmenter; print("Native memory dependency: Sentence_Breaker available")'
 if [[ "$install_chromium" == 1 ]]; then
   export PLAYWRIGHT_BROWSERS_PATH="$cache/playwright-browsers"
   "$python" -m playwright install chromium
