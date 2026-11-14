@@ -357,7 +357,7 @@ class MAIRuntime:
         if not functional_mcp:
             register_tool_result_tools(registry, tool_result_store)
         if mcp_config and principal.role is AccessRole.OWNER:
-            manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
+            manager = MCPConnectionManager(mcp_config,
                                            workspace=workspace,
                                            host_download_links=self.download_links,
                                            host_tool_result_store=tool_result_store)

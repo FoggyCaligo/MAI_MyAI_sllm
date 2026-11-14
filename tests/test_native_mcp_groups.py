@@ -324,7 +324,7 @@ def test_default_functional_mcp_config_discovers_all_enabled_servers(tmp_path):
             sentence_breaker_db_path=data / "sentence_breaker.sqlite3",
             config_path=tmp_path / "mcp_servers.json",
         )
-        manager = MCPConnectionManager(config, memory_user_id="local-owner")
+        manager = MCPConnectionManager(config)
         assert manager.functional_mode is True
         assert set(GROUPS).issubset(manager.servers)
         assert {"remote", "host"}.issubset(manager.servers)

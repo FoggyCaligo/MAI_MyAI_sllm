@@ -42,7 +42,7 @@ def failure_details(exc: Exception) -> tuple[str, bool]:
 
 def tool_failure_payload(exc: Exception, **fields: Any) -> dict[str, Any]:
     category, retryable = failure_details(exc)
-    return {
+    payload = {
         "ok": False,
         "error_type": type(exc).__name__,
         "error_category": category,
@@ -50,3 +50,7 @@ def tool_failure_payload(exc: Exception, **fields: Any) -> dict[str, Any]:
         "message": str(exc),
         **fields,
     }
+    details = getattr(exc, "result", None)
+    if isinstance(details, dict):
+        payload["details"] = details
+    return payload

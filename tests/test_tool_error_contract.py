@@ -28,6 +28,8 @@ def test_unified_error_shape(error, category, retryable):
     assert result["error_category"] == category
     assert result["retryable"] is retryable
     assert result["message"] == str(error)
+    if isinstance(error, (TerminalOutputLimitError, TerminalCommandError)):
+        assert result["details"] == error.result
 
 
 def test_native_registry_handler_fails_with_common_error_contract():

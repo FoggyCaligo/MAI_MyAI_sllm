@@ -101,7 +101,7 @@ def test_retired_external_memorizer_is_not_discovered_or_activated(tmp_path):
         "catalog_path": "catalog.json",
         "servers": [{"id": "memorizer", "command": "must-not-run"}],
     }), encoding="utf-8")
-    manager = MCPConnectionManager(config, memory_user_id="test-user")
+    manager = MCPConnectionManager(config)
     assert "memorizer" not in manager.servers
     registry = ToolRegistry()
     manager.register(registry)

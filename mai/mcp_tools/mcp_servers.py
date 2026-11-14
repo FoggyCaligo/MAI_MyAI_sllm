@@ -45,7 +45,7 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
     root = Path(memory_db_path).expanduser().resolve().parent
     segmenter_parent = Path(sentence_breaker_db_path).expanduser().resolve().parent
     if root != segmenter_parent:
-        raise ValueError("MCP_memorizer requires memory and segmenter DBs in the same directory")
+        raise ValueError("memory and Sentence_Breaker databases must be in the same directory")
     root.mkdir(parents=True, exist_ok=True)
     path = (Path(config_path).expanduser().resolve() if config_path is not None
             else Path(__file__).with_name("mcp_servers.json"))
@@ -213,7 +213,6 @@ class MCPConnectionManager:
         self.host_download_links = host_download_links
         self.host_tool_result_store = host_tool_result_store
         self.config_path = Path(config_path).expanduser().resolve()
-        self.memory_user_id = memory_user_id
         self.workspace = workspace
         config = json.loads(self.config_path.read_text(encoding="utf-8"))
         if not isinstance(config, dict) or not isinstance(config.get("servers", []), list):
@@ -280,13 +279,7 @@ class MCPConnectionManager:
     def _server_env(self, server: str) -> dict[str, str]:
         entry = self.servers[server]
         env = dict(os.environ)
-        for k,v in entry.get("env", {}).items():
-            if v == "{memory_user_id}":
-                if not self.memory_user_id:
-                    raise MCPConnectionError(f"server {server} requires authenticated memory user")
-                env[k] = self.memory_user_id
-            else:
-                env[k] = v
+        env.update(entry.get("env", {}))
         return env
 
     async def _connect(self, server: str) -> Any:
@@ -574,8 +567,8 @@ class MCPConnectionManager:
             await stack.aclose()
 
 
-async def _refresh_main(config_path: str, memory_user_id: str) -> None:
-    manager = MCPConnectionManager(config_path, memory_user_id=memory_user_id)
+async def _refresh_main(config_path: str) -> None:
+    manager = MCPConnectionManager(config_path)
     discovered = await manager.refresh_catalog()
     print(f"Cached {len(discovered)} MCP tools: " + ", ".join(discovered))
 
@@ -585,7 +578,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("refresh",))
     parser.add_argument("--config", required=True)
-    parser.add_argument("--memory-user-id", default="local-user",
-                        help="Administrative identity used only while refreshing server catalog")
     args = parser.parse_args()
-    asyncio.run(_refresh_main(args.config, args.memory_user_id))
+    asyncio.run(_refresh_main(args.config))
