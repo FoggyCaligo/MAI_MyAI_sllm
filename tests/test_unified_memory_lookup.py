@@ -5,9 +5,9 @@ from mcp_memorizer.manager import MemorySearchInput
 from mai.mcp_tools.mcp_memorizer.admission import MEMORY_RECALL_TOOL_NAMES
 
 
-def test_lookup_keyword_with_limit():
-    value = MemorySearchInput.model_validate({"keyword": "사용자의 취미", "limit": 10})
-    assert value.keyword == "사용자의 취미"
+def test_lookup_query_with_limit():
+    value = MemorySearchInput.model_validate({"query": "사용자의 취미", "limit": 10})
+    assert value.query == "사용자의 취미"
     assert value.node_id is None
     assert value.limit == 10
 
@@ -15,15 +15,15 @@ def test_lookup_keyword_with_limit():
 def test_lookup_node_id():
     value = MemorySearchInput.model_validate({"node_id": 584})
     assert value.node_id == 584
-    assert value.keyword is None
+    assert value.query is None
 
 
 @pytest.mark.parametrize("payload", [
-    {}, {"keyword": "취미", "node_id": 584},
+    {}, {"query": "취미", "node_id": 584},
     {"limit": 51},
     {"node_id": 584, "limit": 3},
-    {"keyword": ""}, {"node_id": -1},
-    {"query": "취미"},
+    {"query": ""}, {"node_id": -1},
+    {"keyword": "취미"},
 ])
 def test_lookup_rejects_invalid_contract(payload):
     with pytest.raises(ValidationError):
@@ -33,7 +33,7 @@ def test_lookup_rejects_invalid_contract(payload):
 def test_overview_requires_bounded_limit():
     value = MemorySearchInput.model_validate({"limit": 8})
     assert value.node_id is None
-    assert value.keyword is None
+    assert value.query is None
     assert value.limit == 8
 
 

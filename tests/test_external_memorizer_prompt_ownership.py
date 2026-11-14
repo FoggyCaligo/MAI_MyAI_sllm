@@ -16,7 +16,7 @@ def test_main_prompt_omits_native_memory_guidance():
 
 
 def test_external_memory_policy_and_namespace(tmp_path):
-    assert "keyword" in MEMORY_SEARCH_DESCRIPTION
+    assert "query" in MEMORY_SEARCH_DESCRIPTION\n    assert "AND" in MEMORY_SEARCH_DESCRIPTION\n    assert "NOT" in MEMORY_SEARCH_DESCRIPTION
     assert "created_at" in MEMORY_MODEL_CONTEXT["instruction"]
     config = tmp_path / "servers.json"
     config.write_text(json.dumps({"servers": [

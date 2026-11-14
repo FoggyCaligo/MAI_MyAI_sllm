@@ -19,7 +19,7 @@ MAI는 **장기기억 엔진을 직접 구현하지 않고**, 별도 저장소 [
 
 MAI는 `memorizer__memory_search`라는 **MCP 서버별 이름**으로 도구를 공개한다. 모델은 `tool_manual`에서 활성화하고, 활성화 후 제공되는 구조화 스키마로 호출한다. 이전 네이티브 `memory_search`를 별도로 등록하지 않는다.
 
-엔진의 `keyword`·`limit`·`node_id` 입력과 실제 검색/정렬/확장 규칙은 [MCP_memorizer 검색 계약](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md)을 참고한다. MAI는 전체 장기기억을 매 턴 무조건 프롬프트에 넣지 않는다.
+엔진의 `query`·`limit`·`node_id` 입력과 실제 검색/정렬/확장 규칙은 [MCP_memorizer 검색 계약](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/recall.md)을 참고한다. `query`는 단일 검색어 또는 AND(`&`), OR(`|`), NOT(`!`), 괄호(`()`)의 Boolean 검색식을 받는다. 키워드 각각은 기존 개념 기반 검색을 수행하고 조건에 따라 결과를 결합·제외한다. MAI는 전체 장기기억을 매 턴 무조건 프롬프트에 넣지 않는다.
 
 현재 작업에서 `remote__switch_workspace(target="client")`를 선택했더라도 **메모리·인터넷·브라우저·호스트 제어 도구는 MAI 서버인 host에서 실행**한다. 선택은 작업별 Workspace 호환 도구에만 적용된다.
 
