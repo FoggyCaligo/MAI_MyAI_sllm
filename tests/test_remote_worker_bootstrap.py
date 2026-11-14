@@ -18,6 +18,7 @@ def test_remote_worker_bundle_contains_python_registry_and_project_metadata():
     assert "mai/tools/registry.py" in paths
     assert "mai/tools/filesystem.py" in paths
     assert "mai/tools/terminal.py" in paths
+    assert "mai/remote/temp_workspace.py" in paths
 
 
 def test_powershell_bootstrap_delegates_session_to_persistent_python_client():
@@ -72,5 +73,6 @@ def test_worker_source_archive_and_native_client_do_not_require_codeact():
 
     source = inspect.getsource(agent_client.run_agent)
     assert '"native.invoke"' in source
+    assert '"native.cleanup"' in source
     assert "execute_code" not in source
     assert not build_registry().has("execute_code")
