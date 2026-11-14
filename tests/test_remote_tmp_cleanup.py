@@ -190,6 +190,9 @@ def test_agent_finalization_sends_cleanup_after_remote_tool_use(tmp_path, monkey
             "path": "debug.log", "content": "temporary",
             "lifecycle": "temporary",
         }),)),
+        _turn(calls=(NativeToolCall(name="switch_workspace", arguments={
+            "target": "host",
+        }),)),
         RuntimeError("model failed") if fails else _turn(content="finished"),
     ]
     agent = AgentRuntime(FakeAdapter(turns), registry)
