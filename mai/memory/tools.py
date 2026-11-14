@@ -34,7 +34,11 @@ class MemorySearchInput(BaseModel):
     )
     keyword: str | None = Field(
         default=None, min_length=1,
-        description="Search persistent memories by topic or free-text keywords (recall).",
+        description="Legacy plain-keyword alias for query. Cannot be combined with query.",
+    )
+    query: str | None = Field(
+        default=None, min_length=1,
+        description="Search Fact and Utterance memory with keywords or AND/OR/NOT Boolean operators and parentheses.",
     )
     limit: int | None = Field(
         default=None, ge=1,
@@ -43,11 +47,13 @@ class MemorySearchInput(BaseModel):
 
     @model_validator(mode="after")
     def check_selector(self) -> "MemorySearchInput":
-        if self.node_id is not None and self.keyword is not None:
-            raise ValueError("Provide at most one of node_id or keyword")
+        if self.keyword is not None and self.query is not None:
+            raise ValueError("Provide only query or legacy keyword, never both")
+        if self.node_id is not None and (self.keyword is not None or self.query is not None):
+            raise ValueError("node_id cannot combine with query or keyword")
         if self.node_id is not None and self.limit is not None:
             raise ValueError("limit is not valid with node_id")
-        if self.node_id is None and self.keyword is None:
+        if self.node_id is None and self.keyword is None and self.query is None:
             if self.limit is None:
                 raise ValueError("limit is required for overview without node_id or keyword")
             if self.limit > 50:
@@ -69,11 +75,13 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
     async def memory_search(
         node_id: int | None = None,
         keyword: str | None = None,
+        query: str | None = None,
         limit: int | None = None,
     ) -> dict[str, object]:
         if node_id is not None:
             return memory.memory_search(working, user_id=user_id, node_id=node_id)
-        if keyword is None:
+        effective_query = query if query is not None else keyword
+        if effective_query is None:
             if limit is None:
                 raise ValueError("limit is required for overview")
             if not include_recall_entry:
@@ -81,19 +89,20 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
             return memory.memory_overview(user_id=user_id, limit=limit)
         if not include_recall_entry:
             raise ValueError("Keyword recall is disabled for this tool registry")
-        recalled = memory.explicit_recall(user_id=user_id, query=keyword, limit=limit)
+        recalled = memory.explicit_recall(user_id=user_id, query=effective_query, limit=limit)
         working.merge_working(recalled)
         return recalled.model_snapshot()
 
     registry.add(
         name="memory_search",
         description=(
-            "Retrieve persistent memory in one of three modes: keyword for topic-based "
-            "recall (e.g. hobbies, preferences, events), node_id to expand a known graph node, "
-            "or neither keyword nor node_id for a recent-memory overview. The overview mode "
-            "REQUIRES an explicit limit from 1 to 50; keyword recall supports an optional limit "
-            "and node_id forbids limit. A recent overview is not the complete memory database. "
-            "A bounded or empty result does not prove other memories are absent."
+            "Retrieve persistent memory in one of three modes: query for keyword or Boolean "
+            "AND/OR/NOT search over saved Facts and Utterances; node_id to expand a returned "
+            "user-owned memory node; or limit (1 to 50) alone for recent overview. "
+            "query supports parentheses, quoted terms, & / | / ! operators, and an optional limit. "
+            "keyword is a backwards-compatible alias for plain queries; never provide both. "
+            "node_id cannot combine with query, keyword or limit. The overview is bounded, "
+            "not the complete database; empty results do not prove memories are absent."
         ),
         input_model=MemorySearchInput,
         handler=memory_search,
