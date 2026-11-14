@@ -20,158 +20,54 @@ from typing import Any, Mapping
 from pydantic import BaseModel, ConfigDict
 
 from ..tools.registry import ToolRegistry, ToolRegistryError
-from .workspace import WorkspaceContext
 
 
 _LOG = logging.getLogger(__name__)
 
-# Exact MCP server groups whose registered tools follow the per-task workspace.
-WORKSPACE_CAPABLE_MCP_SERVERS = frozenset({
-    "mai_file", "mai_code", "mai_docs", "mai_terminal_run", "mai_utilities",
-})
-HOST_ONLY_MCP_SERVERS = frozenset({"mai_internet", "mai_browser", "memorizer", "host", "remote"})
 
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
                               sentence_breaker_db_path: str | Path,
                               config_path: str | Path | None = None) -> Path:
-    """Create an editable private MCP config once, never overwrite user toggles.
+    """Create the independent memory MCP configuration once, preserving user toggles.
 
-    The built-in memorizer is configured with MAI's existing DB directory.
-    Stdio executes the current MAI Portable Python interpreter. Disabling an
-    entry changes the next startup catalog without uninstalling anything.
+    Existing configs from functional MCP versions are loaded read-only; obsolete
+    groups are not started or registered and no user settings are overwritten.
     """
     import sys
     root = Path(memory_db_path).expanduser().resolve().parent
-    segmenter_parent = Path(sentence_breaker_db_path).expanduser().resolve().parent
-    if root != segmenter_parent:
+    other = Path(sentence_breaker_db_path).expanduser().resolve().parent
+    if root != other:
         raise ValueError("MCP_memorizer requires memory and segmenter DBs in the same directory")
     root.mkdir(parents=True, exist_ok=True)
     path = (Path(config_path).expanduser().resolve() if config_path is not None
             else Path(__file__).with_name("mcp_servers.json"))
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        # The initial feature branch stored operator settings beside the DB.
-        # Preserve any existing toggles when adopting mai/mcp_tools layout.
-        legacy_path = root / "mcp_servers.json"
-        if legacy_path != path and legacy_path.is_file():
-            previous = json.loads(legacy_path.read_text(encoding="utf-8"))
-            if not isinstance(previous, dict) or not isinstance(previous.get("servers"), list):
-                raise ValueError("invalid legacy MCP config; refusing to replace operator settings")
-            try:
-                with path.open("x", encoding="utf-8") as fp:
-                    json.dump(previous, fp, ensure_ascii=False, indent=2)
-            except FileExistsError:
-                pass
-            # Continue to schema-v2 migration below so MCP_remote is
-            # registered on this first start even with a legacy config.
-        from .native_groups import GROUPS
-        config = {
-            "schema_version": 5,
-            "functional_mode": True,
-            "catalog_path": "mcp_catalog.json",
-            "servers": [{
-                "id": "memorizer",
-                "enabled": True,
-                "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
-                "env": {
-                    "MEMORIZER_USER_ID": "{memory_user_id}",
-                    "MEMORIZER_DATA_DIR": str(root),
-                },
-            }, {
-                "id": "remote",
-                "enabled": True,
-                "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.MCP_remote.server"],
-            }, {
-                "id": "host",
-                "enabled": True,
-                "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.MCP_host"],
-            }] + [{
-                "id": group, "enabled": True, "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.native_groups", "--group", group],
-                "env": {"MAI_CWD": str(Path(__file__).resolve().parents[2])},
-            } for group in GROUPS],
-        }
-        # Exclusive creation avoids clobbering a concurrently customized config.
+        previous = root / "mcp_servers.json"
+        if previous != path and previous.is_file():
+            old = json.loads(previous.read_text(encoding="utf-8"))
+            if not isinstance(old, dict) or not isinstance(old.get("servers"), list):
+                raise ValueError("invalid legacy MCP config")
+            config = old
+        else:
+            config = {
+                "catalog_path": "mcp_catalog.json",
+                "servers": [{
+                    "id": "memorizer", "enabled": True, "command": sys.executable,
+                    "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
+                    "env": {
+                        "MEMORIZER_USER_ID": "{memory_user_id}",
+                        "MEMORIZER_DATA_DIR": str(root),
+                    },
+                }],
+            }
         try:
             with path.open("x", encoding="utf-8") as fp:
                 json.dump(config, fp, ensure_ascii=False, indent=2)
         except FileExistsError:
             pass
-    # One-time migration for existing configurations. Subsequent edits to
-    # enabled/disabled entries are respected, including intentional removal.
-    existing = json.loads(path.read_text(encoding="utf-8"))
-    if existing.get("schema_version", 1) < 2:
-        if not any(entry.get("id") == "remote" for entry in existing.get("servers", [])):
-            existing["servers"].append({
-                "id": "remote", "enabled": True, "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.MCP_remote.server"],
-            })
-        existing["schema_version"] = 2
-        backup = path.with_name("mcp_servers.pre-workspace.json")
-        if not backup.exists():
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        temp = path.with_suffix(".workspace.tmp")
-        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(path)
-    # New installations/migrating v2 configs enable each functional MCP group.
-    # Existing v3/v4 entries retain the operator's exact enabled flags.
-    existing = json.loads(path.read_text(encoding="utf-8"))
-    if existing.get("schema_version", 1) < 3:
-        from .native_groups import GROUPS
-        installed = {entry["id"] for entry in existing["servers"]}
-        for group in GROUPS:
-            if group not in installed:
-                existing["servers"].append({
-                    "id": group, "enabled": True,
-                    "command": sys.executable,
-                    "args": ["-m", "mai.mcp_tools.native_groups", "--group", group],
-                    "env": {"MAI_CWD": str(Path(__file__).resolve().parents[2])},
-                })
-        existing["schema_version"] = 3
-        backup = path.with_name("mcp_servers.pre-functional-groups.json")
-        if not backup.exists():
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        temp = path.with_suffix(".functional-groups.tmp")
-        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(path)
-    existing = json.loads(path.read_text(encoding="utf-8"))
-    if existing.get("schema_version", 1) < 4:
-        # New installations use the function-group MCP registry by default.
-        # A staging config with *all* groups intentionally disabled keeps its
-        # native tool path until its owner explicitly enables functional_mode.
-        from .native_groups import GROUPS
-        enabled_groups = {
-            entry["id"] for entry in existing["servers"]
-            if entry.get("enabled") is True
-        }
-        existing["functional_mode"] = bool(enabled_groups.intersection(GROUPS))
-        existing["schema_version"] = 4
-        backup = path.with_name("mcp_servers.pre-functional-mode.json")
-        if not backup.exists():
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        temp = path.with_suffix(".functional-mode.tmp")
-        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(path)
-    existing = json.loads(path.read_text(encoding="utf-8"))
-    if existing.get("schema_version", 1) < 5:
-        if not any(entry.get("id") == "host" for entry in existing["servers"]):
-            existing["servers"].append({
-                "id": "host", "enabled": True, "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.MCP_host"],
-            })
-        existing["schema_version"] = 5
-        backup = path.with_name("mcp_servers.pre-host-control.json")
-        if not backup.exists():
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-        temp = path.with_suffix(".host-control.tmp")
-        temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(path)
     return path
-
 
 class MCPConnectionError(ToolRegistryError):
     """MCP discovery, handshake or tool contract failed."""
@@ -207,21 +103,12 @@ class MCPConnectionManager:
 
     def __init__(self, config_path: str | Path, *,
                  memory_user_id: str | None = None,
-                 workspace: WorkspaceContext | None = None,
-                 host_download_links: Any | None = None,
-                 host_tool_result_store: Any | None = None,
                  allowed_server_ids: frozenset[str] | None = None) -> None:
-        self.host_download_links = host_download_links
-        self.host_tool_result_store = host_tool_result_store
         self.config_path = Path(config_path).expanduser().resolve()
         self.memory_user_id = memory_user_id
-        self.workspace = workspace
         config = json.loads(self.config_path.read_text(encoding="utf-8"))
         if not isinstance(config, dict) or not isinstance(config.get("servers", []), list):
             raise ValueError("MCP config must contain servers array")
-        self.functional_mode = config.get("functional_mode", False)
-        if not isinstance(self.functional_mode, bool):
-            raise ValueError("MCP functional_mode must be boolean")
         self.servers: dict[str, dict[str, Any]] = {}
         for entry in config.get("servers", []):
             if not isinstance(entry, dict):
@@ -239,7 +126,7 @@ class MCPConnectionManager:
             raw_env = entry.get("env", {})
             if not isinstance(raw_env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k,v in raw_env.items()):
                 raise ValueError(f"invalid env for MCP server {ident}")
-            if enabled and (allowed_server_ids is None or ident in allowed_server_ids):
+            if enabled and ident == "memorizer" and (allowed_server_ids is None or ident in allowed_server_ids):
                 self.servers[ident] = dict(entry)
         cache_name = config.get("catalog_path", "mcp_catalog.json")
         if not isinstance(cache_name, str) or not cache_name:
@@ -411,20 +298,9 @@ class MCPConnectionManager:
                 async def invoke(**kwargs):
                     return await self.call(name, kwargs)
                 return invoke
-            routing_note = ""
-            if record["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
-                routing_note = (
-                    "Workspace-capable: host by default; after switch_workspace(client), "
-                    "this and all later eligible tools run on client until switch(host) "
-                    "or task end. No per-tool location arguments or repeated switches. "
-                )
-            elif record["server"] in HOST_ONLY_MCP_SERVERS:
-                routing_note = "Host-only tool; workspace switching never relocates this tool. "
-            description = (
-                f"Model-visible tool name: {model_name}. "
-                + routing_note
-                + (record["description"] or f"Tool {record['name']} on MCP server {record['server']}")
-            )
+            description = (f"Model-visible tool name: {model_name}. "
+                           + (record["description"] or "External memorizer memory tool."))
+
             registry.add(name=model_name, description=description,
                          input_model=EmptyToolInput, handler=bind(full_name),
                          timeout_seconds=float(self.servers[record["server"]].get("tool_timeout", 300)),
@@ -459,113 +335,17 @@ class MCPConnectionManager:
         return None
 
     async def call(self, name: str, arguments: Mapping[str,Any]) -> Any:
+        """Invoke only the independently packaged memorizer MCP."""
         if name not in self.catalog or self.catalog[name]["server"] not in self._sessions:
             raise MCPConnectionError(f"MCP tool {name} is not activated")
         entry = self.catalog[name]
-        if entry["server"] == "mai_terminal_run" and entry["name"] == "terminal_run":
-            declared = arguments.get("temporary_outputs", [])
-            if declared:
-                if not isinstance(declared, list):
-                    raise ValueError("temporary_outputs must be a list of new paths")
-                if self.workspace is not None and self.workspace.snapshot().target == "client":
-                    raise MCPConnectionError(
-                        "temporary_outputs on client workspace is not supported; "
-                        "remote scratch cleanup is not implemented"
-                    )
-                from ..tools.artifacts import declare_temporary_outputs
-                configured_cwd = self.servers[entry["server"]].get("env", {}).get("MAI_CWD")
-                effective_cwd = arguments.get("cwd") or configured_cwd or Path.cwd()
-                declare_temporary_outputs(declared, cwd=effective_cwd)
-        # Workspace selection is host-owned.  Compatible tools use their
-        # original native tool names on the authenticated worker, without
-        # changing public MCP schemas or leaking a session token to the model.
-        if self.workspace is not None and entry["server"] in WORKSPACE_CAPABLE_MCP_SERVERS:
-            snapshot = self.workspace.snapshot()
-            if snapshot.target == "client":
-                if (entry["server"] == "mai_file" and entry["name"] == "file_write"
-                        and arguments.get("lifecycle") == "temporary"):
-                    from ..remote.session import RemoteExecutionError
-                    raise RemoteExecutionError(
-                        "temporary file_write on client is not supported; "
-                        "remote scratch cleanup is not implemented"
-                    )
-                from ..remote.target import ExecutionTarget
-                from ..remote.session import RemoteExecutionError
-                session_id = self.workspace.validate_remote(snapshot)
-                target = ExecutionTarget(
-                    owner_id=self.workspace.owner_id,
-                    remote_session_id=session_id,
-                )
-                response = await target.execute(
-                    "native.invoke",
-                    {"name": entry["name"], "arguments": dict(arguments)},
-                    timeout=None if entry["server"] == "mai_terminal_run" else 600,
-                )
-                if set(response) != {"value"}:
-                    raise RemoteExecutionError(
-                        f"remote worker returned invalid tool-result envelope for {entry['name']!r}"
-                    )
-                return response["value"]
-        response = await self._sessions[entry["server"]].call_tool(entry["name"], dict(arguments))
+        if entry["server"] != "memorizer":
+            raise MCPConnectionError("Only the memorizer MCP server is supported")
+        response = await self._sessions["memorizer"].call_tool(entry["name"], dict(arguments))
         if response.isError:
             raise MCPToolExecutionError(f"MCP tool {name} returned an error: {response.content}")
-        if entry["server"] == "host":
-            # Stateful owner-only actions must never run inside an MCP child.
-            # Ignore child-provided result fields; execute only the validated,
-            # model-supplied arguments on the MAI host.
-            action = entry["name"]
-            if action == "file_download_link":
-                if self.host_download_links is None or set(arguments) != {"path"}:
-                    raise MCPConnectionError("host file download control unavailable")
-                return self.host_download_links.create(
-                    arguments["path"], base_url=os.environ.get("MAI_PUBLIC_BASE_URL", ""),
-                )
-            if action == "tool_result_read":
-                if self.host_tool_result_store is None or set(arguments) != {"result_id", "offset", "limit"}:
-                    raise MCPConnectionError("host tool result control unavailable")
-                return self.host_tool_result_store.read(**dict(arguments))
-            if action == "restart":
-                if set(arguments) != {"update"} or type(arguments["update"]) is not bool:
-                    raise MCPConnectionError("invalid host restart request")
-                from portable.restart_mai import detach
-                return await asyncio.wait_for(
-                    asyncio.to_thread(detach, update=arguments["update"], await_handoff=True),
-                    timeout=15,
-                )
-            raise MCPConnectionError(f"unsupported host MCP action: {action}")
-        if entry["server"] == "remote" and entry["name"] == "switch_workspace":
-            if self.workspace is None:
-                raise MCPConnectionError("Workspace control unavailable for this agent run")
-            # Never accept the target from a result produced by an untrusted
-            # server: the registered input is the sole requested target.
-            if set(arguments) != {"target"} or arguments["target"] not in ("host", "client"):
-                raise MCPConnectionError("Invalid workspace selection contract")
-            return self.workspace.switch(arguments["target"])
-        result = (
-            response.structuredContent if response.structuredContent is not None
-            else [getattr(block, "text", str(block)) for block in response.content]
-        )
-        # A standalone filesystem MCP process has its own ContextVars.
-        # Synchronize actual successful lifecycle results with MAI's per-turn
-        # host artifact ledger, so temporary files still get cleaned up.
-        if entry["server"] == "mai_file" and isinstance(result, dict):
-            from ..tools.artifacts import (
-                register_temporary_artifact, discard_temporary_artifact,
-                move_temporary_artifact,
-            )
-            operation = entry["name"]
-            if (operation == "file_write" and result.get("created") is True
-                    and result.get("lifecycle") == "temporary"
-                    and isinstance(result.get("path"), str)):
-                register_temporary_artifact(result["path"])
-            elif operation == "file_delete" and result.get("deleted") is True:
-                if isinstance(result.get("path"), str):
-                    discard_temporary_artifact(result["path"])
-            elif operation == "file_move":
-                if (isinstance(result.get("source"), str)
-                        and isinstance(result.get("destination"), str)):
-                    move_temporary_artifact(result["source"], result["destination"])
-        return result
+        return (response.structuredContent if response.structuredContent is not None
+                else [getattr(block, "text", str(block)) for block in response.content])
 
     async def close(self) -> None:
         for server in reversed(list(self._stacks)):
