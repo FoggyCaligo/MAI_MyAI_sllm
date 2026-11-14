@@ -93,9 +93,17 @@
 | --- | --- | --- |
 | 00 | 완료(원격 Git 트리 구조 변경, 로컬 검증 별도) | 이 문서 생성 및 전체 파일 이동 |
 | 01 | 정적 감사 작성 / 실기검증 대기 | 376파일 인벤토리, 핵심 코드·대표 테스트, 3개 보고서 |
-| 02–14 | 미착수 | Rust Core에 앞서 감사 미확정 계약을 보강 |
+| 02 | 부분 완료 | Rust workspace와 최소 core 생성, OS별 빌드·정적 UI 제공 미완료 |
+| 03–14 | 미착수 | 기존 UI API/스트리밍 및 실제 llama.cpp 연결 미완료 |
 
 ## 특별 주의
 - `python/`은 기존 프로젝트 전체의 경로 변경이므로 그 내부 launcher, workflow, 상대 경로는 즉시 실행 가능하다고 가정하지 않는다.
 - Rust 초안의 crate 이름과 턴 구분은 감사 결과에 따라 조정하되, 모든 기능 요구는 유지한다.
 - 제거 대상인 MCP에만 접근 가능한 도구 기능은 **네이티브 대체를 구현한 뒤** 기능 보존 여부를 평가한다.
+
+## 실제 구현 체크포인트 — 2026-11-14
+- Rust workspace 및 `mai-core` 생성: `rust/Cargo.toml`, `rust/crates/mai-core`.
+- 외부 의존 없는 fake-model 테스트 9개 작성: 직접 최종답변, lazy tool activation, 도구 결과/history, 미활성 도구 거부, 활성화 원자성, 사전/중간 취소, 빈 입력·빈 답변, 모델 실패, 중복 레지스트리.
+- 기존 UI 소스 **미수정**, MCP/Verifier/mcp_memorizer 구현 없음.
+- 이 구현은 agent core의 최소 **동기식** 스켈레톤으로, 실제 JSON typed schema/async timeouts/streaming/real llama.cpp/remote worker는 후속 구현해야 한다. 기존 계약 전체의 대체로 간주하지 않는다.
+- 이 실행 환경에 cargo/rustc가 없어 테스트 **미실행**. `cargo test --workspace`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` 실행 필요.
