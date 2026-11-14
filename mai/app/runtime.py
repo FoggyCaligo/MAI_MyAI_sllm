@@ -44,7 +44,7 @@ from ..tools.registry import ToolRegistry
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from ..mcp_tools.workspace import WorkspaceContext
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
 from .selected_model import SelectedModelStore
