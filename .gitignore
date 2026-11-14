@@ -17,6 +17,8 @@ data/*.db
 # Quality dataset intentionally remains in Git.
 !data/sentence_breaker.sqlite3
 /MAI_MEMORY/
+# Keep legacy private data untracked if relocation is blocked by a collision.
+/mai/mcp_tools/mcp_memorizer/MAI_MEMORY/
 MAI_MyAI_sllm/*
 
 # 로컬 화자 특징 데이터
