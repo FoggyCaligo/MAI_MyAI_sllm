@@ -16,7 +16,7 @@ def _root(tmp_path):
 def test_moves_old_db_and_uploads_preserving_bytes(tmp_path):
     root = _root(tmp_path)
     old_mem = root / LEGACY_MEMORY_RELATIVE
-    old_mem.mkdir()
+    old_mem.mkdir(parents=True)
     (old_mem / "memory.sqlite3").write_bytes(b"existing-memory-db")
     (old_mem / "sentence_breaker.sqlite3").write_bytes(b"existing-segmenter")
     (old_mem / "chat.sqlite3").write_bytes(b"existing-chat")
@@ -37,7 +37,7 @@ def test_moves_old_db_and_uploads_preserving_bytes(tmp_path):
 def test_refuses_collision_without_overwriting(tmp_path):
     root = _root(tmp_path)
     old = root / LEGACY_MEMORY_RELATIVE
-    old.mkdir()
+    old.mkdir(parents=True)
     (old / "memory.sqlite3").write_bytes(b"old")
     destination = root / MEMORY_RELATIVE
     destination.mkdir(parents=True)
@@ -52,7 +52,7 @@ def test_updates_only_known_old_memorizer_settings_preserves_flags(tmp_path):
     config = root / "mai/mcp_tools/mcp_servers.json"
     config.parent.mkdir(parents=True)
     old_data = root / LEGACY_MEMORY_RELATIVE
-    old_data.mkdir()
+    old_data.mkdir(parents=True)
     (old_data / "memory.sqlite3").write_bytes(b"sqlite")
     before = {
         "catalog_path": "mcp_catalog.json",
