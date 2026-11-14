@@ -1,8 +1,4 @@
-"""Regression checks for the restored flag_native_tool mounting boundary.
-
-The production native tool implementations stay intact. Only independent
-memorizer is allowed through the MCP transport for owner runs.
-"""
+"""Native ToolRegistry mounts built-in tools and original memory_search without MCP."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -10,97 +6,49 @@ from types import SimpleNamespace
 from mai.app.access import AccessPrincipal, AccessRole
 from mai.app.runtime import MAIRuntime
 from mai.agent.tool_results import ToolResultStore
-from mai.mcp_tools.mcp_servers import MCPConnectionManager
 from mai.tools.browser import BrowserSessionManager
-from mai.tools.registry import ToolRegistry
+from mai.memory.working import WorkingGraph
 
 
-def _legacy_mcp_config(tmp_path):
-    config_path = tmp_path / "mcp_servers.json"
-    config_path.write_text(json.dumps({
-        "functional_mode": True,
-        "servers": [
-            {"id": name, "enabled": True, "command": "python"}
-            for name in ("memorizer", "mai_file", "mai_code", "mai_terminal_run",
-                         "mai_internet", "mai_utilities", "remote", "host")
-        ],
-    }), encoding="utf-8")
-    return config_path
-
-
-def test_mcp_filter_ignores_all_functional_groups_and_host_control(tmp_path):
-    config = _legacy_mcp_config(tmp_path)
-    manager = MCPConnectionManager(
-        config, memory_user_id="owner",
+def test_native_registry_ignores_legacy_mcp_configuration(tmp_path, monkeypatch):
+    legacy = tmp_path / "mcp_servers.json"
+    legacy.write_text(json.dumps({"functional_mode": True, "servers": [
+        {"id": "memorizer", "enabled": True, "command": "python"},
+        {"id": "mai_file", "enabled": True, "command": "python"},
+    ]}), encoding="utf-8")
+    monkeypatch.setenv("MAI_MCP_CONFIG", str(legacy))
+    runtime = SimpleNamespace(
+        cwd=tmp_path, memory=object(),
+        download_links=SimpleNamespace(create=lambda *a, **kw: {}),
     )
-    assert set(manager.servers) == {"memorizer"}
-
-
-def test_owner_tools_mount_natively_even_with_functional_mode_true(tmp_path, monkeypatch):
-    config = _legacy_mcp_config(tmp_path)
-    monkeypatch.setenv("MAI_MCP_CONFIG", str(config))
-    runtime = SimpleNamespace(cwd=tmp_path, download_links=SimpleNamespace(create=lambda *a, **kw: {}))
     owner = AccessPrincipal(user_id="owner", db_id="owner", role=AccessRole.OWNER)
+    working = WorkingGraph()
     registry = MAIRuntime._registry_for(
-        runtime, owner, ToolResultStore(max_inline_chars=10666), BrowserSessionManager(),
+        runtime, owner, working, ToolResultStore(max_inline_chars=10666),
+        BrowserSessionManager(),
     )
-    for name in ("file_list", "file_write", "code_search", "code_edit",
-                 "terminal_run", "document_edit", "csv_aggregate",
-                 "web_search", "web_fetch", "market_data", "browser_open",
-                 "calculator", "current_time", "restart",
-                 "file_download_link", "tool_result_read", "switch_workspace"):
+    for name in (
+        "memory_search", "file_list", "file_write", "code_search", "code_edit",
+        "terminal_run", "document_edit", "csv_aggregate", "web_search",
+        "web_fetch", "market_data", "browser_open", "calculator", "current_time",
+        "restart", "file_download_link", "tool_result_read", "switch_workspace",
+    ):
         assert registry.has(name), name
         assert registry.get(name).category != "mcp", name
-        assert "mcp_input_schema" not in registry.get(name).metadata, name
-    assert not registry.has("mai_terminal_run__terminal_run")
-    assert not registry.has("mai_file__file_write")
+    assert not any(name.startswith(("memorizer__", "mai_file__", "mai_terminal_run__"))
+                   for name in registry.names())
     assert not registry.has("remote__switch_workspace")
-    assert all("at_remote_pc" not in registry.get(name).native_schema()["function"]["parameters"].get("properties", {}) and "is_remote_pc" not in registry.get(name).native_schema()["function"]["parameters"].get("properties", {}) for name in registry.names())
-    assert set(registry.mcp_manager.servers) == {"memorizer"}
+    assert set(registry.get("memory_search").native_schema()["function"]["parameters"]["properties"]) == {
+        "node_id", "keyword", "query", "limit",
+    }
     assert registry.get("restart").activation_requires_invocation
-
-    # Native tools do not require a subprocess or MCP session.
-    path = tmp_path / "native-mount-check.txt"
-    result = asyncio.run(registry.get("file_write").invoke({
-        "path": str(path), "content": "direct-native",
-    }))
-    assert path.read_text(encoding="utf-8") == "direct-native"
-    assert result is not None
     assert registry.workspace.target == "host"
+
+    output = tmp_path / "native-mount-check.txt"
+    result = asyncio.run(registry.get("file_write").invoke({
+        "path": str(output), "content": "direct-native",
+    }))
+    assert output.read_text(encoding="utf-8") == "direct-native"
+    assert result is not None
     switch = asyncio.run(registry.get("switch_workspace").invoke({"target": "host"}))
     assert switch["changed"] is False
-
-
-def test_disabled_memorizer_does_not_restore_functional_mcp(tmp_path):
-    config = _legacy_mcp_config(tmp_path)
-    settings = json.loads(config.read_text(encoding="utf-8"))
-    settings["servers"][0]["enabled"] = False
-    config.write_text(json.dumps(settings), encoding="utf-8")
-    manager = MCPConnectionManager(
-        config, memory_user_id="owner",
-    )
-    assert manager.servers == {}
-
-
-def test_legacy_cached_functional_tools_are_never_registered(tmp_path):
-    import hashlib
-    config = _legacy_mcp_config(tmp_path)
-    schema = {"type": "object"}
-    digest = hashlib.sha256(json.dumps(
-        schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")).hexdigest()
-    (tmp_path / "mcp_catalog.json").write_text(json.dumps({
-        "version": 1,
-        "tools": [
-            {"server": "mai_file", "name": "file_read",
-             "description": "legacy", "schema": {"invalid": True},
-             "schema_hash": "obsolete"},
-            {"server": "memorizer", "name": "memory_search",
-             "description": "memory", "schema": schema,
-             "schema_hash": digest},
-        ],
-    }), encoding="utf-8")
-    manager = MCPConnectionManager(config, memory_user_id="owner")
-    registry = ToolRegistry()
-    manager.register(registry)
-    assert registry.names() == ("memorizer__memory_search",)
