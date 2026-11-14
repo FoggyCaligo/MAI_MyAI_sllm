@@ -94,48 +94,20 @@ def test_missing_catalog_means_no_process_started(tmp_path):
     assert manager._sessions == {}
 
 
-def test_real_memorizer_stdio_discovery_activation_and_search(tmp_path):
-    """End-to-end: explicit refresh, lazy tool_manual activation, stdio call."""
-    import sys
-    from mai.llm.models import NativeToolCall
-
-    data_dir = tmp_path / "private-memory"
+def test_retired_external_memorizer_is_not_discovered_or_activated(tmp_path):
+    """A legacy memorizer MCP entry must not shadow native memory_search."""
     config = tmp_path / "servers.json"
     config.write_text(json.dumps({
         "catalog_path": "catalog.json",
-        "servers": [{
-            "id": "memorizer",
-            "command": sys.executable,
-            "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
-            "env": {
-                "MEMORIZER_DATA_DIR": str(data_dir),
-                "MEMORIZER_USER_ID": "{memory_user_id}",
-            },
-        }],
+        "servers": [{"id": "memorizer", "command": "must-not-run"}],
     }), encoding="utf-8")
-
-    async def exercise():
-        discovery = MCPConnectionManager(config, memory_user_id="test-user")
-        names = await discovery.refresh_catalog()
-        assert names == ["memorizer.memory_search"]
-        manager = MCPConnectionManager(config, memory_user_id="test-user")
-        registry = ToolRegistry()
-        manager.register(registry)
-        assert manager._sessions == {}
-        contexts = registry.model_context(names=["memorizer__memory_search"])
-        assert any("latest created_at" in c["context"].get("instruction", "") for c in contexts)
-        assert registry.model_context(names=()) == ()
-        try:
-            await manager.activate(["memorizer__memory_search"])
-            output = await registry.invoke(NativeToolCall(
-                name="memorizer__memory_search", arguments={"limit": 5}))
-            assert output is not None
-            assert "memorizer" in manager._sessions
-        finally:
-            await manager.close()
-        assert manager._sessions == {}
-
-    asyncio.run(exercise())
+    manager = MCPConnectionManager(config, memory_user_id="test-user")
+    assert "memorizer" not in manager.servers
+    registry = ToolRegistry()
+    manager.register(registry)
+    assert registry.names() == ()
+    assert asyncio.run(manager.refresh_catalog()) == []
+    assert manager._sessions == {}
 
 
 def test_disabled_server_not_listed_and_toggle_without_reinstall(tmp_path):
@@ -157,16 +129,17 @@ def test_disabled_server_not_listed_and_toggle_without_reinstall(tmp_path):
     assert registry.names() == ("first__memory_search", "second__memory_search")
 
 
-def test_default_memory_mcp_config_is_created_once_and_preserved(tmp_path):
+def test_default_mcp_config_excludes_retired_memorizer_and_preserves_toggles(tmp_path):
     from mai.mcp_tools.mcp_servers import ensure_default_mcp_config
     path = ensure_default_mcp_config(
         memory_db_path=tmp_path / "memory.sqlite3",
         sentence_breaker_db_path=tmp_path / "sentence_breaker.sqlite3",
         config_path=tmp_path / "mcp_servers.json")
     body = json.loads(path.read_text(encoding="utf-8"))
-    assert body["servers"][0]["enabled"] is True
-    assert body["servers"][0]["id"] == "memorizer"
-    assert body["servers"][0]["env"]["MEMORIZER_DATA_DIR"] == str(tmp_path)
+    names = {entry["id"] for entry in body["servers"]}
+    assert "memorizer" not in names
+    assert {"remote", "host", "mai_file"}.issubset(names)
+    assert body["functional_mode"] is True
     body["servers"][0]["enabled"] = False
     path.write_text(json.dumps(body), encoding="utf-8")
     assert ensure_default_mcp_config(
@@ -203,14 +176,15 @@ def test_refresh_only_starts_enabled_servers_and_replaces_stale_catalog(tmp_path
     assert registry.names() == ("first__memory_search",)
 
 
-def test_existing_legacy_mcp_toggle_is_migrated_without_overwrite(tmp_path):
+def test_existing_legacy_mcp_config_retires_memorizer_but_preserves_other_toggles(tmp_path):
     from mai.mcp_tools.mcp_servers import ensure_default_mcp_config
     data = tmp_path / "MAI_MEMORY"
     data.mkdir()
     legacy = data / "mcp_servers.json"
-    legacy.write_text(json.dumps({"servers": [{
-        "id": "memorizer", "enabled": False, "command": "prior-portable-python"
-    }]}), encoding="utf-8")
+    legacy.write_text(json.dumps({"servers": [
+        {"id": "memorizer", "enabled": False, "command": "prior-portable-python"},
+        {"id": "custom", "enabled": False, "command": "custom-python"},
+    ]}), encoding="utf-8")
     new_path = tmp_path / "mai" / "mcp_tools" / "mcp_servers.json"
     result = ensure_default_mcp_config(
         memory_db_path=data / "memory.sqlite3",
@@ -218,5 +192,8 @@ def test_existing_legacy_mcp_toggle_is_migrated_without_overwrite(tmp_path):
         config_path=new_path,
     )
     assert result == new_path
-    assert json.loads(new_path.read_text(encoding="utf-8"))["servers"][0]["enabled"] is False
+    migrated = json.loads(new_path.read_text(encoding="utf-8"))
+    assert "memorizer" not in {entry["id"] for entry in migrated["servers"]}
+    assert any(entry["id"] == "custom" and entry["enabled"] is False
+               for entry in migrated["servers"])
     assert legacy.exists()
