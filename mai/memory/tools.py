@@ -38,11 +38,17 @@ class MemorySearchInput(BaseModel):
     )
     query: str | None = Field(
         default=None, min_length=1,
-        description="Search Fact and Utterance memory with keywords or AND/OR/NOT Boolean operators and parentheses.",
+        description=(
+            "Search saved Fact and Utterance memories. Plain text is a lexical keyword search; "
+            "Boolean operators AND/OR/NOT (or &/|/!), parentheses, and quoted multiword terms "
+            "are supported. Operator precedence: NOT > AND > OR. "
+            "Example: (토마토 OR 방울토마토) AND NOT 재배종료. "
+            "Terms are matched against the existing Concept index; no automatic synonym expansion."
+        ),
     )
     limit: int | None = Field(
         default=None, ge=1,
-        description="Maximum results: optional for keyword recall, required (1–50) for overview, forbidden with node_id.",
+        description="Optional maximum search results for query/keyword; required in range 1–50 for recent overview (without query/keyword/node_id); forbidden with node_id.",
     )
 
     @model_validator(mode="after")
@@ -109,7 +115,10 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
             "Retrieve persistent memory in one of three modes: query for keyword or Boolean "
             "AND/OR/NOT search over saved Facts and Utterances; node_id to expand a returned "
             "user-owned memory node; or limit (1 to 50) alone for recent overview. "
-            "query supports parentheses, quoted terms, & / | / ! operators, and an optional limit. "
+            "query supports parentheses, quoted multiword terms, & / | / ! operators, "
+            "and an optional limit. Boolean precedence is NOT > AND > OR. Example: "
+            "(토마토 OR 방울토마토) AND NOT 재배종료. This is lexical Concept search "
+            "without synonym expansion, not a semantic/embedding search. "
             "keyword is a backwards-compatible alias for plain queries; never provide both. "
             "node_id cannot combine with query, keyword or limit. The overview is bounded, "
             "not the complete database; empty results do not prove memories are absent."
@@ -118,10 +127,13 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         handler=memory_search,
         category="memory",
         metadata={"catalog_hint": (
-            "Native persistent-memory lookup: query supports keyword or Boolean "
-            "AND/OR/NOT (Fact and Utterance), keyword is the legacy alias, "
-            "node_id expands a returned node, and limit alone lists recent "
-            "memories (1..50). Call tool_manual first to inspect full arguments."
+            "Native memory_search: activate with tool_manual, then use query for lexical "
+            "Fact/Utterance search (AND/OR/NOT or &/|/!, parentheses, quoted terms; "
+            "NOT > AND > OR). Example: (토마토 OR 방울토마토) AND NOT 재배종료. "
+            "keyword is a legacy alternative to query (never both). node_id expands "
+            "a returned user-owned node (cannot combine with other selectors); "
+            "limit=1..50 alone shows recent memory; query may have optional limit. "
+            "No automatic synonyms/semantic search; empty results are not proof of absence."
         )},
     )
 
