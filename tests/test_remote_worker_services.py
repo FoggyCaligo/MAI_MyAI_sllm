@@ -76,7 +76,7 @@ def test_remote_worker_rejects_web_and_browser_calls():
 
 def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
     from types import SimpleNamespace
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
     from mai.remote import routing
 
     owner_id = "valid-owner"
@@ -101,13 +101,13 @@ def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
     asyncio.run(exercise())
     assert routed == [(
         owner_id, session.session_id, "native.invoke",
-        {"name": "calculator", "arguments": {"expression": "7+5"}}, 600,
+        {"name": "calculator", "arguments": {"expression": "7+5"}, "run_id": workspace.run_id}, 600,
     )]
 
 
 def test_remote_transport_missing_value_envelope_fails(monkeypatch):
     from types import SimpleNamespace
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
     from mai.remote import routing
 
     owner_id = "valid-owner"
@@ -159,7 +159,7 @@ def test_remote_transport_budget_covers_terminal_execution():
 
 
 def test_switch_to_already_selected_host_workspace_is_noop(monkeypatch):
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
 
     def unexpected_lookup(owner_id):
         raise AssertionError("worker lookup should not occur for an unchanged target")
@@ -177,7 +177,7 @@ def test_switch_to_already_selected_host_workspace_is_noop(monkeypatch):
 
 def test_switch_to_already_selected_client_workspace_is_noop(monkeypatch):
     from types import SimpleNamespace
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
 
     session = SimpleNamespace(session_id="session-1", connected=True)
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: session)
@@ -199,7 +199,7 @@ def test_switch_to_already_selected_client_workspace_is_noop(monkeypatch):
 
 
 def test_switch_to_client_still_fails_without_worker(monkeypatch):
-    from mai.mcp_tools import workspace as workspace_module
+    from mai.remote import workspace as workspace_module
 
     monkeypatch.setattr(workspace_module.remote_sessions, "owner_session", lambda owner: None)
     workspace = WorkspaceContext(owner_id="owner")
