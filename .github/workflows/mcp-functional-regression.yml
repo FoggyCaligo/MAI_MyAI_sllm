@@ -1,10 +1,13 @@
-name: Functional MCP Full Regression
+name: Native Tool Full Regression
 on:
   workflow_dispatch:
   push:
-    branches: [feature/mcp-lazy-manager]
+    branches: [dev]
     paths:
       - 'mai/mcp_tools/**'
+      - 'mai/tools/**'
+      - 'mai/remote/**'
+      - 'mai/app/server.py'
       - 'mai/app/runtime.py'
       - 'mai/platform/windows.py'
       - 'tests/**'

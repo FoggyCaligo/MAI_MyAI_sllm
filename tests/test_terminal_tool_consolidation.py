@@ -55,3 +55,11 @@ def test_tmp_cleanup_does_not_follow_root_symlink(tmp_path):
     with pytest.raises(ValueError):
         clean_tmp_contents(root)
     assert (outside / "important.txt").read_text() == "keep"
+
+def test_server_startup_has_no_mcp_discovery():
+    from pathlib import Path
+    from mai.app import server
+    source = Path(server.__file__).read_text(encoding="utf-8")
+    assert "ensure_default_mcp_config(" not in source
+    assert "MCPConnectionManager(" not in source
+    assert 'os.environ["MAI_MCP_CONFIG"]' not in source

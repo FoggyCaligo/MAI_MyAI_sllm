@@ -48,7 +48,7 @@ def test_remote_service_without_connection_fails_and_does_not_run_locally():
     )
 
     async def exercise():
-        local = await host.get("market_data").invoke({"symbol": "AAPL"})
+        assert host.has("market_data")
         with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
             workspace.switch("client")
         assert workspace.target == "host"
