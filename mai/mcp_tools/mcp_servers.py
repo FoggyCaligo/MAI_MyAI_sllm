@@ -209,7 +209,8 @@ class MCPConnectionManager:
                  memory_user_id: str | None = None,
                  workspace: WorkspaceContext | None = None,
                  host_download_links: Any | None = None,
-                 host_tool_result_store: Any | None = None) -> None:
+                 host_tool_result_store: Any | None = None,
+                 allowed_server_ids: frozenset[str] | None = None) -> None:
         self.host_download_links = host_download_links
         self.host_tool_result_store = host_tool_result_store
         self.config_path = Path(config_path).expanduser().resolve()
@@ -238,7 +239,7 @@ class MCPConnectionManager:
             raw_env = entry.get("env", {})
             if not isinstance(raw_env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k,v in raw_env.items()):
                 raise ValueError(f"invalid env for MCP server {ident}")
-            if enabled:
+            if enabled and (allowed_server_ids is None or ident in allowed_server_ids):
                 self.servers[ident] = dict(entry)
         cache_name = config.get("catalog_path", "mcp_catalog.json")
         if not isinstance(cache_name, str) or not cache_name:
