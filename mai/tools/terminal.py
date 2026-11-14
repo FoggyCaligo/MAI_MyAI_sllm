@@ -276,7 +276,7 @@ def register_terminal_tools(
             "Never declare an existing file or a user-requested deliverable as temporary. "
             "Prefer file_write(lifecycle=temporary) for scripts used across tool calls. "
             "Shell output files not declared are persistent and are NOT auto-deleted. "
-            "Client workspace temporary_outputs is unsupported until remote cleanup is implemented. "
+            "On client, temporary_outputs must be relative output paths; omit cwd so the command runs inside the worker task-specific ./tmp directory. MAI sends cleanup after the final agent result; only that task directory is removed. "
             "Nonzero exits and output limit violations fail visibly. "
             "Windows terminal output is decoded as UTF-8 strictly; stderr contents "
             "are not used as a heuristic to determine success."
