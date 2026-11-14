@@ -212,7 +212,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable Python cannot start' }
 $uv = Join-Path $runtimes 'uv\uv.exe'
 & $uv pip install --python $python "$root[dev]"
 if ($LASTEXITCODE -ne 0) { throw 'MAI dependency installation failed' }
-& $python -c 'import fastapi, uvicorn, playwright, mai, pytest'
+& $python -c 'import fastapi, uvicorn, playwright, mai, pytest; from sentence_breaker import LanguageGraph; from mai.memory.segmenter import SentenceBreakerSegmenter; print("Native memory dependency: Sentence_Breaker available")'
 if ($LASTEXITCODE -ne 0) { throw 'Portable Python import verification failed' }
 
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $runtimes 'playwright-browsers'
