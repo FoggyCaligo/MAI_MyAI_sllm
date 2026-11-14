@@ -5,16 +5,16 @@
 ## 실행 계약
 
 1. 모델은 먼저 `tool_manual`로 정확한 도구명을 활성화한다.
-2. 작업 시작 위치는 MAI 서버인 `host`. Owner는 인증된 워커가 연결된 뒤 `remote__switch_workspace(target="client")`로 전환한다.
-3. 전환이 성공하면 이후 같은 작업의 **Workspace 호환 도구 전체**가 `client`에서 실행된다. `remote__switch_workspace(target="host")`가 성공하면 다시 Host에서 실행된다. 별도 도구 인수 `at_remote_pc`는 없다.
+2. 작업 시작 위치는 MAI 서버인 `host`. Owner는 인증된 워커가 연결된 뒤 `switch_workspace(target="client")`로 전환한다.
+3. 전환이 성공하면 이후 같은 작업의 **Workspace 호환 도구 전체**가 `client`에서 실행된다. `switch_workspace(target="host")`가 성공하면 다시 Host에서 실행된다. 별도 도구 인수 `at_remote_pc`는 없다.
 4. 연결되지 않은 Client·미지원 도구는 명시적으로 실패하며 Host로 자동 우회하지 않는다. `memory_search`, 호스트 관리·웹·브라우저는 Host에 남는다.
 5. 실행 결과는 원본 도구 결과를 전달한다. Client에서는 원격 정리가 불가능한 임시 파일 쓰기 및 터미널 `temporary_outputs`를 거부한다.
 
-예: `tool_manual`에서 `remote__switch_workspace`와 `mai_file__document_read`를 활성화한 뒤:
+예: `tool_manual`에서 `switch_workspace`와 `document_read`를 활성화한 뒤:
 
 ```text
-remote__switch_workspace(target="client")
-mai_file__document_read(path="/home/owner/notes.txt")
+switch_workspace(target="client")
+document_read(path="/home/owner/notes.txt")
 ```
 
 ## 구현 및 도구 지원 범위

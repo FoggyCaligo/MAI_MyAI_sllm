@@ -26,7 +26,7 @@ MAI가 **다른 컴퓨터의 도구**를 실행하는 기능. 원격 웹 공개(
 4. 화면에 생성된 **일회용 연결 명령** 복사.
 5. **대상 PC**의 PowerShell(Windows) 또는 터미널(Linux)에서 실행.
 6. UI에 **원격 연결됨** 표시 확인.
-7. MAI에 원격 PC 작업 요청. `tool_manual`로 `remote__switch_workspace`와 필요한 도구를 활성화한 다음 `target="client"`로 한 번 전환하고 계속 사용.
+7. MAI에 원격 PC 작업 요청. `tool_manual`로 `switch_workspace`와 필요한 도구를 활성화한 다음 `target="client"`로 한 번 전환하고 계속 사용.
 
 **연결 명령 직접 작성 금지:** 서버 주소, 세션 ID, 임시 인증 키가 포함되므로 UI에서 발급한 명령 그대로 사용한다. 재사용·공유 금지.
 
@@ -68,14 +68,14 @@ MAI 웹 UI (Owner)
 
 ## 4. 원격 도구 사용
 
-새 작업은 `host`에서 시작한다. `remote__switch_workspace(target="client")`가 성공하면 이후의 Workspace 지원 도구가 같은 작업 동안 Client에서 실행된다. `target="host"`로 다시 전환하거나 작업이 종료되면 Client 지정은 끝난다. **개별 도구에 `at_remote_pc` 같은 인수를 추가하지 않는다.**
+새 작업은 `host`에서 시작한다. `switch_workspace(target="client")`가 성공하면 이후의 Workspace 지원 도구가 같은 작업 동안 Client에서 실행된다. `target="host"`로 다시 전환하거나 작업이 종료되면 Client 지정은 끝난다. **개별 도구에 `at_remote_pc` 같은 인수를 추가하지 않는다.**
 
 예시 — Linux Client의 파일 읽기:
 
 ```text
-tool_manual(tools=["remote__switch_workspace", "mai_file__document_read"])
-remote__switch_workspace(target="client")
-mai_file__document_read(path="/home/user/notes.txt")
+tool_manual(tools=["switch_workspace", "document_read"])
+switch_workspace(target="client")
+document_read(path="/home/user/notes.txt")
 ```
 
 - **Client 지원:** 파일·코드·CSV·문서 작업, `terminal_run`, 계산·시간 조회

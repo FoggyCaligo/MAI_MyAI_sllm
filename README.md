@@ -34,7 +34,7 @@ MAI 장기기억의 그래프·검색·추출 구현은 **내장 `mai/memory/`**
 | 에이전트 실행·도구 호출 | `mai/agent/` |
 | 사실·수치 검증 | `mai/agent/verification.py` |
 | 기억과 검색 | `mai/memory/`, SQLite와 FTS5 |
-| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `remote__switch_workspace(target="client")`로 인증된 워커를 선택 |
+| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `switch_workspace(target="client")`로 인증된 워커를 선택 |
 | 공개 웹 서버 | `mai/app/`; Tailscale Funnel/Cloudflare는 선택형 별도 기능 |
 | Portable 준비·검증 | `mai.sh`, `mai.ps1`, `portable/` |
 
@@ -72,3 +72,5 @@ Windows + .NET 8 SDK에서 `powershell -ExecutionPolicy Bypass -File ./MAI_light
 Portable 런타임은 `-IncludeRuntime`, GGUF 파일은 `-IncludeModels` 옵션을 사용해야 포함된다.
 개인 데이터(.env, MAI_MEMORY, 업로드)는 절대 기본 배포에 포함하지 않는다.
 GitHub Actions의 `Windows MAI EXE Distribution` 워크플로에서도 실행기를 빌드하여 결과물을 제공한다.
+
+현재 모델이 사용하는 툴은 **네이티브 툴**이다. MCP 서버 카탈로그는 로딩하지 않는다. `tool_manual`로 `terminal_run`, `document_read`, `memory_search`, `switch_workspace` 등 필요한 툴을 활성화한다. 파일 목록·검색·이동·삭제 및 계산을 위한 기존 개별 툴 10개는 제거되어 `terminal_run`으로 대체한다. 계산·분석용 임시 파일은 호스트 `./tmp`에 저장하며 최종 답변 후 비동기 기억 후처리가 끝나면 폴더 내부만 정리한다(폴더 자체는 유지). 원격 client의 임시 파일 자동 정리는 지원하지 않는다.
