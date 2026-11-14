@@ -29,7 +29,7 @@ _LOG = logging.getLogger(__name__)
 WORKSPACE_CAPABLE_MCP_SERVERS = frozenset({
     "mai_file", "mai_code", "mai_docs", "mai_terminal_run", "mai_utilities",
 })
-HOST_ONLY_MCP_SERVERS = frozenset({"mai_internet", "mai_browser", "memorizer", "host", "remote"})
+HOST_ONLY_MCP_SERVERS = frozenset({"mai_internet", "mai_browser", "host", "remote"})
 
 
 def ensure_default_mcp_config(*, memory_db_path: str | Path,
@@ -71,15 +71,6 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
             "functional_mode": True,
             "catalog_path": "mcp_catalog.json",
             "servers": [{
-                "id": "memorizer",
-                "enabled": True,
-                "command": sys.executable,
-                "args": ["-m", "mai.mcp_tools.mcp_memorizer.server"],
-                "env": {
-                    "MEMORIZER_USER_ID": "{memory_user_id}",
-                    "MEMORIZER_DATA_DIR": str(root),
-                },
-            }, {
                 "id": "remote",
                 "enabled": True,
                 "command": sys.executable,
@@ -170,6 +161,15 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
         temp = path.with_suffix(".host-control.tmp")
         temp.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
+    # Remove retired memory MCP entry, retaining all unrelated settings.
+    current = json.loads(path.read_text(encoding="utf-8"))
+    remaining = [entry for entry in current.get("servers", [])
+                 if entry.get("id") != "memorizer"]
+    if len(remaining) != len(current.get("servers", [])):
+        current["servers"] = remaining
+        temp = path.with_suffix(".native-memory.tmp")
+        temp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
     return path
 
 
@@ -238,7 +238,7 @@ class MCPConnectionManager:
             raw_env = entry.get("env", {})
             if not isinstance(raw_env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k,v in raw_env.items()):
                 raise ValueError(f"invalid env for MCP server {ident}")
-            if enabled:
+            if enabled and ident != "memorizer":
                 self.servers[ident] = dict(entry)
         cache_name = config.get("catalog_path", "mcp_catalog.json")
         if not isinstance(cache_name, str) or not cache_name:

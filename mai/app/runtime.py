@@ -24,19 +24,20 @@ from ..llm.models import ModelConfig, model_generation_limit
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.cloud_api import CloudAPIAdapter, configured_models
 from ..llm.llamacpp_router import SingleResidentRouter
-from ..mcp_tools.mcp_memorizer.admission import (
+from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from mcp_memorizer.extraction.service import ModelFactExtractor
-from mcp_memorizer.integrations.mai import MAIExtractionAdapter
-from mcp_memorizer.memory.graph.repository import MemoryGraphRepository
-from mcp_memorizer.memory.index import SqliteFtsConceptIndex
-from mcp_memorizer.memory.recall.service import RecallService
-from mcp_memorizer.memory.runtime import MemoryRuntime
-from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter
+from ..memory.extraction.service import ModelFactExtractor
+from ..memory.graph.repository import MemoryGraphRepository
+from ..memory.index import SqliteFtsConceptIndex
+from ..memory.recall.service import RecallService
+from ..memory.runtime import MemoryRuntime
+from ..memory.segmenter import SentenceBreakerSegmenter
+from ..memory.tools import register_memory_tools
+from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
@@ -238,7 +239,7 @@ class MAIRuntime:
                     ModelConfig(model=clean_model, host=self.llamacpp_host, think=False),
                     router=self._llamacpp_router,
                 )
-            extractor = ModelFactExtractor(MAIExtractionAdapter(adapter))
+            extractor = ModelFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
 
@@ -364,6 +365,9 @@ class MAIRuntime:
             # old native counterpart behind the operator's back.
             manager.register(registry)
             registry.mcp_manager = manager
+        # Native memory is bound to the authenticated host user in both tool modes.
+        register_memory_tools(registry, self.memory, WorkingGraph(),
+                              user_id=principal.memory_user_id)
         return registry
 
     async def run_user_message(
