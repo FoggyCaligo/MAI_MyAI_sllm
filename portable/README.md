@@ -33,7 +33,7 @@ MAI/
     check_llamacpp_catalog.py
     portable_backup.py
     verify_portable_backup.py
-  mai/mcp_tools/mcp_memorizer/MAI_MEMORY/                      # 별도 Git 저장소: SQLite 기억·대화·감사·분해기 기록 및 음성 프로필
+  MAI_MEMORY/                      # 별도 Git 저장소: SQLite 기억·대화·감사·분해기 기록 및 음성 프로필
 ```
 
 Linux는 Ubuntu 24.04 x86-64 호스트에서 실행하며 네이티브 Python·uv·llama.cpp는 `~/.cache/mai-portable/<프로젝트 경로 해시>/` 또는 `XDG_CACHE_HOME`에 준비한다. SSD에 있는 Windows `.exe`를 Linux에서 실행하지 않는다. Linux에는 `python3`, `git`, `curl`, `tar`, `sha256sum`, `flock`, `zstd` 및 Vulkan 드라이버 등 호스트 의존성이 필요하다.
@@ -44,7 +44,7 @@ Linux는 Ubuntu 24.04 x86-64 호스트에서 실행하며 네이티브 Python·u
 
 Python 패키지는 **`pyproject.toml`**의 기본·`dev` 의존성을 설치한다. 별도 요구사항 파일은 사용하지 않는다. Playwright Chromium을 별도로 다운로드한다. 기존 `.env`는 유지하고, 없을 때 Owner 자격 증명을 입력받아 생성한다.
 
-개인 DB도 일반 Portable 설치가 다운로드하지 않는다. 비공개 [MAI_MEMORY 저장소](../docs/memory-repository.md)를 별도로 준비하고 기존 `.env`의 DB 경로가 새 폴더를 가리키는지 확인한다. `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`는 본체 Git에서 무시되지만, 과거 본체 Git에 추적된 `data/` DB 파일은 이 변경만으로 제거되지 않는다.
+개인 DB도 일반 Portable 설치가 다운로드하지 않는다. 비공개 [MAI_MEMORY 저장소](../docs/memory-repository.md)를 별도로 준비하고 기존 `.env`의 DB 경로가 새 폴더를 가리키는지 확인한다. `MAI_MEMORY/`는 본체 Git에서 무시되지만, 과거 본체 Git에 추적된 `data/` DB 파일은 이 변경만으로 제거되지 않는다.
 
 `setup`은 Ornith 1.5 9B Q8_0 GGUF와 BF16 projector를 `portable/portable-models/gguf/ornith_1.5_9b_Q8/`에 자동 다운로드한다. 공식 배포처의 SHA-256을 검증하고 기존 정상 파일은 재사용한다. 손상된 파일은 덮어쓰지 않고 명시적으로 오류를 반환하며, 기존 Q4 모델을 삭제하지 않는다. 추가 모델은 사용자가 별도로 설치한다.
 
