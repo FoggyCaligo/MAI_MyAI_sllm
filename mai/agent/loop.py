@@ -45,7 +45,7 @@ def _permanent_read_failure(name: str, execution: "ToolExecution") -> bool:
         "WebFetchError", "HTTPStatusError", "WebFetchHTTPError",
     }:
         return bool(_MISSING_RESOURCE_RE.search(execution.audit_content))
-    if name in {"file_read", "code_read"}:
+    if name in {"document_read", "code_read"}:
         return execution.error_type in {"FileNotFoundError", "NotADirectoryError"}
     return False
 
@@ -629,7 +629,7 @@ class AgentLoop:
                             "or finish by reporting the remaining failure."
                         )
                     else:
-                        cacheable = call.name in {"web_search", "web_fetch", "file_read", "code_read"}
+                        cacheable = call.name in {"web_search", "web_fetch", "document_read", "code_read"}
                         cached_failure = permanent_failure_cache.get(call_fp)
                         cached = read_cache.get(call_fp) if reuse_enabled and cacheable else None
                         if cached_failure is not None:
@@ -662,7 +662,7 @@ class AgentLoop:
                                 read_cache.clear()
                                 # Local paths may now exist. Web 404s are independent.
                                 for fingerprint, failure in list(permanent_failure_cache.items()):
-                                    if failure.name in {"file_read", "code_read"}:
+                                    if failure.name in {"document_read", "code_read"}:
                                         del permanent_failure_cache[fingerprint]
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     tool_elapsed_ms += elapsed_ms
@@ -830,7 +830,7 @@ class AgentLoop:
             # keeping only literal source excerpts in subsequent model rounds.
             views = self.tool_result_store.web_model_views(source_content, tool_name=call.name)
             model_content, compact_content = views.initial_content, views.compact_history_content
-        elif call.name in {"file_read", "code_read"} and self.tool_result_store is not None and os.environ.get("AGENT_PROGRESS_SUMMARY_ENABLED", "true").lower() in {"true", "1", "yes"}:
+        elif call.name in {"document_read", "code_read"} and self.tool_result_store is not None and os.environ.get("AGENT_PROGRESS_SUMMARY_ENABLED", "true").lower() in {"true", "1", "yes"}:
             views = self.tool_result_store.file_model_views(source_content, tool_name=call.name)
             model_content, compact_content = views.initial_content, views.compact_history_content
         else:

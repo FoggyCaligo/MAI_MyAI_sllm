@@ -137,7 +137,7 @@ class AgentGuard:
             family = executable.group(1) if executable else ""
             family = {"cmd.exe": "cmd", "powershell.exe": "powershell"}.get(family, family)
             target += ":" + family
-        elif name in {"web_fetch", "file_read", "code_read"}:
+        elif name in {"web_fetch", "document_read", "code_read"}:
             target += ":" + str(arguments.get("url") or arguments.get("path") or arguments.get("target") or "")
         elif name == "web_search":
             # A repeated provider-level error across different queries warrants

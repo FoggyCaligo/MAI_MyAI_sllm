@@ -161,7 +161,7 @@ class ToolResultStore:
         Exact original bytes remain accessible through tool_result_read and
         the audit result; the small excerpt is explicitly incomplete.
         """
-        if tool_name not in {"file_read", "code_read"} or len(content) <= 2500:
+        if tool_name not in {"document_read", "code_read"} or len(content) <= 2500:
             return self.model_views(content)
         stored = self.store(content)
         initial = (

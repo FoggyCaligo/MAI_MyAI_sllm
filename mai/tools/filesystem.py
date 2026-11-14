@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .artifacts import discard_temporary_artifact, move_temporary_artifact, register_temporary_artifact
-from .documents import document_read
+from .documents import document_read as _parse_structured_document
 from .registry import ToolRegistry
 
 
@@ -36,7 +36,7 @@ class FileSearchInput(_StrictModel):
     max_results: int = Field(default=200, ge=1, le=5000)
 
 
-class FileReadInput(_StrictModel):
+class DocumentReadInput(_StrictModel):
     path: str
     encoding: str = "utf-8-sig"
     max_chars: int | None = Field(default=None, ge=1)
@@ -145,7 +145,7 @@ def file_search(*, root: str = ".", pattern: str, max_results: int = 200, cwd: s
     }
 
 
-def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None = None, cwd: str | Path | None = None) -> dict[str, Any]:
+def document_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None = None, cwd: str | Path | None = None) -> dict[str, Any]:
     target = _resolve(path, cwd)
     if not target.exists():
         raise FileNotFoundError(str(target))
@@ -153,7 +153,7 @@ def file_read(*, path: str, encoding: str = "utf-8-sig", max_chars: int | None =
         raise IsADirectoryError(str(target))
 
     if target.suffix.lower() in {".pdf", ".docx", ".xlsx", ".csv", ".pptx"}:
-        result = document_read(
+        result = _parse_structured_document(
             path=str(target),
             max_chars=50000 if max_chars is None else max_chars,
             encoding=encoding,
@@ -236,7 +236,7 @@ def file_copy(*, source: str, destination: str, create_parents: bool = False, cw
 _READ_BINDINGS = (
     ("file_list", "List files and directories at a local path. Use directories_only=true with recursive=false to discover project folders without listing files or exhausting max_items on files; narrow path to descend. Absolute paths and paths outside the current repository are allowed. collection.complete=false means the returned items are only a partial collection.", FileListInput, file_list),
     ("file_search", "Recursively search file and directory names using a glob pattern from any accessible local root. collection.complete=false means more matches may exist beyond the returned results.", FileSearchInput, file_search),
-    ("file_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", FileReadInput, file_read),
+    ("document_read", "Read a local file from any accessible path. Supports plain text plus structured PDF, DOCX, XLSX, CSV, and PPTX files through one interface. For CSV, pass encoding explicitly when needed, such as cp949. Do not guess an unconfirmed file path; discover it with file_list, file_search, or code_search before retrying.", DocumentReadInput, document_read),
 )
 _WRITE_BINDINGS = (
     ("file_write", "Write text to any accessible local file. Create the file if absent or replace it if present. Set create_parents=true to create missing parent directories; For scripts, probes, command output captures, and other intermediate files needed only during this turn, set lifecycle=temporary. The runtime removes newly created temporary files after final verification and before returning the answer. For user-requested deliverables, set lifecycle=persistent. Never overwrite an existing file merely to mark it temporary; an existing file is not registered for deletion. Prefer file_write rather than terminal shell redirection when creating temporary scripts so cleanup tracking is reliable. On Windows, PowerShell .ps1 files written with the default UTF-8 encoding automatically receive a UTF-8 BOM for PowerShell 5.1 compatibility; explicitly requested alternative encodings are honored.", FileWriteInput, file_write),
