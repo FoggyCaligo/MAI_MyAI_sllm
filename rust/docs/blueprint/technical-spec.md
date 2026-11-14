@@ -45,13 +45,13 @@
                              ├─ sentence-breaker
                              └─ mai-worker ─ Host/Client protocol ─ remote worker
 ```
-- LLM 자체는 검증된 `llama-server` 외부 프로세스로 유지한다. Rust 바인딩으로의 교체는 요구사항이 아니다.
+- LLM 자체는 검증된 `llama-server` 외부 프로세스로 유지한다. Rust 바인딩으로의 교체는 요구사항이 아니다. 기존 `mai/llm/cloud_api.py`가 제공하는 OpenAI/Anthropic/OpenRouter 외부 모델 경로도 유지한다.
 - `Agent FSM` 단계: 요청 수락 → 환경/모델 확정 → 컨텍스트 구성 → 모델 스트리밍 → 필요 시 도구 수행 → 결과 반영 → 최종 응답/취소/실패. **임의의 에이전트 라운드 상한은 두지 않는다**. 사용자 취소·시간 제한·자원 제한은 별도 정책으로 적용한다.
 - 도구 시스템: MCP 없이 Rust native registry + typed input/output schema + `tool_manual`. 도구 설명은 사용 전 필요할 때 노출하며, boolean 검색·툴 조건·Host/Client 실행 위치를 명확히 한다. OS와 무관하게 기본 쉘은 Git Bash/bash 정책을 존중하되 실제 설치·호환성 검증이 필요하다.
 - Host/Client는 실행 환경의 용어다. Client 선택 후 추가 전환 전까지 연속적인 도구 실행이 선택된 Client 환경에서 이뤄져야 한다. 기본 Host로 몰래 복귀하지 않는다. 원격 연결 실패와 작업 중단은 명시적으로 보고한다.
 - 도구별 timeout, 전체 요청 timeout, 모델 호출 timeout을 혼동하지 않는다. 기존 `settings.yaml`과 실행 코드를 조사해 **실효값과 적용 범위**를 명세·테스트로 확정한다. 임의 기본값을 새로 만들지 않는다.
 - Worker 임시파일은 해당 worker의 `./tmp` 내부에 생성한다. 최종 호출 종료 신호 수신 시 안전하게 비우되, 동시 작업간 소유권·중복 신호·연결 단절·프로세스 강제 종료를 구분한다. 사용자가 보존하도록 지정한 파일이나 워커 작업 디렉터리 외부 파일을 삭제하지 않는다.
-- 모델 정책: 한 번에 하나의 GGUF 상주, 모델 전환시 언로드·재로드 직렬화, 시작 전 VRAM 여유 검사, RAM 예산 검사, 실패 시 기존 상태 명확히 표시. 기존 모델 목록과 Q8 기본 설정은 실제 기준 브랜치·현재 설정 간 차이가 있을 수 있으므로 구현 전 검증한다.
+- 모델 정책: 공유 `LLAMACPP_MEMORY_GUARD_ENABLED` 정책과 외부 클라이언트까지 포함한 게이트웨이 소유권을 보존하고, 별도 lock 중복 여부는 감사·검증 후 통합한다. 한 번에 하나의 GGUF 상주, 모델 전환시 언로드·재로드 직렬화, 시작 전 VRAM 여유 검사, RAM 예산 검사, 실패 시 기존 상태 명확히 표시. 기존 모델 목록과 Q8 기본 설정은 실제 기준 브랜치·현재 설정 간 차이가 있을 수 있으므로 구현 전 검증한다.
 - 메모리는 MAI 자체 Rust 구현을 사용한다. 기존 사용자 데이터·SQLite 스키마·검색 품질을 보존하도록 읽기·마이그레이션을 분리하고 데이터 손상 방지 백업 및 역마이그레이션 경로를 설계한다. `mcp_memorizer`를 호출하지 않는다.
 - 사용자-facing 이벤트: 현재 UI가 기대하는 메시지/모델명/진행상태/툴 결과/에러/취소/음성 인터페이스의 payload와 이벤트 순서를 캡처하여 계약 테스트한다.
 - 비동기 동작: Tokio 기반 cancellation-safe task 관리, 구조화 로깅(tracing), bounded queues, backpressure, 타임아웃 및 프로세스 재시작/정리의 소유권 모델을 정의한다.
@@ -77,3 +77,11 @@
 - MCP/Verifier/mcp_memorizer를 Rust로 포팅하지 않는다. 단, 이들에 묶여 있던 **필수 사용자 기능**은 별도 네이티브 경로로 복구한다.
 - Rust 컴파일 성공 ≠ 동작 보장: 외부 시스템, 네트워크, 데드락, 논리·프로토콜 버그는 통합·실기 테스트가 필요하다.
 - 현시점에서 실제 변경 후 기존 진입점·CI가 깨지는 것은 예상된다. 참조용 `python/`과 개발용 `rust/`의 별도 실행/빌드 경로를 후속 턴에서 구축한다.
+
+## 7. Turn 01 정적 감사 반영
+- [`legacy-audit.md`](legacy-audit.md): 전체 파일 목록과 주요 기능/API/설정 확인, 근거 수준 및 실기검증 대기항목.
+- [`behavior-test-spec.md`](behavior-test-spec.md): Rust에서 재현할 기능·실패·보안·원격·메모리·모델·벤치마크 계약.
+- [`consolidation-opportunities.md`](consolidation-opportunities.md): 기능 보존 조건 아래 통합할 과다 인터페이스 및 유지할 독립 경계.
+- [`legacy-file-inventory.json`](legacy-file-inventory.json): 원본 376개 추적 파일의 SHA/크기/도메인 매니페스트.
+- **확인된 Web UI 실체는 정적 HTML/JS** (`python/mai/app/static/`). Vue 기반이라는 가정은 사용하지 않는다. UI 자체 변경 금지.
+- 실기 golden trace, 모든 함수 레벨 호출 관계, Sentence_Breaker 외부 소스 감사는 아직 수행 전이다. 완전한 동작 동등성 보증으로 표현하지 않는다.
