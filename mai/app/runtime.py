@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
-from typing import Any, Mapping, Sequence, Callable
+from typing import Any, Mapping, Sequence, Callable, Literal
 
 import httpx
 
@@ -126,6 +126,11 @@ class MAIRunResult:
     model: str
     model_rounds: int
     tools: tuple[dict[str, object], ...]
+
+
+class WorkspaceSwitchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target: Literal["host", "client"]
 
 
 class FileDownloadLinkInput(BaseModel):
@@ -314,38 +319,41 @@ class MAIRuntime:
         registry = ToolRegistry()
         workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
         registry.workspace = workspace
-        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
-        configured_mcp_mode = (
-            json.loads(Path(mcp_config).read_text(encoding="utf-8")).get("functional_mode", False)
-            if mcp_config and principal.role is AccessRole.OWNER else False
-        )
-        if not isinstance(configured_mcp_mode, bool):
-            raise ValueError("MCP functional_mode must be a boolean")
-        functional_mcp = (
-            principal.role is AccessRole.OWNER and bool(mcp_config) and
-            _env_bool("MAI_MCP_FUNCTIONAL_TOOLS", configured_mcp_mode)
-        )
-        if principal.role is AccessRole.OWNER and not functional_mcp:
+        # Restore the flag_native_tool model-to-ToolRegistry mounting path:
+        # tools in mai/tools execute directly, never through functional MCP
+        # subprocesses. Retain current host/client sticky workspace semantics.
+        if principal.role is AccessRole.OWNER:
             register_routed_service_tools(
                 registry, workspace=workspace, browser_manager=browser_manager,
+            )
+            register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
+            register_restart_tool(registry)
+            registry.add(
+                name="remote__switch_workspace",
+                description=(
+                    "Select host or client for all subsequent workspace-capable "
+                    "native tool calls within this task. Each new task starts on "
+                    "host. Client requires an authenticated connected worker; "
+                    "failed switching preserves the previous selection. "
+                    "Host-only tools never change location."
+                ),
+                input_model=WorkspaceSwitchInput,
+                handler=workspace.switch,
+                category="workspace",
+                activation_requires_invocation=True,
+            )
+            registry.add(
+                name="file_download_link",
+                description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
+                input_model=FileDownloadLinkInput,
+                handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
+                category="filesystem",
             )
         elif principal.role is AccessRole.TRIAL:
             register_time_tools(registry)
             register_calculator_tools(registry)
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
-        if principal.role is AccessRole.OWNER:
-            if not functional_mcp:
-                register_routed_pc_tools(registry, workspace=workspace, cwd=str(self.cwd))
-                register_restart_tool(registry)
-                registry.add(
-                    name="file_download_link",
-                    description="Create a one-hour download link for any existing local file accessible to the MAI process. The path is unrestricted. The link is a secret bearer capability; share only with the intended recipient. An absolute URL requires MAI_PUBLIC_BASE_URL, otherwise the link is relative to this MAI server. In your final answer, present the returned markdown_link as a clickable Markdown link, not as a code block or plain URL.",
-                    input_model=FileDownloadLinkInput,
-                    handler=lambda path: self.download_links.create(path, base_url=os.environ.get("MAI_PUBLIC_BASE_URL", "")),
-                    category="filesystem",
-                )
-        elif principal.role is AccessRole.TRIAL:
             register_readonly_local_tools(
                 registry,
                 cwd=self.cwd,
@@ -353,15 +361,15 @@ class MAIRuntime:
             )
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
-        if not functional_mcp:
-            register_tool_result_tools(registry, tool_result_store)
+        register_tool_result_tools(registry, tool_result_store)
+        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
         if mcp_config and principal.role is AccessRole.OWNER:
-            manager = MCPConnectionManager(mcp_config, memory_user_id=principal.memory_user_id,
-                                           workspace=workspace,
-                                           host_download_links=self.download_links,
-                                           host_tool_result_store=tool_result_store)
-            # Disabled groups are genuinely unavailable: never restore their
-            # old native counterpart behind the operator's back.
+            # Memory remains an independent MCP. Functional native groups,
+            # host control and workspace selection are registered directly.
+            manager = MCPConnectionManager(
+                mcp_config, memory_user_id=principal.memory_user_id,
+                workspace=workspace, allowed_server_ids=frozenset({"memorizer"}),
+            )
             manager.register(registry)
             registry.mcp_manager = manager
         return registry
