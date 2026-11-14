@@ -71,7 +71,7 @@ Linux 실행기는 `portable/start-portable-llamacpp-linux.sh`. 모델 카탈로
 | 기능 | 현재 구현 | 추가 검증 |
 |---|---|---|
 | 원격 Linux 도구 | `mai/app/static/remote-agent-linux.sh`, `mai/remote/python_worker.py` | Linux 대상 PC에서 실제 연결·명령 실행 |
-| 원격 실행 | `mai/remote/routing.py`, `at_remote_pc=true` | 원격/로컬 경로 구분, 실패 시 로컬 대체 없음 |
+| 원격 실행 | `mai/remote/routing.py`, `switch_workspace(target=client)` | 원격/로컬 경로 구분, 실패 시 로컬 대체 없음 |
 | 원격 웹 공개 | Tailscale Funnel / Cloudflare | 호스트 설치·로그인·실제 외부 HTTPS 접속 |
 
 연결 절차: [원격 도구 연결](remote-tool-connection.md). 웹 공개와 원격 Native 워커는 서로 다른 기능.
@@ -97,4 +97,4 @@ python -m pytest -q
 
 **문자 인코딩:** Linux Bash 자식 프로세스는 `C.UTF-8`, Python은 UTF-8 출력으로 구성하고, 터미널 수신 바이트는 UTF-8 우선 후 명시된 한국어 구형 인코딩을 순서대로 시도한다. [운영체제 경계](platform-boundary.md)를 참고한다.
 
-**지속 DB:** 기본 경로는 별도 Git 저장소 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`이며, 본체 Git에 남은 과거 `data/` 파일의 정리는 별도 작업이다.
+**지속 DB:** 기본 경로는 별도 Git 저장소 `MAI_MEMORY/`이며, 본체 Git에 남은 과거 `data/` 파일의 정리는 별도 작업이다.
