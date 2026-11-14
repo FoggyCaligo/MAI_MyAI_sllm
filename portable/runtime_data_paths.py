@@ -6,10 +6,8 @@ on both Portable launchers; can also be run manually while MAI is stopped.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from pathlib import Path
-import shutil
 import sys
 
 MEMORY_RELATIVE = Path("MAI_MEMORY")
@@ -51,47 +49,6 @@ def _relocate(old: Path, new: Path) -> bool:
     return True
 
 
-def _update_memorizer_config(root: Path) -> bool:
-    preferred = root / "mai/mcp_tools/mcp_servers.json"
-    # An older version placed the MCP config inside the old memory folder;
-    # after relocation it will be inside the new memory folder until the
-    # first-start config helper copies it into mai/mcp_tools.
-    config_file = preferred if preferred.is_file() else root / MEMORY_RELATIVE / "mcp_servers.json"
-    if not config_file.is_file():
-        return False
-    config = json.loads(config_file.read_text(encoding="utf-8"))
-    if not isinstance(config, dict) or not isinstance(config.get("servers"), list):
-        raise DataPathMigrationError(f"Invalid MCP config; existing file left unchanged: {config_file}")
-    prior = (root / LEGACY_MEMORY_RELATIVE).resolve()
-    target = (root / MEMORY_RELATIVE).resolve()
-    changed = False
-    for entry in config["servers"]:
-        if not isinstance(entry, dict) or entry.get("id") != "memorizer":
-            continue
-        env = entry.get("env")
-        if not isinstance(env, dict):
-            continue
-        configured = env.get("MEMORIZER_DATA_DIR")
-        if isinstance(configured, str) and Path(configured).expanduser().resolve() == prior:
-            env["MEMORIZER_DATA_DIR"] = str(target)
-            changed = True
-        args = entry.get("args")
-        if isinstance(args, list):
-            for index, value in enumerate(args):
-                if value == "mai.mcp_tools.MCP_memorizer.server":
-                    args[index] = "mai.mcp_tools.mcp_memorizer.server"
-                    changed = True
-    if changed:
-        # Preserve the operator's original settings and enabled toggles.
-        backup = config_file.with_name("mcp_servers.pre-data-path-migration.json")
-        if not backup.exists():
-            shutil.copy2(config_file, backup)
-        temp = config_file.with_suffix(".migration.tmp")
-        temp.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp.replace(config_file)
-    return changed
-
-
 def normalize_legacy_environment(root: Path) -> dict[str, str]:
     """Redirect only canonical old MAI paths; preserve intentional custom paths."""
     root = root.expanduser().resolve()
@@ -123,7 +80,6 @@ def migrate(root: Path) -> dict[str, bool]:
         "memory": _relocate(root / LEGACY_MEMORY_RELATIVE, root / MEMORY_RELATIVE),
         "uploads": _relocate(root / "mai_uploads", root / UPLOAD_RELATIVE),
     }
-    moved["memorizer_config_updated"] = _update_memorizer_config(root)
     return moved
 
 
