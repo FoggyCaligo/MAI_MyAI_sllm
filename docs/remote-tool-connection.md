@@ -26,7 +26,7 @@ MAI가 **다른 컴퓨터의 도구**를 실행하는 기능. 원격 웹 공개(
 4. 화면에 생성된 **일회용 연결 명령** 복사.
 5. **대상 PC**의 PowerShell(Windows) 또는 터미널(Linux)에서 실행.
 6. UI에 **원격 연결됨** 표시 확인.
-7. MAI에 원격 PC 작업 요청. 필요한 Native 도구는 `tool_manual`로 활성화한 다음 `at_remote_pc=true`로 호출.
+7. MAI에 원격 PC 작업 요청. `tool_manual`로 `remote__switch_workspace`와 필요한 도구를 활성화한 다음 `target="client"`로 한 번 전환하고 계속 사용.
 
 **연결 명령 직접 작성 금지:** 서버 주소, 세션 ID, 임시 인증 키가 포함되므로 UI에서 발급한 명령 그대로 사용한다. 재사용·공유 금지.
 
@@ -68,23 +68,21 @@ MAI 웹 UI (Owner)
 
 ## 4. 원격 도구 사용
 
-| 인수 | 실행 위치 |
-|---|---|
-| `at_remote_pc=false` 또는 생략 | MAI 서버 컴퓨터 |
-| `at_remote_pc=true` | Owner가 연결한 원격 Windows/Linux 워커 |
+새 작업은 `host`에서 시작한다. `remote__switch_workspace(target="client")`가 성공하면 이후의 Workspace 지원 도구가 같은 작업 동안 Client에서 실행된다. `target="host"`로 다시 전환하거나 작업이 종료되면 Client 지정은 끝난다. **개별 도구에 `at_remote_pc` 같은 인수를 추가하지 않는다.**
 
-예시 — Linux 원격 PC의 파일 읽기(`document_read` 활성화 후):
+예시 — Linux Client의 파일 읽기:
 
-```json
-{"path":"/home/user/notes.txt","at_remote_pc":true}
+```text
+tool_manual(tools=["remote__switch_workspace", "mai_file__document_read"])
+remote__switch_workspace(target="client")
+mai_file__document_read(path="/home/user/notes.txt")
 ```
 
-- **지원:** 파일·코드·CSV·문서 작업, `terminal_run`, 계산·시간·웹·시장 정보, 브라우저 등 원격 워커 등록 Native 도구.
-- **서버 전용:** `memory_search`, `tool_result_read`, `file_download_link` 등 서버 상태에 종속된 도구.
-- **이미지 분석:** 기존 원격 `image_analyze` 도구 없음. 첨부 이미지 인식은 MAI 서버의 메인 llama.cpp 모델이 담당.
-- **원격 세션 식별:** MAI 서버가 로그인한 Owner의 연결을 선택. 모델이 세션 ID를 도구 인수로 지정하지 않음.
-- **오류:** 원격 세션 부재·연결 끊김·미지원 도구는 **실패**. 로컬 PC로 자동 전환하지 않음.
-- **셸:** 대상 OS의 문법 사용. Windows 명령을 Linux shell 문법으로 임의 변환하지 않음.
+- **Client 지원:** 파일·코드·CSV·문서 작업, `terminal_run`, 계산·시간 조회
+- **Host 전용:** `memory_search`, 웹·브라우저·시세, `tool_result_read`, `file_download_link` 등 서버 상태에 종속된 도구
+- **오류:** 세션 부재·연결 끊김·미지원 도구는 명시적으로 실패하며 Host로 자동 대체하지 않음
+- **임시 산출물:** 원격 작업에서 자동 정리가 구현되지 않은 임시 쓰기·출력 파일 선언은 거부됨
+- **운영체제:** 대상 OS의 셸 문법으로 명령 실행, 원격 워커에 모델 GGUF 또는 기억 DB 복제 없음
 
 자세한 구현: [Native 워커 계약](remote-native-worker.md).
 
