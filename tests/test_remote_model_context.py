@@ -1,5 +1,5 @@
 from mai.remote.routing import register_routed_pc_tools
-from mai.mcp_tools.workspace import WorkspaceContext
+from mai.remote.workspace import WorkspaceContext
 from mai.tools.registry import ToolRegistry
 
 def test_remote_target_is_task_scoped_not_per_tool(tmp_path):
