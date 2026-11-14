@@ -96,7 +96,14 @@ class AgentRuntime:
             finally:
                 # Also clean up when the run fails or is cancelled.
                 # Cleanup errors remain visible instead of being hidden.
-                artifacts.cleanup()
+                try:
+                    artifacts.cleanup()
+                finally:
+                    # The host signals task completion after the final model
+                    # answer (also on failure/cancellation), not after each tool.
+                    workspace = getattr(self.loop.registry, "workspace", None)
+                    if workspace is not None:
+                        await workspace.cleanup_remote_tmp()
 
     async def run_user_message(
         self,
