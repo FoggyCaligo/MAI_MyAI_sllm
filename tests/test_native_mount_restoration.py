@@ -31,7 +31,6 @@ def test_mcp_filter_ignores_all_functional_groups_and_host_control(tmp_path):
     config = _legacy_mcp_config(tmp_path)
     manager = MCPConnectionManager(
         config, memory_user_id="owner",
-        allowed_server_ids=frozenset({"memorizer"}),
     )
     assert set(manager.servers) == {"memorizer"}
 
