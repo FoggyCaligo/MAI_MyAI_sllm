@@ -127,3 +127,9 @@ python -m pytest -q tests/test_remote_python_worker.py tests/test_remote_worker_
 ```
 
 관련 파일: `mai/remote/routing.py`, `mai/remote/session.py`, `mai/remote/agent_client.py`, `mai/remote/python_worker.py`. 이전 원본: [.old/remote-powershell-connection.md](.old/remote-powershell-connection.md).
+
+### 클라이언트 임시 파일 정리
+
+클라이언트의 워커 소스 디렉터리에 `./tmp/<작업 ID>/`가 자동 생성된다. `file_write(path="probe.py", lifecycle="temporary")`를 호출하면 `tmp` 안에 작성하고 **실제 절대 경로를 결과로 돌려준다**. 이후 `terminal_run`에서 그 경로를 이용할 수 있다. `terminal_run(command="...", temporary_outputs=["output.json"])`를 사용하는 경우 `cwd`를 생략하면 해당 작업의 `tmp` 안에서 실행한다. 반대로 영구 결과물은 일반 프로젝트 경로에 `lifecycle="persistent"`로 저장해야 한다.
+
+MAI는 **최종 모델 호출과 검증이 끝난 뒤** `native.cleanup` 작업 종료 신호를 전송한다. 정상 응답이 오면 워커가 해당 작업의 `tmp` 디렉터리만 삭제한다. 중간에 `switch_workspace(target="host")`로 복귀했더라도 해당 클라이언트의 정리 신호를 보낸다. 정리는 작업별이므로 다른 작업 및 기존 `./tmp` 파일은 보존한다. 원격 연결이 끊겼거나 워커 프로세스가 비정상 종료된 경우 정리를 확인할 수 없으며 오류를 보고한다.
