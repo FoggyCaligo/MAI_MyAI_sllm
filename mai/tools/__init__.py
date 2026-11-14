@@ -28,6 +28,7 @@ from .registry import (
     UnknownToolError,
 )
 from .terminal import register_terminal_tools, terminal_run
+from .switch_workspace import WorkspaceSwitchInput, register_switch_workspace_tool
 from .time import current_time, register_time_tools
 from .web import WebFetchError, WebSearchError, register_web_tools, web_fetch, web_search
 
@@ -44,6 +45,7 @@ __all__ = [
     "ToolRegistry",
     "ToolRegistryError",
     "UnknownToolError",
+    "WorkspaceSwitchInput",
     "WebFetchError",
     "WebSearchError",
     "calculator",
@@ -73,6 +75,7 @@ __all__ = [
     "register_market_tools",
     "register_readonly_local_tools",
     "register_terminal_tools",
+    "register_switch_workspace_tool",
     "register_time_tools",
     "register_web_tools",
     "terminal_run",
