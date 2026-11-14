@@ -14,8 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from mai.tools.local import register_local_pc_tools
-from mai.tools.time import register_time_tools
-from mai.tools.calculator import register_calculator_tools
 from mai.tools.market import register_market_tools
 from mai.tools.registry import ToolRegistry
 
@@ -31,8 +29,6 @@ def build_registry(*, cwd: str | Path | None = None) -> ToolRegistry:
         filesystem_timeout_seconds=120,
         code_timeout_seconds=120,
     )
-    register_time_tools(registry, timeout_seconds=20)
-    register_calculator_tools(registry, timeout_seconds=20)
     register_market_tools(registry, timeout_seconds=60)
     remote_registry = ToolRegistry()
     for definition in registry.definitions():
