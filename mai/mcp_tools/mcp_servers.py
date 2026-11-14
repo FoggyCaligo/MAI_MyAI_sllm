@@ -17,8 +17,6 @@ import re
 import time
 from typing import Any, Mapping
 
-from pydantic import BaseModel, ConfigDict
-
 from ..tools.registry import ToolRegistry, ToolRegistryError
 
 
@@ -77,10 +75,6 @@ class MCPToolExecutionError(ToolRegistryError):
     """A connected MCP server explicitly rejected or failed a tool call."""
 
 
-class MCPInput(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
 def _stable_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -102,8 +96,7 @@ class MCPConnectionManager:
     """
 
     def __init__(self, config_path: str | Path, *,
-                 memory_user_id: str | None = None,
-                 allowed_server_ids: frozenset[str] | None = None) -> None:
+                 memory_user_id: str | None = None) -> None:
         self.config_path = Path(config_path).expanduser().resolve()
         self.memory_user_id = memory_user_id
         config = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -126,7 +119,7 @@ class MCPConnectionManager:
             raw_env = entry.get("env", {})
             if not isinstance(raw_env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k,v in raw_env.items()):
                 raise ValueError(f"invalid env for MCP server {ident}")
-            if enabled and ident == "memorizer" and (allowed_server_ids is None or ident in allowed_server_ids):
+            if enabled and ident == "memorizer":
                 self.servers[ident] = dict(entry)
         cache_name = config.get("catalog_path", "mcp_catalog.json")
         if not isinstance(cache_name, str) or not cache_name:
