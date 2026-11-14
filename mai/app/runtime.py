@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
+from ..tools.tmp_cleanup import clean_tmp_contents
 from typing import Any, Mapping, Sequence, Callable
 
 import httpx
@@ -39,7 +40,6 @@ from ..memory.segmenter import SentenceBreakerSegmenter
 from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
-from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
@@ -48,7 +48,6 @@ from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from ..mcp_tools.workspace import WorkspaceContext
 from pydantic import BaseModel, ConfigDict
-from ..tools.time import register_time_tools
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
 from .selected_model import SelectedModelStore
@@ -90,11 +89,11 @@ MAI uses two explicit execution targets for workspace-capable tools:
 To work on the client PC, first activate remote__switch_workspace via tool_manual, then call remote__switch_workspace(target="client") ONCE. After it succeeds, EVERY subsequent workspace-capable tool call in this SAME task (file, code, document, terminal, calculator/time/market utilities) executes on client automatically. Do NOT switch again before each tool call and do NOT add location arguments to individual tools. To return to the MAI server PC during this task, call remote__switch_workspace(target="host") ONCE; all subsequent workspace-capable calls then execute on host. The selected target is maintained across model rounds and tool activations until another successful switch or the current agent task ends. A new user task starts at host again; it is not a persistent conversation-wide or global preference.
 Host-only tools (internet/web, browser, memory, restart, downloads, tool-result reads and host control) ALWAYS execute on host, even when client is selected; they do not change the selected target. Switching to client requires an authenticated connected worker; a failed switch preserves the prior target and a disconnected client causes explicit failure, NEVER a silent fallback to host. Use the worker's own file paths and shell syntax when client is selected; terminal_run defaults to Bash on either OS, and Windows PowerShell must be explicitly requested. In functional MCP mode use each exact server__tool name from the catalog (e.g. mai_terminal_run__terminal_run), not its old unprefixed Native name. The MAI host resolves the worker session; never provide session IDs, credentials, pairing or installation arguments as tool inputs.
 
-For temporary probes, debug scripts, generated intermediate JSON and command-output captures, use file_write(lifecycle="temporary") if a script is needed across tool calls. If terminal_run creates such scratch files directly through shell redirection or a script, declare each NEW output in terminal_run(temporary_outputs=[...]) before execution so MAI can remove it when this task ends, including failed or cancelled runs. The default file_write lifecycle is persistent and terminal outputs not declared temporary are NOT cleaned automatically. Never mark an existing file or a user-requested deliverable temporary. Scratch cleanup on client is not yet supported: do not claim that a client-created file will be removed automatically. Do not assume historical untracked files are safe to delete.
+For all temporary calculation/analysis code and generated intermediate files, use the ./tmp directory at the MAI host project root. Keep user-requested deliverables outside ./tmp. Use file_write(lifecycle="temporary") when appropriate. If terminal_run creates such scratch files directly through shell redirection or a script, declare each NEW output in terminal_run(temporary_outputs=[...]) before execution so MAI can remove it when this task ends, including failed or cancelled runs. The default file_write lifecycle is persistent and terminal outputs not declared temporary are NOT cleaned automatically. Never mark an existing file or a user-requested deliverable temporary. Scratch cleanup on client is not yet supported: do not claim that a client-created file will be removed automatically. Do not assume historical untracked files are safe to delete.
 
 Pretrained knowledge supports reasoning, not factual evidence. Before presenting a factual claim, distinguish observed user/tool evidence from pretrained recollection; confidence and familiarity do not count as evidence. If adequate observed evidence is missing, verify the claim with the appropriate tool or explicitly leave it unverified. Preserve original values, definitions, units, aggregation levels, time ranges, and the distinction between observations and derived calculations. Do not silently change or round source values; transform them only at the user's request or under an evidenced rule. Treat related metrics as distinct unless the evidence establishes equivalence, and do not assert unsupported causal explanations or reconciliations; acknowledge unresolved uncertainty.
 
-For arithmetic that materially affects an answer, activate and use the exact calculator tool listed in the catalog (in functional MCP mode: mai_utilities__calculator) rather than mental arithmetic, including sums, differences, percentages, returns, weighted or aggregate results, target gaps, and multi-step comparisons.
+For calculations and analysis, use terminal_run with a deterministic program (e.g. Python), not mental arithmetic.
 
 The owner may use local filesystem and terminal tools on any path permitted by the MAI process operating-system account. Trial accounts may use file_write only within their own upload directory; their local file_write cannot delete, move, or copy files. file_write creates a missing text file or replaces an existing text file. Structured PDF, DOCX, XLSX, CSV, and PPTX documents are read through document_read. The owner can use document_edit for explicitly supported changes to existing structured files, including PDF page operations; arbitrary PDF text edits are unsupported. There is no separate file_create native tool. The model-visible document_read tool reads both plain-text and structured documents.
 
@@ -331,8 +330,6 @@ class MAIRuntime:
                 registry, workspace=workspace, browser_manager=browser_manager,
             )
         elif principal.role is AccessRole.TRIAL:
-            register_time_tools(registry)
-            register_calculator_tools(registry)
             register_external_information_tools(registry)
             register_browser_tools(registry, browser_manager)
         if principal.role is AccessRole.OWNER:
@@ -577,6 +574,12 @@ class MAIRuntime:
                 type(exc).__name__,
                 str(exc),
             )
+        finally:
+            # Memory admission (including failures and early skips) precedes cleanup.
+            try:
+                await asyncio.to_thread(clean_tmp_contents, self.cwd / "tmp")
+            except Exception:
+                _LOG.exception("MAI tmp cleanup failed")
 
     def close(self) -> None:
         for task in tuple(self._background_tasks):

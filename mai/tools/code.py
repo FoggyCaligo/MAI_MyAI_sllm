@@ -407,17 +407,5 @@ def register_code_tools(registry: ToolRegistry, *, cwd: str | Path | None = None
     def symbols_handler(**kwargs: Any) -> dict[str, Any]:
         return code_symbols(cwd=cwd, **kwargs)
 
-    registry.add(
-        name="code_search",
-        description=(
-            "Search file contents recursively from any accessible local path and return exact matching lines. "
-            "Use explicit literal or regex mode, optional include/exclude globs, and optional inclusive start_line/end_line "
-            "bounds applied independently to each candidate file. collection.complete=false means more matches may exist beyond the returned results."
-        ),
-        input_model=CodeSearchInput,
-        handler=search_handler,
-        timeout_seconds=timeout_seconds,
-        category="code",
-    )
-    registry.add(name="code_read", description="Read an inclusive line range from a local text/code file with stable line numbers.", input_model=CodeReadInput, handler=read_handler, timeout_seconds=timeout_seconds, category="code")
+    # Retired code_search and code_read: terminal_run provides their operations.
     registry.add(name="code_symbols", description="Parse a source file with an explicit supported parser and return structural symbols. Python uses standard AST; JavaScript, TypeScript, TSX, C, C++, Java, Go, Rust, and Ruby use Tree-sitter grammars. The parser must be selected explicitly.", input_model=CodeSymbolsInput, handler=symbols_handler, timeout_seconds=timeout_seconds, category="code")

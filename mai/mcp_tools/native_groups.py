@@ -21,7 +21,7 @@ from mcp.server.lowlevel.server import NotificationOptions
 from ..tools.registry import ToolRegistry
 
 GROUPS = ("mai_internet", "mai_browser", "mai_file", "mai_code",
-          "mai_terminal_run", "mai_docs", "mai_utilities")
+          "mai_terminal_run", "mai_docs")
 
 
 def build_registry(group: str, *, cwd: str | Path | None = None) -> tuple[ToolRegistry, Any | None]:
@@ -55,14 +55,7 @@ def build_registry(group: str, *, cwd: str | Path | None = None) -> tuple[ToolRe
         register_terminal_tools(registry, cwd=root)
     elif group == "mai_docs":
         from ..tools.document_edit import register_document_edit_tool
-        from ..tools.csv_aggregate import register_csv_aggregate_tool
         register_document_edit_tool(registry, cwd=root, timeout_seconds=120)
-        register_csv_aggregate_tool(registry, cwd=root, timeout_seconds=120)
-    elif group == "mai_utilities":
-        from ..tools.calculator import register_calculator_tools
-        from ..tools.time import register_time_tools
-        register_calculator_tools(registry, timeout_seconds=20)
-        register_time_tools(registry, timeout_seconds=20)
     return registry, browser
 
 

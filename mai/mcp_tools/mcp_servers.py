@@ -164,7 +164,7 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
     # Remove retired memory MCP entry, retaining all unrelated settings.
     current = json.loads(path.read_text(encoding="utf-8"))
     remaining = [entry for entry in current.get("servers", [])
-                 if entry.get("id") != "memorizer"]
+                 if entry.get("id") not in {"memorizer", "mai_utilities"}]
     if len(remaining) != len(current.get("servers", [])):
         current["servers"] = remaining
         temp = path.with_suffix(".native-memory.tmp")

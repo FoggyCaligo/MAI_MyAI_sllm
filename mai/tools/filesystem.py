@@ -254,7 +254,7 @@ def _register_bindings(registry: ToolRegistry, bindings: tuple[tuple[str, str, t
 
 
 def register_filesystem_read_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
-    _register_bindings(registry, _READ_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
+    _register_bindings(registry, tuple(b for b in _READ_BINDINGS if b[0] == "document_read"), cwd=cwd, timeout_seconds=timeout_seconds)
 
 
 def register_filesystem_write_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
@@ -281,4 +281,4 @@ def register_trial_file_write(registry: ToolRegistry, *, upload_root: str | Path
 
 
 def register_filesystem_tools(registry: ToolRegistry, *, cwd: str | Path | None = None, timeout_seconds: float | None = None) -> None:
-    _register_bindings(registry, _READ_BINDINGS + _WRITE_BINDINGS, cwd=cwd, timeout_seconds=timeout_seconds)
+    _register_bindings(registry, tuple(b for b in _READ_BINDINGS + _WRITE_BINDINGS if b[0] in {"document_read", "file_write"}), cwd=cwd, timeout_seconds=timeout_seconds)

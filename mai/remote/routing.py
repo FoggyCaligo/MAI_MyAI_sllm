@@ -13,8 +13,6 @@ from typing import Any
 from mai.remote.session import RemoteExecutionError
 from mai.remote.target import ExecutionTarget
 from mai.tools.local import register_local_pc_tools
-from mai.tools.time import register_time_tools
-from mai.tools.calculator import register_calculator_tools
 from mai.tools.external import register_external_information_tools
 from mai.tools.browser import BrowserSessionManager, register_browser_tools
 from mai.tools.registry import ToolRegistry
@@ -89,8 +87,6 @@ def register_routed_service_tools(
 ) -> None:
     """Add worker-portable, request-independent services with identical local schemas."""
     local = ToolRegistry()
-    register_time_tools(local, timeout_seconds=20)
-    register_calculator_tools(local, timeout_seconds=20)
     register_external_information_tools(
         local, web_timeout_seconds=180, market_timeout_seconds=60,
     )
