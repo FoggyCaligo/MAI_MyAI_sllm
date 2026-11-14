@@ -26,7 +26,7 @@ MAI가 **다른 컴퓨터의 도구**를 실행하는 기능. 원격 웹 공개(
 4. 화면에 생성된 **일회용 연결 명령** 복사.
 5. **대상 PC**의 PowerShell(Windows) 또는 터미널(Linux)에서 실행.
 6. UI에 **원격 연결됨** 표시 확인.
-7. MAI에 원격 PC 작업 요청. 필요한 Native 도구는 `tool_manual`로 활성화한 다음 `at_remote_pc=true`로 호출.
+7. MAI에 원격 PC 작업 요청. `tool_manual`로 `switch_workspace`를 활성화하여 `target="client"`로 한 번 전환한 다음, 필요한 Native 도구를 일반 인자로 호출.
 
 **연결 명령 직접 작성 금지:** 서버 주소, 세션 ID, 임시 인증 키가 포함되므로 UI에서 발급한 명령 그대로 사용한다. 재사용·공유 금지.
 
@@ -68,18 +68,21 @@ MAI 웹 UI (Owner)
 
 ## 4. 원격 도구 사용
 
-| 인수 | 실행 위치 |
+| 작업 상태 | 실행 위치 |
 |---|---|
-| `at_remote_pc=false` 또는 생략 | MAI 서버 컴퓨터 |
-| `at_remote_pc=true` | Owner가 연결한 원격 Windows/Linux 워커 |
+| 기본값 / `switch_workspace(target="host")` | MAI 서버 컴퓨터 |
+| `switch_workspace(target="client")` 성공 이후 | Owner가 연결한 원격 Windows/Linux 워커 |
 
-예시 — Linux 원격 PC의 파일 읽기(`document_read` 활성화 후):
+예시 — `tool_manual`로 두 도구를 활성화한 뒤, 한 번 전환하고 파일 읽기:
 
-```json
-{"path":"/home/user/notes.txt","at_remote_pc":true}
+```text
+switch_workspace(target="client")
+document_read(path="/home/user/notes.txt")
 ```
 
-- **지원:** 파일·코드·CSV·문서 작업, `terminal_run`, 계산·시간·웹·시장 정보, 브라우저 등 원격 워커 등록 Native 도구.
+실행 대상은 해당 작업이 끝날 때까지 유지된다. Native 도구의 개별 인수에는 `is_remote_pc`나 `at_remote_pc`가 없다. 웹·브라우저·기억 및 호스트 관리 도구는 항상 서버에서 실행된다.
+
+- **지원:** 파일·코드·CSV·문서 작업, `terminal_run`, 계산·시간 도구 등 Workspace 지원 Native 도구. 웹·시장 정보·브라우저는 호스트 전용.
 - **서버 전용:** `memory_search`, `tool_result_read`, `file_download_link` 등 서버 상태에 종속된 도구.
 - **이미지 분석:** 기존 원격 `image_analyze` 도구 없음. 첨부 이미지 인식은 MAI 서버의 메인 llama.cpp 모델이 담당.
 - **원격 세션 식별:** MAI 서버가 로그인한 Owner의 연결을 선택. 모델이 세션 ID를 도구 인수로 지정하지 않음.
