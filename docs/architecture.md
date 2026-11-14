@@ -90,10 +90,10 @@ AgentRuntime / AgentLoop
 
 | 데이터 | 기본 경로 |
 |---|---|
-| 장기기억 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/memory.sqlite3` |
-| 분해기 누적 데이터 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/sentence_breaker.sqlite3` |
-| 대화 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/chat.sqlite3` |
-| 감사 | `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/log.sqlite3` |
+| 장기기억 | `MAI_MEMORY/memory.sqlite3` |
+| 분해기 누적 데이터 | `MAI_MEMORY/sentence_breaker.sqlite3` |
+| 대화 | `MAI_MEMORY/chat.sqlite3` |
+| 감사 | `MAI_MEMORY/log.sqlite3` |
 | 업로드 | `mai/mai_uploads/` |
 
 - **Owner:** 작업별 Workspace를 선택하여 호스트 및 인증된 원격 워커의 파일·터미널 기능 사용.
