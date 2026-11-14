@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from datetime import datetime, timezone
 
 from mai.memory.graph.repository import MemoryGraphRepository
@@ -44,7 +46,7 @@ def test_native_boolean_recall_preserves_fact_utterance_and_user_boundary(tmp_pa
         only_a = fact("alice", "alpha preference", ("alpha",))
         fact("alice", "alpha beta cancelled", ("alpha", "beta"))
         only_b = fact("alice", "beta history", ("beta",))
-        fact("bob", "alpha secret", ("alpha",))
+        secret = fact("bob", "alpha secret", ("alpha",))
         evidence = graph.record_evidence("user_utterance", "gamma update", now=NOW)
         utterance = graph.create_utterance_node(user_id="alice", evidence=evidence, now=NOW)
         graph.add_typed_edge(anchor.id, utterance.id, "spoke", provenance="test", now=NOW)
@@ -74,6 +76,12 @@ def test_native_boolean_recall_preserves_fact_utterance_and_user_boundary(tmp_pa
         keyword = asyncio.run(registry.get("memory_search").invoke({"keyword": "gamma"}))
         assert any(x["node_id"] == utterance.id for x in keyword["nodes"])
         assert MemorySearchInput.model_validate({"keyword": "alpha"}).keyword == "alpha"
+        with pytest.raises(PermissionError, match="does not belong"):
+            asyncio.run(registry.get("memory_search").invoke({"node_id": secret.id}))
+        with pytest.raises(PermissionError, match="does not belong"):
+            asyncio.run(registry.get("memory_search").invoke({"node_id": concept("alpha").id}))
+        same_user = asyncio.run(registry.get("memory_search").invoke({"node_id": only_a.id}))
+        assert isinstance(same_user, dict)
     finally:
         index.close()
         graph.close()
