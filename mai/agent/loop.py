@@ -700,6 +700,7 @@ class AgentLoop:
                             similar_notice = guard.after_similar_failure(
                                 call.name, call.arguments, ok=False,
                                 error_type=execution.error_type,
+                                execution_target=(getattr(getattr(self.registry, "workspace", None), "target", "host")),
                             )
                             if similar_notice is not None:
                                 round_notices.append(similar_notice)
