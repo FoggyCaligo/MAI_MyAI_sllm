@@ -80,7 +80,7 @@ AgentRuntime / AgentLoop
 | 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
 | 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-**Workspace 실행 대상:** 새 Agent 작업은 `host`에서 시작한다. Owner는 `tool_manual`로 `remote__switch_workspace`를 활성화하고 `target="client"`로 인증된 워커를 선택할 수 있다. 전환에 성공하면 **해당 작업의 이후 모든 Workspace 지원 도구**가 다른 전환이나 작업 종료까지 계속 client에서 실행된다. `target="host"`로 복귀한다. 도구별 `at_remote_pc` 인자는 없고, client 연결 실패 시 host로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI host에서 실행한다.
+**Workspace 실행 대상:** 새 Agent 작업은 `host`에서 시작한다. Owner는 `tool_manual`로 `switch_workspace`를 활성화하고 `target="client"`로 인증된 워커를 선택할 수 있다. 전환에 성공하면 **해당 작업의 이후 모든 Workspace 지원 도구**가 다른 전환이나 작업 종료까지 계속 client에서 실행된다. `target="host"`로 복귀한다. 도구별 `at_remote_pc` 인자는 없고, client 연결 실패 시 host로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI host에서 실행한다.
 
 **웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 
