@@ -107,5 +107,11 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         input_model=MemorySearchInput,
         handler=memory_search,
         category="memory",
+        metadata={"catalog_hint": (
+            "Native persistent-memory lookup: query supports keyword or Boolean "
+            "AND/OR/NOT (Fact and Utterance), keyword is the legacy alias, "
+            "node_id expands a returned node, and limit alone lists recent "
+            "memories (1..50). Call tool_manual first to inspect full arguments."
+        )},
     )
 
