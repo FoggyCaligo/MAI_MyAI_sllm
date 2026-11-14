@@ -5,7 +5,7 @@ import asyncio
 
 from mai.remote.python_worker import build_registry
 from mai.remote.routing import register_routed_pc_tools, register_routed_service_tools
-from mai.mcp_tools.workspace import WorkspaceContext
+from mai.remote.workspace import WorkspaceContext
 from mai.tools.browser import BrowserSessionManager
 from mai.tools.local import register_local_pc_tools, register_readonly_local_tools
 from mai.tools.registry import ToolRegistry
