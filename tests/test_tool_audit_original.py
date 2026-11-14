@@ -21,6 +21,7 @@ def test_audit_persists_full_original_in_both_chat_paths(tmp_path, monkeypatch, 
 
     class Runtime:
         model = "test"
+        selected_model = "test"
         async def run_user_message(self, *args, **kwargs):
             kwargs["on_tool_execution"](execution)
             return SimpleNamespace(answer="done", model="test", model_rounds=1, tools=[])
