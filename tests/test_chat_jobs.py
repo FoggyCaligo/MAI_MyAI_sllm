@@ -44,7 +44,7 @@ def test_completed_tool_progress_is_visible_before_job_finishes() -> None:
     store.mark_running(job.job_id)
 
     first = {
-        "name": "file_read",
+        "name": "document_read",
         "arguments": {"path": "README.md"},
         "ok": True,
         "error_type": None,
@@ -68,7 +68,7 @@ def test_completed_tool_progress_is_visible_before_job_finishes() -> None:
     snapshot["tools"][0]["name"] = "mutated"
     fresh = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")
     assert fresh is not None
-    assert fresh["tools"][0]["name"] == "file_read"
+    assert fresh["tools"][0]["name"] == "document_read"
 
 
 def test_latest_model_thinking_is_visible_and_can_be_cleared() -> None:
@@ -222,7 +222,7 @@ def test_live_stream_progress_visible_during_running_job() -> None:
         partial={
             "thinking": "reasoning in progress", "content": "partial",
             "chunks": 8, "finish_reason": None, "complete": False,
-            "tool_fragments": [{"index": 0, "name": "file_read"}],
+            "tool_fragments": [{"index": 0, "name": "document_read"}],
         },
     )
     snapshot = store.snapshot_for(job_id=job.job_id, auth_user_id="owner")

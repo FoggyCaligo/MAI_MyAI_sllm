@@ -53,7 +53,7 @@ def test_related_failures_warn_without_blocking_changed_commands():
 def test_full_file_evidence_kept_after_compaction():
     store = ToolResultStore(max_inline_chars=4000)
     original = "line of factual evidence\n" * 300
-    view = store.file_model_views(original, tool_name="file_read")
+    view = store.file_model_views(original, tool_name="document_read")
     assert view.compact_history_content is not None
     import json
     compact = json.loads(view.compact_history_content)
@@ -69,12 +69,12 @@ def test_read_reuse_avoids_duplicate_io_and_model_rounds_do_not_increase(monkeyp
     calls = []
     registry = ToolRegistry()
     registry.add(
-        name="file_read", description="Read test", input_model=_Input,
+        name="document_read", description="Read test", input_model=_Input,
         handler=lambda path: (calls.append(path), {"value": path})[1],
     )
-    read = ("file_read", {"path": "example.txt"})
+    read = ("document_read", {"path": "example.txt"})
     adapter = _Adapter([
-        _turn(("tool_manual", {"tools": ["file_read"]})),
+        _turn(("tool_manual", {"tools": ["document_read"]})),
         _turn(read), _turn(read),
         _turn(content="done"),
     ])
@@ -98,12 +98,12 @@ def test_reuse_disabled_does_not_suppress_reads(monkeypatch):
     calls = []
     registry = ToolRegistry()
     registry.add(
-        name="file_read", description="Read test", input_model=_Input,
+        name="document_read", description="Read test", input_model=_Input,
         handler=lambda path: (calls.append(path), path)[1],
     )
-    read = ("file_read", {"path": "example.txt"})
+    read = ("document_read", {"path": "example.txt"})
     adapter = _Adapter([
-        _turn(("tool_manual", {"tools": ["file_read"]})),
+        _turn(("tool_manual", {"tools": ["document_read"]})),
         _turn(read), _turn(read), _turn(content="done"),
     ])
     runtime = AgentRuntime(adapter, registry, tool_result_store=ToolResultStore(max_inline_chars=4000))
@@ -123,17 +123,17 @@ def test_file_write_invalidates_read_cache(monkeypatch):
     read_calls = []
     registry = ToolRegistry()
     registry.add(
-        name="file_read", description="Read test", input_model=_Input,
+        name="document_read", description="Read test", input_model=_Input,
         handler=lambda path: (read_calls.append(path), state["content"])[1],
     )
     registry.add(
         name="file_write", description="Write test", input_model=_WriteInput,
         handler=lambda path, content: state.update(content=content) or "saved",
     )
-    read = ("file_read", {"path": "sample.txt"})
+    read = ("document_read", {"path": "sample.txt"})
     write = ("file_write", {"path": "sample.txt", "content": "after"})
     adapter = _Adapter([
-        _turn(("tool_manual", {"tools": ["file_read", "file_write"]})),
+        _turn(("tool_manual", {"tools": ["document_read", "file_write"]})),
         _turn(read),
         _turn(write),
         _turn(read),
@@ -143,7 +143,7 @@ def test_file_write_invalidates_read_cache(monkeypatch):
     result = asyncio.run(runtime.run_user_message("Read then modify then reread"))
     assert result.content == "done"
     assert read_calls == ["sample.txt", "sample.txt"]
-    assert [item.audit_content for item in result.tool_executions if item.name == "file_read"] == [
+    assert [item.audit_content for item in result.tool_executions if item.name == "document_read"] == [
         "before", "after",
     ]
 
@@ -181,7 +181,7 @@ def test_permanent_failure_detection_is_conservative():
         "web_fetch", failure("web_fetch", "WebFetchError", "HTTP 404 Not Found")
     )
     assert _permanent_read_failure(
-        "file_read", failure("file_read", "FileNotFoundError", "absent")
+        "document_read", failure("document_read", "FileNotFoundError", "absent")
     )
     assert not _permanent_read_failure(
         "web_fetch", failure("web_fetch", "WebFetchError", "HTTP 429 rate limited")

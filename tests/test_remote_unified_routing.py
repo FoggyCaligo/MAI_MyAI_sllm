@@ -9,9 +9,9 @@ def test_pc_tool_names_are_unified_and_default_local(tmp_path):
     registry = ToolRegistry()
     workspace = WorkspaceContext(owner_id="owner")
     register_routed_pc_tools(registry, workspace=workspace, cwd=str(tmp_path))
-    assert all(registry.has(x) for x in ("file_read", "file_write", "terminal_run", "document_edit"))
-    assert not registry.has("remote_file_read")
-    assert "at_remote_pc" not in registry.get("file_read").input_model.model_fields
+    assert all(registry.has(x) for x in ("document_read", "file_write", "terminal_run", "document_edit"))
+    assert not registry.has("remote_document_read")
+    assert "at_remote_pc" not in registry.get("document_read").input_model.model_fields
     assert workspace.target == "host"
 
 def test_unconnected_remote_switch_fails_without_touching_local_file(tmp_path, monkeypatch):
@@ -26,6 +26,6 @@ def test_unconnected_remote_switch_fails_without_touching_local_file(tmp_path, m
     with pytest.raises(ToolArgumentsError):
         registry.get("file_write").validate_arguments({
             "path": str(file), "content": "modified", "at_remote_pc": True})
-    result = asyncio.run(registry.get("file_read").invoke({"path": str(file)}))
+    result = asyncio.run(registry.get("document_read").invoke({"path": str(file)}))
     assert result["content"] == "untouched"
     assert file.read_text(encoding="utf-8") == "untouched"

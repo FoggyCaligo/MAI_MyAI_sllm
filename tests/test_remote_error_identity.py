@@ -18,7 +18,7 @@ def test_remote_error_type_and_message_survive_transport():
                 "owner", session.session_id,
                 RemoteOperation(
                     operation="native.invoke",
-                    arguments={"name": "file_read", "arguments": {"path": "missing"}},
+                    arguments={"name": "document_read", "arguments": {"path": "missing"}},
                 ),
             )
         )

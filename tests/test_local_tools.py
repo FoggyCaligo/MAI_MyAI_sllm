@@ -29,7 +29,7 @@ def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> N
     assert registry.names() == (
         "file_list",
         "file_search",
-        "file_read",
+        "document_read",
         "file_write",
         "file_delete",
         "file_move",
@@ -91,7 +91,7 @@ def test_filesystem_tools_support_create_read_write_copy_move_delete(tmp_path: P
     assert Path(created["path"]).read_text() == "hello"
 
     read = run(registry.invoke(NativeToolCall(
-        name="file_read",
+        name="document_read",
         arguments={"path": "a.txt"},
     )))
     assert read["content"] == "hello"
@@ -178,7 +178,7 @@ def test_absolute_path_is_not_confined_to_registered_cwd(tmp_path: Path) -> None
     register_filesystem_tools(registry, cwd=root)
 
     result = run(registry.invoke(NativeToolCall(
-        name="file_read",
+        name="document_read",
         arguments={"path": str(target)},
     )))
     assert result["content"] == "visible"
