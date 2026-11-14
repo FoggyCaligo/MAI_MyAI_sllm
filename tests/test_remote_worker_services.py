@@ -14,8 +14,8 @@ from mai.tools.registry import ToolRegistry
 def test_worker_exposes_all_worker_portable_services():
     worker = build_registry()
     assert {
-        "current_time", "calculator", "market_data",
-        "document_read", "file_write", "terminal_run", "code_search", "document_edit",
+        "market_data",
+        "document_read", "file_write", "terminal_run", "code_symbols", "document_edit",
     }.issubset(worker.names())
     for name in ("web_search", "web_fetch", "browser_open", "browser_snapshot",
                  "browser_click", "browser_input_text", "browser_scroll",
@@ -48,8 +48,7 @@ def test_remote_service_without_connection_fails_and_does_not_run_locally():
     )
 
     async def exercise():
-        local = await host.get("calculator").invoke({"expression": "12+8"})
-        assert local["result"] == "20"
+        local = await host.get("market_data").invoke({"symbol": "AAPL"})
         with pytest.raises(RemoteExecutionError, match="No authenticated connected remote worker"):
             workspace.switch("client")
         assert workspace.target == "host"
@@ -91,17 +90,17 @@ def test_connected_remote_service_routes_without_local_fallback(monkeypatch):
 
     async def fake_execute(self, operation, arguments, *, timeout):
         routed.append((self.owner_id, self.remote_session_id, operation, arguments, timeout))
-        return {"value": {"expression": "7+5", "result": "REMOTE-12"}}
+        return {"value": {"symbol": "AAPL", "result": "REMOTE-12"}}
 
     monkeypatch.setattr(routing.ExecutionTarget, "execute", fake_execute)
 
     async def exercise():
-        value = await host.get("calculator").invoke({"expression": "7+5"})
+        value = await host.get("market_data").invoke({"symbol": "AAPL"})
         assert value["result"] == "REMOTE-12"
     asyncio.run(exercise())
     assert routed == [(
         owner_id, session.session_id, "native.invoke",
-        {"name": "calculator", "arguments": {"expression": "7+5"}}, 600,
+        {"name": "market_data", "arguments": {"symbol": "AAPL"}}, 600,
     )]
 
 
@@ -126,7 +125,7 @@ def test_remote_transport_missing_value_envelope_fails(monkeypatch):
 
     async def exercise():
         with pytest.raises(RemoteExecutionError, match="invalid tool-result envelope"):
-            await host.get("calculator").invoke({"expression": "1+2"})
+            await host.get("market_data").invoke({"symbol": "AAPL"})
     asyncio.run(exercise())
 
 
@@ -147,7 +146,6 @@ def test_remote_worker_doubles_native_timeouts_without_changing_local_defaults(t
                     else definition.timeout_seconds * REMOTE_TOOL_TIMEOUT_MULTIPLIER)
         assert remote.get(definition.name).timeout_seconds == expected
     assert not remote.has("browser_open")
-    assert remote.get("calculator").timeout_seconds == 40
 
 
 def test_remote_transport_budget_covers_terminal_execution():

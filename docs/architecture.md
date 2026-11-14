@@ -40,7 +40,7 @@ AgentRuntime / AgentLoop
 | 3 | Main 모델 추론 → 필요할 때 도구 활성화·실행 → 임시답변 |
 | 4 | Verifier 검증 → 승인 또는 근거를 첨부한 반려 |
 | 5 | 반려 시 Main 재진입·재조사·수정. 교정 예산 소진·필수 계약 위반은 실패로 표시 |
-| 6 | 승인 답변 전달·대화 저장, 비동기 기억 추출·저장 |
+| 6 | 승인 답변 전달·대화 저장, 비동기 기억 추출·저장 후 호스트 `./tmp` 내부 정리(디렉터리는 유지) |
 
 **수명:** 도구 활성화 집합·도구 결과 저장소·작업 문맥은 요청 단위. 장기기억·대화·감사 DB는 지속 저장. 서버 재시작 후 실행 중 계산을 그대로 재개하는 영속 작업 큐는 아님.
 
@@ -71,7 +71,7 @@ AgentRuntime / AgentLoop
 
 | 항목 | 계약 |
 |---|---|
-| 도구 발견 | 시스템 카탈로그에 이름·분류 노출 |
+| 도구 발견 | 네이티브 도구 이름·분류만 시스템 카탈로그에 노출. MCP 서버는 시작·등록하지 않음 |
 | 초기 실행 가능 도구 | `tool_manual` |
 | 도구 활성화 | 정확한 이름으로 활성화 → 다음 모델 차례부터 입력 스키마 노출 |
 | 도구 호출 | 구조화된 `tools` / `tool_calls`. 텍스트 추측·패턴 추출로 복원하지 않음 |
@@ -80,7 +80,9 @@ AgentRuntime / AgentLoop
 | 큰 결과 | 최초 페이지 + 원문 식별자. 추가 내용은 `tool_result_read` |
 | 웹 결과 | 최초 원문 노출 뒤 후속 문맥에 출처 기반 발췌 사용 가능. 감사에는 원문 보존 |
 
-**Workspace 실행 대상:** 새 Agent 작업은 `host`에서 시작한다. Owner는 `tool_manual`로 `remote__switch_workspace`를 활성화하고 `target="client"`로 인증된 워커를 선택할 수 있다. 전환에 성공하면 **해당 작업의 이후 모든 Workspace 지원 도구**가 다른 전환이나 작업 종료까지 계속 client에서 실행된다. `target="host"`로 복귀한다. 도구별 `at_remote_pc` 인자는 없고, client 연결 실패 시 host로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI host에서 실행한다.
+**도구 정리:** `file_list`, `file_search`, `file_delete`, `file_move`, `file_copy`, `code_read`, `code_search`, `calculator`, `current_time`, `csv_aggregate`는 제거됨. 터미널로 대체하며, 계산·분석용 임시 코드는 `./tmp`에 둔다.
+
+**Workspace 실행 대상:** 새 Agent 작업은 `host`에서 시작한다. Owner는 `tool_manual`로 `switch_workspace`를 활성화하고 `target="client"`로 인증된 워커를 선택할 수 있다. 전환에 성공하면 **해당 작업의 이후 모든 Workspace 지원 도구**가 다른 전환이나 작업 종료까지 계속 client에서 실행된다. `target="host"`로 복귀한다. 도구별 `at_remote_pc` 인자는 없고, client 연결 실패 시 host로 자동 대체하지 않는다. 웹·브라우저·기억·호스트 제어 도구는 항상 MAI host에서 실행한다.
 
 **웹 공개는 별개:** `REMOTE_HOSTING_PROVIDER`의 Tailscale/Cloudflare 설정은 브라우저의 외부 접속용이며 원격 PC 도구 실행 권한을 생성하지 않음.
 

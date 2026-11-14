@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 import time
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
@@ -41,12 +39,12 @@ from ..memory.tools import register_memory_tools
 from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.external import register_external_information_tools
-from ..tools.local import register_local_pc_tools, register_readonly_local_tools
+from ..tools.local import register_readonly_local_tools
 from ..tools.registry import ToolRegistry
 from ..tools.restart import register_restart_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
 from ..mcp_tools.workspace import WorkspaceContext
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from .access import AccessPrincipal, AccessRole
 from .downloads import DownloadLinkStore
 from .selected_model import SelectedModelStore
@@ -444,11 +442,7 @@ class MAIRuntime:
                     ),
                 )
         finally:
-            try:
-                if registry.mcp_manager is not None:
-                    await registry.mcp_manager.close()
-            finally:
-                await browser_manager.close_all()
+            await browser_manager.close_all()
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions

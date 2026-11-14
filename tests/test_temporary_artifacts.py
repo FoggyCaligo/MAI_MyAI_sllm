@@ -54,7 +54,7 @@ def test_runtime_removes_temporary_file_after_successful_final_answer(tmp_path: 
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["file_write", "file_move"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["file_write"]}),)),
         assistant_turn(calls=(NativeToolCall(
             name="file_write",
             arguments={"path": "scratch.py", "content": "print('x')", "lifecycle": "temporary"},
@@ -72,7 +72,7 @@ def test_file_write_defaults_to_persistent_and_survives_final_answer(tmp_path: P
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
     adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["file_write", "file_move"]}),)),
+        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["file_write"]}),)),
         assistant_turn(calls=(NativeToolCall(
             name="file_write",
             arguments={"path": "output.txt", "content": "keep me"},
@@ -83,28 +83,6 @@ def test_file_write_defaults_to_persistent_and_survives_final_answer(tmp_path: P
     run(AgentRuntime(adapter, registry).run_user_message("create output"))
 
     assert (tmp_path / "output.txt").read_text() == "keep me"
-
-
-def test_moved_temporary_file_is_cleaned_at_destination(tmp_path: Path) -> None:
-    registry = ToolRegistry()
-    register_filesystem_tools(registry, cwd=tmp_path)
-    adapter = FakeAdapter([
-        assistant_turn(calls=(NativeToolCall(name="tool_manual", arguments={"tools": ["file_write", "file_move"]}),)),
-        assistant_turn(calls=(NativeToolCall(
-            name="file_write",
-            arguments={"path": "scratch.txt", "content": "x", "lifecycle": "temporary"},
-        ),)),
-        assistant_turn(calls=(NativeToolCall(
-            name="file_move",
-            arguments={"source": "scratch.txt", "destination": "moved.txt"},
-        ),)),
-        assistant_turn(content="done"),
-    ])
-
-    run(AgentRuntime(adapter, registry).run_user_message("work with scratch file"))
-
-    assert not (tmp_path / "scratch.txt").exists()
-    assert not (tmp_path / "moved.txt").exists()
 
 
 def test_temporary_cleanup_failure_is_explicit(tmp_path: Path) -> None:

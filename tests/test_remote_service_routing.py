@@ -12,7 +12,7 @@ def test_services_have_clean_schemas_and_host_only_web_tools():
                                   browser_manager=BrowserSessionManager())
     for name in ("web_search", "web_fetch", "browser_open", "browser_snapshot",
                  "browser_click", "browser_input_text", "browser_press_key",
-                 "browser_scroll", "browser_close", "current_time", "calculator"):
+                 "browser_scroll", "browser_close"):
         assert registry.has(name)
         model = registry.get(name).input_model
         assert "at_remote_pc" not in model.model_fields

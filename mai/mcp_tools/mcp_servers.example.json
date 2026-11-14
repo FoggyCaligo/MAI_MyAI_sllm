@@ -4,7 +4,7 @@
   "servers": [
     {
       "id": "remote",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -13,7 +13,7 @@
     },
     {
       "id": "mai_internet",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -27,7 +27,7 @@
     },
     {
       "id": "mai_browser",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -41,7 +41,7 @@
     },
     {
       "id": "mai_file",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -55,7 +55,7 @@
     },
     {
       "id": "mai_code",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -69,7 +69,7 @@
     },
     {
       "id": "mai_terminal_run",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -83,7 +83,7 @@
     },
     {
       "id": "mai_docs",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -97,7 +97,7 @@
     },
     {
       "id": "mai_utilities",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -111,7 +111,7 @@
     },
     {
       "id": "host",
-      "enabled": true,
+      "enabled": false,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
       "args": [
         "-m",
@@ -119,5 +119,6 @@
       ]
     }
   ],
-  "functional_mode": true
+  "functional_mode": false,
+  "_note": "LEGACY EXAMPLE ONLY: native MAI ignores this file; no MCP servers are registered."
 }
