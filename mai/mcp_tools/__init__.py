@@ -1,1 +1,1 @@
-"""MCP tools: common server discovery, tool_manual and per-server adapters."""
+"""Independent MCP_memorizer integration and its transport manager only."""
