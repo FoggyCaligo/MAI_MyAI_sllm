@@ -1,16 +1,18 @@
-"""Smoke contracts for the external MAI-derived memory engine."""
-from mcp_memorizer.memory.graph.repository import MemoryGraphRepository as ExternalGraph
-from mcp_memorizer.memory.runtime import MemoryRuntime as ExternalRuntime
-from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter as ExternalSegmenter
-from mcp_memorizer.extraction.prompt import _FACT_EXTRACTION_SYSTEM as EXTERNAL_PROMPT
+"""The MAI memory engine and fact extraction are native again."""
+from mai.memory.graph.repository import MemoryGraphRepository
+from mai.memory.runtime import MemoryRuntime
+from mai.memory.segmenter import SentenceBreakerSegmenter
+from mai.memory.extraction.service import _FACT_EXTRACTION_SYSTEM
 
-def test_external_memory_contract_preserves_extraction_prompt():
-    assert "durable, user-grounded facts" in EXTERNAL_PROMPT
-    assert "assistant_final_answer" in EXTERNAL_PROMPT
-    assert "facts" in EXTERNAL_PROMPT
 
-def test_runtime_uses_external_memory_classes():
-    from mai.app import runtime as module
-    assert module.MemoryGraphRepository is ExternalGraph
-    assert module.MemoryRuntime is ExternalRuntime
-    assert module.SentenceBreakerSegmenter is ExternalSegmenter
+def test_native_memory_extraction_contract():
+    assert "durable, user-grounded facts" in _FACT_EXTRACTION_SYSTEM
+    assert "assistant_final_answer" in _FACT_EXTRACTION_SYSTEM
+    assert "facts" in _FACT_EXTRACTION_SYSTEM
+
+
+def test_application_uses_native_memory_classes():
+    from mai.app import runtime
+    assert runtime.MemoryGraphRepository is MemoryGraphRepository
+    assert runtime.MemoryRuntime is MemoryRuntime
+    assert runtime.SentenceBreakerSegmenter is SentenceBreakerSegmenter
