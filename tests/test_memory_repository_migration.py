@@ -65,3 +65,19 @@ def test_default_paths_use_memory_repo_in_config_and_launchers():
     ):
         assert expected in path.read_text(encoding="utf-8")
     assert "MAI_MEMORY/" in (root / ".gitignore").read_text(encoding="utf-8")
+    legacy = "mai/mcp_tools/mcp_memorizer/MAI_MEMORY"
+    for path in (
+        root / ".env.example",
+        root / "mai" / "app" / "server.py",
+        root / "portable" / "start-portable-llamacpp-router.ps1",
+        root / "portable" / "start-portable-llamacpp-linux.sh",
+        root / "portable" / "llamacpp_memory_gateway.py",
+        root / "scripts" / "reset_trial.py",
+        root / "portable" / "restart_mai.py",
+    ):
+        assert legacy not in path.read_text(encoding="utf-8"), path
+    from portable.runtime_data_paths import MEMORY_RELATIVE
+    assert MEMORY_RELATIVE == Path("MAI_MEMORY")
+    from portable import restart_mai
+    assert restart_mai.DATA == restart_mai.ROOT / "MAI_MEMORY"
+
