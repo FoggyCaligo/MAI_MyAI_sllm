@@ -142,4 +142,4 @@ python scripts/audit_codebase.py
 
 
 ### Function-group MCP tool boundary
-기능별 MCP 구조와 전체 하위 도구 매핑, 실행 위치, Lazy activation, schema-v5 마이그레이션은 [MCP 문서](mcp-lazy-loading.md)를 참고한다. Owner는 기본으로 기능별 서버를 사용하고, Trial 축소 도구 권한은 기존 Native 레지스트리로 격리한다.
+MAI의 일반 도구는 `mai/tools/`에서 Native `ToolRegistry`로 직접 등록되며 `tool_manual`로 활성화한다. `MCP_memorizer`만 별도 MCP 서버로 연결한다. Owner 도구는 기존 host/client 실행 위치 전환을 유지하고 Trial 도구는 Native 권한 제한을 적용한다.
