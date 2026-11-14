@@ -12,7 +12,8 @@ from pathlib import Path
 import shutil
 import sys
 
-MEMORY_RELATIVE = Path("mai/mcp_tools/mcp_memorizer/MAI_MEMORY")
+MEMORY_RELATIVE = Path("MAI_MEMORY")
+LEGACY_MEMORY_RELATIVE = Path("mai/mcp_tools/mcp_memorizer/MAI_MEMORY")
 UPLOAD_RELATIVE = Path("mai/mai_uploads")
 
 
@@ -61,7 +62,7 @@ def _update_memorizer_config(root: Path) -> bool:
     config = json.loads(config_file.read_text(encoding="utf-8"))
     if not isinstance(config, dict) or not isinstance(config.get("servers"), list):
         raise DataPathMigrationError(f"Invalid MCP config; existing file left unchanged: {config_file}")
-    prior = (root / "MAI_MEMORY").resolve()
+    prior = (root / LEGACY_MEMORY_RELATIVE).resolve()
     target = (root / MEMORY_RELATIVE).resolve()
     changed = False
     for entry in config["servers"]:
@@ -96,13 +97,13 @@ def normalize_legacy_environment(root: Path) -> dict[str, str]:
     root = root.expanduser().resolve()
     mapping = {
         "MAI_UPLOAD_ROOT": (root / "mai_uploads", root / UPLOAD_RELATIVE),
-        "MEMORY_DB_PATH": (root / "MAI_MEMORY/memory.sqlite3",
+        "MEMORY_DB_PATH": (root / LEGACY_MEMORY_RELATIVE / "memory.sqlite3",
                            root / MEMORY_RELATIVE / "memory.sqlite3"),
-        "SENTENCE_BREAKER_DB_PATH": (root / "MAI_MEMORY/sentence_breaker.sqlite3",
+        "SENTENCE_BREAKER_DB_PATH": (root / LEGACY_MEMORY_RELATIVE / "sentence_breaker.sqlite3",
                                      root / MEMORY_RELATIVE / "sentence_breaker.sqlite3"),
-        "CHAT_DB_PATH": (root / "MAI_MEMORY/chat.sqlite3",
+        "CHAT_DB_PATH": (root / LEGACY_MEMORY_RELATIVE / "chat.sqlite3",
                          root / MEMORY_RELATIVE / "chat.sqlite3"),
-        "LOG_DB_PATH": (root / "MAI_MEMORY/log.sqlite3",
+        "LOG_DB_PATH": (root / LEGACY_MEMORY_RELATIVE / "log.sqlite3",
                         root / MEMORY_RELATIVE / "log.sqlite3"),
     }
     changed = {}
@@ -119,7 +120,7 @@ def migrate(root: Path) -> dict[str, bool]:
     if not (root / "mai").is_dir():
         raise DataPathMigrationError(f"Not an MAI project root: {root}")
     moved = {
-        "memory": _relocate(root / "MAI_MEMORY", root / MEMORY_RELATIVE),
+        "memory": _relocate(root / LEGACY_MEMORY_RELATIVE, root / MEMORY_RELATIVE),
         "uploads": _relocate(root / "mai_uploads", root / UPLOAD_RELATIVE),
     }
     moved["memorizer_config_updated"] = _update_memorizer_config(root)
