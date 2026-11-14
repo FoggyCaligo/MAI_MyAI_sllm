@@ -367,7 +367,7 @@ class MAIRuntime:
             # host control and workspace selection are registered directly.
             manager = MCPConnectionManager(
                 mcp_config, memory_user_id=principal.memory_user_id,
-                workspace=workspace, allowed_server_ids=frozenset({"memorizer"}),
+                allowed_server_ids=frozenset({"memorizer"}),
             )
             manager.register(registry)
             registry.mcp_manager = manager
