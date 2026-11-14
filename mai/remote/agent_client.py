@@ -53,16 +53,21 @@ async def run_agent(*, server: str, session: str, key: str,
                     raise RemoteAgentProtocolError("poll request_id is invalid")
                 outcome: dict[str, Any] = {"request_id": request_id, "ok": False}
                 try:
-                    if command.get("operation") != "native.invoke":
+                    if command.get("operation") == "scratch.cleanup":
+                        if command.get("arguments") != {}:
+                            raise RemoteAgentProtocolError("scratch.cleanup takes no arguments")
+                        value = await active_worker.cleanup_scratch()
+                    elif command.get("operation") != "native.invoke":
                         raise RemoteAgentProtocolError(
                             f"unsupported remote operation: {command.get('operation')!r}"
                         )
-                    args = command.get("arguments")
-                    if not isinstance(args, dict):
-                        raise RemoteAgentProtocolError("native.invoke arguments must be an object")
-                    value = await active_worker.execute_native(
-                        args.get("name"), args.get("arguments"),
-                    )
+                    else:
+                        args = command.get("arguments")
+                        if not isinstance(args, dict):
+                            raise RemoteAgentProtocolError("native.invoke arguments must be an object")
+                        value = await active_worker.execute_native(
+                            args.get("name"), args.get("arguments"),
+                        )
                     # Serialization is part of the tool result contract. If it
                     # fails, report a failed call instead of disconnecting here.
                     try:

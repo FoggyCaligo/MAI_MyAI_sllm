@@ -450,6 +450,7 @@ class MAIRuntime:
                 principal=principal,
                 tool_executions=tool_executions,
                 fact_extractor=fact_extractor,
+                remote_session_id=remote_session_id,
             )
         )
         self._background_tasks.add(task)
@@ -479,6 +480,7 @@ class MAIRuntime:
         principal: AccessPrincipal,
         tool_executions: Sequence[Any],
         fact_extractor: ModelFactExtractor,
+        remote_session_id: str | None = None,
     ) -> None:
         recall_tools = successful_memory_recall_tools(tool_executions)
         all_successful_tools = successful_tool_names(tool_executions)
@@ -545,7 +547,15 @@ class MAIRuntime:
             try:
                 await asyncio.to_thread(clean_tmp_contents, self.cwd / "tmp")
             except Exception:
-                _LOG.exception("MAI tmp cleanup failed")
+                _LOG.exception("MAI host tmp cleanup failed")
+            if remote_session_id:
+                try:
+                    from mai.remote.target import ExecutionTarget
+                    await ExecutionTarget(owner_id=principal.db_id, remote_session_id=remote_session_id).execute(
+                        "scratch.cleanup", {}, timeout=60,
+                    )
+                except Exception:
+                    _LOG.exception("MAI client tmp cleanup failed")
 
     def close(self) -> None:
         for task in tuple(self._background_tasks):

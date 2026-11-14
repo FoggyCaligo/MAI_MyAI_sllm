@@ -276,7 +276,7 @@ def register_terminal_tools(
             "Never declare an existing file or a user-requested deliverable as temporary. "
             "Prefer file_write(lifecycle=temporary) for scripts used across tool calls. "
             "Shell output files not declared are persistent and are NOT auto-deleted. "
-            "Client workspace temporary_outputs is unsupported until remote cleanup is implemented. "
+            "On client, temporary_outputs must be new paths inside the worker ./tmp directory; the host signals cleanup after memory postprocessing. "
             "Nonzero exits and output limit violations fail visibly. "
             "Captured stdout/stderr use strict UTF-8-SIG decoding first, then CP949, EUC-KR, or ISO-2022-KR; "
             "the actual encoding is returned in stdout_encoding/stderr_encoding, and stderr alone does not determine success."
