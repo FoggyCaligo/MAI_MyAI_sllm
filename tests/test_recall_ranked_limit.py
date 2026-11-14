@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcp_memorizer.memory.recall.service import RecallService
-from mcp_memorizer.memory.graph.models import GraphNeighborhood
-from mcp_memorizer.memory.index.base import ConceptHit
+from mai.memory.recall.service import RecallService
+from mai.memory.graph.models import GraphNeighborhood
+from mai.memory.index.base import ConceptHit
 from mai.agent.verification import _review_payload
 
 
@@ -70,13 +70,13 @@ def test_verifier_does_not_truncate_selected_tool_evidence():
     long_result = "x" * 12000
     payload = _review_payload(
         candidate="Response", messages=[{"role": "user", "content": "Question"}],
-        tool_results=[("memorizer__memory_search", True, None, long_result)],
+        tool_results=[("memory_search", True, None, long_result)],
     )
     assert payload["tool_results_in_execution_order"][0]["result"] == long_result
 
 
 def test_recall_tool_schema_exposes_optional_limit_to_model():
-    from mcp_memorizer.manager import MemorySearchInput
+    from mai.memory.tools import MemorySearchInput
     schema = MemorySearchInput.model_json_schema()
     assert "limit" in schema["properties"]
     assert "limit" not in schema.get("required", [])
