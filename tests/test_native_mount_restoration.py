@@ -54,6 +54,8 @@ def test_owner_tools_mount_natively_even_with_functional_mode_true(tmp_path, mon
         assert "mcp_input_schema" not in registry.get(name).metadata, name
     assert not registry.has("mai_terminal_run__terminal_run")
     assert not registry.has("mai_file__file_write")
+    assert not registry.has("remote__switch_workspace")
+    assert all("at_remote_pc" not in registry.get(name).native_schema()["function"]["parameters"].get("properties", {}) and "is_remote_pc" not in registry.get(name).native_schema()["function"]["parameters"].get("properties", {}) for name in registry.names())
     assert set(registry.mcp_manager.servers) == {"memorizer"}
     assert registry.get("restart").activation_requires_invocation
 
@@ -76,7 +78,6 @@ def test_disabled_memorizer_does_not_restore_functional_mcp(tmp_path):
     config.write_text(json.dumps(settings), encoding="utf-8")
     manager = MCPConnectionManager(
         config, memory_user_id="owner",
-        allowed_server_ids=frozenset({"memorizer"}),
     )
     assert manager.servers == {}
 
