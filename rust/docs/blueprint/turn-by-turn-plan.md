@@ -16,11 +16,12 @@
 - [ ] 로컬 clone에서 변경된 전체 파일 무결성 및 실행/빌드 경로 검증
 - 완료 기준: 원본 Git blob SHA를 변경하지 않고 위치만 이동, 총 파일 개수 일치, 2문서 존재.
 
-## Turn 01 — 기능·호환성 감사
-- 기존 `python/mai`, `python/portable`, `python/scripts`, `python/tests`, `python/benchmark` 전수 조사.
-- API route/event schema, 옵션/환경변수, 모델/메모리 DB 스키마, 서드파티, 라이선스, 실효 timeout, 툴 목록, 프로세스 수명주기 표 작성.
-- **유지/폐기/대체** 3분류 매트릭스 작성; MCP·Verifier·mcp_memorizer 및 관련 코드·문서 정리 대상 구체화. Sentence_Breaker 원본 알고리즘·라이선스 확보.
-- 완료 기준: 모든 핵심 기능이 새 모듈과 최소 1개 검증 시나리오에 매핑됨.
+## Turn 01 — 기능·호환성 감사 (정적 감사 산출물 작성, 실행 검증 미완료)
+- [x] 376개 전체 파일 경로·SHA·크기·기능 영역 인벤토리 생성; 핵심 구현과 대표 테스트 직접 확인. [ ] 나머지 파일 상세 함수별 호출 관계/모든 assertion 및 실기 경로 감사.
+- [x] 주요 API route, 설정, 자원 보호, 권한·모델·원격 수명주기 추출. [ ] 전체 event payload/DB schema/툴 목록/서드파티·라이선스/실효 timeout 확인.
+- [x] 유지/폐기/대체 및 인터페이스 통합 후보 보고서 작성. [ ] 외부 Sentence_Breaker 원본 알고리즘·라이선스·테스트 확보.
+- 산출물: `legacy-audit.md`, `behavior-test-spec.md`, `consolidation-opportunities.md`, `legacy-file-inventory.json`.
+- 미완료 게이트: 모든 핵심 기능/모든 도구·UI 이벤트의 상세 parity mapping과 golden traces. **정적 매핑 작성은 완료했으나 실제 동작 검증은 아직 아니다.**
 
 ## Turn 02 — Rust workspace 및 도구 체인
 - workspace/crate 골격, Cargo lockfile, 설정 파일/secret 분리, Windows 11 + Linux 빌드 및 CI 초기화.
@@ -91,7 +92,8 @@
 | 턴 | 현재 상태 | 비고 |
 | --- | --- | --- |
 | 00 | 완료(원격 Git 트리 구조 변경, 로컬 검증 별도) | 이 문서 생성 및 전체 파일 이동 |
-| 01–14 | 미착수 | 각 턴에서 업데이트 |
+| 01 | 정적 감사 작성 / 실기검증 대기 | 376파일 인벤토리, 핵심 코드·대표 테스트, 3개 보고서 |
+| 02–14 | 미착수 | Rust Core에 앞서 감사 미확정 계약을 보강 |
 
 ## 특별 주의
 - `python/`은 기존 프로젝트 전체의 경로 변경이므로 그 내부 launcher, workflow, 상대 경로는 즉시 실행 가능하다고 가정하지 않는다.
