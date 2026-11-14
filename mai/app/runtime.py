@@ -24,25 +24,25 @@ from ..llm.models import ModelConfig, model_generation_limit
 from ..llm.llamacpp import LlamaCppAdapter
 from ..llm.cloud_api import CloudAPIAdapter, configured_models
 from ..llm.llamacpp_router import SingleResidentRouter
-from ..mcp_tools.mcp_memorizer.admission import (
+from ..memory.admission import (
     should_skip_recall_without_new_facts,
     successful_memory_recall_tools,
     successful_non_recall_tool_results,
     successful_tool_names,
 )
-from mcp_memorizer.extraction.service import ModelFactExtractor
-from mcp_memorizer.integrations.mai import MAIExtractionAdapter
-from mcp_memorizer.memory.graph.repository import MemoryGraphRepository
-from mcp_memorizer.memory.index import SqliteFtsConceptIndex
-from mcp_memorizer.memory.recall.service import RecallService
-from mcp_memorizer.memory.runtime import MemoryRuntime
-from mcp_memorizer.memory.segmenter import SentenceBreakerSegmenter
+from ..memory.extraction.service import ModelFactExtractor
+from ..memory.graph.repository import MemoryGraphRepository
+from ..memory.index import SqliteFtsConceptIndex
+from ..memory.recall.service import RecallService
+from ..memory.runtime import MemoryRuntime
+from ..memory.segmenter import SentenceBreakerSegmenter
+from ..memory.tools import register_memory_tools
+from ..memory.working import WorkingGraph
 from ..tools.browser import BrowserSessionManager, register_browser_tools
 from ..tools.calculator import register_calculator_tools
 from ..tools.external import register_external_information_tools
 from ..tools.local import register_local_pc_tools, register_readonly_local_tools
 from ..tools.registry import ToolRegistry
-from ..mcp_tools.mcp_servers import MCPConnectionManager
 from ..tools.restart import register_restart_tool
 from ..tools.switch_workspace import register_switch_workspace_tool
 from ..remote.routing import register_routed_pc_tools, register_routed_service_tools
@@ -88,7 +88,7 @@ MAI uses two explicit execution targets for workspace-capable tools:
 - host: the MAI server PC. It is the default at the beginning of EACH NEW agent task.
 - client: the authenticated, connected owner-authorized Windows/Linux worker PC.
 To work on the client PC, first activate switch_workspace via tool_manual, then call switch_workspace(target="client") ONCE. After it succeeds, EVERY subsequent workspace-capable tool call in this SAME task (file, code, document, terminal, calculator/time utilities) executes on client automatically. Do NOT switch again before each tool call and do NOT add location arguments to individual tools. To return to the MAI server PC during this task, call switch_workspace(target="host") ONCE; all subsequent workspace-capable calls then execute on host. The selected target is maintained across model rounds and tool activations until another successful switch or the current agent task ends. A new user task starts at host again; it is not a persistent conversation-wide or global preference.
-Host-only tools (internet/web, browser, memory, restart, downloads, tool-result reads and host control) ALWAYS execute on host, even when client is selected; they do not change the selected target. Switching to client requires an authenticated connected worker; a failed switch preserves the prior target and a disconnected client causes explicit failure, NEVER a silent fallback to host. Use the worker's own file paths and shell syntax when client is selected; terminal_run defaults to Bash on either OS, and Windows PowerShell must be explicitly requested. The built-in tools from mai/tools are native ToolRegistry functions (for example terminal_run and file_write); only the independent memory MCP tool retains its server namespace. The MAI host resolves the worker session; never provide session IDs, credentials, pairing or installation arguments as tool inputs.
+Host-only tools (internet/web, browser, memory, restart, downloads, tool-result reads and host control) ALWAYS execute on host, even when client is selected; they do not change the selected target. Switching to client requires an authenticated connected worker; a failed switch preserves the prior target and a disconnected client causes explicit failure, NEVER a silent fallback to host. Use the worker's own file paths and shell syntax when client is selected; terminal_run defaults to Bash on either OS, and Windows PowerShell must be explicitly requested. The built-in tools from mai/tools are native ToolRegistry functions (for example terminal_run and file_write); memory_search is a built-in native tool using the restored memory engine. The MAI host resolves the worker session; never provide session IDs, credentials, pairing or installation arguments as tool inputs.
 
 For temporary probes, debug scripts, generated intermediate JSON and command-output captures, use file_write(lifecycle="temporary") if a script is needed across tool calls. If terminal_run creates such scratch files directly through shell redirection or a script, declare each NEW output in terminal_run(temporary_outputs=[...]) before execution so MAI can remove it when this task ends, including failed or cancelled runs. The default file_write lifecycle is persistent and terminal outputs not declared temporary are NOT cleaned automatically. Never mark an existing file or a user-requested deliverable temporary. Scratch cleanup on client is not yet supported: do not claim that a client-created file will be removed automatically. Do not assume historical untracked files are safe to delete.
 
@@ -197,7 +197,7 @@ class MAIRuntime:
             yield
 
     async def _postprocess_memory_with_model_scope(self, **kwargs):
-        adapter = getattr(getattr(kwargs.get("fact_extractor"), "adapter", None), "llm_adapter", None)
+        adapter = getattr(kwargs.get("fact_extractor"), "adapter", None)
         if isinstance(adapter, CloudAPIAdapter):
             await self._postprocess_memory(**kwargs)
         else:
@@ -239,7 +239,7 @@ class MAIRuntime:
                     ModelConfig(model=clean_model, host=self.llamacpp_host, think=False),
                     router=self._llamacpp_router,
                 )
-            extractor = ModelFactExtractor(MAIExtractionAdapter(adapter))
+            extractor = ModelFactExtractor(adapter)
             self._fact_extractors[clean_model] = extractor
         return extractor
 
@@ -308,11 +308,13 @@ class MAIRuntime:
     def _registry_for(
         self,
         principal: AccessPrincipal,
+        working: WorkingGraph,
         tool_result_store: ToolResultStore,
         browser_manager: BrowserSessionManager,
         remote_session_id: str | None = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
+        register_memory_tools(registry, self.memory, working, user_id=principal.memory_user_id)
         workspace = WorkspaceContext(owner_id=principal.db_id) if principal.role is AccessRole.OWNER else None
         registry.workspace = workspace
         # Restore the flag_native_tool model-to-ToolRegistry mounting path:
@@ -345,15 +347,6 @@ class MAIRuntime:
         else:
             raise ValueError(f"unsupported access role: {principal.role!r}")
         register_tool_result_tools(registry, tool_result_store)
-        mcp_config = os.environ.get("MAI_MCP_CONFIG", "").strip()
-        if mcp_config and principal.role is AccessRole.OWNER:
-            # Memory remains an independent MCP. Functional native groups,
-            # host control and workspace selection are registered directly.
-            manager = MCPConnectionManager(
-                mcp_config, memory_user_id=principal.memory_user_id,
-            )
-            manager.register(registry)
-            registry.mcp_manager = manager
         return registry
 
     async def run_user_message(
@@ -396,9 +389,10 @@ class MAIRuntime:
         verifier_adapter = adapter
         fact_extractor = self._fact_extractor_for(selected_model)
 
+        working = WorkingGraph()
         tool_result_store = ToolResultStore(max_inline_chars=self.max_inline_tool_result_chars)
         browser_manager = BrowserSessionManager()
-        registry = self._registry_for(principal, tool_result_store, browser_manager, remote_session_id)
+        registry = self._registry_for(principal, working, tool_result_store, browser_manager, remote_session_id)
 
         max_identical_failures = int(os.environ.get("AGENT_MAX_IDENTICAL_FAILURES", "5"))
         agent = AgentRuntime(
@@ -448,11 +442,7 @@ class MAIRuntime:
                     ),
                 )
         finally:
-            try:
-                if registry.mcp_manager is not None:
-                    await registry.mcp_manager.close()
-            finally:
-                await browser_manager.close_all()
+            await browser_manager.close_all()
         answer = result.content
         model_rounds = result.model_rounds
         tool_executions = result.tool_executions
