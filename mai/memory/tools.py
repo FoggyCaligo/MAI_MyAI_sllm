@@ -79,6 +79,16 @@ def register_memory_tools(registry: ToolRegistry, memory: MemoryRuntime, working
         limit: int | None = None,
     ) -> dict[str, object]:
         if node_id is not None:
+            # A shared Concept node may link several users' memories. Do not
+            # authorize expansion solely via reachability to this user's anchor.
+            anchor = memory.graph.get_user_anchor(user_id)
+            node = memory.graph.get_node(node_id)
+            if anchor is None or not (
+                (node.node_type == "anchor" and node.id == anchor.id) or
+                (node.node_type in {"fact", "utterance"} and
+                 node.payload.get("user_id") == user_id)
+            ):
+                raise PermissionError("memory node does not belong to the current user")
             return memory.memory_search(working, user_id=user_id, node_id=node_id)
         effective_query = query if query is not None else keyword
         if effective_query is None:
