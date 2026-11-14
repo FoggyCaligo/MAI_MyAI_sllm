@@ -34,7 +34,7 @@ MAI는 `memorizer__memory_search`라는 **MCP 서버별 이름**으로 도구를
 MAI 기본 개인 데이터 디렉터리는 `mai/mcp_tools/mcp_memorizer/MAI_MEMORY/`다. 메모리와 분해기 누적 DB는 그 아래의 `memory.sqlite3`, `sentence_breaker.sqlite3`를 사용한다. **이 위치는 MAI 호스트의 설정**이며 독립 패키지의 기본 경로와 다르다.
 
 - 개인 DB 저장소와 경로 이전: [MAI 데이터 저장소 관리](memory-repository.md)
-- MCP 연결·활성화: [MCP 지연 로딩](mcp-lazy-loading.md)
+- 기억 MCP 연결·활성화: [MCP_memorizer 연동](../mai/mcp_tools/README.md)
 - 전체 요청 실행 흐름: [MAI 실행 구조](architecture.md)
 - 모델·Portable 설치: [설치 안내](../setup.md), [Portable 안내](../portable/README.md)
 - MAI 회귀 테스트: `tests/test_external_memorizer_integration.py`, `tests/test_unified_memory_lookup.py`, `tests/test_recall_ranked_limit.py`
