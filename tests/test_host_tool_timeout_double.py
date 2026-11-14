@@ -15,8 +15,9 @@ def test_owner_host_pc_timeouts_are_doubled(tmp_path):
     local = ToolRegistry()
     register_local_pc_tools(local, cwd=tmp_path)
     assert local.get("document_read").timeout_seconds == 120
-    assert local.get("file_search").timeout_seconds == 120
-    assert local.get("code_search").timeout_seconds == 120
+    assert local.get("code_symbols").timeout_seconds == 120
+    assert not local.has("file_search")
+    assert not local.has("code_search")
     # Terminal timeout is enforced by terminal_run's handler, not ToolDefinition.
     assert local.get("terminal_run").timeout_seconds is None
 
@@ -30,7 +31,7 @@ def test_host_readonly_tools_use_same_doubled_timeouts(tmp_path):
     registry = ToolRegistry()
     register_readonly_local_tools(registry, cwd=tmp_path)
     assert registry.get("document_read").timeout_seconds == 120
-    assert registry.get("code_search").timeout_seconds == 120
+    assert registry.get("code_symbols").timeout_seconds == 120
 
 
 def test_remote_service_timeout_is_twice_current_local_service_timeout():
@@ -41,8 +42,6 @@ def test_remote_service_timeout_is_twice_current_local_service_timeout():
     worker = build_registry()
     # Portable services have twice their local execution budget on workers.
     for name, remote_timeout in {
-        "current_time": 40,
-        "calculator": 40,
         "market_data": 120,
     }.items():
         assert worker.get(name).timeout_seconds == remote_timeout
@@ -66,8 +65,10 @@ def test_remote_service_timeout_is_twice_current_local_service_timeout():
 
 def test_remote_pc_limits_double_current_local(tmp_path):
     worker = build_registry(cwd=tmp_path)
-    assert worker.get("file_search").timeout_seconds == 240
-    assert worker.get("code_search").timeout_seconds == 240
+    assert worker.get("document_read").timeout_seconds == 240
+    assert worker.get("code_symbols").timeout_seconds == 240
+    assert not worker.has("file_search")
+    assert not worker.has("code_search")
     assert worker.get("terminal_run").timeout_seconds is None
 
 

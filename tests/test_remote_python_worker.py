@@ -12,10 +12,10 @@ def test_remote_python_worker_reuses_local_native_schema():
     assert registry.get("file_write").input_model is FileWriteInput
     assert registry.has("terminal_run")
     assert registry.has("document_edit")
-    assert registry.has("code_search")
+    assert not registry.has("code_search")
     assert registry.has("code_symbols")
-    assert registry.has("current_time")
-    assert registry.has("calculator")
+    assert not registry.has("current_time")
+    assert not registry.has("calculator")
     assert registry.has("market_data")
     assert not registry.has("web_search")
     assert not registry.has("web_fetch")

@@ -70,8 +70,8 @@ def test_csv_aggregation_available_to_owner_and_trial(tmp_path):
     for register in (register_local_pc_tools, register_readonly_local_tools):
         registry = ToolRegistry()
         register(registry, cwd=tmp_path)
-        schema = registry.get("csv_aggregate").native_schema()
-        assert schema["function"]["name"] == "csv_aggregate"
+        assert not registry.has("csv_aggregate")
+        assert registry.has("document_read")
 
 
 def test_verifier_csv_contract_requires_matching_computed_lineage():

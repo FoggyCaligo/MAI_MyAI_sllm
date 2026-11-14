@@ -103,29 +103,13 @@ def test_code_tools_are_native_registry_tools(tmp_path):
     registry = ToolRegistry()
     register_code_tools(registry, cwd=tmp_path)
 
-    assert {"code_search", "code_read", "code_symbols"}.issubset(registry.names())
-
-    result = asyncio.run(
-        registry.invoke(
-            NativeToolCall(
-                name="code_search",
-                arguments={
-                    "root": ".",
-                    "query": "target",
-                    "mode": "literal",
-                    "case_sensitive": True,
-                    "include_globs": ["*.py"],
-                    "exclude_globs": [],
-                    "encoding": "utf-8",
-                    "start_line": 1,
-                    "end_line": 1,
-                    "max_results": 20,
-                    "max_file_bytes": 100000,
-                },
-            )
-        )
-    )
-    assert result["results"][0]["relative_path"] == "sample.py"
+    assert set(registry.names()) == {"code_symbols"}
+    assert not registry.has("code_search")
+    assert not registry.has("code_read")
+    result = asyncio.run(registry.invoke(NativeToolCall(
+        name="code_symbols", arguments={"path": "sample.py", "parser": "python"},
+    )))
+    assert isinstance(result["symbols"], list)
 
 
 @pytest.mark.parametrize(

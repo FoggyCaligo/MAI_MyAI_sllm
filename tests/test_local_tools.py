@@ -27,21 +27,10 @@ def test_local_pc_bundle_registers_all_current_native_tools(tmp_path: Path) -> N
     register_local_pc_tools(registry, cwd=tmp_path)
 
     assert registry.names() == (
-        "file_list",
-        "file_search",
-        "document_read",
-        "file_write",
-        "file_delete",
-        "file_move",
-        "file_copy",
-        "csv_aggregate",
-        "code_search",
-        "code_read",
-        "code_symbols",
-        "code_edit",
-        "document_edit",
-        "terminal_run",
+        "document_read", "file_write", "code_symbols", "code_edit",
+        "document_edit", "terminal_run",
     )
+
 
 
 def test_trial_bundle_can_write_only_inside_upload_root(tmp_path: Path) -> None:
@@ -102,24 +91,9 @@ def test_filesystem_tools_support_create_read_write_copy_move_delete(tmp_path: P
     )))
     assert (tmp_path / "a.txt").read_text() == "changed"
 
-    run(registry.invoke(NativeToolCall(
-        name="file_copy",
-        arguments={"source": "a.txt", "destination": "b.txt"},
-    )))
-    assert (tmp_path / "b.txt").read_text() == "changed"
-
-    run(registry.invoke(NativeToolCall(
-        name="file_move",
-        arguments={"source": "b.txt", "destination": "c.txt"},
-    )))
-    assert not (tmp_path / "b.txt").exists()
-    assert (tmp_path / "c.txt").exists()
-
-    run(registry.invoke(NativeToolCall(
-        name="file_delete",
-        arguments={"path": "c.txt"},
-    )))
-    assert not (tmp_path / "c.txt").exists()
+    for retired in ("file_copy", "file_move", "file_delete"):
+        assert not registry.has(retired)
+    assert (tmp_path / "a.txt").read_text() == "changed"
 
 
 def test_file_write_replaces_existing_file(tmp_path: Path) -> None:
@@ -145,25 +119,12 @@ def test_file_write_creates_missing_file(tmp_path: Path) -> None:
     assert (tmp_path / "missing.txt").read_text() == "x"
 
 
-def test_file_search_and_list_return_structured_results(tmp_path: Path) -> None:
-    (tmp_path / "nested").mkdir()
-    (tmp_path / "nested" / "alpha.py").write_text("print('x')")
-    (tmp_path / "beta.txt").write_text("b")
-
+def test_file_search_and_list_are_not_native_tools(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_filesystem_tools(registry, cwd=tmp_path)
-
-    listed = run(registry.invoke(NativeToolCall(
-        name="file_list",
-        arguments={"path": ".", "recursive": True},
-    )))
-    assert any(item["name"] == "alpha.py" for item in listed["items"])
-
-    searched = run(registry.invoke(NativeToolCall(
-        name="file_search",
-        arguments={"root": ".", "pattern": "*.py"},
-    )))
-    assert searched["results"] == [str(tmp_path / "nested" / "alpha.py")]
+    assert not registry.has("file_list")
+    assert not registry.has("file_search")
+    assert registry.has("document_read")
 
 
 def test_absolute_path_is_not_confined_to_registered_cwd(tmp_path: Path) -> None:
@@ -189,7 +150,7 @@ def test_terminal_run_schema_keeps_timeout_internal(tmp_path: Path) -> None:
     register_terminal_tools(registry, cwd=tmp_path)
 
     parameters = registry.get("terminal_run").native_schema()["function"]["parameters"]
-    assert set(parameters["properties"]) == {"command", "cwd", "shell"}
+    assert set(parameters["properties"]) == {"command", "cwd", "shell", "temporary_outputs"}
 
     with pytest.raises(ToolArgumentsError):
         run(registry.invoke(NativeToolCall(
