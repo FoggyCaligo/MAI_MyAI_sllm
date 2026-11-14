@@ -131,9 +131,12 @@ class MCPConnectionManager:
             if not isinstance(body, dict) or body.get("version") != 1:
                 raise ValueError("unsupported MCP catalog version")
             for entry in body.get("tools", []):
-                self._check_tool_record(entry)
+                # Ignore stale functional-MCP records before validating them.
+                if not isinstance(entry, dict) or entry.get("server") != "memorizer":
+                    continue
                 if entry["server"] not in self.servers:
                     continue
+                self._check_tool_record(entry)
                 full_name = f'{entry["server"]}.{entry["name"]}'
                 if full_name in self.catalog:
                     raise ValueError(f"duplicate cached MCP tool: {full_name}")
