@@ -25,6 +25,7 @@ class WorkspaceContext:
     def __init__(self, *, owner_id: str):
         self.owner_id = owner_id
         self._current = WorkspaceSnapshot("host", None)
+        self.used_client_session_ids: set[str] = set()
 
     @property
     def target(self) -> WorkspaceName:
@@ -51,6 +52,7 @@ class WorkspaceContext:
         if session is None or not session.connected:
             # Do not change the workspace on failed selection.
             raise RemoteExecutionError("No authenticated connected remote worker for this owner")
+        self.used_client_session_ids.add(session.session_id)
         self._current = WorkspaceSnapshot("client", session.session_id)
         return {"ok": True, "workspace": "client", "changed": True, "platform": "remote-worker"}
 
