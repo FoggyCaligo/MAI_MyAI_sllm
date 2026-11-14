@@ -11,9 +11,9 @@
 | [Portable](../portable/README.md) | `portable/` 실행기·카탈로그 | 단일 모델 상주, 운영체제별 런타임, Memory 별도 복제 |
 | [실행 구조](architecture.md) | `mai/app/runtime.py`, `mai/agent/loop.py` | 요청 흐름과 요청별 Verifier 활성화 |
 | [답변 검증](verifier.md) | `mai/agent/verification.py`, `settings.yaml` | 현재 기본 OFF와 추가 품질 검토 OFF 구분 |
-| [장기기억 연동](memory.md) | `mai/app/runtime.py`, 외부 `MCP_memorizer` | MAI의 후처리·사용자 권한·도구 호출 설명만 유지; 엔진 내부 구조는 독립 원본 문서로 이관 |
+| [장기기억 연동](memory.md) | `mai/app/runtime.py`, `mai/memory/` | 네이티브 검색·그래프·추출과 사용자별 저장을 설명 |
 | [기억 저장소 분리](memory-repository.md) | `mai/app/server.py`, Portable 실행기, `.gitignore` | `MAI_MEMORY/` 클론과 경로, 기존 Git 추적 DB 경고 |
-| [문장 분해기 안내](sentence-breaker.md) | 독립 `Sentence_Breaker`, `MCP_memorizer/memory/segmenter.py` | 알고리즘 원본은 Sentence_Breaker, Concept 연동은 MCP_memorizer로 이관; MAI는 DB 경로만 문서화 |
+| [문장 분해기 안내](sentence-breaker.md) | 독립 `Sentence_Breaker`, `mai/memory/segmenter.py` | 알고리즘 원본은 Sentence_Breaker, Concept 연동은 현재 MAI의 네이티브 기억 모듈에서 수행 |
 | [도구 결과](TOOL_RESULT_PAGINATION.md) | `mai/tools/web.py`, `mai/agent/tool_results.py` | 빈 결과의 명시적 성공 계약, 원문/발췌 구별 |
 | [OS 및 인코딩](platform-boundary.md) | `mai/platform/`, `mai/tools/terminal.py` | Git Bash·PowerShell·Linux, UTF-8와 추가 디코딩 후보 |
 | [Linux 점검](linux-tool-audit.md) | Linux 실행기 및 `mai/platform/linux.py` | 기본 셸 Bash, 실기기 미검증 표시 |

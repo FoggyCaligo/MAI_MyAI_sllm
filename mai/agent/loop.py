@@ -24,6 +24,7 @@ from .guards import (
     content_fingerprint,
 )
 from .tool_results import ToolResultStore
+from .tool_errors import tool_failure_payload
 from .verification import FinalGroundingVerifier, FinalVerificationResult
 
 
@@ -756,10 +757,7 @@ class AgentLoop:
                 f"native tool '{call.name}' is registered but not activated in the current model round; "
                 "activate it with tool_manual before using its schema. This is not a missing capability."
             )
-            payload = {
-                "ok": False, "error_type": type(exc).__name__, "message": str(exc),
-                "required_activation": {"name": "tool_manual", "arguments": {"tools": [call.name]}},
-            }
+            payload = tool_failure_payload(exc, required_activation={"name": "tool_manual", "arguments": {"tools": [call.name]}})
             source_content = _serialize_tool_content(payload)
             model_content, compact_content = self._model_contents(source_content)
             return ToolExecution(
@@ -782,13 +780,7 @@ class AgentLoop:
                 unknown = sorted(set(requested) - frozenset(self.registry.names()))
                 if unknown:
                     exc = UnknownToolError(f"tool_manual requested unknown tools: {unknown}")
-                    payload = {
-                        "ok": False,
-                        "error_type": type(exc).__name__,
-                        "message": str(exc),
-                        "unknown_tools": unknown,
-                        "available_tools": list(self.registry.names()),
-                    }
+                    payload = tool_failure_payload(exc, unknown_tools=unknown, available_tools=list(self.registry.names()))
                     source_content = _serialize_tool_content(payload)
                     model_content, compact_content = self._model_contents(source_content)
                     return ToolExecution(
@@ -811,7 +803,7 @@ class AgentLoop:
             else:
                 value = await self.registry.invoke(call)
         except Exception as exc:
-            payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+            payload = tool_failure_payload(exc)
             source_content = _serialize_tool_content(payload)
             model_content, compact_content = self._model_contents(source_content)
             return ToolExecution(
@@ -846,7 +838,7 @@ class AgentLoop:
         )
 
     def _guard_failure_execution(self, call: NativeToolCall, exc: AgentGuardError) -> ToolExecution:
-        payload = {"ok": False, "error_type": type(exc).__name__, "message": str(exc)}
+        payload = tool_failure_payload(exc)
         source_content = _serialize_tool_content(payload)
         model_content, compact_content = self._model_contents(source_content)
         return ToolExecution(

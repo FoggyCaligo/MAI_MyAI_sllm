@@ -37,9 +37,9 @@ def ensure_default_mcp_config(*, memory_db_path: str | Path,
                               config_path: str | Path | None = None) -> Path:
     """Create an editable private MCP config once, never overwrite user toggles.
 
-    The built-in memorizer is configured with MAI's existing DB directory.
-    Stdio executes the current MAI Portable Python interpreter. Disabling an
-    entry changes the next startup catalog without uninstalling anything.
+    Memory search is now a host-native tool, not an MCP child.
+    Stdio runs functional MCP servers with the MAI Python interpreter. Disabling
+    an entry changes the next startup catalog without uninstalling anything.
     """
     import sys
     root = Path(memory_db_path).expanduser().resolve().parent

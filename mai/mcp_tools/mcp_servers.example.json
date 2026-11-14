@@ -3,19 +3,6 @@
   "catalog_path": "mcp_catalog.json",
   "servers": [
     {
-      "id": "memorizer",
-      "enabled": true,
-      "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",
-      "args": [
-        "-m",
-        "mai.mcp_tools.mcp_memorizer.server"
-      ],
-      "env": {
-        "MEMORIZER_USER_ID": "{memory_user_id}",
-        "MEMORIZER_DATA_DIR": "D:/REPLACE_WITH_PRIVATE_TEST_MEMORY_PATH"
-      }
-    },
-    {
       "id": "remote",
       "enabled": true,
       "command": "D:/REPLACE_WITH_MAI_PATH/portable/portable-runtimes/python/python.exe",

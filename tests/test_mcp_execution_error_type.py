@@ -1,4 +1,4 @@
-"""MCP tool failure is not a transport/connection failure."""
+"""MCP file tool failure is not a transport/connection failure."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -16,30 +16,30 @@ def test_mcp_tool_validation_failure_preserves_server_error_type(tmp_path):
     config = tmp_path / "mcp_servers.json"
     config.write_text(json.dumps({
         "servers": [{
-            "id": "memorizer",
+            "id": "mai_file",
             "command": "python",
-            "args": ["-m", "mcp_memorizer.mcp_server"],
+            "args": ["-m", "mai.mcp_tools.native_groups"],
         }]
     }), encoding="utf-8")
     manager = MCPConnectionManager(config)
-    manager.catalog["memorizer.memory_search"] = {
-        "server": "memorizer",
-        "name": "memory_search",
+    manager.catalog["mai_file.document_read"] = {
+        "server": "mai_file",
+        "name": "document_read",
     }
-    details = "ValidationError: node_id forbids keyword and limit"
+    details = "ValidationError: invalid path"
 
     class Session:
         async def call_tool(self, name, arguments):
-            assert name == "memory_search"
-            assert arguments == {"node_id": 2, "limit": 50}
+            assert name == "document_read"
+            assert arguments == {"path": "missing.txt"}
             return SimpleNamespace(isError=True, content=[details])
 
-    manager._sessions["memorizer"] = Session()
+    manager._sessions["mai_file"] = Session()
 
     async def run():
-        await manager.call("memorizer.memory_search", {"node_id": 2, "limit": 50})
+        await manager.call("mai_file.document_read", {"path": "missing.txt"})
 
-    with pytest.raises(MCPToolExecutionError, match="node_id forbids keyword and limit") as exc:
+    with pytest.raises(MCPToolExecutionError, match="invalid path") as exc:
         asyncio.run(run())
     assert not isinstance(exc.value, MCPConnectionError)
 
@@ -47,12 +47,12 @@ def test_mcp_tool_validation_failure_preserves_server_error_type(tmp_path):
 def test_mcp_tool_unactivated_still_reports_connection_error(tmp_path):
     config = tmp_path / "mcp_servers.json"
     config.write_text(json.dumps({
-        "servers": [{"id": "memorizer", "command": "python", "args": []}]
+        "servers": [{"id": "mai_file", "command": "python", "args": []}]
     }), encoding="utf-8")
     manager = MCPConnectionManager(config)
-    manager.catalog["memorizer.memory_search"] = {
-        "server": "memorizer",
-        "name": "memory_search",
+    manager.catalog["mai_file.document_read"] = {
+        "server": "mai_file",
+        "name": "document_read",
     }
     with pytest.raises(MCPConnectionError, match="not activated"):
-        asyncio.run(manager.call("memorizer.memory_search", {"keyword": "hello"}))
+        asyncio.run(manager.call("mai_file.document_read", {"path": "hello.txt"}))

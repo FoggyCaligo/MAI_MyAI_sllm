@@ -278,8 +278,8 @@ def register_terminal_tools(
             "Shell output files not declared are persistent and are NOT auto-deleted. "
             "Client workspace temporary_outputs is unsupported until remote cleanup is implemented. "
             "Nonzero exits and output limit violations fail visibly. "
-            "Windows terminal output is decoded as UTF-8 strictly; stderr contents "
-            "are not used as a heuristic to determine success."
+            "Captured stdout/stderr use strict UTF-8-SIG decoding first, then CP949, EUC-KR, or ISO-2022-KR; "
+            "the actual encoding is returned in stdout_encoding/stderr_encoding, and stderr alone does not determine success."
         ),
         input_model=TerminalRunInput,
         handler=handler,

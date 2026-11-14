@@ -18,7 +18,7 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 
 `check`는 필수 파일과 GGUF 카탈로그를 확인하지만 GPU 추론 성공을 보장하지 않는다. `start`는 llama.cpp의 단일 상주 모델 라우터를 실행한 뒤 MAI 웹 서버를 시작한다. 기본 웹 주소는 `http://127.0.0.1:8000`이다.
 
-장기기억 엔진의 내부 구조·검색·추출 알고리즘은 [독립 MCP_memorizer](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md)에서, 문자 경로 분해 알고리즘은 [Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)에서 관리한다. MAI의 사용자별 호출·작업 수명주기는 [MAI 기억 연동](docs/memory.md)을 참고한다.
+MAI 장기기억의 그래프·검색·추출 구현은 **내장 `mai/memory/`**에 있으며, 모델에는 네이티브 `memory_search`만 노출한다. 별도 `MCP_memorizer`는 현재 MAI 런타임 의존성이 아니다. 분해 알고리즘은 [Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)를 사용한다. 상세 내용은 [MAI 기억 구조](docs/memory.md) 참조.
 
 ## 기억·대화 데이터 백업
 
@@ -34,7 +34,7 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 | 에이전트 실행·도구 호출 | `mai/agent/` |
 | 사실·수치 검증 | `mai/agent/verification.py` |
 | 기억과 검색 | `mai/memory/`, SQLite와 FTS5 |
-| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `at_remote_pc=true` 지정 |
+| 로컬·원격 Native 도구 | `mai/tools/`, `mai/remote/`; Owner는 `remote__switch_workspace(target="client")`로 인증된 워커를 선택 |
 | 공개 웹 서버 | `mai/app/`; Tailscale Funnel/Cloudflare는 선택형 별도 기능 |
 | Portable 준비·검증 | `mai.sh`, `mai.ps1`, `portable/` |
 

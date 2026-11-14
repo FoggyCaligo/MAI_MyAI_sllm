@@ -114,7 +114,7 @@ def test_tool_failure_is_returned_as_visible_structured_tool_result() -> None:
     ])
     result = run(AgentRuntime(adapter, registry).run_user_message("try"))
     payload = json.loads(result.tool_executions[1].content)
-    assert payload == {"ok": False, "error_type": "PermissionError", "message": "denied"}
+    assert payload == {"ok": False, "error_type": "PermissionError", "error_category": "permission_denied", "retryable": False, "message": "denied"}
     assert result.tool_executions[1].handler_started is True
 
 

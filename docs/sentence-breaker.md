@@ -4,7 +4,7 @@ Sentence_Breaker는 **MAI 및 MCP_memorizer와 같은 개발자가 만든 독립
 
 문자별 연결 경로, 문장 층, SQLite 스키마, 연속 경로 생존 상태, 동적 계획법 비교 규칙, **분해 후 학습** 순서를 포함한 알고리즘 명세는 [Sentence_Breaker 원본 문서](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)로 이관했다. 이 문서는 별도의 알고리즘 사본을 보유하지 않으며 단일 원본 링크만 유지한다.
 
-MCP_memorizer가 해당 분해기를 `SentenceBreakerSegmenter`로 호출하고 반환된 조각을 Concept 그래프·FTS5 색인으로 연결하는 방식은 [MCP_memorizer의 Sentence_Breaker 연동 문서](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/sentence-breaker.md)에서 관리한다.
+MAI는 `mai/memory/segmenter.py`의 `SentenceBreakerSegmenter`로 분해기를 호출하고, `mai/memory/`에서 Concept 그래프·FTS5 색인으로 연결한다. 독립 MCP_memorizer는 별도의 프로젝트로 유지된다.
 
 ## MAI가 설정하는 경계
 
