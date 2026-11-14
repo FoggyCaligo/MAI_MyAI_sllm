@@ -18,7 +18,7 @@ Windows PowerShell에서는 `./mai.ps1 setup`, `./mai.ps1 check`, `./mai.ps1 sta
 
 `check`는 필수 파일과 GGUF 카탈로그를 확인하지만 GPU 추론 성공을 보장하지 않는다. `start`는 llama.cpp의 단일 상주 모델 라우터를 실행한 뒤 MAI 웹 서버를 시작한다. 기본 웹 주소는 `http://127.0.0.1:8000`이다.
 
-장기기억 엔진의 내부 구조·검색·추출 알고리즘은 [독립 MCP_memorizer](https://github.com/FoggyCaligo/MCP_memorizer/blob/dev/docs/architecture.md)에서, 문자 경로 분해 알고리즘은 [Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)에서 관리한다. MAI의 사용자별 호출·작업 수명주기는 [MAI 기억 연동](docs/memory.md)을 참고한다.
+장기기억 엔진은 `mai/memory/`의 Native 구현을 사용한다. 기존 `memory_search` 한 개에 MCP_memorizer의 Boolean 및 Fact/Utterance 검색 개선을 통합했다. 문자 경로 분해 알고리즘은 [Sentence_Breaker](https://github.com/FoggyCaligo/Sentence_Breaker/blob/dev/docs/algorithm.md)를 사용한다. [Native 기억 구조와 저장 수명주기](docs/memory.md)를 참고한다.
 
 ## 기억·대화 데이터 백업
 
