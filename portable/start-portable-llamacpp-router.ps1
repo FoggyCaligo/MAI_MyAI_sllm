@@ -65,13 +65,23 @@ $arguments = @('--models-preset', ('"' + $ini + '"'), '--models-max', "$ModelsMa
                '--host', '127.0.0.1', '--port', "$routerPort", '--jinja')
 if ($guardEnabled) { $arguments += @('--models-memory-margin', [string]$catalog.min_free_vram_mib) }
 if ($preserveReasoning) { $arguments += '--reasoning-preserve' } else { $arguments += '--no-reasoning-preserve' }
+# Persist native subprocess stdout/stderr independently of console availability.
+# A unique directory per launch prevents old evidence from being overwritten.
+$logRoot = Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/console-logs'
+$logDir = Join-Path $logRoot ((Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + $PID)
+New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+$routerStdout = Join-Path $logDir 'llama-router.stdout.log'
+$routerStderr = Join-Path $logDir 'llama-router.stderr.log'
+$gatewayStdout = Join-Path $logDir 'memory-gateway.stdout.log'
+$gatewayStderr = Join-Path $logDir 'memory-gateway.stderr.log'
+Write-Host "MAI native console logs: $logDir"
 $process = $null
 $gateway = $null
 try {
-    $process = Start-Process -FilePath $server -ArgumentList $arguments -WorkingDirectory $iniDir -PassThru -NoNewWindow
+    $process = Start-Process -FilePath $server -ArgumentList $arguments -WorkingDirectory $iniDir -PassThru -NoNewWindow -RedirectStandardOutput $routerStdout -RedirectStandardError $routerStderr
     $ready = $false
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
-        if ($process.HasExited) { throw "llama.cpp router exited with $($process.ExitCode)" }
+        if ($process.HasExited) { throw "llama.cpp router exited with $($process.ExitCode); logs: $routerStdout, $routerStderr" }
         try {
             $listing = Invoke-RestMethod -Uri "http://127.0.0.1:$routerPort/v1/models" -TimeoutSec 2
             $ids = @($listing.data | ForEach-Object { $_.id })
@@ -79,7 +89,7 @@ try {
         } catch { }
         Start-Sleep -Seconds 1
     }
-    if (-not $ready) { throw 'Router model aliases not registered within startup deadline' }
+    if (-not $ready) { throw "Router model aliases not registered within startup deadline; logs: $routerStdout, $routerStderr" }
     if ($guardEnabled) {
         $gatewayArgs = @('-m', 'portable.llamacpp_memory_gateway',
             '--upstream', 'http://127.0.0.1:8081',
@@ -87,17 +97,17 @@ try {
             '--min-free-vram-mib', [string]$catalog.min_free_vram_mib,
             '--min-available-ram-mib', [string]$catalog.min_available_ram_mib,
             '--telemetry-path', ('"' + (Join-Path $root 'mai/mcp_tools/mcp_memorizer/MAI_MEMORY/gpu_ram_safety.jsonl') + '"'))
-        $gateway = Start-Process -FilePath $python -ArgumentList $gatewayArgs -WorkingDirectory $root -PassThru -NoNewWindow
+        $gateway = Start-Process -FilePath $python -ArgumentList $gatewayArgs -WorkingDirectory $root -PassThru -NoNewWindow -RedirectStandardOutput $gatewayStdout -RedirectStandardError $gatewayStderr
         $gatewayReady = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            if ($gateway.HasExited) { throw "Memory gateway exited with $($gateway.ExitCode)" }
+            if ($gateway.HasExited) { throw "Memory gateway exited with $($gateway.ExitCode); logs: $gatewayStdout, $gatewayStderr" }
             try {
                 $listing = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/v1/models' -TimeoutSec 2
                 if (@($listing.data).Count -gt 0) { $gatewayReady = $true; break }
             } catch { }
             Start-Sleep -Seconds 1
         }
-        if (-not $gatewayReady) { throw 'Memory gateway did not become ready' }
+        if (-not $gatewayReady) { throw "Memory gateway did not become ready; logs: $gatewayStdout, $gatewayStderr" }
     }
     Write-Host 'MAI llama.cpp router endpoint ready on 127.0.0.1:8080; '
     Write-Host "Shared memory guard: $guardEnabled"
