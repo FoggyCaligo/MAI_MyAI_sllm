@@ -207,7 +207,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # closed immediately; real tool sessions open lazily upon tool_manual.
     startup_discovery_started = time.monotonic()
     logger.info("MAI startup phase=mcp_discovery status=starting")
-    discovery = MCPConnectionManager(mcp_config_path, memory_user_id="catalog-discovery")
+    discovery = MCPConnectionManager(
+        mcp_config_path, memory_user_id="catalog-discovery",
+        allowed_server_ids=frozenset({"memorizer"}),
+    )
     discovered_tools = await discovery.refresh_catalog()
     logger.info("MAI startup phase=mcp_discovery status=completed elapsed_seconds=%.3f",
                 time.monotonic() - startup_discovery_started)
