@@ -58,4 +58,4 @@ def test_main_prompt_has_only_native_workspace_name_and_task_scope():
     assert 'switch_workspace(target="client")' in AGENT_SYSTEM_PROMPT
     assert "remote__switch_workspace" not in AGENT_SYSTEM_PROMPT
     assert "server__tool" not in AGENT_SYSTEM_PROMPT
-    assert "new user task starts at host" in AGENT_SYSTEM_PROMPT.lower()
+    assert "at the start of every new task" in AGENT_SYSTEM_PROMPT.lower()
