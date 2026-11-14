@@ -18,7 +18,7 @@ from mai.tools.calculator import register_calculator_tools
 from mai.tools.external import register_external_information_tools
 from mai.tools.browser import BrowserSessionManager, register_browser_tools
 from mai.tools.registry import ToolRegistry
-from mai.mcp_tools.workspace import WorkspaceContext
+from mai.remote.workspace import WorkspaceContext
 
 
 def _add_routed_definitions(
