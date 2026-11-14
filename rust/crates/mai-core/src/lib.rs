@@ -51,15 +51,17 @@ impl ToolRegistry {
         if name.trim().is_empty() || name == "tool_manual" {
             return Err("invalid or reserved tool name".into());
         }
-        if self.definitions.insert(name.into(), handler).is_some() {
+        if self.definitions.contains_key(name) {
             return Err(format!("duplicate tool: {name}"));
         }
+        self.definitions.insert(name.into(), handler);
         Ok(())
     }
     pub fn names(&self) -> Vec<String> { self.definitions.keys().cloned().collect() }
     fn contains(&self, name: &str) -> bool { self.definitions.contains_key(name) }
     fn execute(&self, name: &str, args: &Arguments) -> Result<String, String> {
-        self.definitions.get(name).ok_or_else(|| format!("unknown tool: {name}"))?(args)
+        let handler = self.definitions.get(name).ok_or_else(|| format!("unknown tool: {name}"))?;
+        handler(args)
     }
 }
 #[derive(Debug)]
