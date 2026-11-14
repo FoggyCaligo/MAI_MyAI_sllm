@@ -37,7 +37,7 @@ class RemoteScratch:
         if not isinstance(name, str) or not name.strip():
             raise ValueError("temporary path must be a nonempty relative path")
         name_path = Path(name)
-        if (name_path.is_absolute() or name_path.drive
+        if (name_path.is_absolute() or name_path.anchor or name_path.drive
                 or any(component in ("..", ".", "") for component in name_path.parts)
                 or "\\" in name):
             raise ValueError("temporary paths must stay within worker ./tmp")
