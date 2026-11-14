@@ -61,8 +61,8 @@ def test_catalog_with_no_prior_system_message_precedes_user() -> None:
 
 
 def test_catalog_presents_memory_search_modes_before_activation_without_full_schema() -> None:
-    from mcp_memorizer.policy import MEMORY_CATALOG_HINT
-    from mcp_memorizer.integrations.mai_tools import register_memory_tools
+    from mai.memory.policy import MEMORY_CATALOG_HINT
+    from mai.memory.tools import register_memory_tools
     registry = ToolRegistry()
     register_memory_tools(registry, object(), object(), user_id="local-user")
     history = [{"role": "user", "content": "Do you remember my project?"}]
@@ -73,9 +73,9 @@ def test_catalog_presents_memory_search_modes_before_activation_without_full_sch
         "category": "memory",
         "description": MEMORY_CATALOG_HINT,
     }]
-    assert "keyword" in catalog[0]["description"]
+    assert "query" in catalog[0]["description"]
     assert "tool_manual" in catalog[0]["description"]
     assert "parameters" not in history[0]["content"]
     assert "properties" not in history[0]["content"]
     activated = registry.native_schemas(names=["memory_search"])
-    assert "keyword" in activated[0]["function"]["parameters"]["properties"]
+    assert "query" in activated[0]["function"]["parameters"]["properties"]
