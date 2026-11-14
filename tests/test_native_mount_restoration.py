@@ -48,7 +48,7 @@ def test_owner_tools_mount_natively_even_with_functional_mode_true(tmp_path, mon
                  "terminal_run", "document_edit", "csv_aggregate",
                  "web_search", "web_fetch", "market_data", "browser_open",
                  "calculator", "current_time", "restart",
-                 "file_download_link", "tool_result_read", "remote__switch_workspace"):
+                 "file_download_link", "tool_result_read", "switch_workspace"):
         assert registry.has(name), name
         assert registry.get(name).category != "mcp", name
         assert "mcp_input_schema" not in registry.get(name).metadata, name
@@ -65,7 +65,7 @@ def test_owner_tools_mount_natively_even_with_functional_mode_true(tmp_path, mon
     assert path.read_text(encoding="utf-8") == "direct-native"
     assert result is not None
     assert registry.workspace.target == "host"
-    switch = asyncio.run(registry.get("remote__switch_workspace").invoke({"target": "host"}))
+    switch = asyncio.run(registry.get("switch_workspace").invoke({"target": "host"}))
     assert switch["changed"] is False
 
 
