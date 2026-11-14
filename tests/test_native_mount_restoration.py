@@ -12,6 +12,7 @@ from mai.app.runtime import MAIRuntime
 from mai.agent.tool_results import ToolResultStore
 from mai.mcp_tools.mcp_servers import MCPConnectionManager
 from mai.tools.browser import BrowserSessionManager
+from mai.tools.registry import ToolRegistry
 
 
 def _legacy_mcp_config(tmp_path):
@@ -78,3 +79,27 @@ def test_disabled_memorizer_does_not_restore_functional_mcp(tmp_path):
         allowed_server_ids=frozenset({"memorizer"}),
     )
     assert manager.servers == {}
+
+
+def test_legacy_cached_functional_tools_are_never_registered(tmp_path):
+    import hashlib
+    config = _legacy_mcp_config(tmp_path)
+    schema = {"type": "object"}
+    digest = hashlib.sha256(json.dumps(
+        schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    (tmp_path / "mcp_catalog.json").write_text(json.dumps({
+        "version": 1,
+        "tools": [
+            {"server": "mai_file", "name": "file_read",
+             "description": "legacy", "schema": {"invalid": True},
+             "schema_hash": "obsolete"},
+            {"server": "memorizer", "name": "memory_search",
+             "description": "memory", "schema": schema,
+             "schema_hash": digest},
+        ],
+    }), encoding="utf-8")
+    manager = MCPConnectionManager(config, memory_user_id="owner")
+    registry = ToolRegistry()
+    manager.register(registry)
+    assert registry.names() == ("memorizer__memory_search",)
