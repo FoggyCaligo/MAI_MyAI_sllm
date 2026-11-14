@@ -4,13 +4,7 @@ import json
 import pytest
 
 from mai.llm.models import ModelTurn
-from mcp_memorizer.extraction.service import (
-    FactExtractionError, ModelFactExtractor as ExternalModelFactExtractor,
-)
-from mcp_memorizer.integrations.mai import MAIExtractionAdapter
-
-def ModelFactExtractor(adapter):
-    return ExternalModelFactExtractor(MAIExtractionAdapter(adapter))
+from mai.memory.extraction.service import FactExtractionError, ModelFactExtractor
 
 
 def run(coro):
@@ -122,7 +116,7 @@ def test_extractor_receives_non_recall_tool_evidence_and_deduplicates() -> None:
 def test_extractor_invalid_json_is_an_explicit_failure() -> None:
     extractor = ModelFactExtractor(FakeAdapter(["not-json"]))
 
-    with pytest.raises(FactExtractionError, match="invalid structured extraction JSON"):
+    with pytest.raises(FactExtractionError, match="structured output schema"):
         run(extractor.extract(
             user_text="최근에 바뀐 게 있어.",
             previous_assistant_message=None,
@@ -134,8 +128,8 @@ def test_extractor_invalid_json_is_an_explicit_failure() -> None:
 def test_fact_extractor_has_no_default_fifteen_second_deadline() -> None:
     extractor = ModelFactExtractor(FakeAdapter([json.dumps({"facts": []})]))
 
-    # The portable extractor has no separate hard-coded 15-second deadline.
-    assert not hasattr(extractor, "timeout_seconds")
+    # The original native extractor supports an optional deadline, defaulting to none.
+    assert extractor.timeout_seconds is None
     assert run(extractor.extract(
         user_text="hello",
         previous_assistant_message=None,
