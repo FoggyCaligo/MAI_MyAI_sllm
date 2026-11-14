@@ -1,26 +1,25 @@
 # Windows·Linux 원격 Native 워커
 
-이 문서는 현재 `dev`의 원격 PC 작업 경로를 설명한다. 별도 CodeAct 평가기나 `execute_code` 도구를 사용하는 방식이 아니다. 웹 UI를 인터넷에 공개하는 기능과 원격 PC에서 도구를 실행하는 기능은 별도다.
+이 문서는 복구 브랜치의 원격 PC 작업 경로를 설명한다. 별도 CodeAct 평가기나 `execute_code` 도구를 사용하는 방식이 아니다. 웹 UI를 인터넷에 공개하는 기능과 원격 PC에서 도구를 실행하는 기능은 별도다.
 
 ## 실행 계약
 
 1. 모델의 최초 차례에는 `tool_manual`만 노출된다. 활성화한 도구의 실제 Pydantic 인수 계약이 다음 차례부터 제공된다.
-2. Owner의 원격 지원 native 도구에는 `at_remote_pc: bool = false`가 추가된다. 모델은 사용자 요청의 실행 대상을 기준으로 이를 선택하며, 경로·명령 문자열 패턴으로 원격 여부를 추측하지 않는다.
-3. 생략 또는 `false`는 MAI 호스트에서 실행한다. `true`는 해당 Owner가 인증·연결한 원격 워커의 `native.invoke` 경로에서 실행한다.
-4. 대상 워커가 없거나 연결이 끊겼거나 미지원 도구인 경우 명시적으로 실패하며, 로컬 실행으로 되돌리지 않는다. 원격 실패 유형과 메시지도 보존한다.
-5. 결과는 전송용 envelope가 아니라 원래 도구의 결과를 모델에 보여준다.
+2. Owner는 Native `switch_workspace(target="host"|"client")`를 한 번 호출하여 해당 작업의 실행 대상을 선택한다. 기본값은 `host`이며 매 새 작업마다 초기화된다.
+3. `client`로 성공적으로 전환하면 이후 Workspace 지원 Native 도구는 별도 위치 인자 없이 연결된 워커의 `native.invoke`에서 실행된다. `is_remote_pc`와 `at_remote_pc`는 도구 입력에 없다.
+4. 연결이 끊기거나 워커가 없으면 오류를 반환하며 host로 조용히 재시도하지 않는다. 웹·시장 정보·브라우저·기억·호스트 제어는 host 전용이다.
+5. 도구 결과는 전송용 envelope가 아니라 원래 반환값을 모델에 제공한다.
 
-예를 들어 `document_read`를 활성화한 뒤에는 다음 인수를 사용할 수 있다.
-
-```json
-{"path":"/home/owner/notes.txt","at_remote_pc":true}
+```text
+switch_workspace(target="client")
+document_read(path="/home/owner/notes.txt")
 ```
 
 ## 구현 및 도구 지원 범위
 
 서버 측 등록과 라우팅은 `mai/app/runtime.py`, `mai/remote/routing.py`, `mai/remote/target.py`에 있다. 워커는 `mai/remote/python_worker.py`에서 공통 Native 도구 등록을 재사용한다.
 
-원격 지원 범위는 파일·코드 작업, CSV 집계, 구조화 문서 편집, 터미널, 계산, 시각 조회, 웹 검색·조회, 한국 주식 시장 조회 및 브라우저 작업이다. 워커의 브라우저 세션 관리자는 동일 원격 연결에서 재사용된다.
+Workspace 전환 지원 범위는 파일·코드 작업, CSV 집계, 구조화 문서 편집, 터미널, 계산 및 시각 조회다. 웹 검색·시장 정보와 브라우저는 호스트 전용으로 유지된다.
 
 `memory_search`, `tool_result_read`, `file_download_link`는 MAI 서버의 저장소·권한·토큰 상태에 종속되어 원격화되지 않는다. Ollama 전용 원격 `image_analyze` 도구는 폐기됐다. 메인 모델 이미지 입력은 MAI 서버에 전달된 첨부에 대한 llama.cpp 직접 입력이다.
 
