@@ -340,7 +340,6 @@ class MAIRuntime:
                 input_model=WorkspaceSwitchInput,
                 handler=workspace.switch,
                 category="workspace",
-                activation_requires_invocation=True,
             )
             registry.add(
                 name="file_download_link",
