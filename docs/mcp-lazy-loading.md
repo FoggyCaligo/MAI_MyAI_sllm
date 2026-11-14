@@ -1,5 +1,24 @@
 # MAI MCP Connection Manager: enabled-only startup discovery
 
+> **Recovery branch override (recovery/flag-mcp-20261114, 2026-11-14).**
+> This branch restores the `flag_native_tool` **mounting path** for built-in tools:
+> `mai/tools/*.py` -> Native `ToolRegistry` -> `tool_manual` -> model.
+> The function-group MCP servers (`mai_file`, `mai_code`, `mai_terminal_run`,
+> `mai_docs`, `mai_internet`, `mai_browser`, `mai_utilities`) are not
+> exposed or started at runtime, even if an existing schema-v5 config has
+> `functional_mode: true` or `enabled: true` for those groups.
+> `remote__switch_workspace`, `restart`, `file_download_link`, and
+> `tool_result_read` are now native registry tools as well. Per-task
+> host/client switching remains sticky as in the MCP version.
+> **Only the separately maintained MCP_memorizer remains an MCP server**
+> (and it still respects its enabled flag). Existing MCP config files are
+> preserved, not deleted or rewritten; the active catalog is rebuilt with
+> the allowed memorizer entries only. This is a mounting rollback, not a
+> rollback of tool implementations, memory engines, or worker behavior.
+> Sections below describe the earlier functional-MCP implementation and
+> remain as historical architecture notes for future migration.
+>
+
 ## Startup and toggling
 
 MAI uses **one MCP integration branch**, `feature/mcp-lazy-manager`.
