@@ -80,4 +80,7 @@ def test_recall_tool_schema_exposes_optional_limit_to_model():
     schema = MemorySearchInput.model_json_schema()
     assert "limit" in schema["properties"]
     assert "limit" not in schema.get("required", [])
-    assert "keyword recall" in schema["properties"]["limit"]["description"]
+    description = schema["properties"]["limit"]["description"]
+    assert "query/keyword" in description
+    assert "recent overview" in description
+    assert "node_id" in description
