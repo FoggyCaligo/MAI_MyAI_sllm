@@ -70,7 +70,7 @@ def test_real_remote_work_resets_idle_deadline(monkeypatch):
 
         task = asyncio.create_task(manager.execute(
             "owner", session.session_id,
-            RemoteOperation(operation="native.invoke", arguments={"name": "file_read"}),
+            RemoteOperation(operation="native.invoke", arguments={"name": "document_read"}),
         ))
         await asyncio.sleep(0)
         packet = session.pending.get_nowait()

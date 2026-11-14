@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from mai.tools.filesystem import file_read, file_write
+from mai.tools.filesystem import document_read, file_write
 from mai.tools.terminal import TerminalRunInput, terminal_run
 
 
@@ -14,7 +14,7 @@ def test_unicode_paths_and_bom_script_encoding(tmp_path):
     source = "Write-Output '한글 경로 확인'"
     file_write(path=str(path), content=source, encoding="utf-8-sig")
     assert path.read_bytes().startswith(b"\xef\xbb\xbf")
-    assert file_read(path=str(path))["content"] == source
+    assert document_read(path=str(path))["content"] == source
 
 
 def test_terminal_shell_is_explicit_not_inferred():
@@ -38,7 +38,7 @@ def test_default_file_write_is_powershell_51_compatible(tmp_path):
     script = tmp_path / "한글 실행.ps1"
     file_write(path=str(script), content="Write-Output '안녕하세요'")
     assert script.read_bytes().startswith(b"\xef\xbb\xbf")
-    assert file_read(path=str(script))["content"] == "Write-Output '안녕하세요'"
+    assert document_read(path=str(script))["content"] == "Write-Output '안녕하세요'"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 integration")

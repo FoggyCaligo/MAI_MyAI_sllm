@@ -14,7 +14,7 @@ from mai.tools.registry import ToolRegistry
 def test_owner_host_pc_timeouts_are_doubled(tmp_path):
     local = ToolRegistry()
     register_local_pc_tools(local, cwd=tmp_path)
-    assert local.get("file_read").timeout_seconds == 120
+    assert local.get("document_read").timeout_seconds == 120
     assert local.get("file_search").timeout_seconds == 120
     assert local.get("code_search").timeout_seconds == 120
     # Terminal timeout is enforced by terminal_run's handler, not ToolDefinition.
@@ -23,13 +23,13 @@ def test_owner_host_pc_timeouts_are_doubled(tmp_path):
     routed = ToolRegistry()
     register_routed_pc_tools(routed, workspace=WorkspaceContext(owner_id="owner"), cwd=str(tmp_path))
     assert routed.has("terminal_run")
-    assert routed.get("file_read").timeout_seconds is None
+    assert routed.get("document_read").timeout_seconds is None
 
 
 def test_host_readonly_tools_use_same_doubled_timeouts(tmp_path):
     registry = ToolRegistry()
     register_readonly_local_tools(registry, cwd=tmp_path)
-    assert registry.get("file_read").timeout_seconds == 120
+    assert registry.get("document_read").timeout_seconds == 120
     assert registry.get("code_search").timeout_seconds == 120
 
 

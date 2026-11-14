@@ -10,7 +10,7 @@
 4. 대상 워커가 없거나 연결이 끊겼거나 미지원 도구인 경우 명시적으로 실패하며, 로컬 실행으로 되돌리지 않는다. 원격 실패 유형과 메시지도 보존한다.
 5. 결과는 전송용 envelope가 아니라 원래 도구의 결과를 모델에 보여준다.
 
-예를 들어 `file_read`를 활성화한 뒤에는 다음 인수를 사용할 수 있다.
+예를 들어 `document_read`를 활성화한 뒤에는 다음 인수를 사용할 수 있다.
 
 ```json
 {"path":"/home/owner/notes.txt","at_remote_pc":true}
@@ -48,7 +48,7 @@ Windows·Linux 실기기에서 원격 워커의 종단간 정상 작동을 모�
 
 ## 공통 인코딩 계약
 
-원격 워커의 `register_local_pc_tools()`는 호스트와 동일한 `terminal_run`, `file_read`, `file_write` 구현을 등록한다. 현재 `terminal_run`은 OS별 자식 프로세스에서 UTF-8 출력을 우선하고, 디코딩 실패 시 CP949·EUC-KR·ISO-2022-KR을 순서대로 재시도하며 모두 실패하면 오류로 보고한다. 실제 사용한 코덱은 결과에 표시한다. Windows PowerShell 5.1 `.ps1`의 기본 UTF-8 BOM 정책과 기존 파일의 명시적 인코딩 선택도 로컬·원격에 공통이다. 다만 원격 워커가 **최신 소스 묶음으로 재연결해야** 변경 내용이 적용된다.
+원격 워커의 `register_local_pc_tools()`는 호스트와 동일한 `terminal_run`, `document_read`, `file_write` 구현을 등록한다. 현재 `terminal_run`은 OS별 자식 프로세스에서 UTF-8 출력을 우선하고, 디코딩 실패 시 CP949·EUC-KR·ISO-2022-KR을 순서대로 재시도하며 모두 실패하면 오류로 보고한다. 실제 사용한 코덱은 결과에 표시한다. Windows PowerShell 5.1 `.ps1`의 기본 UTF-8 BOM 정책과 기존 파일의 명시적 인코딩 선택도 로컬·원격에 공통이다. 다만 원격 워커가 **최신 소스 묶음으로 재연결해야** 변경 내용이 적용된다.
 
 ## 원격 워커 캐시 자동 정리
 

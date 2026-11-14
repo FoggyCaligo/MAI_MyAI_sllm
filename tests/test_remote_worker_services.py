@@ -15,7 +15,7 @@ def test_worker_exposes_all_worker_portable_services():
     worker = build_registry()
     assert {
         "current_time", "calculator", "market_data",
-        "file_read", "file_write", "terminal_run", "code_search", "document_edit",
+        "document_read", "file_write", "terminal_run", "code_search", "document_edit",
     }.issubset(worker.names())
     for name in ("web_search", "web_fetch", "browser_open", "browser_snapshot",
                  "browser_click", "browser_input_text", "browser_scroll",

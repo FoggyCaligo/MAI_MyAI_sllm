@@ -73,7 +73,7 @@ MAI 웹 UI (Owner)
 | `at_remote_pc=false` 또는 생략 | MAI 서버 컴퓨터 |
 | `at_remote_pc=true` | Owner가 연결한 원격 Windows/Linux 워커 |
 
-예시 — Linux 원격 PC의 파일 읽기(`file_read` 활성화 후):
+예시 — Linux 원격 PC의 파일 읽기(`document_read` 활성화 후):
 
 ```json
 {"path":"/home/user/notes.txt","at_remote_pc":true}

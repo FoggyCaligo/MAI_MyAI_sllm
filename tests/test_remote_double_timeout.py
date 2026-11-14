@@ -23,7 +23,7 @@ def test_remote_tool_limits_are_twice_local_limits(tmp_path, monkeypatch):
     remote = build_registry(cwd=tmp_path)
     assert REMOTE_TOOL_TIMEOUT_MULTIPLIER == 2
     for name in (
-        "file_read", "file_write", "code_read",
+        "document_read", "file_write", "code_read",
         "code_search", "document_edit",
     ):
         local_timeout = local.get(name).timeout_seconds

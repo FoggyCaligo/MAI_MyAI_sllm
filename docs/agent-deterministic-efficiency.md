@@ -32,7 +32,7 @@ not token counts or model GPU utilization.
 ## 2. Read-result reuse
 
 With evidence reuse enabled, an **identical successful** `web_search`,
-`web_fetch`, `file_read` or `code_read` call in the same agent run
+`web_fetch`, `document_read` or `code_read` call in the same agent run
 reuses the exact earlier tool output. A run ends with its cache; no data
 is shared across users, sessions, or independent prompts.
 

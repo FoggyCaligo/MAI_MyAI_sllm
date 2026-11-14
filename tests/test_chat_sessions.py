@@ -182,7 +182,7 @@ def test_chat_history_restores_assistant_tool_log_metadata(tmp_path) -> None:
     metadata = {
         "model": "test-model",
         "model_rounds": 2,
-        "tools": [{"name": "file_read", "arguments": {"path": "README.md"}, "ok": True}],
+        "tools": [{"name": "document_read", "arguments": {"path": "README.md"}, "ok": True}],
     }
     store.append(
         db_id="local-user",

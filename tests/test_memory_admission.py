@@ -23,7 +23,7 @@ def test_successful_memory_recall_tools_detects_persistent_memory_reads() -> Non
     executions = (
         Execution("memorizer__memory_search", True),
         Execution("file_search", True),
-        Execution("file_read", False),
+        Execution("document_read", False),
     )
 
     assert successful_memory_recall_tools(executions) == (
