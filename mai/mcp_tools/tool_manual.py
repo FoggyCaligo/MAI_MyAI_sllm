@@ -1,7 +1,6 @@
-"""Shared MCP/native tool discovery, tool_manual and model-facing catalog.
+"""Native tool activation and model-facing catalog contracts.
 
-Keep the existing MAI activation contract and change only transport-specific
-terminology; host agent execution logic remains inside mai.agent.loop.
+Host agent execution logic remains inside mai.agent.loop.
 """
 from __future__ import annotations
 

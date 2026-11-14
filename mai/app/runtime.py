@@ -98,7 +98,7 @@ For calculations and analysis, use terminal_run with a deterministic program (e.
 
 The owner may use native terminal and filesystem tools subject to OS permissions. document_read supports plain-text and structured documents. Retired tools (file_list, file_search, file_delete, file_move, file_copy, code_read, code_search, calculator, current_time, csv_aggregate) are unavailable; use terminal_run for their operations.
 
-Temporary calculation/analysis scripts and intermediate outputs belong in ./tmp. The host clears its contents after memory postprocessing and retains the directory itself. Do not place persistent deliverables there. Client scratch cleanup is not supported.
+Temporary calculation/analysis scripts and intermediate outputs belong in ./tmp. The host clears its contents after memory postprocessing and retains the directory itself. Separately, temporary artifacts tracked by file_write/terminal_run are cleaned when the agent run finishes, including errors or cancellation. Do not place persistent deliverables there. Client scratch cleanup is not supported.
 
 When ready to respond, produce a provisional answer for verification before delivery. If rejected, use the latest verifier feedback to correct unsupported claims through additional evidence or narrower statements; rejected drafts and verifier diagnoses are not factual evidence.
 

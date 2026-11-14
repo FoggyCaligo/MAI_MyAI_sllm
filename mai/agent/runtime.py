@@ -74,7 +74,7 @@ class AgentRuntime:
         stable_end = next((i for i, msg in enumerate(effective_messages)
                            if msg.get("role") != "system"), len(effective_messages))
         effective_messages.insert(stable_end, {"role": "system", "content": EVIDENCE_REASONING_CONTRACT})
-        if runtime_context:
+        if runtime_context["tool_contexts"]:
             effective_messages.insert(stable_end + 1, {
                 "role": "system",
                 "content": TOOL_RUNTIME_CONTEXT_CONTRACT + "\n" + json.dumps(runtime_context, ensure_ascii=False, separators=(",", ":")),

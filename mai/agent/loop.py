@@ -46,7 +46,7 @@ def _permanent_read_failure(name: str, execution: "ToolExecution") -> bool:
         "WebFetchError", "HTTPStatusError", "WebFetchHTTPError",
     }:
         return bool(_MISSING_RESOURCE_RE.search(execution.audit_content))
-    if name in {"document_read", "code_read"}:
+    if name in {"document_read"}:
         return execution.error_type in {"FileNotFoundError", "NotADirectoryError"}
     return False
 
@@ -796,8 +796,6 @@ class AgentLoop:
                 # Validate all contexts before activating any tool. Do not put
                 # the context instructions into this control tool's response.
                 self.registry.model_context(names=requested)
-                if self.registry.mcp_manager is not None:
-                    await self.registry.mcp_manager.activate(requested)
                 value = {"activated_tools": requested, "available_next_round": True}
                 activated_tool_names.update(requested)
             else:
