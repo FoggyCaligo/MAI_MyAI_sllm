@@ -456,7 +456,9 @@ async fn run_job(request: RunJob) {
             job.updated = now();
         }
     }
-    let run_files = match app.workspace.as_ref()
+    let run_files = match app
+        .workspace
+        .as_ref()
         .map(|workspace| RunFiles::new(workspace.clone()).map(Arc::new))
         .transpose()
     {

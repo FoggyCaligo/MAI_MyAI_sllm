@@ -17,7 +17,9 @@ pub struct Workspace {
     root: Arc<PathBuf>,
 }
 impl Workspace {
-    pub(crate) fn root(&self) -> &Path { self.root.as_path() }
+    pub(crate) fn root(&self) -> &Path {
+        self.root.as_path()
+    }
     pub fn new(root: impl AsRef<Path>) -> Result<Self, String> {
         let root = fs::canonicalize(root).map_err(|e| format!("workspace root: {e}"))?;
         if !root.is_dir() {
@@ -331,13 +333,20 @@ fn add(
     })
 }
 pub fn register_workspace(registry: &mut Registry, workspace: &Workspace) -> Result<(), String> {
-    register_workspace_with_mode(registry,workspace,true)
+    register_workspace_with_mode(registry, workspace, true)
 }
 /// Register read/search tools only; mutations are bound separately to a run-owned scope.
-pub fn register_workspace_reads(registry: &mut Registry, workspace: &Workspace) -> Result<(), String> {
-    register_workspace_with_mode(registry,workspace,false)
+pub fn register_workspace_reads(
+    registry: &mut Registry,
+    workspace: &Workspace,
+) -> Result<(), String> {
+    register_workspace_with_mode(registry, workspace, false)
 }
-fn register_workspace_with_mode(registry: &mut Registry, workspace: &Workspace, include_edit: bool) -> Result<(), String> {
+fn register_workspace_with_mode(
+    registry: &mut Registry,
+    workspace: &Workspace,
+    include_edit: bool,
+) -> Result<(), String> {
     add(
         registry,
         workspace,
@@ -379,16 +388,16 @@ fn register_workspace_with_mode(registry: &mut Registry, workspace: &Workspace, 
         code_read,
     )?;
     if include_edit {
-    add(
-        registry,
-        workspace,
-        "code_edit",
-        "Replace exactly one literal match in existing source",
-        json!({"type":"object","properties":{"path":{"type":"string"},
+        add(
+            registry,
+            workspace,
+            "code_edit",
+            "Replace exactly one literal match in existing source",
+            json!({"type":"object","properties":{"path":{"type":"string"},
             "old_text":{"type":"string"},"new_text":{"type":"string"}},
             "required":["path","old_text","new_text"],"additionalProperties":false}),
-        code_edit,
-    )?;
+            code_edit,
+        )?;
     }
     add(
         registry,
