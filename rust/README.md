@@ -1,25 +1,50 @@
 # MAI Rust 재구성
 
-기존 MAI 전체는 `../python/`에 보존. **기존 Web UI (`python/mai/app/static`)는 원본 그대로 유지**하며 Rust 런타임에 아직 연결하지 않았다.
+이 저장소는 기존 MAI를 **Rust 네이티브 런타임으로 단계적으로 이식 중**입니다. 기존 전체 프로젝트는 `../python/`에 보존되어 있으며, Web UI는 `../python/mai/app/static/`의 **원본 파일을 그대로 사용합니다**.
 
-## 현재 구현
+## 현재 Rust workspace
 
-- `mai-core`: 동기식 핵심 상태 머신과 mock model 계약 테스트 9개
-- `mai-runtime`: Tokio 기반 비동기 실행 루프, JSON 도구 인자/일부 strict schema 검증, lazy `tool_manual` 활성화, bounded 이벤트 채널, 취소 및 모델/도구별 타임아웃; mock model 계약 테스트 7개
-- Verifier / MCP / mcp_memorizer 미포함
-- `cargo fmt --all -- --check`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings` GitHub Actions 통과 (2026-11-15)
+- `crates/mai-runtime`: 정식 비동기 Agent Core. 지연 도구 활성화(`tool_manual`), JSON 인자 검증의 제한된 부분집합, CancellationToken, model/tool timeout, 이벤트 채널, 채팅 히스토리 입력.
+- `crates/mai-runtime/src/llamacpp.rs`: 외부 llama.cpp router의 OpenAI-compatible `/v1/chat/completions` 클라이언트. tool call ID 및 결과 대응, 잘못된 JSON·절단 응답 거부. **현재는 비스트리밍 요청**.
+- `crates/mai-web`: **127.0.0.1 로컬 전용 개발 미리보기**. 기존 UI를 읽어 제공하고 preauth login, bearer session, `/models`, `/chat/jobs`, `/chat/jobs/active`, `/chat/jobs/{id}`, `/session/{id}`의 첫 호환 경로를 제공.
+- 중복 동기식 `mai-core` crate는 제거. 초기 구현은 Git 이력에서 복구 가능.
+- MCP·Verifier·mcp_memorizer는 새 Rust 구현에 포함하지 않습니다.
+
+## 테스트
 
 ```bash
-cd rust
+cd "$(git rev-parse --show-toplevel)/rust"
 cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## 미구현·주의
+`Cargo.lock`을 Git에 추적합니다.
 
-실제 llama.cpp/클라우드 모델 연동, UI와 연결되는 HTTP/SSE/WebSocket 서버, 원격 워커, 비동기 임시 파일 수명주기, 영속 메모리, Sentence_Breaker, 벤치마크 이식은 아직 진행 전이다.
+## 로컬 HTTP 미리보기 (실서비스에 사용하지 말 것)
 
-비동기 런타임은 `mai-core`에서 독립된 새 crate로 작성되어 있으므로, 다음 단계에서 중복 상태 머신을 정리하고 `mai-runtime`을 정식 Core로 채택한다. 현재 도구 schema 검증은 JSON Schema 일부(object, properties, required, enum, additionalProperties=false, 타입/배열)에 한정된다. API 서비스에 적용하기 전 전체 스키마 검증 도입 또는 정확한 제약 표현을 확정해야 한다.
+실제 MAI와 포트가 겹치지 않도록 **기본 포트 8100**을 사용합니다. Rust 서버는 코드상 loopback `127.0.0.1`에만 바인딩하므로 Tailscale Funnel / Cloudflare / 외부 프록시로 노출하지 마세요. 기존 `OWNER_USERS` 값과 실제 로드된 llama.cpp 모델 ID가 필요합니다. Rust 서버는 아직 `.env`를 자동 로드하지 않습니다.
 
-이벤트 채널은 bounded이고 소비자가 처리하지 않으면 backpressure가 걸린다. 실제 서버 연결 때는 종료된 구독자·취소·느린 구독자에 대한 회복 전략이 필요하다. 타임아웃이 걸린 async future는 drop되지만 blocking 작업/외부 프로세스 강제 종료 및 정리는 별도 구현이 필요하다.
+Git Bash 예제 (계정과 모델 값은 본인 환경에 맞춰 설정):
+
+```bash
+cd "$(git rev-parse --show-toplevel)/rust"
+export OWNER_USERS='[{"user_id":"test-owner","user_pw":"test-only-password","db_id":"test-db"}]'
+export MAI_RUST_MODEL='실제로_로드된_모델_ID'
+export LLAMACPP_HOST='http://127.0.0.1:8080'
+cargo run -p mai-web
+```
+
+브라우저에서 `http://127.0.0.1:8100/`을 열 수 있으나, **기존 UI 기능 전체가 작동한다고 보장하지 않습니다**. 임시 테스트용 자격증명을 사용하고, 실제 데이터를 이 서버로 옮기지 마세요.
+
+## 아직 지원하지 않는 동작
+
+- llama.cpp 모델 자동 다운로드, 단일 상주/모델 스위치/VRAM-RAM 감시용 ModelSupervisor. 따라서 실행 전 모델이 이미 로드돼 있어야 합니다.
+- Host/Client 원격 워커, 전체 Native Tools 및 tool_manual 카탈로그, 반복 도구 실패 가드, 임시파일 및 작업별 cleanup.
+- 기존 DB에 저장된 채팅/장기기억, trial 계정, 로그인 보안 정책 전체, 업로드/이미지, 다운로드 링크, STT/TTS·음성 API, cloud model providers.
+- 전체 실시간 토큰 스트리밍·thinking 진행·API payload 동등성. 현재의 작업 진행 이벤트는 부분 호환입니다.
+- Windows 실제 환경 통합시험 및 benchmark, Sentence_Breaker Rust 이식.
+
+이 버전의 `mai-web`은 **메모리 내 세션/채팅/작업 상태**만 유지합니다. 서버를 재시작하면 사라지며, 원본 Python SQLite 데이터는 접근하지 않습니다. 프로덕션 대체 전 데이터·인증·자원 보호를 완성해야 합니다.
+
+공식 구현 기준선: `docs/blueprint/behavior-test-spec.md`, `docs/blueprint/core-unification.md`.
