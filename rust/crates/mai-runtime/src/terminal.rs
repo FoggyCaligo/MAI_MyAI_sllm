@@ -92,12 +92,22 @@ fn git_bash_path() -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
         if let Some(folder) = std::env::var_os(variable) {
-            candidates.push(PathBuf::from(folder).join("Git").join("bin").join("bash.exe"));
+            candidates.push(
+                PathBuf::from(folder)
+                    .join("Git")
+                    .join("bin")
+                    .join("bash.exe"),
+            );
         }
     }
     if let Some(folder) = std::env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(folder).join("Programs").join("Git")
-            .join("bin").join("bash.exe"));
+        candidates.push(
+            PathBuf::from(folder)
+                .join("Programs")
+                .join("Git")
+                .join("bin")
+                .join("bash.exe"),
+        );
     }
     for path in candidates {
         if path.is_file() {
