@@ -96,7 +96,9 @@ impl Registry {
     }
 
     /// Move an existing tool definition for routing without re-declaring its schema.
-    pub fn take(&mut self,name:&str)->Option<Tool>{self.tools.remove(name)}
+    pub fn take(&mut self, name: &str) -> Option<Tool> {
+        self.tools.remove(name)
+    }
 
     pub fn names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
