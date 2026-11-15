@@ -178,3 +178,10 @@
 - [ ] Windows/Linux CI 완료 여부 및 실기 CPU/child-process tree 확인.
 - [ ] Windows Job Object/하위 프로세스 강제 종료 견고성, CP949/EUC-KR 복구, 장시간 동시 실행, 실제 Bash 경로.
 - [ ] remote Host/Client 실행 타깃 지정, 분산 취소, 원격 워커 최종 tmp cleanup 확인.
+
+## Turn 07 플랫폼 호환성 보완
+- [x] Windows의 WSL `bash` 오인 실행 방지. Git for Windows `bin/bash.exe`만 검색하고 `MAI_GIT_BASH_PATH`로 명시적 경로 재정의 가능.
+- [x] Windows `\\\\?\\` 정규화 경로와 기존 디렉터리 비교 오류 수정.
+- [x] Windows Bash/CMD/PowerShell 직접 실행 계약 테스트 추가.
+- [ ] 지속 셸 세션·Host/Client당 2개 세션 제한·실행 종료 시 모든 세션 강제 종료.
+- [ ] Windows Job Object 및 다른 프로세스와 공유되는 호스트 자원 보호.
