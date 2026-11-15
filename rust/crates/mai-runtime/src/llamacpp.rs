@@ -64,11 +64,18 @@ impl LlamaCpp {
                 || next.last().is_none_or(|m| m.role != Role::User)
                 || next.iter().any(|m| m.role == Role::Tool)
             {
-                return Err("initial model history requires user/assistant turns ending in user".into());
+                return Err(
+                    "initial model history requires user/assistant turns ending in user".into(),
+                );
             }
             for message in next {
-                let role = if message.role == Role::User { "user" } else { "assistant" };
-                self.wire.push(json!({"role":role,"content":message.content}));
+                let role = if message.role == Role::User {
+                    "user"
+                } else {
+                    "assistant"
+                };
+                self.wire
+                    .push(json!({"role":role,"content":message.content}));
             }
         } else {
             if next.len() != self.pending.len() {

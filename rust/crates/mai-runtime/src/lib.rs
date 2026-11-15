@@ -155,7 +155,8 @@ impl<M: Model> Engine<M> {
         cancellation: &CancellationToken,
         events: &mpsc::Sender<Event>,
     ) -> Result<Outcome, RunError> {
-        self.run_with_history(prompt, &[], cancellation, events).await
+        self.run_with_history(prompt, &[], cancellation, events)
+            .await
     }
 
     /// Start one run using a bounded, authenticated snapshot of prior chat.
@@ -168,7 +169,9 @@ impl<M: Model> Engine<M> {
         events: &mpsc::Sender<Event>,
     ) -> Result<Outcome, RunError> {
         if prompt.trim().is_empty()
-            || prior.iter().any(|m| m.role == Role::Tool || m.content.trim().is_empty())
+            || prior
+                .iter()
+                .any(|m| m.role == Role::Tool || m.content.trim().is_empty())
         {
             return self.finish_error(RunError::InvalidInput, events).await;
         }
