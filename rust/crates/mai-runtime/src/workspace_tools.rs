@@ -17,6 +17,7 @@ pub struct Workspace {
     root: Arc<PathBuf>,
 }
 impl Workspace {
+    pub(crate) fn root(&self) -> &Path { self.root.as_path() }
     pub fn new(root: impl AsRef<Path>) -> Result<Self, String> {
         let root = fs::canonicalize(root).map_err(|e| format!("workspace root: {e}"))?;
         if !root.is_dir() {
@@ -26,7 +27,7 @@ impl Workspace {
             root: Arc::new(root),
         })
     }
-    fn path(&self, input: &str) -> Result<PathBuf, String> {
+    pub(crate) fn path(&self, input: &str) -> Result<PathBuf, String> {
         if input.trim().is_empty() {
             return Err("empty path".into());
         }
