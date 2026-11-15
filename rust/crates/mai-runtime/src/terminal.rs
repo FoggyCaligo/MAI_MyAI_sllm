@@ -148,12 +148,17 @@ fn checked_cwd(root: &Path, scratch: &Path, requested: Option<&str>) -> Result<P
             }
         }
     };
+    // Windows canonicalization may add the extended-length \\?\ prefix;
+    // compare only canonical paths, never canonical cwd to lexical root.
     let real = fs::canonicalize(target).map_err(|e| format!("terminal cwd: {e}"))?;
-    if !real.is_dir() || !real.starts_with(root) {
+    let canonical_root = fs::canonicalize(root).map_err(|e| format!("terminal root: {e}"))?;
+    let canonical_scratch =
+        fs::canonicalize(scratch).map_err(|e| format!("terminal scratch: {e}"))?;
+    if !real.is_dir() || !real.starts_with(&canonical_root) {
         return Err("terminal cwd must be an existing directory inside workspace".into());
     }
-    let tmp = root.join("tmp");
-    if real.starts_with(tmp) && !real.starts_with(scratch) {
+    let tmp = canonical_root.join("tmp");
+    if real.starts_with(tmp) && !real.starts_with(&canonical_scratch) {
         return Err("terminal cwd cannot be another run's scratch".into());
     }
     Ok(real)
