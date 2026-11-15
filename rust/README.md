@@ -112,3 +112,14 @@ cargo run -p mai-web
 
 - 현재 `terminal_run`은 호출마다 **새 자식 셸**을 실행한다. `cd` 및 환경변수·함수 등의 셸 상태는 다음 호출에 유지되지 않는다. 지속 터미널 세션과 Host/Client당 2개 제한은 아직 이식 전이다.
 - Windows에서 PATH의 `bash`가 WSL 런처와 충돌하는 문제를 해결했으며, Windows Git Bash/CMD/PowerShell 직접 실행 테스트를 추가했다.
+
+## Turn 08 — Owner 기본 터미널과 지속 Bash 세션
+
+- Rust 미리보기 서버의 `OWNER_USERS` 인증 계정은 현재 모두 `owner` 역할이다. **Owner 터미널 기본값은 활성화**다. `MAI_RUST_ENABLE_TERMINAL=0` (또는 `false`/`off`)를 지정하면 비활성화한다.
+- `MAI_RUST_WORKSPACE_ROOT`가 지정되어 있지 않으면 **서버 시작 프로세스의 현재 디렉터리**를 초기 작업 루트로 사용한다. 터미널은 OS 사용자 권한으로 명령을 실행하는 것이므로 **샌드박스가 아니다.** 지금의 Rust 서버는 로컬 loopback 전용 미리보기이며, 공개 인터넷 연결은 금지한다.
+- Bash: `terminal_run(command="cd subdir")` 다음 `terminal_run(command="pwd")` 호출에서 같은 셸의 cwd와 환경변수가 유지된다. `session_id` 기본값은 `default`; 최대 **Host 2개** 세션을 동시에 가진다.
+- `terminal_run(command="exit",session_id="default")`로 해당 세션을 닫고 슬롯을 재사용한다. 에이전트의 한 작업이 종료·실패·취소되면 **모든 해당 작업의 셸을 닫고 난 뒤** `tmp/run-*`을 정리한다.
+- 세션은 **한 에이전트 답변의 여러 도구 호출 동안만** 유지한다. 다음 사용자 메시지까지 유지하지 않으며, Host/Client 전체를 통합하는 4세션 제한 및 원격 Client 2개 제한은 아직 연결되지 않았다.
+- **현재 지속 세션은 Bash만 지원**한다. Windows CMD/PowerShell은 이전처럼 호출별 단발 프로세스로 작동한다. 지속 세션에서는 `cwd` 인자를 지정하지 않고 `cd`를 사용한다. `temporary_outputs`가 필요한 경우 `file_write(lifecycle=temporary)`를 대신 사용한다.
+- Bash 명령의 비정상 종료 코드는 명시적인 도구 오류지만 **셸은 그대로 유지**된다. 취소·타임아웃·출력 한도 초과·실제 프로토콜 오류가 발생하면 해당 셸을 강제 종료한다.
+- Windows 실제 실행 환경의 인코딩, 프로세스 하위 트리 강제 종료, Windows Job Object, Host/Client 원격 실행은 추가 검증·개발이 필요하다. 기존 Web UI / Python 코드는 변경하지 않았다.
