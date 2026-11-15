@@ -14,10 +14,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 sysinfo = "0.33"
 chrono = { version = "0.4", default-features = true }
 rust_decimal = "1"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "test-util", "net", "io-util"] }
 walkdir = "2"
 globset = "0.4"
 regex = "1"
 tempfile = "3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "test-util", "net", "io-util"] }
