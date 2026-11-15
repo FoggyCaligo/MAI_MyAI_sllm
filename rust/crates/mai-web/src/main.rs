@@ -356,7 +356,7 @@ async fn submit_job(
     }
     let job_id = new_token();
     let cancel = CancellationToken::new();
-    {
+    let previous = {
         let mut data = app.data.lock().await;
         for job in data
             .jobs
@@ -365,6 +365,23 @@ async fn submit_job(
         {
             job.cancel.cancel();
         }
+        let previous = data.history
+            .get(&(user.clone(), input.session_id.clone()))
+            .map(|stored| {
+                stored[stored.len().saturating_sub(16)..].iter()
+                    .filter_map(|item| {
+                        let role = match item.get("role").and_then(Value::as_str) {
+                            Some("user") => Role::User,
+                            Some("assistant") => Role::Assistant,
+                            _ => return None,
+                        };
+                        Some(Message {
+                            role,
+                            content: item.get("content")?.as_str()?.to_string(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            }).unwrap_or_default();
         data.history
             .entry((user.clone(), input.session_id.clone()))
             .or_default()
@@ -383,13 +400,15 @@ async fn submit_job(
                 cancel: cancel.clone(),
             },
         );
-    }
+        previous
+    };
     tokio::spawn(run_job(
         app.clone(),
         job_id.clone(),
         user,
         input.session_id,
         input.message,
+        previous,
         cancel,
     ));
     (
@@ -403,6 +422,7 @@ async fn run_job(
     user: String,
     session: String,
     message: String,
+    previous: Vec<Message>,
     cancel: CancellationToken,
 ) {
     {
@@ -423,7 +443,7 @@ async fn run_job(
         let mut engine = Engine::new(model, Registry::new(), Duration::from_secs(500))
             .map_err(|err| err.to_string())?;
         engine
-            .run(&message, &cancel, &tx)
+            .run_with_history(&message, &previous, &cancel, &tx)
             .await
             .map_err(|err| format!("{err:?}"))
     };
