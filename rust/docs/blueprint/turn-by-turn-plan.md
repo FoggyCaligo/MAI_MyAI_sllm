@@ -93,7 +93,7 @@
 | --- | --- | --- |
 | 00 | 완료(원격 Git 트리 구조 변경, 로컬 검증 별도) | 이 문서 생성 및 전체 파일 이동 |
 | 01 | 정적 감사 작성 / 실기검증 대기 | 376파일 인벤토리, 핵심 코드·대표 테스트, 3개 보고서 |
-| 02 | 부분 완료 | Rust workspace와 최소 core 생성, OS별 빌드·정적 UI 제공 미완료 |
+| 02 | 비동기 Core 초기 구현 완료 / 통합 대기 | cargo fmt/test/clippy CI 성공, 실제 UI·llama.cpp 미연결 |
 | 03–14 | 미착수 | 기존 UI API/스트리밍 및 실제 llama.cpp 연결 미완료 |
 
 ## 특별 주의
@@ -107,3 +107,13 @@
 - 기존 UI 소스 **미수정**, MCP/Verifier/mcp_memorizer 구현 없음.
 - 이 구현은 agent core의 최소 **동기식** 스켈레톤으로, 실제 JSON typed schema/async timeouts/streaming/real llama.cpp/remote worker는 후속 구현해야 한다. 기존 계약 전체의 대체로 간주하지 않는다.
 - 이 실행 환경에 cargo/rustc가 없어 테스트 **미실행**. `cargo test --workspace`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` 실행 필요.
+
+## Turn 02 비동기 Core 확장 체크포인트 (2026-11-15)
+- [x] 기존 Rust Core 테스트 9개 통과(사용자 Git Bash 로그).
+- [x] `cargo fmt` 포맷 수정 및 GitHub commit 적용. CI에서 format/test/clippy 모두 통과.
+- [x] `mai-runtime` Rust crate 도입: 비동기 모델 호출, JSON 도구 인자/부분 schema 검증, `tool_manual` 활성화, 각 호출 timeout, 취소, bounded 이벤트 채널.
+- [x] 비동기 계약 테스트 7개 추가. Rust workspace 전체 GitHub Actions 실행 성공.
+- [x] Web UI 코드 무변경 유지. MCP/Verifier/mcp_memorizer 도입 없음.
+- [ ] `mai-core`/ `mai-runtime` 상태 머신 중복 통합, 완전 JSON schema 호환, active tool guard, 요청 전체 lifecycle/finalization, 실행 위치/원격 워커.
+- [ ] 실제 llama.cpp / 웹서버 / UI 통합 및 PC Windows E2E.
+- 다음 작업: 단일 정식 비동기 Core로 통합하고, 실제 HTTP API / UI 계약을 기존 코드와 비교해 구현.
