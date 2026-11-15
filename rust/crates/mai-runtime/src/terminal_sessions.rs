@@ -382,14 +382,21 @@ mod tests {
         let run = Arc::new(RunFiles::new(Workspace::new(&root).unwrap()).unwrap());
         let sessions = TerminalSessions::new(run.clone(), root);
         for index in 0..12 {
-            let command=format!(
-                "printf 'out-{}'; printf 'err-{}' >&2",
-                index,index
+            let command = format!("printf 'out-{}'; printf 'err-{}' >&2", index, index);
+            let result = sessions
+                .run(json!({"command":command}), CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(
+                result["stdout"],
+                format!("out-{index}"),
+                "iteration {index}: {result}"
             );
-            let result=sessions.run(json!({"command":command}),CancellationToken::new())
-                .await.unwrap();
-            assert_eq!(result["stdout"],format!("out-{index}"),"iteration {index}: {result}");
-            assert_eq!(result["stderr"],format!("err-{index}"),"iteration {index}: {result}");
+            assert_eq!(
+                result["stderr"],
+                format!("err-{index}"),
+                "iteration {index}: {result}"
+            );
         }
         sessions.close_all().await;
         run.cleanup().unwrap();
