@@ -734,14 +734,17 @@ mod tests {
     }
     #[test]
     fn terminal_must_have_explicit_workspace_opt_in() {
-        let config=Config {
-            model:"test".into(),
-            llama_url:"http://127.0.0.1:0".into(),
-            ui_dir:PathBuf::from("."),
-            workspace_root:None,
-            enable_terminal:true,
+        let config = Config {
+            model: "test".into(),
+            llama_url: "http://127.0.0.1:0".into(),
+            ui_dir: PathBuf::from("."),
+            workspace_root: None,
+            enable_terminal: true,
         };
-        assert!(App::new(config,vec![]).err().unwrap().contains("workspace root"));
+        assert!(App::new(config, vec![])
+            .err()
+            .unwrap()
+            .contains("workspace root"));
     }
     #[tokio::test]
     async fn private_chat_job_cannot_be_submitted_without_login() {
