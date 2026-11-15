@@ -64,3 +64,20 @@ cargo run -p mai-web
 - `POST /models/select`는 동일 Rust 프로세스의 `ModelSupervisor` 잠금 안에서 안전한 모델 교대를 수행하고, 성공했을 때에만 선택 값을 반영한다.
 - 채팅 Job은 **접수 시점의 선택 모델**을 스냅샷하여 추론에 사용한다. 진행 중 다른 모델로 바뀌어도 해당 작업은 자신의 모델을 명시적으로 준비한다.
 - 모델 잠금은 프로세스 내부에서만 동작하므로, **기존 Python MAI 또는 OpenClaw와 같은 라우터를 동시에 쓰는 환경에서는 단일 상주 보호가 보장되지 않는다.** 향후 공유 게이트웨이 이식 전에 병용하지 않는다.
+
+
+## Turn 05 — 파일·코드 Native Tools 1차 (2026-11-15)
+
+- `mai-runtime::workspace_tools`에 공통 `Workspace` 경계와 `Registry` 등록을 추가. **MCP 전송·중복 ToolRegistry·Host/Client용 별도 래퍼를 사용하지 않는다.**
+- `file_list`: 파일/디렉터리 조회, 재귀/디렉터리만/최대 개수, `collection.complete` 등 페이지 완료 정보.
+- `file_search`: 이름과 상대 경로에 대한 glob 검색, 최대 결과 개수.
+- `document_read`: **일반 UTF-8 텍스트 전용** (기존 Python의 PDF/DOCX/XLSX/PPTX/CSV 구조화 파싱 미이식).
+- `code_read`: 명시적 파일의 줄 번호와 범위에 맞춘 읽기.
+- `code_search`: UTF-8 내용 검색, literal/regex 모드, 결과 수 제한. 기존 포함/제외 glob, 파일 크기·줄 범위 상세 옵션은 아직 이식 전.
+- `code_edit`: 기존 파일에서 정확히 한 번 나타나는 리터럴 문자열만 변경. 없거나 여러 번 나타나면 수정 거절. 같은 디렉터리에서 임시 파일에 쓰고 파일을 교체한다.
+- `mai-web`에는 `MAI_RUST_WORKSPACE_ROOT` 환경 변수를 명시한 **개발용** 실행에서만 위 6개 도구를 추가한다. 미설정 시 기존처럼 `calculator`, `current_time`만 사용한다.
+- 경로는 루트 기준 정규화하고 작업 루트 밖 접근을 차단한다. 탐색 중 symlink는 따라가지 않는다. **이 제한은 기존 owner 계정의 'OS가 허용한 모든 경로' 동작과 다르며, 완전 이식이 아닌 개발용 방어 경계**다.
+- `code_edit`은 아직 원본 파일의 메타데이터/권한 완전 보존, 동시 수정 감지, 강제 종료 중 복구를 검증하지 않았다. 작업자별 분리·인증·스코프 정책도 추후 구현해야 한다.
+- `file_write/file_delete/file_move/file_copy`, `code_symbols`, 구조화 문서 편집, `web_search/web_fetch`, `terminal_run`은 미구현. 특히 원격/호스트 `./tmp` 수명주기와 터미널 프로세스 트리 정리를 먼저 설계해야 한다.
+
+개발용 opt-in 예시: `export MAI_RUST_WORKSPACE_ROOT="/path/to/test-workspace"` (반드시 실데이터가 아닌 테스트 경로 사용).
