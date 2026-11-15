@@ -48,3 +48,13 @@ cargo run -p mai-web
 이 버전의 `mai-web`은 **메모리 내 세션/채팅/작업 상태**만 유지합니다. 서버를 재시작하면 사라지며, 원본 Python SQLite 데이터는 접근하지 않습니다. 프로덕션 대체 전 데이터·인증·자원 보호를 완성해야 합니다.
 
 공식 구현 기준선: `docs/blueprint/behavior-test-spec.md`, `docs/blueprint/core-unification.md`.
+
+## Turn 04 — ModelSupervisor와 첫 Native Tools (2026-11-15)
+
+- `mai-runtime::supervisor`: 시스템 가용 RAM 측정(`sysinfo`), 기본 최소 RAM 6144 MiB 및 GPU 잔여 1024 MiB 정책. 라우터의 `/models`, `/models/unload`, `/models/load`를 이용하여 **기존 모델이 완전히 unloaded 상태가 된 후** 다음 모델을 로드. 모델당 GPU memory metadata에서 weight/context/compute 및 추가 1GiB overhead를 확인한다. 상태·측정치를 알 수 없으면 새 로딩을 거부.
+- `mai-web` 작업 실행은 `ModelSupervisor::acquire`로 **하나의 추론 실행 동안 잠금을 유지**. 실제 Tool loop까지 잠금 범위에 포함한다.
+- `mai-runtime::native_tools`: 원본과 같은 이름의 `calculator`, `current_time`을 MCP 없이 Rust 네이티브로 등록. 나머지 Tool은 아직 미구현.
+- Rust 계산기는 Python의 `decimal` 40자리 컨텍스트와 달리 `rust_decimal` 정밀도 한계가 있으며, 현재 지수 표기 등의 입력도 모두 지원하지 않는다. **전체 calculator 동등성을 주장하지 않는다**.
+- 모델 잠금은 **이 Rust 프로세스 내부에서만** 유효하다. Python MAI/OpenClaw 등 다른 프로세스가 같은 llama.cpp 라우터에 접근할 경우 기존의 공유 메모리 게이트웨이 또는 차후 Rust 통합 게이트웨이가 별도로 필요하다. 이 보호 없이 동시에 사용하지 않는다.
+- ModelSupervisor는 llama.cpp 프로세스를 직접 시작하거나 GGUF 다운로드/설정을 변경하지 않는다. 개발용 preview에서도 기존 라우터가 이미 실행 중이어야 한다.
+- 실기 GPU VRAM 측정 및 Windows RX6800XT 환경 시험은 별도 필요하다.
