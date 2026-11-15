@@ -235,3 +235,67 @@ pub fn register_workspace(registry:&mut Registry,workspace:&Workspace)->Result<(
             "required":["query"],"additionalProperties":false}),|w,a|search(w,a,true))?;
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (tempfile::TempDir, Workspace) {
+        let dir=tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src/main.rs"),"fn alpha() {}\nfn beta() {}\n").unwrap();
+        let ws=Workspace::new(dir.path()).unwrap();
+        (dir,ws)
+    }
+    #[test]
+    fn list_and_code_read_preserve_expected_contracts() {
+        let (_dir,ws)=fixture();
+        let listed=list(&ws,&json!({"path":"src","recursive":false})).unwrap();
+        assert_eq!(listed["items"][0]["name"],"main.rs");
+        assert_eq!(listed["collection"]["complete"],true);
+        let lines=code_read(&ws,&json!({"path":"src/main.rs","start_line":2,"end_line":2})).unwrap();
+        assert_eq!(lines["lines"][0]["line"],2);
+        assert_eq!(lines["lines"][0]["text"],"fn beta() {}");
+    }
+    #[test]
+    fn code_edit_requires_exactly_one_occurrence_and_preserves_on_failure(){
+        let (_dir,ws)=fixture();
+        let path=ws.path("src/main.rs").unwrap();
+        let before=fs::read_to_string(&path).unwrap();
+        assert!(code_edit(&ws,&json!({"path":"src/main.rs","old_text":"fn ","new_text":"pub fn "})).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(),before);
+        let ok=code_edit(&ws,&json!({"path":"src/main.rs","old_text":"alpha","new_text":"gamma"})).unwrap();
+        assert_eq!(ok["replacements"],1);
+        assert!(fs::read_to_string(path).unwrap().contains("gamma"));
+    }
+    #[test]
+    fn traversal_outside_workspace_denied(){
+        let (_dir,ws)=fixture();
+        assert!(ws.path("../outside").is_err());
+        assert!(ws.path("../../outside/new.rs").is_err());
+        assert!(ws.path("src/../../../outside").is_err());
+    }
+    #[test]
+    fn content_search_and_name_search_are_independent(){
+        let (_dir,ws)=fixture();
+        let c=search(&ws,&json!({"root":"src","query":"beta","max_results":10}),true).unwrap();
+        assert_eq!(c["results"][0]["line"],2);
+        let n=search(&ws,&json!({"root":".","pattern":"*.rs"}),false).unwrap();
+        assert_eq!(n["results"].as_array().unwrap().len(),1);
+    }
+    #[test]
+    fn list_reports_truncation_with_complete_false(){
+        let (dir,ws)=fixture();
+        fs::write(dir.path().join("src/second.rs"),"").unwrap();
+        let data=list(&ws,&json!({"path":"src","max_items":1})).unwrap();
+        assert_eq!(data["collection"]["complete"],false);
+        assert_eq!(data["collection"]["has_more"],true);
+    }
+    #[test]
+    fn rejects_invalid_limits_and_binary_files(){
+        let (dir,ws)=fixture();
+        assert!(list(&ws,&json!({"max_items":0})).is_err());
+        fs::write(dir.path().join("invalid.bin"),[0xff,0xfe]).unwrap();
+        assert!(read(&ws,&json!({"path":"invalid.bin"})).is_err());
+    }
+}
