@@ -473,7 +473,9 @@ async fn run_job(
     } else {
         job.status = "failed".into();
         job.error = Some(
-            outcome.err().unwrap_or_else(|| "runtime finished without result".into()),
+            outcome
+                .err()
+                .unwrap_or_else(|| "runtime finished without result".into()),
         );
     }
 }
