@@ -159,3 +159,12 @@
 - [ ] 파일 생성/복사/이동/삭제의 사용자 권한과 임시파일 추적·정리.
 - [ ] Terminal의 하위 프로세스 종료/출력 크기 제한/timeout/cancel; Web의 SSRF/DNS/redirect 보호.
 - [ ] Host/Client에 동일 ToolDescriptor를 전달하는 공통 dispatcher/worker 프로토콜.
+
+## Turn 06 — 파일 변경과 실행별 scratch cleanup (2026-11-15)
+- [x] `RunFiles` + `file_write/file_delete/file_move/file_copy` + 동일 범위의 `code_edit` 구현 및 `mai-web`의 작업별 등록.
+- [x] `tmp/run-*` 실행별 디렉터리, 임시명 중복 거절, 사용자 persistent/existing 파일 보존, 다른 실행의 tmp 직접 수정/조회/검색 차단.
+- [x] 종료 시 `spawn_blocking` 파일 변경과 단일 잠금으로 순서를 보장하고 작업별 scratch를 제거; 성공/실패/취소 모든 경로에서 적용.
+- [x] 파일 조작·작업 격리·반복 cleanup·동시 조작과 cleanup의 경합 회귀 테스트 추가.
+- [ ] 운영 수준 path symlink race/ACL·프로세스 crash recovery, 사용자/작업별 경계 추가 검토 및 실제 Windows 환경 E2E.
+- [ ] Host/Client 원격 워커에 `native.cleanup` 신호를 보내는 통합 프로토콜과 공용 데이터 접근 권한.
+- [ ] 전체 문서·네트워크·터미널 도구, 원본 Python의 모든 파일/인코딩 동작과 정밀 parity.
