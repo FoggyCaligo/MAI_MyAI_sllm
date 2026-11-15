@@ -12,6 +12,8 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 tokio-util = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sysinfo = "0.33"
+chrono = { version = "0.4", default-features = true }
+rust_decimal = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "test-util", "net", "io-util"] }
