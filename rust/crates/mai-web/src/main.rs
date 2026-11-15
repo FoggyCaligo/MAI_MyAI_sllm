@@ -11,7 +11,7 @@ use mai_runtime::{
     llamacpp::{LlamaConfig, LlamaCpp},
     Engine, Event, Registry,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -428,12 +428,10 @@ async fn run_job(
             .map_err(|err| format!("{err:?}"))
     };
     tokio::pin!(task);
-    let mut outcome = None;
-    loop {
+    let outcome = loop {
         tokio::select! {
             result=&mut task=>{
-                outcome=Some(result);
-                break;
+                break result;
             }
             event=rx.recv()=>{
                 if let Some(event)=event {
@@ -462,7 +460,7 @@ async fn run_job(
     if cancel.is_cancelled() {
         job.status = "cancelled".into();
         job.error = Some("cancelled".into());
-    } else if let Some(Ok(result)) = outcome {
+    } else if let Ok(result) = outcome {
         job.status = "completed".into();
         job.response = Some(json!({
             "answer":result.answer,"model":app.config.model,"model_rounds":result.rounds,
@@ -475,9 +473,7 @@ async fn run_job(
     } else {
         job.status = "failed".into();
         job.error = Some(
-            outcome
-                .and_then(Result::err)
-                .unwrap_or_else(|| "runtime finished without result".into()),
+            outcome.err().unwrap_or_else(|| "runtime finished without result".into()),
         );
     }
 }
