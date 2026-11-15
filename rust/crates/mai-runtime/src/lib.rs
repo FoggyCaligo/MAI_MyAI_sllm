@@ -170,6 +170,7 @@ impl<M: Model> Engine<M> {
                 return self.finish_error(RunError::Cancelled, events).await;
             }
             rounds += 1;
+            let callable_this_round = enabled.clone();
             let mut schemas = vec![manual_schema(&self.registry)];
             schemas.extend(
                 enabled
@@ -240,7 +241,7 @@ impl<M: Model> Engine<M> {
                         let name = call.name;
                         let result = if name == "tool_manual" {
                             activate(&self.registry, &mut enabled, &call.arguments)
-                        } else if !enabled.contains(&name) {
+                        } else if !callable_this_round.contains(&name) {
                             Err(format!("tool not activated: {name}"))
                         } else if let Some(tool) = self.registry.tools.get(&name) {
                             match validate_arguments(&tool.schema.parameters, &call.arguments) {
