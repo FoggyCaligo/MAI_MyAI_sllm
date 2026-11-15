@@ -168,3 +168,13 @@
 - [ ] 운영 수준 path symlink race/ACL·프로세스 crash recovery, 사용자/작업별 경계 추가 검토 및 실제 Windows 환경 E2E.
 - [ ] Host/Client 원격 워커에 `native.cleanup` 신호를 보내는 통합 프로토콜과 공용 데이터 접근 권한.
 - [ ] 전체 문서·네트워크·터미널 도구, 원본 Python의 모든 파일/인코딩 동작과 정밀 parity.
+
+## Turn 07 — Native terminal 첫 구현 (2026-11-15)
+- [x] `terminal_run` 초기 Rust native 구현 (기본 Bash, Windows cmd/PowerShell, stdout/stderr, 비정상 종료 오류).
+- [x] 명령 크기·출력 합계 1 MiB 제한, 실행 시간 180초 제한 및 CancellationToken 처리.
+- [x] Unix 프로세스 그룹 종료·Windows taskkill.exe /T /F의 best-effort 트리 종료 guard.
+- [x] RunFiles 소유 scratch와 `temporary_outputs` 검증, 기본 비활성 및 환경 변수 두 개로 명시적 활성화.
+- [x] Bash 출력/종료 코드·출력 제한·취소·명령 파싱 테스트 작성.
+- [ ] Windows/Linux CI 완료 여부 및 실기 CPU/child-process tree 확인.
+- [ ] Windows Job Object/하위 프로세스 강제 종료 견고성, CP949/EUC-KR 복구, 장시간 동시 실행, 실제 Bash 경로.
+- [ ] remote Host/Client 실행 타깃 지정, 분산 취소, 원격 워커 최종 tmp cleanup 확인.
