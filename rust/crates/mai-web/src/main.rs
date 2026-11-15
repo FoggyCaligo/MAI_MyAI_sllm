@@ -270,19 +270,30 @@ async fn logout(State(app): State<App>, headers: HeaderMap) -> Reply {
     success(json!({"logged_out":true}))
 }
 async fn models(State(app): State<App>, headers: HeaderMap) -> Reply {
-    if let Err(e) = app.auth(&headers).await { return e; }
+    if let Err(e) = app.auth(&headers).await {
+        return e;
+    }
     let entries = match app.supervisor.catalog().await {
         Ok(entries) => entries,
-        Err(_) => return failure(StatusCode::SERVICE_UNAVAILABLE, "llama.cpp model catalog unavailable"),
+        Err(_) => {
+            return failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "llama.cpp model catalog unavailable",
+            )
+        }
     };
     let current = app.selected_model.lock().await.clone();
     let mut labels = serde_json::Map::new();
     let mut models = Vec::new();
     for entry in entries {
-        let Some(id) = entry.get("id").and_then(Value::as_str) else { continue };
+        let Some(id) = entry.get("id").and_then(Value::as_str) else {
+            continue;
+        };
         models.push(id.to_owned());
-        let label = entry.get("name").and_then(Value::as_str)
-            .or_else(||entry.get("path").and_then(Value::as_str))
+        let label = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| entry.get("path").and_then(Value::as_str))
             .unwrap_or(id);
         labels.insert(id.to_owned(), json!(label));
     }
@@ -292,10 +303,18 @@ async fn models(State(app): State<App>, headers: HeaderMap) -> Reply {
     }))
 }
 async fn model_select(
-    State(app): State<App>, headers: HeaderMap, Json(input): Json<Value>,
+    State(app): State<App>,
+    headers: HeaderMap,
+    Json(input): Json<Value>,
 ) -> Reply {
-    if let Err(e) = app.auth(&headers).await { return e; }
-    let Some(model) = input.get("model").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
+    if let Err(e) = app.auth(&headers).await {
+        return e;
+    }
+    let Some(model) = input
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+    else {
         return failure(StatusCode::UNPROCESSABLE_ENTITY, "model must be non-empty");
     };
     // A single guard serializes selection, preload and all ongoing chat runs.
@@ -322,7 +341,10 @@ async fn submit_job(
     }
     let selected = app.selected_model.lock().await.clone();
     if input.model.as_ref().is_some_and(|m| m != &selected) {
-        return failure(StatusCode::CONFLICT, "requested model differs from selected model");
+        return failure(
+            StatusCode::CONFLICT,
+            "requested model differs from selected model",
+        );
     }
     if input.remote_session_id.is_some() || !input.attachments.is_empty() {
         return failure(
