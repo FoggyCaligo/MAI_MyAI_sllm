@@ -359,14 +359,26 @@ mod tests {
         let root = tmp.path().to_path_buf();
         let run = Arc::new(RunFiles::new(Workspace::new(&root).unwrap()).unwrap());
         let sessions = TerminalSessions::new(run.clone(), root);
-        sessions.run(json!({"command":"export MAI_PERSIST_AFTER_FAILURE=ok"}),
-            CancellationToken::new()).await.unwrap();
-        let failure = sessions.run(json!({"command":"false"}),
-            CancellationToken::new()).await.unwrap_err();
+        sessions
+            .run(
+                json!({"command":"export MAI_PERSIST_AFTER_FAILURE=ok"}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let failure = sessions
+            .run(json!({"command":"false"}), CancellationToken::new())
+            .await
+            .unwrap_err();
         assert!(failure.contains("returncode"), "{failure}");
-        let output=sessions.run(json!({"command":"printf '%s' \"$MAI_PERSIST_AFTER_FAILURE\""}),
-            CancellationToken::new()).await.unwrap();
-        assert_eq!(output["stdout"],"ok");
+        let output = sessions
+            .run(
+                json!({"command":"printf '%s' \"$MAI_PERSIST_AFTER_FAILURE\""}),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output["stdout"], "ok");
         sessions.close_all().await;
         run.cleanup().unwrap();
     }
