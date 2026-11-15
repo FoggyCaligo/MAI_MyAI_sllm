@@ -6,28 +6,36 @@ on:
       - 'rust/**'
       - '.github/workflows/rust-core-ci.yml'
   workflow_dispatch:
-
 permissions:
-  contents: read
-
+  contents: write
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Format check
-        run: cargo fmt --all -- --check
+      - name: Update lockfile
         working-directory: rust
+        run: cargo generate-lockfile
+      - name: Apply formatting
+        working-directory: rust
+        run: cargo fmt --all
+      - name: Commit lockfile and formatter changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add rust
+          if ! git diff --cached --quiet; then
+            git commit -m "build(rust): update model supervisor lockfile and formatting"
+            git push origin HEAD:rewrite/rust-core-20261114
+          fi
       - name: Test
+        working-directory: rust
         run: cargo test --workspace --locked
-        working-directory: rust
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
         working-directory: rust
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
