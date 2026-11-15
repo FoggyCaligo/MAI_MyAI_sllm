@@ -129,3 +129,13 @@
 - [ ] 실제 Native Tools, remote worker, memory/Sentence_Breaker, benchmark 이식.
 - [ ] 토큰 스트리밍과 실시간 thinking 이벤트, tool 결과 인자·에러형식 완전 보존.
 - [ ] 기존 browser UI로 직접 로그인→대화→새로고침→취소까지 실행해 테스트.
+
+## Turn 04 — Native ModelSupervisor 진행 (2026-11-15)
+- [x] `mai-runtime::supervisor` 단일 상주 확인, unload → status 확인 → 사전 RAM/VRAM 검증 → load → status 확인 정책을 Rust로 작성.
+- [x] 기본 RAM 6144 MiB, VRAM 최소 1024 MiB + 측정되지 않은 allocation 1024 MiB 여유 보존. 불확실한 측정치는 fail closed.
+- [x] `mai-web` 실행 경로에 ModelSupervisor 전역 mutex를 연결, 모델 준비 및 Agent Tool loop 동안 동일 lock 소유.
+- [x] Native Tools 첫 이식: `current_time`, `calculator`. Registry/JSON Schema 한 곳에서 선언해 별도의 MCP 인터페이스 없음.
+- [x] mock router와 고정 RAM/GPU fixture를 이용한 계약 테스트 작성. 실제 모델 테스트는 미실시.
+- [ ] 공용 llama.cpp gateway 통합/다중 프로세스 상주 제어, GPU 메타데이터 실측, 리소스 부족/모델 중단 오류 복구.
+- [ ] calculator 원본 40-digit Decimal 및 모든 파싱 표현 동등성, 나머지 Native Tools 이식.
+- [ ] Windows/Linux CI 및 실기 테스트 결과를 검증 후 최종 완료 여부 기록.
