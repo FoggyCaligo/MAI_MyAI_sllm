@@ -155,13 +155,28 @@ impl<M: Model> Engine<M> {
         cancellation: &CancellationToken,
         events: &mpsc::Sender<Event>,
     ) -> Result<Outcome, RunError> {
-        if prompt.trim().is_empty() {
+        self.run_with_history(prompt, &[], cancellation, events).await
+    }
+
+    /// Start one run using a bounded, authenticated snapshot of prior chat.
+    /// Tool events are intentionally not persisted as conversation history.
+    pub async fn run_with_history(
+        &mut self,
+        prompt: &str,
+        prior: &[Message],
+        cancellation: &CancellationToken,
+        events: &mpsc::Sender<Event>,
+    ) -> Result<Outcome, RunError> {
+        if prompt.trim().is_empty()
+            || prior.iter().any(|m| m.role == Role::Tool || m.content.trim().is_empty())
+        {
             return self.finish_error(RunError::InvalidInput, events).await;
         }
-        let mut messages = vec![Message {
+        let mut messages = prior.to_vec();
+        messages.push(Message {
             role: Role::User,
             content: prompt.into(),
-        }];
+        });
         let mut enabled = BTreeSet::new();
         let mut rounds = 0;
         emit(events, Event::Started).await;
