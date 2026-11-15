@@ -331,6 +331,13 @@ fn add(
     })
 }
 pub fn register_workspace(registry: &mut Registry, workspace: &Workspace) -> Result<(), String> {
+    register_workspace_with_mode(registry,workspace,true)
+}
+/// Register read/search tools only; mutations are bound separately to a run-owned scope.
+pub fn register_workspace_reads(registry: &mut Registry, workspace: &Workspace) -> Result<(), String> {
+    register_workspace_with_mode(registry,workspace,false)
+}
+fn register_workspace_with_mode(registry: &mut Registry, workspace: &Workspace, include_edit: bool) -> Result<(), String> {
     add(
         registry,
         workspace,
@@ -371,6 +378,7 @@ pub fn register_workspace(registry: &mut Registry, workspace: &Workspace) -> Res
             "required":["path"],"additionalProperties":false}),
         code_read,
     )?;
+    if include_edit {
     add(
         registry,
         workspace,
@@ -381,6 +389,7 @@ pub fn register_workspace(registry: &mut Registry, workspace: &Workspace) -> Res
             "required":["path","old_text","new_text"],"additionalProperties":false}),
         code_edit,
     )?;
+    }
     add(
         registry,
         workspace,
