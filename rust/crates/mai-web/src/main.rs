@@ -90,6 +90,7 @@ struct Data {
 #[derive(Clone)]
 struct App {
     supervisor: Arc<ModelSupervisor>,
+    selected_model: Arc<Mutex<String>>,
     config: Arc<Config>,
     users: Arc<Vec<User>>,
     data: Arc<Mutex<Data>>,
@@ -102,6 +103,7 @@ impl App {
         )?);
         Ok(Self {
             supervisor,
+            selected_model: Arc::new(Mutex::new(config.model.clone())),
             config: Arc::new(config),
             users: Arc::new(users),
             data: Arc::new(Mutex::new(Data {
@@ -268,74 +270,42 @@ async fn logout(State(app): State<App>, headers: HeaderMap) -> Reply {
     success(json!({"logged_out":true}))
 }
 async fn models(State(app): State<App>, headers: HeaderMap) -> Reply {
-    if let Err(e) = app.auth(&headers).await {
-        return e;
-    }
-    // This preview does not select/load models. Verify runtime availability.
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return failure(StatusCode::SERVICE_UNAVAILABLE, "HTTP client unavailable"),
+    if let Err(e) = app.auth(&headers).await { return e; }
+    let entries = match app.supervisor.catalog().await {
+        Ok(entries) => entries,
+        Err(_) => return failure(StatusCode::SERVICE_UNAVAILABLE, "llama.cpp model catalog unavailable"),
     };
-    let url = format!("{}/models", app.config.llama_url.trim_end_matches('/'));
-    let data: Value = match client.get(url).send().await {
-        Ok(response) => match response.json().await {
-            Ok(v) => v,
-            Err(_) => {
-                return failure(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "invalid llama.cpp model list",
-                )
-            }
-        },
-        Err(_) => {
-            return failure(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "llama.cpp router unavailable",
-            )
-        }
-    };
-    let available = data.get("data").and_then(Value::as_array);
-    let loaded = available.is_some_and(|arr| {
-        arr.iter().any(|x| {
-            x.get("id").and_then(Value::as_str) == Some(&app.config.model)
-                && x.get("status")
-                    .and_then(|s| s.get("value"))
-                    .and_then(Value::as_str)
-                    == Some("loaded")
-        })
-    });
-    if !loaded {
-        return failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "selected llama.cpp model is not loaded",
-        );
-    }
+    let current = app.selected_model.lock().await.clone();
     let mut labels = serde_json::Map::new();
-    labels.insert(app.config.model.clone(), json!(app.config.model));
+    let mut models = Vec::new();
+    for entry in entries {
+        let Some(id) = entry.get("id").and_then(Value::as_str) else { continue };
+        models.push(id.to_owned());
+        let label = entry.get("name").and_then(Value::as_str)
+            .or_else(||entry.get("path").and_then(Value::as_str))
+            .unwrap_or(id);
+        labels.insert(id.to_owned(), json!(label));
+    }
     success(json!({
-        "models":[app.config.model],"current":app.config.model,
-        "locked":true,"labels":labels,
-        "backend":"llamacpp"
+        "models":models,"current":current,"locked":false,
+        "labels":labels,"backend":"llamacpp"
     }))
 }
 async fn model_select(
-    State(app): State<App>,
-    headers: HeaderMap,
-    Json(input): Json<Value>,
+    State(app): State<App>, headers: HeaderMap, Json(input): Json<Value>,
 ) -> Reply {
-    if let Err(e) = app.auth(&headers).await {
-        return e;
-    }
-    if input.get("model").and_then(Value::as_str) == Some(&app.config.model) {
-        return success(json!({"model":app.config.model,"status":"selected"}));
-    }
-    failure(
-        StatusCode::NOT_IMPLEMENTED,
-        "model switching requires Rust ModelSupervisor",
-    )
+    if let Err(e) = app.auth(&headers).await { return e; }
+    let Some(model) = input.get("model").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) else {
+        return failure(StatusCode::UNPROCESSABLE_ENTITY, "model must be non-empty");
+    };
+    // A single guard serializes selection, preload and all ongoing chat runs.
+    let token = CancellationToken::new();
+    let _guard = match app.supervisor.acquire(model, &token).await {
+        Ok(guard) => guard,
+        Err(err) => return failure(StatusCode::SERVICE_UNAVAILABLE, &err),
+    };
+    *app.selected_model.lock().await = model.to_string();
+    success(json!({"model":model,"status":"loaded"}))
 }
 
 async fn submit_job(
@@ -350,11 +320,9 @@ async fn submit_job(
     if input.message.trim().is_empty() || input.session_id.trim().is_empty() {
         return failure(StatusCode::UNPROCESSABLE_ENTITY, "empty prompt/session");
     }
-    if input.model.as_ref().is_some_and(|m| m != &app.config.model) {
-        return failure(
-            StatusCode::NOT_IMPLEMENTED,
-            "model switching unavailable in preview",
-        );
+    let selected = app.selected_model.lock().await.clone();
+    if input.model.as_ref().is_some_and(|m| m != &selected) {
+        return failure(StatusCode::CONFLICT, "requested model differs from selected model");
     }
     if input.remote_session_id.is_some() || !input.attachments.is_empty() {
         return failure(
@@ -419,6 +387,7 @@ async fn submit_job(
         user,
         input.session_id,
         input.message,
+        selected,
         previous,
         cancel,
     ));
@@ -433,6 +402,7 @@ async fn run_job(
     user: String,
     session: String,
     message: String,
+    selected: String,
     previous: Vec<Message>,
     cancel: CancellationToken,
 ) {
@@ -445,12 +415,12 @@ async fn run_job(
     }
     let config = LlamaConfig {
         endpoint: app.config.llama_url.clone(),
-        model: app.config.model.clone(),
+        model: selected.clone(),
         max_output_tokens: 32768,
     };
     let (tx, mut rx) = mpsc::channel(128);
     let task = async {
-        let _model_guard = app.supervisor.acquire(&app.config.model, &cancel).await?;
+        let _model_guard = app.supervisor.acquire(&selected, &cancel).await?;
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
         let mut tools = Registry::new();
         register_basics(&mut tools)?;
@@ -497,7 +467,7 @@ async fn run_job(
     } else if let Ok(result) = outcome {
         job.status = "completed".into();
         job.response = Some(json!({
-            "answer":result.answer,"model":app.config.model,"model_rounds":result.rounds,
+            "answer":result.answer,"model":selected,"model_rounds":result.rounds,
             "tools":job.tools,"verification_rejections":[]
         }));
         data.history
