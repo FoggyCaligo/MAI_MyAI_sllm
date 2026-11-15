@@ -205,9 +205,11 @@ async fn models(State(app):State<App>,headers:HeaderMap)->Reply {
     if !loaded {
         return failure(StatusCode::SERVICE_UNAVAILABLE,"selected llama.cpp model is not loaded");
     }
+    let mut labels=serde_json::Map::new();
+    labels.insert(app.config.model.clone(),json!(app.config.model));
     success(json!({
         "models":[app.config.model],"current":app.config.model,
-        "locked":true,"labels":{app.config.model.clone():app.config.model.clone()},
+        "locked":true,"labels":labels,
         "backend":"llamacpp"
     }))
 }
