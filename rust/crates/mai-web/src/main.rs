@@ -553,7 +553,7 @@ async fn run_job(request: RunJob) {
     let route = Arc::new(
         WorkspaceRoute::new(
             user.clone(),
-            id.clone(),
+            id.replace('-', ""),
             remote_session_id,
             app.remote.clone(),
         )
