@@ -139,3 +139,11 @@
 - [ ] 공용 llama.cpp gateway 통합/다중 프로세스 상주 제어, GPU 메타데이터 실측, 리소스 부족/모델 중단 오류 복구.
 - [ ] calculator 원본 40-digit Decimal 및 모든 파싱 표현 동등성, 나머지 Native Tools 이식.
 - [ ] Windows/Linux CI 및 실기 테스트 결과를 검증 후 최종 완료 여부 기록.
+
+## Turn 04 모델 선택 API 확장
+- [x] `GET /models` 모델 목록 및 파일명 후보 라벨 제공.
+- [x] `POST /models/select` -> `ModelSupervisor.acquire`로 준비/상태 검증 후 선택 상태 변경.
+- [x] 작업 접수 시 선택 모델 스냅샷 + 추론 종료까지 공통 gate 유지.
+- [x] RunJob 실행 매개변수 하나로 통합해 Clippy의 과도한 인자 경고 제거.
+- [x] 모델 선택 구현 Linux CI 형식·테스트·Clippy 통과.
+- [ ] Windows CI/실제 GPU 모델 라우터 연동 별도 검증.
