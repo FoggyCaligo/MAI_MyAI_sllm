@@ -8,10 +8,11 @@ use axum::{
     Json, Router,
 };
 use mai_runtime::{
+    file_mutations::{register_run_file_tools, RunFiles},
     llamacpp::{LlamaConfig, LlamaCpp},
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
-    workspace_tools::{register_workspace, Workspace},
+    workspace_tools::{register_workspace_reads, Workspace},
     Engine, Event, Message, Registry, Role,
 };
 use serde::Deserialize;
@@ -455,6 +456,22 @@ async fn run_job(request: RunJob) {
             job.updated = now();
         }
     }
+    let run_files = match app.workspace.as_ref()
+        .map(|workspace| RunFiles::new(workspace.clone()).map(Arc::new))
+        .transpose()
+    {
+        Ok(scope) => scope,
+        Err(err) => {
+            let mut data = app.data.lock().await;
+            if let Some(job) = data.jobs.get_mut(&id) {
+                job.status = "failed".into();
+                job.updated = now();
+                job.error = Some(format!("workspace scratch initialization: {err}"));
+            }
+            return;
+        }
+    };
+    let tools_scope = run_files.clone();
     let config = LlamaConfig {
         endpoint: app.config.llama_url.clone(),
         model: selected.clone(),
@@ -467,7 +484,10 @@ async fn run_job(request: RunJob) {
         let mut tools = Registry::new();
         register_basics(&mut tools)?;
         if let Some(workspace) = &app.workspace {
-            register_workspace(&mut tools, workspace)?;
+            register_workspace_reads(&mut tools, workspace)?;
+        }
+        if let Some(scope) = &tools_scope {
+            register_run_file_tools(&mut tools, scope)?;
         }
         let mut engine =
             Engine::new(model, tools, Duration::from_secs(500)).map_err(|err| err.to_string())?;
@@ -501,6 +521,17 @@ async fn run_job(request: RunJob) {
             }
         }
     };
+    // Wait for every in-flight blocking file operation before sealing and
+    // deleting this run's scratch. Late queued operations observe the closed run.
+    let cleanup_error = if let Some(scope) = run_files {
+        match tokio::task::spawn_blocking(move || scope.cleanup()).await {
+            Ok(Ok(())) => None,
+            Ok(Err(err)) => Some(err),
+            Err(err) => Some(format!("scratch cleanup worker: {err}")),
+        }
+    } else {
+        None
+    };
     let mut data = app.data.lock().await;
     let Some(job) = data.jobs.get_mut(&id) else {
         return;
@@ -508,7 +539,13 @@ async fn run_job(request: RunJob) {
     job.updated = now();
     if cancel.is_cancelled() {
         job.status = "cancelled".into();
-        job.error = Some("cancelled".into());
+        job.error = Some(match cleanup_error {
+            Some(err) => format!("cancelled; scratch cleanup failed: {err}"),
+            None => "cancelled".into(),
+        });
+    } else if let Some(err) = cleanup_error {
+        job.status = "failed".into();
+        job.error = Some(format!("scratch cleanup failed: {err}"));
     } else if let Ok(result) = outcome {
         job.status = "completed".into();
         job.response = Some(json!({
