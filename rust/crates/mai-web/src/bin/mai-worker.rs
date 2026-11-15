@@ -1,159 +1,242 @@
 //! Experimental Rust remote native worker. Connects outward to an HTTPS MAI
 //! server, never exposes an inbound listener. Credentials from environment only.
 use mai_runtime::{
-    file_mutations::{register_run_file_tools,RunFiles},
-    terminal_sessions::{register_terminal_sessions,TerminalSessions},
-    workspace_tools::{register_workspace_reads,Workspace},
-    Registry,validate_arguments,
+    file_mutations::{register_run_file_tools, RunFiles},
+    terminal_sessions::{register_terminal_sessions, TerminalSessions},
+    validate_arguments,
+    workspace_tools::{register_workspace_reads, Workspace},
+    Registry,
 };
-use reqwest::{Client,StatusCode};
-use serde_json::{json,Value};
-use std::{collections::HashMap,env,path::PathBuf,sync::Arc,time::Duration};
+use reqwest::{Client, StatusCode};
+use serde_json::{json, Value};
+use std::{collections::HashMap, env, path::PathBuf, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 struct WorkerRun {
-    files:Arc<RunFiles>,
-    terminals:Arc<TerminalSessions>,
-    cancel:CancellationToken,
+    files: Arc<RunFiles>,
+    terminals: Arc<TerminalSessions>,
+    cancel: CancellationToken,
 }
 struct Worker {
-    root:Workspace,
-    runs:HashMap<String,WorkerRun>,
+    root: Workspace,
+    runs: HashMap<String, WorkerRun>,
 }
-fn valid_run_id(s:&str)->bool{
-    s.len()==32 && s.as_bytes().iter().all(|b|b.is_ascii_hexdigit()&&!b.is_ascii_uppercase())
+fn valid_run_id(s: &str) -> bool {
+    s.len() == 32
+        && s.as_bytes()
+            .iter()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 impl Worker {
-    fn new(path:PathBuf)->Result<Self,String>{
-        Ok(Self{root:Workspace::new(path)?,runs:HashMap::new()})
+    fn new(path: PathBuf) -> Result<Self, String> {
+        Ok(Self {
+            root: Workspace::new(path)?,
+            runs: HashMap::new(),
+        })
     }
-    fn create_run(&mut self,id:&str)->Result<(),String>{
-        if !valid_run_id(id){return Err("run ID must be 32 lowercase hex characters".into());}
-        if self.runs.contains_key(id){return Ok(());}
-        let files=Arc::new(RunFiles::new(self.root.clone())?);
-        let terminals=Arc::new(TerminalSessions::new(files.clone(),self.root.root().to_path_buf()));
-        self.runs.insert(id.into(),WorkerRun{files,terminals,cancel:CancellationToken::new()});
+    fn create_run(&mut self, id: &str) -> Result<(), String> {
+        if !valid_run_id(id) {
+            return Err("run ID must be 32 lowercase hex characters".into());
+        }
+        if self.runs.contains_key(id) {
+            return Ok(());
+        }
+        let files = Arc::new(RunFiles::new(self.root.clone())?);
+        let terminals = Arc::new(TerminalSessions::new(
+            files.clone(),
+            self.root.root().to_path_buf(),
+        ));
+        self.runs.insert(
+            id.into(),
+            WorkerRun {
+                files,
+                terminals,
+                cancel: CancellationToken::new(),
+            },
+        );
         Ok(())
     }
-    async fn handle(&mut self,operation:&str,args:Value)->Result<Value,String>{
-        let id=args.get("run_id").and_then(Value::as_str).ok_or("missing run_id")?.to_string();
-        if !valid_run_id(&id){return Err("invalid remote worker run ID".into());}
+    async fn handle(&mut self, operation: &str, args: Value) -> Result<Value, String> {
+        let id = args
+            .get("run_id")
+            .and_then(Value::as_str)
+            .ok_or("missing run_id")?
+            .to_string();
+        if !valid_run_id(&id) {
+            return Err("invalid remote worker run ID".into());
+        }
         match operation {
-            "native.invoke"=>{
-                let name=args.get("name").and_then(Value::as_str).ok_or("missing native name")?;
-                if name=="switch_workspace" {return Err("switch_workspace executes only on host".into());}
-                let params=args.get("arguments").ok_or("missing arguments")?;
-                if !params.is_object(){return Err("native arguments must be a JSON object".into());}
+            "native.invoke" => {
+                let name = args
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or("missing native name")?;
+                if name == "switch_workspace" {
+                    return Err("switch_workspace executes only on host".into());
+                }
+                let params = args.get("arguments").ok_or("missing arguments")?;
+                if !params.is_object() {
+                    return Err("native arguments must be a JSON object".into());
+                }
                 self.create_run(&id)?;
-                let run=self.runs.get(&id).ok_or("run vanished")?;
-                let scoped=self.root.scoped_to_run(&run.files.scratch_path()?)?;
-                let mut tools=Registry::new();
-                register_workspace_reads(&mut tools,&scoped)?;
-                register_run_file_tools(&mut tools,&run.files)?;
-                register_terminal_sessions(&mut tools,run.terminals.clone(),run.cancel.clone())?;
-                let tool=tools.take(name).ok_or_else(||format!("unsupported remote tool: {name}"))?;
-                validate_arguments(&tool.schema.parameters,params)?;
+                let run = self.runs.get(&id).ok_or("run vanished")?;
+                let scoped = self.root.scoped_to_run(&run.files.scratch_path()?)?;
+                let mut tools = Registry::new();
+                register_workspace_reads(&mut tools, &scoped)?;
+                register_run_file_tools(&mut tools, &run.files)?;
+                register_terminal_sessions(&mut tools, run.terminals.clone(), run.cancel.clone())?;
+                let tool = tools
+                    .take(name)
+                    .ok_or_else(|| format!("unsupported remote tool: {name}"))?;
+                validate_arguments(&tool.schema.parameters, params)?;
                 (tool.invoke)(params.clone()).await
             }
-            "native.cleanup"=>{
-                if args.as_object().is_none_or(|o|o.len()!=1){
+            "native.cleanup" => {
+                if args.as_object().is_none_or(|o| o.len() != 1) {
                     return Err("cleanup accepts only run_id".into());
                 }
-                if let Some(run)=self.runs.remove(&id){
+                if let Some(run) = self.runs.remove(&id) {
                     run.cancel.cancel();
                     run.terminals.close_all().await;
-                    let files=run.files;
-                    tokio::task::spawn_blocking(move||files.cleanup())
-                        .await.map_err(|e|e.to_string())??;
+                    let files = run.files;
+                    tokio::task::spawn_blocking(move || files.cleanup())
+                        .await
+                        .map_err(|e| e.to_string())??;
                 }
                 Ok(json!({"cleaned":true}))
             }
-            _=>Err("unsupported native worker operation".into()),
+            _ => Err("unsupported native worker operation".into()),
         }
     }
-    async fn close_all(&mut self){
-        let ids=self.runs.keys().cloned().collect::<Vec<_>>();
-        for id in ids{
-            let _=self.handle("native.cleanup",json!({"run_id":id})).await;
+    async fn close_all(&mut self) {
+        let ids = self.runs.keys().cloned().collect::<Vec<_>>();
+        for id in ids {
+            let _ = self.handle("native.cleanup", json!({"run_id":id})).await;
         }
     }
 }
-async fn run_worker()->Result<(),String>{
-    let base=env::var("MAI_REMOTE_SERVER").map_err(|_|"MAI_REMOTE_SERVER required")?;
-    if !base.to_ascii_lowercase().starts_with("https://"){
+async fn run_worker() -> Result<(), String> {
+    let base = env::var("MAI_REMOTE_SERVER").map_err(|_| "MAI_REMOTE_SERVER required")?;
+    if !base.to_ascii_lowercase().starts_with("https://") {
         return Err("Remote Rust worker requires HTTPS".into());
     }
-    let session=env::var("MAI_REMOTE_SESSION").map_err(|_|"MAI_REMOTE_SESSION required")?;
-    let secret=env::var("MAI_REMOTE_KEY").map_err(|_|"MAI_REMOTE_KEY required")?;
-    if session.trim().is_empty()||secret.trim().is_empty(){
+    let session = env::var("MAI_REMOTE_SESSION").map_err(|_| "MAI_REMOTE_SESSION required")?;
+    let secret = env::var("MAI_REMOTE_KEY").map_err(|_| "MAI_REMOTE_KEY required")?;
+    if session.trim().is_empty() || secret.trim().is_empty() {
         return Err("remote credentials must be nonempty".into());
     }
-    let root=env::var("MAI_CLIENT_WORKSPACE_ROOT")
-        .map(PathBuf::from).map_err(|_|"MAI_CLIENT_WORKSPACE_ROOT required")?;
-    let mut worker=Worker::new(root)?;
-    let client=Client::builder().timeout(Duration::from_secs(40))
+    let root = env::var("MAI_CLIENT_WORKSPACE_ROOT")
+        .map(PathBuf::from)
+        .map_err(|_| "MAI_CLIENT_WORKSPACE_ROOT required")?;
+    let mut worker = Worker::new(root)?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(40))
         .redirect(reqwest::redirect::Policy::none())
-        .build().map_err(|e|e.to_string())?;
-    let url=format!("{}/remote/agent/{}",base.trim_end_matches('/'),session);
-    let outcome=async{
-        loop{
-            let polled=client.post(format!("{url}/poll"))
-                .header("X-MAI-Agent-Secret",&secret).send().await
-                .map_err(|e|format!("worker poll: {e}"))?;
-            if polled.status()!=StatusCode::OK{
-                return Err(format!("worker poll rejected: {}",polled.status()));
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
+    let outcome = async {
+        loop {
+            let polled = client
+                .post(format!("{url}/poll"))
+                .header("X-MAI-Agent-Secret", &secret)
+                .send()
+                .await
+                .map_err(|e| format!("worker poll: {e}"))?;
+            if polled.status() != StatusCode::OK {
+                return Err(format!("worker poll rejected: {}", polled.status()));
             }
-            let message:Value=polled.json().await.map_err(|e|e.to_string())?;
-            let Some(item)=message.get("request").filter(|v|!v.is_null()) else {continue};
-            let id=item.get("request_id").and_then(Value::as_str).ok_or("invalid worker request ID")?;
-            let operation=item.get("operation").and_then(Value::as_str).ok_or("invalid operation")?;
-            let args=item.get("arguments").cloned().ok_or("missing worker arguments")?;
-            let response=match worker.handle(operation,args).await{
-                Ok(value)=>json!({"request_id":id,"ok":true,"result":{"value":value}}),
-                Err(e)=>json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":e}),
+            let message: Value = polled.json().await.map_err(|e| e.to_string())?;
+            let Some(item) = message.get("request").filter(|v| !v.is_null()) else {
+                continue;
             };
-            let confirmed=client.post(format!("{url}/result"))
-                .header("X-MAI-Agent-Secret",&secret)
-                .json(&response).send().await.map_err(|e|e.to_string())?;
-            if !confirmed.status().is_success(){
-                return Err(format!("remote result delivery refused: {}",confirmed.status()));
+            let id = item
+                .get("request_id")
+                .and_then(Value::as_str)
+                .ok_or("invalid worker request ID")?;
+            let operation = item
+                .get("operation")
+                .and_then(Value::as_str)
+                .ok_or("invalid operation")?;
+            let args = item
+                .get("arguments")
+                .cloned()
+                .ok_or("missing worker arguments")?;
+            let response = match worker.handle(operation, args).await {
+                Ok(value) => json!({"request_id":id,"ok":true,"result":{"value":value}}),
+                Err(e) => {
+                    json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":e})
+                }
+            };
+            let confirmed = client
+                .post(format!("{url}/result"))
+                .header("X-MAI-Agent-Secret", &secret)
+                .json(&response)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !confirmed.status().is_success() {
+                return Err(format!(
+                    "remote result delivery refused: {}",
+                    confirmed.status()
+                ));
             }
         }
         #[allow(unreachable_code)]
-        Ok::<(),String>(())
-    }.await;
+        Ok::<(), String>(())
+    }
+    .await;
     worker.close_all().await;
-    let _=client.delete(url).header("X-MAI-Agent-Secret",&secret).send().await;
+    let _ = client
+        .delete(url)
+        .header("X-MAI-Agent-Secret", &secret)
+        .send()
+        .await;
     outcome
 }
 #[tokio::main]
-async fn main()->Result<(),Box<dyn std::error::Error>>{
-    run_worker().await.map_err(|e|std::io::Error::other(e))?;
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run_worker().await.map_err(|e| std::io::Error::other(e))?;
     Ok(())
 }
 #[cfg(test)]
-mod tests{
+mod tests {
     use super::*;
     #[test]
-    fn valid_worker_scratch_identifiers_only(){
+    fn valid_worker_scratch_identifiers_only() {
         assert!(valid_run_id("0123456789abcdef0123456789abcdef"));
         assert!(!valid_run_id("abc"));
         assert!(!valid_run_id("01234567-89ab-cdef-0123-456789abcdef"));
         assert!(!valid_run_id("0123456789ABCDEF0123456789abcdef"));
     }
     #[tokio::test]
-    async fn client_persistent_bash_and_cleanup(){
-        let dir=tempfile::tempdir().unwrap();
-        let mut worker=Worker::new(dir.path().to_path_buf()).unwrap();
-        let run_id="0123456789abcdef0123456789abcdef";
-        let result=worker.handle("native.invoke",json!({"run_id":run_id,"name":"terminal_run",
-            "arguments":{"command":"export CLIENT_FLAG=still_here"}})).await.unwrap();
-        assert_eq!(result["returncode"],0);
-        let second=worker.handle("native.invoke",json!({"run_id":run_id,"name":"terminal_run",
-            "arguments":{"command":"printf '%s' \"$CLIENT_FLAG\""}})).await.unwrap();
-        assert_eq!(second["stdout"],"still_here");
-        let cleaned=worker.handle("native.cleanup",json!({"run_id":run_id})).await.unwrap();
-        assert_eq!(cleaned["cleaned"],true);
+    async fn client_persistent_bash_and_cleanup() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut worker = Worker::new(dir.path().to_path_buf()).unwrap();
+        let run_id = "0123456789abcdef0123456789abcdef";
+        let result = worker
+            .handle(
+                "native.invoke",
+                json!({"run_id":run_id,"name":"terminal_run",
+            "arguments":{"command":"export CLIENT_FLAG=still_here"}}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["returncode"], 0);
+        let second = worker
+            .handle(
+                "native.invoke",
+                json!({"run_id":run_id,"name":"terminal_run",
+            "arguments":{"command":"printf '%s' \"$CLIENT_FLAG\""}}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second["stdout"], "still_here");
+        let cleaned = worker
+            .handle("native.cleanup", json!({"run_id":run_id}))
+            .await
+            .unwrap();
+        assert_eq!(cleaned["cleaned"], true);
         assert!(worker.runs.is_empty());
     }
 }
