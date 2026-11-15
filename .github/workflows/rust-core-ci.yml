@@ -6,36 +6,28 @@ on:
       - 'rust/**'
       - '.github/workflows/rust-core-ci.yml'
   workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Update lockfile
+      - name: Format check
+        run: cargo fmt --all -- --check
         working-directory: rust
-        run: cargo generate-lockfile
-      - name: Apply formatting
-        working-directory: rust
-        run: cargo fmt --all
-      - name: Commit lockfile and formatter changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add rust
-          if ! git diff --cached --quiet; then
-            git commit -m "build(rust): format native terminal and lock dependencies"
-            git push origin HEAD:rewrite/rust-core-20261114
-          fi
       - name: Test
-        working-directory: rust
         run: cargo test --workspace --locked
-      - name: Clippy
         working-directory: rust
+      - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        working-directory: rust
