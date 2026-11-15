@@ -97,7 +97,8 @@ struct App {
 impl App {
     fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
         let supervisor = Arc::new(ModelSupervisor::new(
-            Policy::new(config.llama_url.clone()), Arc::new(PhysicalRam),
+            Policy::new(config.llama_url.clone()),
+            Arc::new(PhysicalRam),
         )?);
         Ok(Self {
             supervisor,
@@ -453,8 +454,8 @@ async fn run_job(
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
         let mut tools = Registry::new();
         register_basics(&mut tools)?;
-        let mut engine = Engine::new(model, tools, Duration::from_secs(500))
-            .map_err(|err| err.to_string())?;
+        let mut engine =
+            Engine::new(model, tools, Duration::from_secs(500)).map_err(|err| err.to_string())?;
         engine
             .run_with_history(&message, &previous, &cancel, &tx)
             .await
@@ -624,8 +625,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         llama_url: env::var("LLAMACPP_HOST").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         ui_dir: ui,
     };
-    let state = App::new(config, users)
-        .map_err(std::io::Error::other)?;
+    let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     eprintln!("MAI Rust preview listening only on http://127.0.0.1:{port} (not production-ready)");
     axum::serve(listener, router(state)).await?;
@@ -641,19 +641,22 @@ mod tests {
     };
     use tower::ServiceExt;
     fn test_app() -> Router {
-        router(App::new(
-            Config {
-                model: "test".into(),
-                llama_url: "http://127.0.0.1:0".into(),
-                ui_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../python/mai/app/static"),
-            },
-            vec![User {
-                user_id: "owner".into(),
-                user_pw: "secret".into(),
-                db_id: "unit".into(),
-            }],
-        ).expect("valid test supervisor"))
+        router(
+            App::new(
+                Config {
+                    model: "test".into(),
+                    llama_url: "http://127.0.0.1:0".into(),
+                    ui_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../../python/mai/app/static"),
+                },
+                vec![User {
+                    user_id: "owner".into(),
+                    user_pw: "secret".into(),
+                    db_id: "unit".into(),
+                }],
+            )
+            .expect("valid test supervisor"),
+        )
     }
     #[tokio::test]
     async fn private_chat_job_cannot_be_submitted_without_login() {

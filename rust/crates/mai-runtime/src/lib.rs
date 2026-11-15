@@ -3,8 +3,8 @@
 //! It is an isolated foundation, not a production-ready replacement for MAI.
 
 pub mod llamacpp;
-pub mod supervisor;
 pub mod native_tools;
+pub mod supervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
