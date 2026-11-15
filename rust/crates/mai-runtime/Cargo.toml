@@ -17,3 +17,7 @@ rust_decimal = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "test-util", "net", "io-util"] }
+walkdir = "2"
+globset = "0.4"
+regex = "1"
+tempfile = "3"
