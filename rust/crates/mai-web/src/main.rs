@@ -100,7 +100,11 @@ struct App {
 }
 impl App {
     fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
-        let workspace = config.workspace_root.as_ref().map(Workspace::new).transpose()?;
+        let workspace = config
+            .workspace_root
+            .as_ref()
+            .map(Workspace::new)
+            .transpose()?;
         let supervisor = Arc::new(ModelSupervisor::new(
             Policy::new(config.llama_url.clone()),
             Arc::new(PhysicalRam),
