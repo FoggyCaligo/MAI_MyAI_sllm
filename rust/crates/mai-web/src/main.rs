@@ -313,6 +313,15 @@ async fn create_remote_session(State(app): State<App>, headers: HeaderMap) -> Re
         Err(e) => failure(StatusCode::CONFLICT, &e),
     }
 }
+async fn revoke_owner_remote(
+    State(app): State<App>,Path(id):Path<String>,headers:HeaderMap,
+)->Reply{
+    let owner=match app.auth(&headers).await{Ok(o)=>o,Err(e)=>return e};
+    match app.remote.revoke_owner(&owner,&id).await{
+        Ok(())=>success(json!({"ok":true})),
+        Err(e)=>failure(StatusCode::FORBIDDEN,&e),
+    }
+}
 async fn remote_poll(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Reply {
     match app.remote.poll(&id, worker_secret(&headers)).await {
         Ok(value) => success(value),
@@ -775,6 +784,7 @@ fn router(app: App) -> Router {
         .route("/models", get(models))
         .route("/models/select", post(model_select))
         .route("/remote/session", post(create_remote_session))
+        .route("/remote/session/{id}", axum::routing::delete(revoke_owner_remote))
         .route("/remote/agent/{id}/poll", post(remote_poll))
         .route("/remote/agent/{id}/result", post(remote_result))
         .route(
