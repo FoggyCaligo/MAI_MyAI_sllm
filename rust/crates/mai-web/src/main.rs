@@ -1,7 +1,7 @@
-mod remote_hub;
-use remote_hub::RemoteHub;
 //! MAI Web API PREVIEW. Loopback only; not a production MAI replacement.
 //! Existing HTML/JS is served unchanged from the preserved python/ tree.
+mod remote_hub;
+use remote_hub::RemoteHub;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
