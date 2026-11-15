@@ -403,22 +403,22 @@ async fn submit_job(
         );
         previous
     };
-    tokio::spawn(run_job(
-        app.clone(),
-        job_id.clone(),
+    tokio::spawn(run_job(RunJob {
+        app: app.clone(),
+        id: job_id.clone(),
         user,
-        input.session_id,
-        input.message,
+        session: input.session_id,
+        message: input.message,
         selected,
         previous,
         cancel,
-    ));
+    }));
     (
         StatusCode::OK,
         Json(json!({"job_id":job_id,"status":"pending"})),
     )
 }
-async fn run_job(
+struct RunJob {
     app: App,
     id: String,
     user: String,
@@ -427,7 +427,9 @@ async fn run_job(
     selected: String,
     previous: Vec<Message>,
     cancel: CancellationToken,
-) {
+}
+async fn run_job(request: RunJob) {
+    let RunJob { app, id, user, session, message, selected, previous, cancel } = request;
     {
         let mut data = app.data.lock().await;
         if let Some(job) = data.jobs.get_mut(&id) {
