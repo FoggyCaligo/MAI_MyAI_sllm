@@ -44,7 +44,7 @@ fn now() -> f64 {
         .as_secs_f64()
 }
 fn owner_terminal_enabled(setting: Option<&str>) -> bool {
-    !setting.is_some_and(|v|matches!(v.to_ascii_lowercase().as_str(),"0"|"false"|"off"))
+    !setting.is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off"))
 }
 
 fn new_token() -> String {
@@ -112,9 +112,9 @@ impl App {
         // unless MAI_RUST_WORKSPACE_ROOT provides an explicit alternative.
         let root = match (config.workspace_root.clone(), config.enable_terminal) {
             (Some(path), _) => Some(path),
-            (None, true) => Some(
-                std::env::current_dir().map_err(|e| format!("owner terminal cwd: {e}"))?,
-            ),
+            (None, true) => {
+                Some(std::env::current_dir().map_err(|e| format!("owner terminal cwd: {e}"))?)
+            }
             (None, false) => None,
         };
         let workspace = root.as_ref().map(Workspace::new).transpose()?;
@@ -713,7 +713,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace_root: env::var_os("MAI_RUST_WORKSPACE_ROOT").map(PathBuf::from),
         // All accounts accepted by this preview are OWNER_USERS owners.
         // Default on; 0/false/off explicitly disables terminal execution.
-        enable_terminal: owner_terminal_enabled(env::var("MAI_RUST_ENABLE_TERMINAL").ok().as_deref()),
+        enable_terminal: owner_terminal_enabled(
+            env::var("MAI_RUST_ENABLE_TERMINAL").ok().as_deref(),
+        ),
     };
     let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
