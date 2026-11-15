@@ -5,7 +5,7 @@ use crate::{Registry, Tool, ToolSchema};
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStderr, ChildStdout, Command},
     sync::Mutex,
 };
