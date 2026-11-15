@@ -678,26 +678,47 @@ mod tests {
     async fn login_issues_bearer_token_and_history_is_owner_scoped() {
         use axum::body::to_bytes;
         let app = test_app();
-        let pre = app.clone().oneshot(
-            Request::builder().uri("/login/session").body(Body::empty()).unwrap()
-        ).await.unwrap();
-        let payload: Value = serde_json::from_slice(&to_bytes(pre.into_body(), 16_384).await.unwrap()).unwrap();
+        let pre = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/login/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let payload: Value =
+            serde_json::from_slice(&to_bytes(pre.into_body(), 16_384).await.unwrap()).unwrap();
         let preauth = payload["session_token"].as_str().unwrap();
-        let login = app.clone().oneshot(
-            Request::builder().method("POST").uri("/login")
-                .header("content-type","application/json")
-                .header("x-mai-preauth-session",preauth)
-                .body(Body::from(r#"{"user_id":"owner","user_pw":"secret"}"#)).unwrap()
-        ).await.unwrap();
-        assert_eq!(login.status(),StatusCode::OK);
-        let login_data: Value = serde_json::from_slice(&to_bytes(login.into_body(),16_384).await.unwrap()).unwrap();
+        let login = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/login")
+                    .header("content-type", "application/json")
+                    .header("x-mai-preauth-session", preauth)
+                    .body(Body::from(r#"{"user_id":"owner","user_pw":"secret"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(login.status(), StatusCode::OK);
+        let login_data: Value =
+            serde_json::from_slice(&to_bytes(login.into_body(), 16_384).await.unwrap()).unwrap();
         let token = login_data["token"].as_str().unwrap();
-        let history = app.oneshot(
-            Request::builder().uri("/session/default")
-                .header("authorization",format!("Bearer {token}"))
-                .body(Body::empty()).unwrap()
-        ).await.unwrap();
-        assert_eq!(history.status(),StatusCode::OK);
+        let history = app
+            .oneshot(
+                Request::builder()
+                    .uri("/session/default")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(history.status(), StatusCode::OK);
     }
     #[tokio::test]
     async fn health_is_loopback_preview() {
