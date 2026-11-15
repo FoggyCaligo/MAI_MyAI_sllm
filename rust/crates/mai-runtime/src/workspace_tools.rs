@@ -15,6 +15,7 @@ use walkdir::WalkDir;
 #[derive(Clone)]
 pub struct Workspace {
     root: Arc<PathBuf>,
+    allowed_scratch: Option<Arc<PathBuf>>,
 }
 impl Workspace {
     pub(crate) fn root(&self) -> &Path {
@@ -27,7 +28,25 @@ impl Workspace {
         }
         Ok(Self {
             root: Arc::new(root),
+            allowed_scratch: None,
         })
+    }
+    /// Protect other jobs' scratch paths from read/search/list tools.
+    pub fn scoped_to_run(&self, scratch: &Path) -> Result<Self,String> {
+        let allowed = self.path(&scratch.to_string_lossy())?;
+        if allowed.parent() != Some(self.root.join("tmp").as_path()) || !allowed.is_dir() {
+            return Err("run scratch must be a direct directory under workspace/tmp".into());
+        }
+        Ok(Self {
+            root: self.root.clone(),
+            allowed_scratch: Some(Arc::new(allowed)),
+        })
+    }
+    fn visible(&self, path: &Path) -> bool {
+        let Some(own) = &self.allowed_scratch else { return true };
+        let tmp = self.root.join("tmp");
+        if path == tmp { return false; }
+        !path.starts_with(&tmp) || path.starts_with(own.as_path())
     }
     pub(crate) fn path(&self, input: &str) -> Result<PathBuf, String> {
         if input.trim().is_empty() {
@@ -63,6 +82,12 @@ impl Workspace {
         }
         if !resolved.starts_with(self.root.as_path()) {
             return Err("path outside allowed workspace".into());
+        }
+        if let Some(own) = &self.allowed_scratch {
+            let tmp = self.root.join("tmp");
+            if resolved.starts_with(tmp) && !resolved.starts_with(own.as_path()) {
+                return Err("another run's scratch path is not accessible".into());
+            }
         }
         Ok(resolved)
     }
@@ -123,7 +148,7 @@ fn list(ws: &Workspace, arg: &Value) -> Result<Value, String> {
         .sort_by_file_name();
     let mut items = Vec::new();
     let mut truncated = false;
-    for entry in walker {
+    for entry in walker.into_iter().filter_entry(|e| ws.visible(e.path())) {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.file_type().is_symlink() {
             continue;
@@ -256,7 +281,8 @@ fn search(ws: &Workspace, arg: &Value, content_mode: bool) -> Result<Value, Stri
     } else {
         WalkDir::new(&base)
     };
-    for entry in files.follow_links(false).sort_by_file_name() {
+    for entry in files.follow_links(false).sort_by_file_name()
+        .into_iter().filter_entry(|e| ws.visible(e.path())) {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.file_type().is_symlink() {
             continue;
