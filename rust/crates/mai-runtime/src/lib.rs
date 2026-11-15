@@ -2,6 +2,7 @@
 //! This crate has no MCP/verifier dependency and does not modify the legacy UI.
 //! It is an isolated foundation, not a production-ready replacement for MAI.
 
+pub mod file_mutations;
 pub mod llamacpp;
 pub mod native_tools;
 pub mod supervisor;
