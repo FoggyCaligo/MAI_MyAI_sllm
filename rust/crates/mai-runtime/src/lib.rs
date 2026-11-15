@@ -4,6 +4,7 @@
 
 pub mod llamacpp;
 pub mod supervisor;
+pub mod native_tools;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
