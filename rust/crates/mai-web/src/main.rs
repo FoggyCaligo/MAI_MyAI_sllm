@@ -12,7 +12,7 @@ use mai_runtime::{
     llamacpp::{LlamaConfig, LlamaCpp},
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
-    terminal::register_terminal,
+    terminal_sessions::{register_terminal_sessions, TerminalSessions},
     workspace_tools::{register_workspace_reads, Workspace},
     Engine, Event, Message, Registry, Role,
 };
@@ -103,14 +103,13 @@ struct App {
 }
 impl App {
     fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
-        if config.enable_terminal && config.workspace_root.is_none() {
-            return Err("terminal requires a configured workspace root".into());
-        }
-        let workspace = config
-            .workspace_root
-            .as_ref()
-            .map(Workspace::new)
-            .transpose()?;
+        // OWNER_USERS is currently the only authenticated user class. Owner
+        // terminal defaults to enabled, with the process cwd as workspace root
+        // unless MAI_RUST_WORKSPACE_ROOT provides an explicit alternative.
+        let root = config.workspace_root.clone().or_else(|| {
+            config.enable_terminal.then(|| std::env::current_dir().unwrap_or_default())
+        });
+        let workspace = root.as_ref().map(Workspace::new).transpose()?;
         let supervisor = Arc::new(ModelSupervisor::new(
             Policy::new(config.llama_url.clone()),
             Arc::new(PhysicalRam),
@@ -479,6 +478,15 @@ async fn run_job(request: RunJob) {
         }
     };
     let tools_scope = run_files.clone();
+    let terminal_sessions = if app.config.enable_terminal {
+        match (&run_files,&app.workspace) {
+            (Some(scope),Some(workspace)) => Some(Arc::new(TerminalSessions::new(
+                scope.clone(),workspace.root().to_path_buf(),
+            ))),
+            _ => None,
+        }
+    } else { None };
+    let active_sessions = terminal_sessions.clone();
     let config = LlamaConfig {
         endpoint: app.config.llama_url.clone(),
         model: selected.clone(),
@@ -496,15 +504,8 @@ async fn run_job(request: RunJob) {
         }
         if let Some(scope) = &tools_scope {
             register_run_file_tools(&mut tools, scope)?;
-            if app.config.enable_terminal {
-                if let Some(workspace) = &app.workspace {
-                    register_terminal(
-                        &mut tools,
-                        scope.clone(),
-                        cancel.clone(),
-                        workspace.root().to_path_buf(),
-                    )?;
-                }
+            if let Some(manager) = &active_sessions {
+                register_terminal_sessions(&mut tools,manager.clone(),cancel.clone())?;
             }
         }
         let mut engine =
@@ -541,6 +542,10 @@ async fn run_job(request: RunJob) {
     };
     // Wait for every in-flight blocking file operation before sealing and
     // deleting this run's scratch. Late queued operations observe the closed run.
+    // Child shells must exit before their scratch directory is removed.
+    if let Some(sessions) = terminal_sessions {
+        sessions.close_all().await;
+    }
     let cleanup_error = if let Some(scope) = run_files {
         match tokio::task::spawn_blocking(move || scope.cleanup()).await {
             Ok(Ok(())) => None,
@@ -695,7 +700,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         llama_url: env::var("LLAMACPP_HOST").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         ui_dir: ui,
         workspace_root: env::var_os("MAI_RUST_WORKSPACE_ROOT").map(PathBuf::from),
-        enable_terminal: env::var("MAI_RUST_ENABLE_TERMINAL").is_ok_and(|v| v == "1"),
+        // All accounts accepted by this preview are OWNER_USERS owners.
+        // Default on; 0/false/off explicitly disables terminal execution.
+        enable_terminal: !env::var("MAI_RUST_ENABLE_TERMINAL")
+            .is_ok_and(|v|matches!(v.to_ascii_lowercase().as_str(),"0"|"false"|"off")),
     };
     let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -733,7 +741,7 @@ mod tests {
         )
     }
     #[test]
-    fn terminal_must_have_explicit_workspace_opt_in() {
+    fn owner_terminal_defaults_to_process_workspace() {
         let config = Config {
             model: "test".into(),
             llama_url: "http://127.0.0.1:0".into(),
@@ -741,10 +749,9 @@ mod tests {
             workspace_root: None,
             enable_terminal: true,
         };
-        assert!(App::new(config, vec![])
-            .err()
-            .unwrap()
-            .contains("workspace root"));
+        let app = App::new(config, vec![]).expect("owner workspace fallback");
+        assert!(app.workspace.is_some());
+        assert!(app.config.enable_terminal);
     }
     #[tokio::test]
     async fn private_chat_job_cannot_be_submitted_without_login() {
