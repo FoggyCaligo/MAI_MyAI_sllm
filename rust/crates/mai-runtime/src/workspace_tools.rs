@@ -18,7 +18,7 @@ pub struct Workspace {
     allowed_scratch: Option<Arc<PathBuf>>,
 }
 impl Workspace {
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         self.root.as_path()
     }
     pub fn new(root: impl AsRef<Path>) -> Result<Self, String> {
