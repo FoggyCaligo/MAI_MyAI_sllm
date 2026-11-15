@@ -32,7 +32,7 @@ impl Workspace {
         })
     }
     /// Protect other jobs' scratch paths from read/search/list tools.
-    pub fn scoped_to_run(&self, scratch: &Path) -> Result<Self,String> {
+    pub fn scoped_to_run(&self, scratch: &Path) -> Result<Self, String> {
         let allowed = self.path(&scratch.to_string_lossy())?;
         if allowed.parent() != Some(self.root.join("tmp").as_path()) || !allowed.is_dir() {
             return Err("run scratch must be a direct directory under workspace/tmp".into());
@@ -43,9 +43,13 @@ impl Workspace {
         })
     }
     fn visible(&self, path: &Path) -> bool {
-        let Some(own) = &self.allowed_scratch else { return true };
+        let Some(own) = &self.allowed_scratch else {
+            return true;
+        };
         let tmp = self.root.join("tmp");
-        if path == tmp { return false; }
+        if path == tmp {
+            return false;
+        }
         !path.starts_with(&tmp) || path.starts_with(own.as_path())
     }
     pub(crate) fn path(&self, input: &str) -> Result<PathBuf, String> {
@@ -281,8 +285,12 @@ fn search(ws: &Workspace, arg: &Value, content_mode: bool) -> Result<Value, Stri
     } else {
         WalkDir::new(&base)
     };
-    for entry in files.follow_links(false).sort_by_file_name()
-        .into_iter().filter_entry(|e| ws.visible(e.path())) {
+    for entry in files
+        .follow_links(false)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| ws.visible(e.path()))
+    {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.file_type().is_symlink() {
             continue;
@@ -528,20 +536,31 @@ mod tests {
         let other = crate::file_mutations::RunFiles::new(ws.clone()).unwrap();
         let own = current.scratch_path().unwrap();
         let other_path = other.scratch_path().unwrap();
-        fs::write(own.join("own.txt"),"mine").unwrap();
-        fs::write(other_path.join("other.txt"),"private").unwrap();
+        fs::write(own.join("own.txt"), "mine").unwrap();
+        fs::write(other_path.join("other.txt"), "private").unwrap();
         let scoped = ws.scoped_to_run(&own).unwrap();
-        assert!(read(&scoped,&json!({"path":own.join("own.txt").to_string_lossy()})).is_ok());
-        assert!(read(&scoped,&json!({"path":other_path.join("other.txt").to_string_lossy()})).is_err());
-        let recursive = list(&scoped,&json!({"path":".","recursive":true})).unwrap();
+        assert!(read(
+            &scoped,
+            &json!({"path":own.join("own.txt").to_string_lossy()})
+        )
+        .is_ok());
+        assert!(read(
+            &scoped,
+            &json!({"path":other_path.join("other.txt").to_string_lossy()})
+        )
+        .is_err());
+        let recursive = list(&scoped, &json!({"path":".","recursive":true})).unwrap();
         let items = recursive["items"].as_array().unwrap();
-        assert!(!items.iter().any(|x| x["path"].as_str().unwrap().contains("other.txt")));
-        assert!(!items.iter().any(|x| x["path"].as_str().unwrap().contains("own.txt")));
-        let matches = search(&scoped,&json!({"query":"private","root":"."}),true).unwrap();
+        assert!(!items
+            .iter()
+            .any(|x| x["path"].as_str().unwrap().contains("other.txt")));
+        assert!(!items
+            .iter()
+            .any(|x| x["path"].as_str().unwrap().contains("own.txt")));
+        let matches = search(&scoped, &json!({"query":"private","root":"."}), true).unwrap();
         assert!(matches["results"].as_array().unwrap().is_empty());
         current.cleanup().unwrap();
         other.cleanup().unwrap();
         assert!(dir.path().exists());
     }
-
 }
