@@ -1,3 +1,5 @@
+mod remote_hub;
+use remote_hub::RemoteHub;
 //! MAI Web API PREVIEW. Loopback only; not a production MAI replacement.
 //! Existing HTML/JS is served unchanged from the preserved python/ tree.
 use axum::{
@@ -13,6 +15,7 @@ use mai_runtime::{
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
     terminal_sessions::{register_terminal_sessions, TerminalSessions},
+    workspace_route::{route_tool,register_switch,WorkspaceRoute},
     workspace_tools::{register_workspace_reads, Workspace},
     Engine, Event, Message, Registry, Role,
 };
@@ -99,6 +102,7 @@ struct Data {
 #[derive(Clone)]
 struct App {
     supervisor: Arc<ModelSupervisor>,
+    remote: Arc<RemoteHub>,
     workspace: Option<Workspace>,
     selected_model: Arc<Mutex<String>>,
     config: Arc<Config>,
@@ -124,6 +128,7 @@ impl App {
         )?);
         Ok(Self {
             supervisor,
+            remote: RemoteHub::new(),
             workspace,
             selected_model: Arc::new(Mutex::new(config.model.clone())),
             config: Arc::new(config),
@@ -291,6 +296,38 @@ async fn logout(State(app): State<App>, headers: HeaderMap) -> Reply {
     app.data.lock().await.sessions.remove(token);
     success(json!({"logged_out":true}))
 }
+
+fn worker_secret(headers:&HeaderMap)->&str{
+    headers.get("x-mai-agent-secret").and_then(|s|s.to_str().ok()).unwrap_or("")
+}
+async fn create_remote_session(State(app):State<App>,headers:HeaderMap)->Reply{
+    let owner=match app.auth(&headers).await{Ok(o)=>o,Err(e)=>return e};
+    match app.remote.create(&owner).await {
+        Ok(v)=>success(v),
+        Err(e)=>failure(StatusCode::CONFLICT,&e),
+    }
+}
+async fn remote_poll(State(app):State<App>,Path(id):Path<String>,headers:HeaderMap)->Reply{
+    match app.remote.poll(&id,worker_secret(&headers)).await{
+        Ok(value)=>success(value),
+        Err(e)=>failure(StatusCode::UNAUTHORIZED,&e),
+    }
+}
+async fn remote_result(State(app):State<App>,Path(id):Path<String>,headers:HeaderMap,
+    Json(payload):Json<Value>)->Reply{
+    match app.remote.resolve(&id,worker_secret(&headers),payload).await {
+        Ok(())=>success(json!({"ok":true})),
+        Err(e)=>failure(StatusCode::BAD_REQUEST,&e),
+    }
+}
+async fn remote_disconnect(State(app):State<App>,Path(id):Path<String>,
+    headers:HeaderMap)->Reply{
+    match app.remote.revoke(&id,worker_secret(&headers)).await{
+        Ok(())=>success(json!({"ok":true})),
+        Err(e)=>failure(StatusCode::UNAUTHORIZED,&e),
+    }
+}
+
 async fn models(State(app): State<App>, headers: HeaderMap) -> Reply {
     if let Err(e) = app.auth(&headers).await {
         return e;
@@ -368,11 +405,13 @@ async fn submit_job(
             "requested model differs from selected model",
         );
     }
-    if input.remote_session_id.is_some() || !input.attachments.is_empty() {
-        return failure(
-            StatusCode::NOT_IMPLEMENTED,
-            "remote workers and attachments are not migrated yet",
-        );
+    if !input.attachments.is_empty() {
+        return failure(StatusCode::NOT_IMPLEMENTED,"attachments are not migrated yet");
+    }
+    if let Some(id)=input.remote_session_id.as_deref() {
+        if !app.remote.belongs_to(&user,id).await {
+            return failure(StatusCode::FORBIDDEN,"remote session belongs to another owner or is missing");
+        }
     }
     let job_id = new_token();
     let cancel = CancellationToken::new();
@@ -433,6 +472,7 @@ async fn submit_job(
         message: input.message,
         selected,
         previous,
+        remote_session_id: input.remote_session_id,
         cancel,
     }));
     (
@@ -448,6 +488,7 @@ struct RunJob {
     message: String,
     selected: String,
     previous: Vec<Message>,
+    remote_session_id: Option<String>,
     cancel: CancellationToken,
 }
 async fn run_job(request: RunJob) {
@@ -459,6 +500,7 @@ async fn run_job(request: RunJob) {
         message,
         selected,
         previous,
+        remote_session_id,
         cancel,
     } = request;
     {
@@ -485,6 +527,9 @@ async fn run_job(request: RunJob) {
             return;
         }
     };
+    let route = Arc::new(WorkspaceRoute::new(
+        user.clone(),id.clone(),remote_session_id,app.remote.clone(),
+    ).expect("nonempty authenticated run identifiers"));
     let tools_scope = run_files.clone();
     let terminal_sessions = if app.config.enable_terminal {
         match (&run_files, &app.workspace) {
@@ -517,6 +562,15 @@ async fn run_job(request: RunJob) {
             register_run_file_tools(&mut tools, scope)?;
             if let Some(manager) = &active_sessions {
                 register_terminal_sessions(&mut tools, manager.clone(), cancel.clone())?;
+            }
+        }
+        register_switch(&mut tools,route.clone())?;
+        for name in [
+            "file_list","file_search","document_read","code_read","code_search",
+            "code_edit","file_write","file_delete","file_move","file_copy","terminal_run",
+        ] {
+            if let Some(tool)=tools.take(name) {
+                tools.register(route_tool(tool,route.clone()))?;
             }
         }
         let mut engine =
@@ -557,6 +611,7 @@ async fn run_job(request: RunJob) {
     if let Some(sessions) = terminal_sessions {
         sessions.close_all().await;
     }
+    let remote_cleanup_error = route.cleanup().await.err();
     let cleanup_error = if let Some(scope) = run_files {
         match tokio::task::spawn_blocking(move || scope.cleanup()).await {
             Ok(Ok(())) => None,
@@ -565,6 +620,11 @@ async fn run_job(request: RunJob) {
         }
     } else {
         None
+    };
+    let cleanup_error = match (cleanup_error,remote_cleanup_error) {
+        (None,None)=>None,
+        (Some(e),None)|(None,Some(e))=>Some(e),
+        (Some(a),Some(b))=>Some(format!("{a}; {b}")),
     };
     let mut data = app.data.lock().await;
     let Some(job) = data.jobs.get_mut(&id) else {
@@ -676,6 +736,10 @@ fn router(app: App) -> Router {
         .route("/logout", post(logout))
         .route("/models", get(models))
         .route("/models/select", post(model_select))
+        .route("/remote/session", post(create_remote_session))
+        .route("/remote/agent/{id}/poll", post(remote_poll))
+        .route("/remote/agent/{id}/result", post(remote_result))
+        .route("/remote/agent/{id}", axum::routing::delete(remote_disconnect))
         .route("/chat/jobs", post(submit_job))
         .route("/chat/jobs/active", get(active_jobs))
         .route("/chat/jobs/{id}", get(get_job).delete(cancel_job))
