@@ -544,4 +544,25 @@ mod tests {
         assert!(result.unwrap_err().contains("cancelled"));
         assert!(!root.path().join("no.txt").exists());
     }
+    #[cfg(windows)]
+    #[test]
+    fn git_bash_resolves_to_real_git_installation() {
+        let shell = git_bash_path().expect("Git for Windows required in Windows CI");
+        assert!(shell.is_file());
+        assert_eq!(shell.file_name().and_then(|v| v.to_str()), Some("bash.exe"));
+        assert!(shell.to_string_lossy().to_ascii_lowercase().contains("git"));
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_shells_execute_without_nested_wrappers() {
+        let root=tempfile::tempdir().unwrap();
+        let base=root.path().to_path_buf();
+        let cmd=execute(json!({"shell":"cmd","command":"@echo off\r\necho cmd-ok"}),
+            base.clone(),base.clone(),CancellationToken::new()).await.unwrap();
+        assert!(cmd["stdout"].as_str().unwrap().contains("cmd-ok"));
+        let ps=execute(json!({"shell":"powershell","command":"Write-Output 'ps-ok'"}),
+            base.clone(),base, CancellationToken::new()).await.unwrap();
+        assert!(ps["stdout"].as_str().unwrap().contains("ps-ok"));
+    }
+
 }
