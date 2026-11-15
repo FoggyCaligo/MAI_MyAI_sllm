@@ -485,8 +485,9 @@ async fn run_job(request: RunJob) {
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
         let mut tools = Registry::new();
         register_basics(&mut tools)?;
-        if let Some(workspace) = &app.workspace {
-            register_workspace_reads(&mut tools, workspace)?;
+        if let (Some(workspace),Some(scope)) = (&app.workspace,&tools_scope) {
+            let limited = workspace.scoped_to_run(&scope.scratch_path()?)?;
+            register_workspace_reads(&mut tools, &limited)?;
         }
         if let Some(scope) = &tools_scope {
             register_run_file_tools(&mut tools, scope)?;
