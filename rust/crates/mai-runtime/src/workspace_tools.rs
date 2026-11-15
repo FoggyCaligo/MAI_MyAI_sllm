@@ -521,4 +521,27 @@ mod tests {
         fs::write(dir.path().join("invalid.bin"), [0xff, 0xfe]).unwrap();
         assert!(read(&ws, &json!({"path":"invalid.bin"})).is_err());
     }
+    #[test]
+    fn scoped_reads_cannot_expose_other_runs_scratch() {
+        let (dir, ws) = fixture();
+        let current = crate::file_mutations::RunFiles::new(ws.clone()).unwrap();
+        let other = crate::file_mutations::RunFiles::new(ws.clone()).unwrap();
+        let own = current.scratch_path().unwrap();
+        let other_path = other.scratch_path().unwrap();
+        fs::write(own.join("own.txt"),"mine").unwrap();
+        fs::write(other_path.join("other.txt"),"private").unwrap();
+        let scoped = ws.scoped_to_run(&own).unwrap();
+        assert!(read(&scoped,&json!({"path":own.join("own.txt").to_string_lossy()})).is_ok());
+        assert!(read(&scoped,&json!({"path":other_path.join("other.txt").to_string_lossy()})).is_err());
+        let recursive = list(&scoped,&json!({"path":".","recursive":true})).unwrap();
+        let items = recursive["items"].as_array().unwrap();
+        assert!(!items.iter().any(|x| x["path"].as_str().unwrap().contains("other.txt")));
+        assert!(!items.iter().any(|x| x["path"].as_str().unwrap().contains("own.txt")));
+        let matches = search(&scoped,&json!({"query":"private","root":"."}),true).unwrap();
+        assert!(matches["results"].as_array().unwrap().is_empty());
+        current.cleanup().unwrap();
+        other.cleanup().unwrap();
+        assert!(dir.path().exists());
+    }
+
 }
