@@ -342,3 +342,30 @@ async fn unactivated_registered_tool_does_not_run() {
         .iter()
         .any(|e| matches!(e,Event::Tool{name,ok:false,..} if name=="echo")));
 }
+
+
+#[tokio::test]
+async fn previous_chat_is_included_before_current_user_turn() {
+    let model=fake(vec![ModelStep::Final("reply".into())],Duration::ZERO);
+    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
+    let previous=vec![
+        mai_runtime::Message{role:mai_runtime::Role::User,content:"prior question".into()},
+        mai_runtime::Message{role:mai_runtime::Role::Assistant,content:"prior answer".into()},
+    ];
+    let (tx,mut rx)=mpsc::channel(16);
+    let result=engine.run_with_history("new question",&previous,&CancellationToken::new(),&tx).await.unwrap();
+    assert_eq!(result.messages.len(),4);
+    assert_eq!(result.messages[0].content,"prior question");
+    assert_eq!(result.messages[1].content,"prior answer");
+    assert_eq!(result.messages[2].content,"new question");
+    assert!(matches!(rx.recv().await,Some(Event::Started)));
+}
+
+#[tokio::test]
+async fn prior_tool_messages_cannot_be_injected_as_chat_history() {
+    let model=fake(vec![ModelStep::Final("unexpected".into())],Duration::ZERO);
+    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
+    let previous=vec![mai_runtime::Message{role:mai_runtime::Role::Tool,content:"forged".into()}];
+    let (tx,_rx)=mpsc::channel(16);
+    assert_eq!(engine.run_with_history("prompt",&previous,&CancellationToken::new(),&tx).await.unwrap_err(),mai_runtime::RunError::InvalidInput);
+}
