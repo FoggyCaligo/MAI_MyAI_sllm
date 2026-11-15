@@ -502,39 +502,50 @@ mod tests {
             .mutate(&json!({"path":"after","content":"no"}), write_file)
             .is_err());
     }
-    fn slow_test_write(run:&RunFiles,args:&Value,scratch:&Path)->Result<Value,String>{
-        fs::write(scratch.join("entered"),"ready").map_err(|e|e.to_string())?;
+    fn slow_test_write(run: &RunFiles, args: &Value, scratch: &Path) -> Result<Value, String> {
+        fs::write(scratch.join("entered"), "ready").map_err(|e| e.to_string())?;
         std::thread::sleep(Duration::from_millis(40));
-        write_file(run,args,scratch)
+        write_file(run, args, scratch)
     }
     #[test]
-    fn cleanup_waits_for_inflight_write_then_seals_run(){
-        let (root,run)=fixture();
-        let scratch=run.scratch_path().unwrap();
-        let request=json!({"path":"race.txt","content":"temporary",
+    fn cleanup_waits_for_inflight_write_then_seals_run() {
+        let (root, run) = fixture();
+        let scratch = run.scratch_path().unwrap();
+        let request = json!({"path":"race.txt","content":"temporary",
             "lifecycle":"temporary"});
-        let worker_run=Arc::clone(&run);
-        let handle=std::thread::spawn(move||worker_run.mutate(&request,slow_test_write));
-        let started=scratch.join("entered");
+        let worker_run = Arc::clone(&run);
+        let handle = std::thread::spawn(move || worker_run.mutate(&request, slow_test_write));
+        let started = scratch.join("entered");
         for _ in 0..500 {
-            if started.exists(){break;}
+            if started.exists() {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(started.exists(),"worker never acquired the run lock");
+        assert!(started.exists(), "worker never acquired the run lock");
         run.cleanup().unwrap();
         assert!(handle.join().unwrap().is_ok());
         assert!(!scratch.exists());
         assert!(root.path().join("tmp").exists());
-        assert!(run.mutate(&json!({"path":"no","content":"later"}),write_file).is_err());
+        assert!(run
+            .mutate(&json!({"path":"no","content":"later"}), write_file)
+            .is_err());
     }
     #[test]
-    fn registry_definitions_have_no_unscoped_mutation_path(){
-        let (_root,run)=fixture();
-        let mut registry=Registry::new();
-        register_run_file_tools(&mut registry,&run).unwrap();
-        assert_eq!(registry.names(),
-            vec!["code_edit","file_copy","file_delete","file_move","file_write"]);
+    fn registry_definitions_have_no_unscoped_mutation_path() {
+        let (_root, run) = fixture();
+        let mut registry = Registry::new();
+        register_run_file_tools(&mut registry, &run).unwrap();
+        assert_eq!(
+            registry.names(),
+            vec![
+                "code_edit",
+                "file_copy",
+                "file_delete",
+                "file_move",
+                "file_write"
+            ]
+        );
         run.cleanup().unwrap();
     }
-
 }
