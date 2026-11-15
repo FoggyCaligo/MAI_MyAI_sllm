@@ -376,6 +376,25 @@ mod tests {
         run.cleanup().unwrap();
     }
     #[tokio::test]
+    async fn alternating_stdout_stderr_does_not_lose_partial_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let run = Arc::new(RunFiles::new(Workspace::new(&root).unwrap()).unwrap());
+        let sessions = TerminalSessions::new(run.clone(), root);
+        for index in 0..12 {
+            let command=format!(
+                "printf 'out-{}'; printf 'err-{}' >&2",
+                index,index
+            );
+            let result=sessions.run(json!({"command":command}),CancellationToken::new())
+                .await.unwrap();
+            assert_eq!(result["stdout"],format!("out-{index}"),"iteration {index}: {result}");
+            assert_eq!(result["stderr"],format!("err-{index}"),"iteration {index}: {result}");
+        }
+        sessions.close_all().await;
+        run.cleanup().unwrap();
+    }
+    #[tokio::test]
     async fn nonzero_command_keeps_bash_session_state() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().to_path_buf();
