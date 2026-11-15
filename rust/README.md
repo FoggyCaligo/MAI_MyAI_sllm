@@ -110,7 +110,7 @@ export MAI_RUST_ENABLE_TERMINAL=1
 cargo run -p mai-web
 ```
 
-- 현재 `terminal_run`은 호출마다 **새 자식 셸**을 실행한다. `cd` 및 환경변수·함수 등의 셸 상태는 다음 호출에 유지되지 않는다. 지속 터미널 세션과 Host/Client당 2개 제한은 아직 이식 전이다.
+- Turn 07 당시 단발 터미널 설명을 대체한다. Turn 08부터 Bash는 작업별 지속 세션을 유지한다. CMD/PowerShell은 여전히 단발 실행이다.
 - Windows에서 PATH의 `bash`가 WSL 런처와 충돌하는 문제를 해결했으며, Windows Git Bash/CMD/PowerShell 직접 실행 테스트를 추가했다.
 
 ## Turn 08 — Owner 기본 터미널과 지속 Bash 세션
@@ -119,7 +119,24 @@ cargo run -p mai-web
 - `MAI_RUST_WORKSPACE_ROOT`가 지정되어 있지 않으면 **서버 시작 프로세스의 현재 디렉터리**를 초기 작업 루트로 사용한다. 터미널은 OS 사용자 권한으로 명령을 실행하는 것이므로 **샌드박스가 아니다.** 지금의 Rust 서버는 로컬 loopback 전용 미리보기이며, 공개 인터넷 연결은 금지한다.
 - Bash: `terminal_run(command="cd subdir")` 다음 `terminal_run(command="pwd")` 호출에서 같은 셸의 cwd와 환경변수가 유지된다. `session_id` 기본값은 `default`; 최대 **Host 2개** 세션을 동시에 가진다.
 - `terminal_run(command="exit",session_id="default")`로 해당 세션을 닫고 슬롯을 재사용한다. 에이전트의 한 작업이 종료·실패·취소되면 **모든 해당 작업의 셸을 닫고 난 뒤** `tmp/run-*`을 정리한다.
-- 세션은 **한 에이전트 답변의 여러 도구 호출 동안만** 유지한다. 다음 사용자 메시지까지 유지하지 않으며, Host/Client 전체를 통합하는 4세션 제한 및 원격 Client 2개 제한은 아직 연결되지 않았다.
+- 세션은 **한 에이전트 답변의 여러 도구 호출 동안만** 유지한다. Turn 09부터 실험적 Rust Client 워커에도 2개의 지속 Bash 세션이 있다(Host 2 + Client 2/작업).
 - **현재 지속 세션은 Bash만 지원**한다. Windows CMD/PowerShell은 이전처럼 호출별 단발 프로세스로 작동한다. 지속 세션에서는 `cwd` 인자를 지정하지 않고 `cd`를 사용한다. `temporary_outputs`가 필요한 경우 `file_write(lifecycle=temporary)`를 대신 사용한다.
 - Bash 명령의 비정상 종료 코드는 명시적인 도구 오류지만 **셸은 그대로 유지**된다. 취소·타임아웃·출력 한도 초과·실제 프로토콜 오류가 발생하면 해당 셸을 강제 종료한다.
 - Windows 실제 실행 환경의 인코딩, 프로세스 하위 트리 강제 종료, Windows Job Object, Host/Client 원격 실행은 추가 검증·개발이 필요하다. 기존 Web UI / Python 코드는 변경하지 않았다.
+
+## Turn 09 — Rust Host/Client Native 워커 (2026-11-15)
+
+- Rust에 작업별 `switch_workspace(target="host"|"client")`를 이식했다. 기본 대상은 host, 동일 대상을 연속 선택하면 `changed=false`이다. Client 전환은 해당 Owner의 인증된 워커가 연결되어 있을 때에만 확정되며, Client 연결 실패 시 Host fallback은 금지된다.
+- Rust Web API `POST /remote/session`은 인증된 Owner에게 임시 원격 세션 및 비밀키를 발급한다. `DELETE /remote/session/{id}`는 Owner가 자신의 세션을 폐기한다. 워커는 `X-MAI-Agent-Secret`을 포함한 `/remote/agent/{id}/poll` 및 `/result`로 요청·결과를 교환한다. 기존 Python 워커의 `native.invoke`, `native.cleanup` 계약과 같은 필드 구조를 사용한다.
+- Rust Client 실행 파일: `cargo run -p mai-web --bin mai-worker`. 환경변수 `MAI_REMOTE_SERVER`(HTTPS 필수), `MAI_REMOTE_SESSION`, `MAI_REMOTE_KEY`, `MAI_CLIENT_WORKSPACE_ROOT`를 반드시 지정한다. 클라이언트가 HTTPS로 외부 연결하므로 인바운드 포트는 열지 않는다.
+- 워커는 파일·코드 및 터미널 Native 도구를 실행하며 작업별 `RunFiles`와 `TerminalSessions`를 생성한다. Host Bash 최대 2세션 + Rust Client Bash 최대 2세션으로 작업별 4세션 구조다. 양측 모두 `exit`과 최종 cleanup에서 세션을 종료한다. 원격 run_id는 기존 Python 워커 규칙과 같은 32자리 소문자 16진수다.
+- Client로 한 번이라도 전환한 작업은 종료 시 `native.cleanup` 확인이 필수다. 워커의 `cleaned=true`가 확인되지 않으면 정상 완료로 처리하지 않는다. 작업별 임시 파일만 정리하고 영구 파일은 보존한다.
+- **운영 제한**: Rust Web은 계속 `127.0.0.1`에만 수신하므로 외부 워커 연결에는 별도의 안전한 HTTPS 리버스 프록시 또는 터널이 필요하다. Python의 원격 연결 설치 UI를 Rust에 아직 이식하지 않았으며, 세션 생성은 Owner 인증 API를 통한 수동 절차다.
+- **취소 제한**: Rust 원격 워커는 요청을 순차 처리한다. 네트워크 장애·호스트 취소 중 실행 중인 Client 명령의 즉시 중단은 아직 보장하지 않으며, cleanup ACK가 오지 않으면 타임아웃 후 오류로 표시한다. 원격 취소의 즉시 전달, Windows Job Object, 장시간 유휴 세션 자동 만료, 실기기 E2E는 남은 작업이다.
+
+### 실험적 수동 연결
+
+1. Rust Web 서버에 Owner 인증으로 `POST /remote/session`을 호출해 받은 `session_id`와 `secret`을 안전하게 보관한다.
+2. 별도 Client PC에서 위 네 환경변수를 설정한 뒤 `cargo run -p mai-web --bin mai-worker`를 실행한다. `MAI_REMOTE_SERVER`는 인증서가 검증되는 HTTPS 주소여야 한다.
+3. 작업 제출 시 `/chat/jobs`의 `remote_session_id`에 세션 ID를 넣고 모델이 Native `switch_workspace(target="client")`로 전환하면 파일·코드·터미널 도구가 Client에서 실행된다.
+4. 세션이 끊겼거나 재발급해야 하면 Owner 인증으로 `DELETE /remote/session/{id}`를 호출한다.
