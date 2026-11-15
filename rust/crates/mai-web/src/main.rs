@@ -429,7 +429,16 @@ struct RunJob {
     cancel: CancellationToken,
 }
 async fn run_job(request: RunJob) {
-    let RunJob { app, id, user, session, message, selected, previous, cancel } = request;
+    let RunJob {
+        app,
+        id,
+        user,
+        session,
+        message,
+        selected,
+        previous,
+        cancel,
+    } = request;
     {
         let mut data = app.data.lock().await;
         if let Some(job) = data.jobs.get_mut(&id) {
