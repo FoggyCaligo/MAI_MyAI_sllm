@@ -112,7 +112,7 @@ impl RunFiles {
         Ok(())
     }
 }
-fn text(v: &Value, key: &str) -> Result<&str, String> {
+fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
     v.get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| format!("missing string: {key}"))
