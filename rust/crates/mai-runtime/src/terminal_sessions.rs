@@ -196,10 +196,13 @@ impl TerminalSessions {
             drop(shell);
             self.sessions.lock().await.remove(id);
         }
-        parsed.map(|mut result| {
-            result["session_id"] = json!(id);
-            result
-        })
+        let mut output = parsed?;
+        output["session_id"] = json!(id);
+        output["command"] = json!(command);
+        if output["returncode"].as_i64() != Some(0) {
+            return Err(format!("persistent Bash command failed: {output}"));
+        }
+        Ok(output)
     }
 }
 #[cfg(windows)]
@@ -283,9 +286,6 @@ async fn collect(
     let result = json!({"command":"","shell":"bash","shell_family":"bash","stdout":stdout,
         "stderr":stderr,"stdout_encoding":"utf-8","stderr_encoding":"utf-8",
         "returncode":code,"timed_out":false});
-    if code != 0 {
-        return Err(format!("persistent Bash command failed: {result}"));
-    }
     Ok(result)
 }
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -350,6 +350,23 @@ mod tests {
         let out = result["stdout"].as_str().unwrap();
         assert!(out.contains("nested"), "{out}");
         assert!(out.contains("present"), "{out}");
+        sessions.close_all().await;
+        run.cleanup().unwrap();
+    }
+    #[tokio::test]
+    async fn nonzero_command_keeps_bash_session_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let run = Arc::new(RunFiles::new(Workspace::new(&root).unwrap()).unwrap());
+        let sessions = TerminalSessions::new(run.clone(), root);
+        sessions.run(json!({"command":"export MAI_PERSIST_AFTER_FAILURE=ok"}),
+            CancellationToken::new()).await.unwrap();
+        let failure = sessions.run(json!({"command":"false"}),
+            CancellationToken::new()).await.unwrap_err();
+        assert!(failure.contains("returncode"), "{failure}");
+        let output=sessions.run(json!({"command":"printf '%s' \"$MAI_PERSIST_AFTER_FAILURE\""}),
+            CancellationToken::new()).await.unwrap();
+        assert_eq!(output["stdout"],"ok");
         sessions.close_all().await;
         run.cleanup().unwrap();
     }
