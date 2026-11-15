@@ -56,6 +56,18 @@ impl RemoteHub {
         );
         Ok(json!({"session_id":id,"secret":secret}))
     }
+    pub async fn revoke_owner(&self, owner:&str, id:&str)->Result<(),String>{
+        let mut all=self.sessions.lock().await;
+        if !all.get(id).is_some_and(|session|session.owner==owner){
+            return Err("remote session is not owned by this account".into());
+        }
+        if let Some(session)=all.remove(id){
+            for (_,sender) in session.pending{
+                let _=sender.send(Err("remote session revoked by owner".into()));
+            }
+        }
+        Ok(())
+    }
     pub async fn belongs_to(&self, owner: &str, id: &str) -> bool {
         let all = self.sessions.lock().await;
         all.get(id).is_some_and(|s| s.owner == owner)
@@ -210,6 +222,16 @@ impl RemoteTransport for RemoteHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn owner_can_revoke_stale_session_and_create_replacement(){
+        let hub=RemoteHub::new();
+        let original=hub.create("alice").await.unwrap();
+        let id=original["session_id"].as_str().unwrap();
+        assert!(hub.revoke_owner("bob",id).await.is_err());
+        assert!(hub.create("alice").await.is_err());
+        hub.revoke_owner("alice",id).await.unwrap();
+        assert!(hub.create("alice").await.is_ok());
+    }
     #[tokio::test]
     async fn owner_scope_and_result_roundtrip() {
         let hub = RemoteHub::new();
