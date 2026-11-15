@@ -9,6 +9,7 @@ pub mod supervisor;
 pub mod terminal;
 pub mod terminal_sessions;
 pub mod workspace_tools;
+pub mod workspace_route;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
