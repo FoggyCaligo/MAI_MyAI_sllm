@@ -6,14 +6,13 @@ use crate::{Registry, Tool, ToolSchema};
 use crate::file_mutations::RunFiles;
 use serde_json::{json, Value};
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     path::{Component, Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::Duration,
 };
-use tokio::{io::AsyncReadExt, process::{Child, Command}, time::{sleep, Instant}};
+use tokio::{io::AsyncReadExt, process::{Child, Command}, time::sleep};
 use tokio_util::sync::CancellationToken;
 
 const MAX_COMMAND_CHARS: usize = 32_768;
