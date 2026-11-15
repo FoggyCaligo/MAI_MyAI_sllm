@@ -1,6 +1,8 @@
 //! Native, async, JSON-based MAI agent engine.
 //! This crate has no MCP/verifier dependency and does not modify the legacy UI.
 //! It is an isolated foundation, not a production-ready replacement for MAI.
+
+pub mod llamacpp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
