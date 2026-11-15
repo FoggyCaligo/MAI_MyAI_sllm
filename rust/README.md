@@ -95,7 +95,7 @@ cargo run -p mai-web
 
 ## Turn 07 — 선택적 Native Terminal 첫 구현 (2026-11-15)
 
-- `mai-runtime::terminal`에 `terminal_run`을 구현했다. **Bash가 기본**이며, Windows에서는 `shell=cmd`, `shell=powershell`도 선택할 수 있다. Bash는 실행 PC PATH에서 `bash`를 찾아 실행한다(Git Bash 설치 및 PATH 필요).
+- `mai-runtime::terminal`에 `terminal_run`을 구현했다. **Bash가 기본**이며, Windows에서는 `shell=cmd`, `shell=powershell`도 선택할 수 있다. Linux는 PATH의 Bash를 사용한다. Windows는 Git for Windows의 `bin/bash.exe`만 명시적으로 찾아 실행하며, 자동 검색이 안 되면 `MAI_GIT_BASH_PATH`에 실행 파일 경로를 지정한다.
 - `mai-web`에서는 `MAI_RUST_ENABLE_TERMINAL=1` **및** `MAI_RUST_WORKSPACE_ROOT`를 둘 다 명시해야 도구를 등록한다. 미설정 상태에서는 **터미널이 활성화되지 않는다.** Rust 서버 자체는 loopback(127.0.0.1) 전용으로 유지된다.
 - 명령어·cwd·shell·temporary_outputs JSON 인자를 사용하고 stdout/stderr/종료 코드를 분리해 반환한다. 성공하지 않은 종료 코드는 도구 오류로 보고한다. 합산 출력 기본 한도 1 MiB, 명령 타임아웃 기본 180초. 시간 초과·출력 초과·취소 시 프로세스 트리 종료를 시도한다.
 - Unix는 별도 프로세스 그룹을 만들고 그룹 종료 시그널을 전달한다. Windows는 `taskkill.exe /PID ... /T /F`와 부모 프로세스 강제 종료를 조합한다. 둘 다 **best effort**이며, 권한 분리·데몬화된 자식이나 OS에서 별도 작업 그룹으로 분리된 프로세스까지 종료된다는 보장은 없다. Windows Job Object 전환을 운영 전 검토해야 한다.
@@ -109,3 +109,6 @@ export MAI_RUST_WORKSPACE_ROOT="/path/to/disposable-test-workspace"
 export MAI_RUST_ENABLE_TERMINAL=1
 cargo run -p mai-web
 ```
+
+- 현재 `terminal_run`은 호출마다 **새 자식 셸**을 실행한다. `cd` 및 환경변수·함수 등의 셸 상태는 다음 호출에 유지되지 않는다. 지속 터미널 세션과 Host/Client당 2개 제한은 아직 이식 전이다.
+- Windows에서 PATH의 `bash`가 WSL 런처와 충돌하는 문제를 해결했으며, Windows Git Bash/CMD/PowerShell 직접 실행 테스트를 추가했다.
