@@ -1,0 +1,29 @@
+name: Rust Core CI
+on:
+  push:
+    branches: [rewrite/rust-core-20261114]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-core-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format check
+        run: cargo fmt --all -- --check
+        working-directory: rust
+      - name: Test
+        run: cargo test --workspace
+        working-directory: rust
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: rust
