@@ -1,7 +1,6 @@
 //! MAI Web API PREVIEW. Loopback only; not a production MAI replacement.
 //! Existing HTML/JS is served unchanged from the preserved python/ tree.
 mod remote_hub;
-use remote_hub::RemoteHub;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -15,10 +14,11 @@ use mai_runtime::{
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
     terminal_sessions::{register_terminal_sessions, TerminalSessions},
-    workspace_route::{route_tool,register_switch,WorkspaceRoute},
+    workspace_route::{register_switch, route_tool, WorkspaceRoute},
     workspace_tools::{register_workspace_reads, Workspace},
     Engine, Event, Message, Registry, Role,
 };
+use remote_hub::RemoteHub;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -297,34 +297,51 @@ async fn logout(State(app): State<App>, headers: HeaderMap) -> Reply {
     success(json!({"logged_out":true}))
 }
 
-fn worker_secret(headers:&HeaderMap)->&str{
-    headers.get("x-mai-agent-secret").and_then(|s|s.to_str().ok()).unwrap_or("")
+fn worker_secret(headers: &HeaderMap) -> &str {
+    headers
+        .get("x-mai-agent-secret")
+        .and_then(|s| s.to_str().ok())
+        .unwrap_or("")
 }
-async fn create_remote_session(State(app):State<App>,headers:HeaderMap)->Reply{
-    let owner=match app.auth(&headers).await{Ok(o)=>o,Err(e)=>return e};
+async fn create_remote_session(State(app): State<App>, headers: HeaderMap) -> Reply {
+    let owner = match app.auth(&headers).await {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
     match app.remote.create(&owner).await {
-        Ok(v)=>success(v),
-        Err(e)=>failure(StatusCode::CONFLICT,&e),
+        Ok(v) => success(v),
+        Err(e) => failure(StatusCode::CONFLICT, &e),
     }
 }
-async fn remote_poll(State(app):State<App>,Path(id):Path<String>,headers:HeaderMap)->Reply{
-    match app.remote.poll(&id,worker_secret(&headers)).await{
-        Ok(value)=>success(value),
-        Err(e)=>failure(StatusCode::UNAUTHORIZED,&e),
+async fn remote_poll(State(app): State<App>, Path(id): Path<String>, headers: HeaderMap) -> Reply {
+    match app.remote.poll(&id, worker_secret(&headers)).await {
+        Ok(value) => success(value),
+        Err(e) => failure(StatusCode::UNAUTHORIZED, &e),
     }
 }
-async fn remote_result(State(app):State<App>,Path(id):Path<String>,headers:HeaderMap,
-    Json(payload):Json<Value>)->Reply{
-    match app.remote.resolve(&id,worker_secret(&headers),payload).await {
-        Ok(())=>success(json!({"ok":true})),
-        Err(e)=>failure(StatusCode::BAD_REQUEST,&e),
+async fn remote_result(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Reply {
+    match app
+        .remote
+        .resolve(&id, worker_secret(&headers), payload)
+        .await
+    {
+        Ok(()) => success(json!({"ok":true})),
+        Err(e) => failure(StatusCode::BAD_REQUEST, &e),
     }
 }
-async fn remote_disconnect(State(app):State<App>,Path(id):Path<String>,
-    headers:HeaderMap)->Reply{
-    match app.remote.revoke(&id,worker_secret(&headers)).await{
-        Ok(())=>success(json!({"ok":true})),
-        Err(e)=>failure(StatusCode::UNAUTHORIZED,&e),
+async fn remote_disconnect(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Reply {
+    match app.remote.revoke(&id, worker_secret(&headers)).await {
+        Ok(()) => success(json!({"ok":true})),
+        Err(e) => failure(StatusCode::UNAUTHORIZED, &e),
     }
 }
 
@@ -406,11 +423,17 @@ async fn submit_job(
         );
     }
     if !input.attachments.is_empty() {
-        return failure(StatusCode::NOT_IMPLEMENTED,"attachments are not migrated yet");
+        return failure(
+            StatusCode::NOT_IMPLEMENTED,
+            "attachments are not migrated yet",
+        );
     }
-    if let Some(id)=input.remote_session_id.as_deref() {
-        if !app.remote.belongs_to(&user,id).await {
-            return failure(StatusCode::FORBIDDEN,"remote session belongs to another owner or is missing");
+    if let Some(id) = input.remote_session_id.as_deref() {
+        if !app.remote.belongs_to(&user, id).await {
+            return failure(
+                StatusCode::FORBIDDEN,
+                "remote session belongs to another owner or is missing",
+            );
         }
     }
     let job_id = new_token();
@@ -527,9 +550,15 @@ async fn run_job(request: RunJob) {
             return;
         }
     };
-    let route = Arc::new(WorkspaceRoute::new(
-        user.clone(),id.clone(),remote_session_id,app.remote.clone(),
-    ).expect("nonempty authenticated run identifiers"));
+    let route = Arc::new(
+        WorkspaceRoute::new(
+            user.clone(),
+            id.clone(),
+            remote_session_id,
+            app.remote.clone(),
+        )
+        .expect("nonempty authenticated run identifiers"),
+    );
     let tools_scope = run_files.clone();
     let terminal_sessions = if app.config.enable_terminal {
         match (&run_files, &app.workspace) {
@@ -564,13 +593,22 @@ async fn run_job(request: RunJob) {
                 register_terminal_sessions(&mut tools, manager.clone(), cancel.clone())?;
             }
         }
-        register_switch(&mut tools,route.clone())?;
+        register_switch(&mut tools, route.clone())?;
         for name in [
-            "file_list","file_search","document_read","code_read","code_search",
-            "code_edit","file_write","file_delete","file_move","file_copy","terminal_run",
+            "file_list",
+            "file_search",
+            "document_read",
+            "code_read",
+            "code_search",
+            "code_edit",
+            "file_write",
+            "file_delete",
+            "file_move",
+            "file_copy",
+            "terminal_run",
         ] {
-            if let Some(tool)=tools.take(name) {
-                tools.register(route_tool(tool,route.clone()))?;
+            if let Some(tool) = tools.take(name) {
+                tools.register(route_tool(tool, route.clone()))?;
             }
         }
         let mut engine =
@@ -621,10 +659,10 @@ async fn run_job(request: RunJob) {
     } else {
         None
     };
-    let cleanup_error = match (cleanup_error,remote_cleanup_error) {
-        (None,None)=>None,
-        (Some(e),None)|(None,Some(e))=>Some(e),
-        (Some(a),Some(b))=>Some(format!("{a}; {b}")),
+    let cleanup_error = match (cleanup_error, remote_cleanup_error) {
+        (None, None) => None,
+        (Some(e), None) | (None, Some(e)) => Some(e),
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
     };
     let mut data = app.data.lock().await;
     let Some(job) = data.jobs.get_mut(&id) else {
@@ -739,7 +777,10 @@ fn router(app: App) -> Router {
         .route("/remote/session", post(create_remote_session))
         .route("/remote/agent/{id}/poll", post(remote_poll))
         .route("/remote/agent/{id}/result", post(remote_result))
-        .route("/remote/agent/{id}", axum::routing::delete(remote_disconnect))
+        .route(
+            "/remote/agent/{id}",
+            axum::routing::delete(remote_disconnect),
+        )
         .route("/chat/jobs", post(submit_job))
         .route("/chat/jobs/active", get(active_jobs))
         .route("/chat/jobs/{id}", get(get_job).delete(cancel_job))
