@@ -18,6 +18,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Refresh Cargo lockfile for worker target
+        working-directory: rust
+        run: cargo generate-lockfile
       - name: Apply formatting
         working-directory: rust
         run: cargo fmt --all
