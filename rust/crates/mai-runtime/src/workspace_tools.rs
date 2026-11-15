@@ -214,8 +214,7 @@ fn code_edit(ws: &Workspace, arg: &Value) -> Result<Value, String> {
     Ok(json!({"path":path.to_string_lossy(),"replacements":1,"bytes":updated.len()}))
 }
 fn search(ws: &Workspace, arg: &Value, content_mode: bool) -> Result<Value, String> {
-    let key = if content_mode { "root" } else { "root" };
-    let base = ws.path(arg.get(key).and_then(Value::as_str).unwrap_or("."))?;
+    let base = ws.path(arg.get("root").and_then(Value::as_str).unwrap_or("."))?;
     if !base.exists() {
         return Err("search root not found".into());
     }
