@@ -242,52 +242,65 @@ async fn collect(
     token: &str,
     cancel: &CancellationToken,
 ) -> Result<Value, String> {
-    let out_marker = format!("\u{1e}{token}:");
-    let err_marker = format!("\u{1e}{token}\u{1f}");
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut exit_code = None;
-    let mut stderr_done = false;
-    while exit_code.is_none() || !stderr_done {
-        let mut out_chunk = Vec::new();
-        let mut err_chunk = Vec::new();
+    // read_until is NOT cancellation-safe inside tokio::select!: an unfinished
+    // read_until may have already consumed bytes when another branch wins.
+    // read() is cancellation-safe, and each stream retains bytes in its own
+    // persistent buffer until both independent completion markers arrive.
+    let stdout_prefix = format!("\u{1e}{token}:");
+    let stderr_marker = format!("\u{1e}{token}\u{1f}");
+    let mut out_raw = Vec::new();
+    let mut err_raw = Vec::new();
+    let mut out_end: Option<usize> = None;
+    let mut exit_code: Option<i32> = None;
+    let mut err_end: Option<usize> = None;
+    let mut out_buf = [0u8; 8192];
+    let mut err_buf = [0u8; 8192];
+
+    while out_end.is_none() || err_end.is_none() {
         tokio::select! {
-            _=cancel.cancelled()=>return Err("terminal cancelled; process tree terminated".into()),
-            count=shell.stdout.read_until(0x1f,&mut out_chunk),if exit_code.is_none()=>{
-                let count=count.map_err(|e|e.to_string())?;
-                if count==0{return Err("persistent Bash terminated before completion".into());}
-                if let Some(at)=find_subslice(&out_chunk,out_marker.as_bytes()){
-                    stdout.extend_from_slice(&out_chunk[..at]);
-                    let status=&out_chunk[at+out_marker.len()..];
-                    if status.last()!=Some(&0x1f){return Err("malformed Bash end marker".into());}
-                    let number=std::str::from_utf8(&status[..status.len()-1])
-                        .map_err(|e|e.to_string())?;
-                    exit_code=Some(number.parse::<i32>().map_err(|e|e.to_string())?);
-                }else{stdout.extend_from_slice(&out_chunk);}
+            _=cancel.cancelled()=>{
+                return Err("terminal cancelled; process tree terminated".into());
             }
-            count=shell.stderr.read_until(0x1f,&mut err_chunk),if !stderr_done=>{
-                let count=count.map_err(|e|e.to_string())?;
-                if count==0{return Err("persistent Bash stderr terminated".into());}
-                if let Some(at)=find_subslice(&err_chunk,err_marker.as_bytes()){
-                    stderr.extend_from_slice(&err_chunk[..at]);
-                    stderr_done=true;
-                }else{stderr.extend_from_slice(&err_chunk);}
+            count=shell.stdout.read(&mut out_buf),if out_end.is_none()=>{
+                let count=count.map_err(|e|format!("Bash stdout: {e}"))?;
+                if count==0{return Err("persistent Bash terminated before stdout marker".into());}
+                out_raw.extend_from_slice(&out_buf[..count]);
+                if let Some(at)=find_subslice(&out_raw,stdout_prefix.as_bytes()){
+                    let value_start=at+stdout_prefix.len();
+                    if let Some(relative_end)=out_raw[value_start..].iter().position(|v|*v==0x1f){
+                        let digits=&out_raw[value_start..value_start+relative_end];
+                        let number=std::str::from_utf8(digits).map_err(|e|e.to_string())?;
+                        exit_code=Some(number.parse::<i32>().map_err(|e|e.to_string())?);
+                        out_end=Some(at);
+                    }
+                }
+            }
+            count=shell.stderr.read(&mut err_buf),if err_end.is_none()=>{
+                let count=count.map_err(|e|format!("Bash stderr: {e}"))?;
+                if count==0{return Err("persistent Bash terminated before stderr marker".into());}
+                err_raw.extend_from_slice(&err_buf[..count]);
+                if let Some(at)=find_subslice(&err_raw,stderr_marker.as_bytes()){
+                    err_end=Some(at);
+                }
             }
         }
-        if stdout.len() + stderr.len() > MAX_OUTPUT_BYTES {
-            return Err(
-                "terminal output collection limit exceeded; process tree terminated".into(),
-            );
+        if out_raw.len()+err_raw.len() > MAX_OUTPUT_BYTES + stdout_prefix.len() + stderr_marker.len() + 32 {
+            return Err("terminal output collection limit exceeded; process tree terminated".into());
         }
     }
-    let stdout = String::from_utf8(stdout).map_err(|_| "stdout is not UTF-8")?;
-    let stderr = String::from_utf8(stderr).map_err(|_| "stderr is not UTF-8")?;
-    let code = exit_code.ok_or("missing shell return code")?;
-    let result = json!({"command":"","shell":"bash","shell_family":"bash","stdout":stdout,
+    let out_end=out_end.ok_or("missing Bash stdout marker")?;
+    let err_end=err_end.ok_or("missing Bash stderr marker")?;
+    let stdout=String::from_utf8(out_raw[..out_end].to_vec()).map_err(|_|"stdout is not UTF-8")?;
+    let stderr=String::from_utf8(err_raw[..err_end].to_vec()).map_err(|_|"stderr is not UTF-8")?;
+    if stdout.len()+stderr.len()>MAX_OUTPUT_BYTES{
+        return Err("terminal output collection limit exceeded; process tree terminated".into());
+    }
+    let code=exit_code.ok_or("missing shell return code")?;
+    Ok(json!({"command":"","shell":"bash","shell_family":"bash","stdout":stdout,
         "stderr":stderr,"stdout_encoding":"utf-8","stderr_encoding":"utf-8",
-        "returncode":code,"timed_out":false});
-    Ok(result)
+        "returncode":code,"timed_out":false}))
 }
+
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
