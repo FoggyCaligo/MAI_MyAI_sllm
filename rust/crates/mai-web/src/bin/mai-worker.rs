@@ -239,4 +239,25 @@ mod tests {
         assert_eq!(cleaned["cleaned"], true);
         assert!(worker.runs.is_empty());
     }
+    #[tokio::test]
+    async fn client_temporary_files_cleanup_without_touching_persistent_files(){
+        let dir=tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("existing.txt"),"user-content").unwrap();
+        let mut worker=Worker::new(dir.path().to_path_buf()).unwrap();
+        let run_id="0123456789abcdef0123456789abcdef";
+        let created=worker.handle("native.invoke",json!({"run_id":run_id,"name":"file_write",
+            "arguments":{"path":"scripts/temporary.txt","content":"scratch",
+                "lifecycle":"temporary"}})).await.unwrap();
+        let path=std::path::PathBuf::from(created["path"].as_str().unwrap());
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(),"scratch");
+        let outside=worker.handle("native.invoke",json!({"run_id":run_id,"name":"file_write",
+            "arguments":{"path":"permanent.txt","content":"saved","lifecycle":"persistent"}})).await.unwrap();
+        assert_eq!(outside["lifecycle"],"persistent");
+        worker.handle("native.cleanup",json!({"run_id":run_id})).await.unwrap();
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_to_string(dir.path().join("existing.txt")).unwrap(),"user-content");
+        assert_eq!(std::fs::read_to_string(dir.path().join("permanent.txt")).unwrap(),"saved");
+    }
+
 }
