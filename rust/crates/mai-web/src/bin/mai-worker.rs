@@ -196,7 +196,7 @@ async fn run_worker() -> Result<(), String> {
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run_worker().await.map_err(|e| std::io::Error::other(e))?;
+    run_worker().await.map_err(std::io::Error::other)?;
     Ok(())
 }
 #[cfg(test)]
