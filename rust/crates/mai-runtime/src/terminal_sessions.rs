@@ -1,6 +1,7 @@
 //! Run-scoped persistent Bash shells. Session state survives tool calls, but
 //! never survives the owning agent run. Remote client transport is not wired.
 use crate::file_mutations::RunFiles;
+use crate::{Registry,Tool,ToolSchema};
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, process::{Child,ChildStderr,ChildStdout,Command},sync::Mutex};
@@ -206,6 +207,43 @@ async fn collect(shell:&mut BashSession,token:&str,cancel:&CancellationToken)->R
 }
 fn find_subslice(haystack:&[u8],needle:&[u8])->Option<usize>{
     haystack.windows(needle.len()).position(|w|w==needle)
+}
+
+
+pub fn register_terminal_sessions(
+    registry:&mut Registry,
+    sessions:Arc<TerminalSessions>,
+    cancellation:CancellationToken,
+)->Result<(),String>{
+    registry.register(Tool{
+        schema:ToolSchema{
+            name:"terminal_run".into(),
+            description:"Run persistent Bash commands on Owner host (default session reused across calls). session_id identifies one of max 2 host shells. exit closes a session. cmd/powershell remain one-shot on Windows.".into(),
+            parameters:json!({"type":"object","properties":{
+                "command":{"type":"string"},
+                "shell":{"type":"string","enum":["bash","cmd","powershell"]},
+                "session_id":{"type":"string"},
+                "cwd":{"type":"string"},
+                "temporary_outputs":{"type":"array","items":{"type":"string"}}
+            },"required":["command"],"additionalProperties":false})
+        },
+        timeout:COMMAND_TIMEOUT+Duration::from_secs(10),
+        invoke:Arc::new(move |args|{
+            let sessions=sessions.clone();
+            let token=cancellation.clone();
+            Box::pin(async move {
+                if args.get("shell").and_then(Value::as_str).unwrap_or("bash")=="bash"{
+                    sessions.run(args,token).await
+                }else{
+                    if args.get("session_id").is_some(){
+                        return Err("persistent session_id requires shell=bash".into());
+                    }
+                    let scratch=sessions.run.scratch_path()?;
+                    super::terminal::execute(args,sessions.root.clone(),scratch,token).await
+                }
+            })
+        }),
+    })
 }
 
 #[cfg(test)]
