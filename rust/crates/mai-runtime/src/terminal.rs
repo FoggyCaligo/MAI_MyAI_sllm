@@ -460,26 +460,40 @@ mod tests {
         let shared = token.clone();
         let dir = root.path().to_path_buf();
         let task = tokio::spawn(async move {
-            execute(json!({"command":"(sleep 1; printf orphan > descendant.txt) & wait"}),
-                dir.clone(),dir,shared).await
+            execute(
+                json!({"command":"(sleep 1; printf orphan > descendant.txt) & wait"}),
+                dir.clone(),
+                dir,
+                shared,
+            )
+            .await
         });
         sleep(Duration::from_millis(100)).await;
         token.cancel();
-        assert!(tokio::time::timeout(Duration::from_secs(3),task)
-            .await.unwrap().unwrap().is_err());
+        assert!(tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err());
         sleep(Duration::from_millis(1150)).await;
-        assert!(!root.path().join("descendant.txt").exists(),
-            "cancelled background child must not survive to write output");
+        assert!(
+            !root.path().join("descendant.txt").exists(),
+            "cancelled background child must not survive to write output"
+        );
     }
     #[tokio::test]
     async fn cancelled_before_spawn_never_executes_command() {
-        let root=tempfile::tempdir().unwrap();
-        let cancel=CancellationToken::new();
+        let root = tempfile::tempdir().unwrap();
+        let cancel = CancellationToken::new();
         cancel.cancel();
-        let result=execute(json!({"command":"printf leaked > no.txt"}),
-            root.path().to_path_buf(),root.path().to_path_buf(),cancel).await;
+        let result = execute(
+            json!({"command":"printf leaked > no.txt"}),
+            root.path().to_path_buf(),
+            root.path().to_path_buf(),
+            cancel,
+        )
+        .await;
         assert!(result.unwrap_err().contains("cancelled"));
         assert!(!root.path().join("no.txt").exists());
     }
-
 }
