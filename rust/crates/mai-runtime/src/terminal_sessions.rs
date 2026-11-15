@@ -242,10 +242,11 @@ async fn collect(
     token: &str,
     cancel: &CancellationToken,
 ) -> Result<Value, String> {
-    // read_until is NOT cancellation-safe inside tokio::select!: an unfinished
-    // read_until may have already consumed bytes when another branch wins.
-    // read() is cancellation-safe, and each stream retains bytes in its own
-    // persistent buffer until both independent completion markers arrive.
+    // read_until appends any partially read bytes to the caller's buffer
+    // on cancellation. The previous code allocated that buffer inside each
+    // select! iteration, then dropped it when another branch won.
+    // read() is cancellation-safe; persistent per-stream buffers preserve
+    // all bytes until both independent completion markers arrive.
     let stdout_prefix = format!("\u{1e}{token}:");
     let stderr_marker = format!("\u{1e}{token}\u{1f}");
     let mut out_raw = Vec::new();
