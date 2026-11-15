@@ -78,6 +78,35 @@ fn terminate_tree(pid: u32) {
         .status();
 }
 
+#[cfg(windows)]
+fn git_bash_path() -> Result<PathBuf, String> {
+    // Unqualified "bash" on Windows can resolve to the WSL launcher in
+    // System32. Only launch a confirmed Git for Windows bash.exe.
+    if let Some(override_path) = std::env::var_os("MAI_GIT_BASH_PATH") {
+        let path = PathBuf::from(override_path);
+        if path.is_file() {
+            return Ok(path);
+        }
+        return Err("MAI_GIT_BASH_PATH does not point to a file".into());
+    }
+    let mut candidates = Vec::new();
+    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(folder) = std::env::var_os(variable) {
+            candidates.push(PathBuf::from(folder).join("Git").join("bin").join("bash.exe"));
+        }
+    }
+    if let Some(folder) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(folder).join("Programs").join("Git")
+            .join("bin").join("bash.exe"));
+    }
+    for path in candidates {
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err("Git for Windows bash.exe not found; set MAI_GIT_BASH_PATH".into())
+}
+
 fn shell_args(
     shell: &str,
     command: &str,
@@ -88,7 +117,11 @@ fn shell_args(
     }
     let mut child = match shell {
         "bash" => {
-            let mut c = Command::new("bash");
+            #[cfg(windows)]
+            let program = git_bash_path()?;
+            #[cfg(not(windows))]
+            let program = PathBuf::from("bash");
+            let mut c = Command::new(program);
             c.args(["--noprofile", "--norc", "-c", command]);
             c
         }
