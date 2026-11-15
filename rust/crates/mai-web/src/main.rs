@@ -451,7 +451,7 @@ async fn run_job(
                 }
             }
         }
-    }
+    };
     let mut data = app.data.lock().await;
     let Some(job) = data.jobs.get_mut(&id) else {
         return;
