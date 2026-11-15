@@ -285,21 +285,29 @@ async fn collect(
                 }
             }
         }
-        if out_raw.len()+err_raw.len() > MAX_OUTPUT_BYTES + stdout_prefix.len() + stderr_marker.len() + 32 {
-            return Err("terminal output collection limit exceeded; process tree terminated".into());
+        if out_raw.len() + err_raw.len()
+            > MAX_OUTPUT_BYTES + stdout_prefix.len() + stderr_marker.len() + 32
+        {
+            return Err(
+                "terminal output collection limit exceeded; process tree terminated".into(),
+            );
         }
     }
-    let out_end=out_end.ok_or("missing Bash stdout marker")?;
-    let err_end=err_end.ok_or("missing Bash stderr marker")?;
-    let stdout=String::from_utf8(out_raw[..out_end].to_vec()).map_err(|_|"stdout is not UTF-8")?;
-    let stderr=String::from_utf8(err_raw[..err_end].to_vec()).map_err(|_|"stderr is not UTF-8")?;
-    if stdout.len()+stderr.len()>MAX_OUTPUT_BYTES{
+    let out_end = out_end.ok_or("missing Bash stdout marker")?;
+    let err_end = err_end.ok_or("missing Bash stderr marker")?;
+    let stdout =
+        String::from_utf8(out_raw[..out_end].to_vec()).map_err(|_| "stdout is not UTF-8")?;
+    let stderr =
+        String::from_utf8(err_raw[..err_end].to_vec()).map_err(|_| "stderr is not UTF-8")?;
+    if stdout.len() + stderr.len() > MAX_OUTPUT_BYTES {
         return Err("terminal output collection limit exceeded; process tree terminated".into());
     }
-    let code=exit_code.ok_or("missing shell return code")?;
-    Ok(json!({"command":"","shell":"bash","shell_family":"bash","stdout":stdout,
+    let code = exit_code.ok_or("missing shell return code")?;
+    Ok(
+        json!({"command":"","shell":"bash","shell_family":"bash","stdout":stdout,
         "stderr":stderr,"stdout_encoding":"utf-8","stderr_encoding":"utf-8",
-        "returncode":code,"timed_out":false}))
+        "returncode":code,"timed_out":false}),
+    )
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
