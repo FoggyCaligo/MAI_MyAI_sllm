@@ -78,6 +78,17 @@ cargo run -p mai-web
 - `mai-web`에는 `MAI_RUST_WORKSPACE_ROOT` 환경 변수를 명시한 **개발용** 실행에서만 위 6개 도구를 추가한다. 미설정 시 기존처럼 `calculator`, `current_time`만 사용한다.
 - 경로는 루트 기준 정규화하고 작업 루트 밖 접근을 차단한다. 탐색 중 symlink는 따라가지 않는다. **이 제한은 기존 owner 계정의 'OS가 허용한 모든 경로' 동작과 다르며, 완전 이식이 아닌 개발용 방어 경계**다.
 - `code_edit`은 아직 원본 파일의 메타데이터/권한 완전 보존, 동시 수정 감지, 강제 종료 중 복구를 검증하지 않았다. 작업자별 분리·인증·스코프 정책도 추후 구현해야 한다.
-- `file_write/file_delete/file_move/file_copy`, `code_symbols`, 구조화 문서 편집, `web_search/web_fetch`, `terminal_run`은 미구현. 특히 원격/호스트 `./tmp` 수명주기와 터미널 프로세스 트리 정리를 먼저 설계해야 한다.
+- `file_write/file_delete/file_move/file_copy`는 Turn 06에서 실행별 보호를 갖춘 개발용 구현을 추가했다. `code_symbols`, 구조화 문서 편집, `web_search/web_fetch`, `terminal_run`은 여전히 미구현. 특히 원격/호스트 `./tmp` 수명주기와 터미널 프로세스 트리 정리를 먼저 설계해야 한다.
 
 개발용 opt-in 예시: `export MAI_RUST_WORKSPACE_ROOT="/path/to/test-workspace"` (반드시 실데이터가 아닌 테스트 경로 사용).
+
+## Turn 06 — 실행별 파일 변경·임시파일 정리 (2026-11-15)
+
+- `mai-runtime::file_mutations`에 `file_write`, `file_delete`, `file_move`, `file_copy`, 실행별 `code_edit`를 추가. 기존 `workspace_tools`의 읽기·검색 기능과 **동일한 입력 이름**을 쓰되 파일 변경은 매 작업의 `RunFiles`로만 등록.
+- `file_write(lifecycle="temporary")`는 요청된 **안전한 상대 경로**를 `<workspace>/tmp/run-<무작위>/...`에 매핑하고 실제 경로를 반환한다. 이 경로는 같은 실행의 후속 파일 조회에서 재사용 가능하다. 기존 파일을 임시파일로 덮어쓰거나 자동 삭제 대상으로 등록하지 않는다.
+- `file_write(lifecycle="persistent")`와 기존 파일을 덮어쓴 경우는 작업 종료 후에도 유지된다. `file_move/file_copy`는 현재 일반 파일만 지원하며 목적지 덮어쓰기를 거부한다. 임시 파일을 작업 디렉터리 밖으로 **이동**하는 것은 거부한다. `file_delete`는 작업/워크스페이스 최상위 루트를 삭제하지 못한다.
+- 파일 변경을 하는 `spawn_blocking` 작업과 최종 정리는 하나의 실행별 mutex를 공유한다. 정리를 시작하면 해당 실행은 `closed` 상태로 전환되어 나중에 시작된 작업이 쓰기를 수행하지 않는다. 정리는 성공/실패/취소 경로에서 **사용자에게 성공을 보고하기 전에** 실행별 임시 디렉터리를 제거한다. 정리 실패는 작업의 오류 상태에 반영한다.
+- 읽기·파일검색·코드검색도 실행별로 제한되어 다른 작업의 `tmp/run-*` 경로를 직접 읽거나 루트 재귀 검색으로 열람하지 못한다.
+- 설계는 기존 **Python 원본/웹 UI 무변경**, 개발용 로컬 `mai-web` 옵션 `MAI_RUST_WORKSPACE_ROOT`를 유지한다.
+
+**남은 제한:** 운영용 동시 파일 수정 감지, 강제 프로세스 종료 시 보장되는 정리, 실행 간 공용 저장소 ACL, NTFS/ACL/하드링크·심볼릭 링크를 포함한 모든 TOCTOU, 교차 파일시스템 이동·디렉터리 복사, 원격 워커 cleanup 통신, 실제 llama.cpp·UI E2E는 아직 검증하지 않았다. `spawn_blocking` 작업이 이미 시작된 후 취소되면 해당 작업이 마무리된 뒤 정리가 이루어지며, **이미 완료된 영구 파일 변경을 자동으로 롤백하지 않는다.**
