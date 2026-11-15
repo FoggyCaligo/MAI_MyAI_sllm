@@ -147,3 +147,15 @@
 - [x] RunJob 실행 매개변수 하나로 통합해 Clippy의 과도한 인자 경고 제거.
 - [x] 모델 선택 구현 Linux CI 형식·테스트·Clippy 통과.
 - [ ] Windows CI/실제 GPU 모델 라우터 연동 별도 검증.
+
+
+## Turn 05 파일/코드 도구 1차 진행 (2026-11-15)
+- [x] `mai-runtime::workspace_tools` 단일 Registry 선언 구조 및 Workspace root 권한 경계.
+- [x] `file_list`, `file_search`, `document_read`(UTF-8 text), `code_read`, `code_search`, `code_edit` 기본 동작 및 독립 Rust 단위 테스트.
+- [x] 요청자가 명시적으로 `MAI_RUST_WORKSPACE_ROOT`를 설정한 로컬 preview에서만 노출.
+- [x] 루트 밖 경로 차단, symlink 탐색 배제, 중복 편집 방지, 검색 결과가 잘렸음을 나타내는 collection 메타데이터.
+- [x] Linux workspace Cargo test / Clippy 성공. Windows CI 및 실제 브라우저 사용은 별도 검증 중.
+- [ ] 원본의 모든 파일 인코딩·구조화 문서·include/exclude globs·pagination 완전 parity.
+- [ ] 파일 생성/복사/이동/삭제의 사용자 권한과 임시파일 추적·정리.
+- [ ] Terminal의 하위 프로세스 종료/출력 크기 제한/timeout/cancel; Web의 SSRF/DNS/redirect 보호.
+- [ ] Host/Client에 동일 ToolDescriptor를 전달하는 공통 dispatcher/worker 프로토콜.
