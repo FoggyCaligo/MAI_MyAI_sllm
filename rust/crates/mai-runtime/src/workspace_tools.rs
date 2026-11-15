@@ -175,7 +175,7 @@ fn search(ws:&Workspace,arg:&Value,content_mode:bool)->Result<Value,String>{
             }
         }else{
             let glob=glob.as_ref().ok_or("glob unavailable")?;
-            if glob.is_match(entry.file_name())||glob.is_match(relative){
+            if glob.is_match(Path::new(entry.file_name()))||glob.is_match(relative){
                 if results.len()==max{truncated=true;break;}
                 results.push(json!(entry.path().to_string_lossy()));
             }
