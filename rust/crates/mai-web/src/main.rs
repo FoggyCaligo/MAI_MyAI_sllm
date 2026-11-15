@@ -11,6 +11,7 @@ use mai_runtime::{
     llamacpp::{LlamaConfig, LlamaCpp},
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
+    workspace_tools::{register_workspace, Workspace},
     Engine, Event, Message, Registry, Role,
 };
 use serde::Deserialize;
@@ -55,6 +56,7 @@ struct Config {
     model: String,
     llama_url: String,
     ui_dir: PathBuf,
+    workspace_root: Option<PathBuf>,
 }
 struct PreAuth {
     until: Instant,
@@ -90,6 +92,7 @@ struct Data {
 #[derive(Clone)]
 struct App {
     supervisor: Arc<ModelSupervisor>,
+    workspace: Option<Workspace>,
     selected_model: Arc<Mutex<String>>,
     config: Arc<Config>,
     users: Arc<Vec<User>>,
@@ -97,12 +100,14 @@ struct App {
 }
 impl App {
     fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
+        let workspace = config.workspace_root.as_ref().map(Workspace::new).transpose()?;
         let supervisor = Arc::new(ModelSupervisor::new(
             Policy::new(config.llama_url.clone()),
             Arc::new(PhysicalRam),
         )?);
         Ok(Self {
             supervisor,
+            workspace,
             selected_model: Arc::new(Mutex::new(config.model.clone())),
             config: Arc::new(config),
             users: Arc::new(users),
@@ -457,6 +462,9 @@ async fn run_job(request: RunJob) {
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
         let mut tools = Registry::new();
         register_basics(&mut tools)?;
+        if let Some(workspace) = &app.workspace {
+            register_workspace(&mut tools, workspace)?;
+        }
         let mut engine =
             Engine::new(model, tools, Duration::from_secs(500)).map_err(|err| err.to_string())?;
         engine
@@ -627,6 +635,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model,
         llama_url: env::var("LLAMACPP_HOST").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         ui_dir: ui,
+        workspace_root: env::var_os("MAI_RUST_WORKSPACE_ROOT").map(PathBuf::from),
     };
     let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -651,6 +660,7 @@ mod tests {
                     llama_url: "http://127.0.0.1:0".into(),
                     ui_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("../../../python/mai/app/static"),
+                    workspace_root: None,
                 },
                 vec![User {
                     user_id: "owner".into(),
