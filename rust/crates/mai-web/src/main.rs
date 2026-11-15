@@ -9,7 +9,7 @@ use axum::{
 };
 use mai_runtime::{
     llamacpp::{LlamaConfig, LlamaCpp},
-    Engine, Event, Registry,
+    Engine, Event, Message, Registry, Role,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
