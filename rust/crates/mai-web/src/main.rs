@@ -43,6 +43,10 @@ fn now() -> f64 {
         .unwrap_or_default()
         .as_secs_f64()
 }
+fn owner_terminal_enabled(setting: Option<&str>) -> bool {
+    !setting.is_some_and(|v|matches!(v.to_ascii_lowercase().as_str(),"0"|"false"|"off"))
+}
+
 fn new_token() -> String {
     Uuid::new_v4().to_string()
 }
@@ -106,11 +110,13 @@ impl App {
         // OWNER_USERS is currently the only authenticated user class. Owner
         // terminal defaults to enabled, with the process cwd as workspace root
         // unless MAI_RUST_WORKSPACE_ROOT provides an explicit alternative.
-        let root = config.workspace_root.clone().or_else(|| {
-            config
-                .enable_terminal
-                .then(|| std::env::current_dir().unwrap_or_default())
-        });
+        let root = match (config.workspace_root.clone(), config.enable_terminal) {
+            (Some(path), _) => Some(path),
+            (None, true) => Some(
+                std::env::current_dir().map_err(|e| format!("owner terminal cwd: {e}"))?,
+            ),
+            (None, false) => None,
+        };
         let workspace = root.as_ref().map(Workspace::new).transpose()?;
         let supervisor = Arc::new(ModelSupervisor::new(
             Policy::new(config.llama_url.clone()),
@@ -707,8 +713,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         workspace_root: env::var_os("MAI_RUST_WORKSPACE_ROOT").map(PathBuf::from),
         // All accounts accepted by this preview are OWNER_USERS owners.
         // Default on; 0/false/off explicitly disables terminal execution.
-        enable_terminal: !env::var("MAI_RUST_ENABLE_TERMINAL")
-            .is_ok_and(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")),
+        enable_terminal: owner_terminal_enabled(env::var("MAI_RUST_ENABLE_TERMINAL").ok().as_deref()),
     };
     let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -744,6 +749,14 @@ mod tests {
             )
             .expect("valid test supervisor"),
         )
+    }
+    #[test]
+    fn owner_terminal_is_enabled_by_default_and_can_be_disabled() {
+        assert!(owner_terminal_enabled(None));
+        assert!(owner_terminal_enabled(Some("1")));
+        assert!(!owner_terminal_enabled(Some("0")));
+        assert!(!owner_terminal_enabled(Some("FALSE")));
+        assert!(!owner_terminal_enabled(Some("off")));
     }
     #[test]
     fn owner_terminal_defaults_to_process_workspace() {
