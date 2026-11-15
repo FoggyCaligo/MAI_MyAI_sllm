@@ -217,62 +217,128 @@ fn rejected_duplicate_registration_does_not_overwrite() {
     assert_eq!(r.names(), vec!["echo"]);
 }
 
-
 #[tokio::test]
 async fn newly_activated_tool_is_not_callable_in_same_model_round() {
-    let model=fake(vec![
-        ModelStep::Calls(vec![
-            Call {name:"tool_manual".into(),arguments:json!({"tools":["echo"]})},
-            Call {name:"echo".into(),arguments:json!({"text":"early"})},
-        ]),
-        invoke(json!({"text":"later"})),
-        ModelStep::Final("done".into()),
-    ],Duration::ZERO);
-    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
-    let (_,events)=run(&mut engine,&CancellationToken::new()).await;
-    let calls:Vec<_>=events.iter().filter_map(|e|if let Event::Tool{name,ok,result}=e {
-        (name=="echo").then_some((*ok,result.clone()))
-    }else{None}).collect();
-    assert_eq!(calls.len(),2);
+    let model = fake(
+        vec![
+            ModelStep::Calls(vec![
+                Call {
+                    name: "tool_manual".into(),
+                    arguments: json!({"tools":["echo"]}),
+                },
+                Call {
+                    name: "echo".into(),
+                    arguments: json!({"text":"early"}),
+                },
+            ]),
+            invoke(json!({"text":"later"})),
+            ModelStep::Final("done".into()),
+        ],
+        Duration::ZERO,
+    );
+    let mut engine = Engine::new(
+        model,
+        registry(Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let (_, events) = run(&mut engine, &CancellationToken::new()).await;
+    let calls: Vec<_> = events
+        .iter()
+        .filter_map(|e| {
+            if let Event::Tool { name, ok, result } = e {
+                (name == "echo").then_some((*ok, result.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(calls.len(), 2);
     assert!(!calls[0].0);
     assert!(calls[1].0);
 }
 
 #[tokio::test]
 async fn failed_multi_activation_does_not_partially_enable_tools() {
-    let model=fake(vec![
-        ModelStep::Calls(vec![Call{name:"tool_manual".into(),arguments:json!({"tools":["echo","missing"]})}]),
-        invoke(json!({"text":"forbidden"})),
-        ModelStep::Final("handled".into()),
-    ],Duration::ZERO);
-    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
-    let (_,events)=run(&mut engine,&CancellationToken::new()).await;
-    assert_eq!(events.iter().filter(|e|matches!(e,Event::Tool{ok:false,..})).count(),2);
+    let model = fake(
+        vec![
+            ModelStep::Calls(vec![Call {
+                name: "tool_manual".into(),
+                arguments: json!({"tools":["echo","missing"]}),
+            }]),
+            invoke(json!({"text":"forbidden"})),
+            ModelStep::Final("handled".into()),
+        ],
+        Duration::ZERO,
+    );
+    let mut engine = Engine::new(
+        model,
+        registry(Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let (_, events) = run(&mut engine, &CancellationToken::new()).await;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Tool { ok: false, .. }))
+            .count(),
+        2
+    );
 }
 
 #[tokio::test]
 async fn empty_prompt_never_calls_model() {
-    let model=fake(vec![ModelStep::Final("never".into())],Duration::ZERO);
-    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
-    let (tx,mut rx)=mpsc::channel(16);
-    let err=engine.run("  ",&CancellationToken::new(),&tx).await.unwrap_err();
-    assert_eq!(err,mai_runtime::RunError::InvalidInput);
-    assert!(matches!(rx.recv().await,Some(Event::Failed{..})));
+    let model = fake(vec![ModelStep::Final("never".into())], Duration::ZERO);
+    let mut engine = Engine::new(
+        model,
+        registry(Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let (tx, mut rx) = mpsc::channel(16);
+    let err = engine
+        .run("  ", &CancellationToken::new(), &tx)
+        .await
+        .unwrap_err();
+    assert_eq!(err, mai_runtime::RunError::InvalidInput);
+    assert!(matches!(rx.recv().await, Some(Event::Failed { .. })));
 }
 
 #[tokio::test]
 async fn no_tool_calls_does_not_look_like_success() {
-    let model=fake(vec![ModelStep::Calls(vec![])],Duration::ZERO);
-    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
-    let (result,events)=run(&mut engine,&CancellationToken::new()).await;
-    assert_eq!(result.unwrap_err(),mai_runtime::RunError::InvalidModelResponse);
-    assert!(!events.iter().any(|e|matches!(e,Event::Final{..})));
+    let model = fake(vec![ModelStep::Calls(vec![])], Duration::ZERO);
+    let mut engine = Engine::new(
+        model,
+        registry(Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let (result, events) = run(&mut engine, &CancellationToken::new()).await;
+    assert_eq!(
+        result.unwrap_err(),
+        mai_runtime::RunError::InvalidModelResponse
+    );
+    assert!(!events.iter().any(|e| matches!(e, Event::Final { .. })));
 }
 
 #[tokio::test]
 async fn unactivated_registered_tool_does_not_run() {
-    let model=fake(vec![invoke(json!({"text":"blocked"})),ModelStep::Final("done".into())],Duration::ZERO);
-    let mut engine=Engine::new(model,registry(Duration::ZERO,Duration::from_secs(1)),Duration::from_secs(1)).unwrap();
-    let (_,events)=run(&mut engine,&CancellationToken::new()).await;
-    assert!(events.iter().any(|e|matches!(e,Event::Tool{name,ok:false,..} if name=="echo")));
+    let model = fake(
+        vec![
+            invoke(json!({"text":"blocked"})),
+            ModelStep::Final("done".into()),
+        ],
+        Duration::ZERO,
+    );
+    let mut engine = Engine::new(
+        model,
+        registry(Duration::ZERO, Duration::from_secs(1)),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let (_, events) = run(&mut engine, &CancellationToken::new()).await;
+    assert!(events
+        .iter()
+        .any(|e| matches!(e,Event::Tool{name,ok:false,..} if name=="echo")));
 }

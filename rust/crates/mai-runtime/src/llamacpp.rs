@@ -30,15 +30,28 @@ impl LlamaCpp {
             return Err("model and max_output_tokens must be nonempty".into());
         }
         let host = Url::parse(&config.endpoint).map_err(|e| format!("invalid endpoint: {e}"))?;
-        if !matches!(host.scheme(), "http" | "https") || host.query().is_some() || host.fragment().is_some() {
+        if !matches!(host.scheme(), "http" | "https")
+            || host.query().is_some()
+            || host.fragment().is_some()
+        {
             return Err("endpoint must be an HTTP(S) base URL without query/fragment".into());
         }
-        let url = host.join("v1/chat/completions").map_err(|e| e.to_string())?;
+        let url = host
+            .join("v1/chat/completions")
+            .map_err(|e| e.to_string())?;
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| format!("HTTP client init: {e}"))?;
-        Ok(Self { client, url, config, wire: vec![], consumed: 0, pending: vec![], turn_index: 0 })
+        Ok(Self {
+            client,
+            url,
+            config,
+            wire: vec![],
+            consumed: 0,
+            pending: vec![],
+            turn_index: 0,
+        })
     }
 
     fn accept_history(&mut self, history: &[Message]) -> Result<(), String> {
@@ -50,10 +63,13 @@ impl LlamaCpp {
             if next.len() != 1 || next[0].role != Role::User {
                 return Err("initial model history must start with one user message".into());
             }
-            self.wire.push(json!({"role":"user","content":next[0].content}));
+            self.wire
+                .push(json!({"role":"user","content":next[0].content}));
         } else {
             if next.len() != self.pending.len() {
-                return Err("assistant tool-call count does not match returned tool results".into());
+                return Err(
+                    "assistant tool-call count does not match returned tool results".into(),
+                );
             }
             for (message, (name, id)) in next.iter().zip(self.pending.iter()) {
                 if message.role != Role::Tool {
@@ -77,17 +93,24 @@ impl LlamaCpp {
     }
 
     async fn complete(
-        &mut self, history: &[Message], available: &[ToolSchema],
+        &mut self,
+        history: &[Message],
+        available: &[ToolSchema],
     ) -> Result<ModelStep, String> {
         self.accept_history(history)?;
-        let tools: Vec<Value> = available.iter().map(|tool| json!({
-            "type":"function",
-            "function":{
-                "name":tool.name,
-                "description":tool.description,
-                "parameters":tool.parameters
-            }
-        })).collect();
+        let tools: Vec<Value> = available
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type":"function",
+                    "function":{
+                        "name":tool.name,
+                        "description":tool.description,
+                        "parameters":tool.parameters
+                    }
+                })
+            })
+            .collect();
         let body = json!({
             "model": self.config.model,
             "messages": self.wire,
@@ -96,16 +119,30 @@ impl LlamaCpp {
             "cache_prompt":true,
             "max_tokens":self.config.max_output_tokens
         });
-        let response = self.client.post(self.url.clone()).json(&body)
-            .send().await.map_err(|e| format!("llama.cpp HTTP request: {e}"))?;
+        let response = self
+            .client
+            .post(self.url.clone())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("llama.cpp HTTP request: {e}"))?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("llama.cpp HTTP {status}: {}", body.chars().take(512).collect::<String>()));
+            return Err(format!(
+                "llama.cpp HTTP {status}: {}",
+                body.chars().take(512).collect::<String>()
+            ));
         }
-        let data: Value = response.json().await.map_err(|e| format!("llama.cpp JSON response: {e}"))?;
-        let choice = data.get("choices").and_then(Value::as_array)
-            .and_then(|items| items.first()).ok_or("llama.cpp missing choices")?;
+        let data: Value = response
+            .json()
+            .await
+            .map_err(|e| format!("llama.cpp JSON response: {e}"))?;
+        let choice = data
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .ok_or("llama.cpp missing choices")?;
         if choice.get("finish_reason").and_then(Value::as_str) == Some("length") {
             return Err("llama.cpp truncated output (finish_reason=length)".into());
         }
@@ -127,7 +164,8 @@ impl LlamaCpp {
             if content.trim().is_empty() {
                 return Err("llama.cpp returned empty final answer".into());
             }
-            self.wire.push(json!({"role":"assistant","content":content}));
+            self.wire
+                .push(json!({"role":"assistant","content":content}));
             return Ok(ModelStep::Final(content.into()));
         }
         let mut calls = Vec::with_capacity(raw_calls.len());
@@ -135,9 +173,14 @@ impl LlamaCpp {
         let mut pending = Vec::with_capacity(raw_calls.len());
         for (idx, item) in raw_calls.iter().enumerate() {
             let function = item.get("function").ok_or("tool call missing function")?;
-            let name = function.get("name").and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty()).ok_or("tool call missing name")?;
-            let raw_args = function.get("arguments").ok_or("tool call missing arguments")?;
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .ok_or("tool call missing name")?;
+            let raw_args = function
+                .get("arguments")
+                .ok_or("tool call missing arguments")?;
             let arguments = match raw_args {
                 Value::String(s) => serde_json::from_str::<Value>(s)
                     .map_err(|_| "tool call arguments contain invalid JSON")?,
@@ -147,21 +190,30 @@ impl LlamaCpp {
             if !arguments.is_object() {
                 return Err("tool call arguments must be JSON object".into());
             }
-            let id = item.get("id").and_then(Value::as_str)
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("call_{}_{}", self.turn_index, idx));
-            if pending.iter().any(|(_, seen_id): &(String, String)| *seen_id == id) {
+            if pending
+                .iter()
+                .any(|(_, seen_id): &(String, String)| *seen_id == id)
+            {
                 return Err("duplicate tool call id".into());
             }
             pending.push((name.into(), id.clone()));
-            calls.push(Call { name: name.into(), arguments: arguments.clone() });
+            calls.push(Call {
+                name: name.into(),
+                arguments: arguments.clone(),
+            });
             normalized.push(json!({
                 "id":id, "type":"function",
                 "function":{"name":name,"arguments":arguments.to_string()}
             }));
         }
-        self.wire.push(json!({"role":"assistant","content":content,"tool_calls":normalized}));
+        self.wire
+            .push(json!({"role":"assistant","content":content,"tool_calls":normalized}));
         self.pending = pending;
         self.turn_index += 1;
         Ok(ModelStep::Calls(calls))
@@ -169,9 +221,11 @@ impl LlamaCpp {
 }
 
 impl Model for LlamaCpp {
-    fn next<'a>(&'a mut self, history: &'a [Message], available: &'a [ToolSchema])
-        -> BoxFuture<'a, Result<ModelStep, String>>
-    {
+    fn next<'a>(
+        &'a mut self,
+        history: &'a [Message],
+        available: &'a [ToolSchema],
+    ) -> BoxFuture<'a, Result<ModelStep, String>> {
         Box::pin(self.complete(history, available))
     }
 }
