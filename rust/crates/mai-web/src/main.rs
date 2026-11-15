@@ -107,7 +107,9 @@ impl App {
         // terminal defaults to enabled, with the process cwd as workspace root
         // unless MAI_RUST_WORKSPACE_ROOT provides an explicit alternative.
         let root = config.workspace_root.clone().or_else(|| {
-            config.enable_terminal.then(|| std::env::current_dir().unwrap_or_default())
+            config
+                .enable_terminal
+                .then(|| std::env::current_dir().unwrap_or_default())
         });
         let workspace = root.as_ref().map(Workspace::new).transpose()?;
         let supervisor = Arc::new(ModelSupervisor::new(
@@ -479,13 +481,16 @@ async fn run_job(request: RunJob) {
     };
     let tools_scope = run_files.clone();
     let terminal_sessions = if app.config.enable_terminal {
-        match (&run_files,&app.workspace) {
-            (Some(scope),Some(workspace)) => Some(Arc::new(TerminalSessions::new(
-                scope.clone(),workspace.root().to_path_buf(),
+        match (&run_files, &app.workspace) {
+            (Some(scope), Some(workspace)) => Some(Arc::new(TerminalSessions::new(
+                scope.clone(),
+                workspace.root().to_path_buf(),
             ))),
             _ => None,
         }
-    } else { None };
+    } else {
+        None
+    };
     let active_sessions = terminal_sessions.clone();
     let config = LlamaConfig {
         endpoint: app.config.llama_url.clone(),
@@ -505,7 +510,7 @@ async fn run_job(request: RunJob) {
         if let Some(scope) = &tools_scope {
             register_run_file_tools(&mut tools, scope)?;
             if let Some(manager) = &active_sessions {
-                register_terminal_sessions(&mut tools,manager.clone(),cancel.clone())?;
+                register_terminal_sessions(&mut tools, manager.clone(), cancel.clone())?;
             }
         }
         let mut engine =
@@ -703,7 +708,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // All accounts accepted by this preview are OWNER_USERS owners.
         // Default on; 0/false/off explicitly disables terminal execution.
         enable_terminal: !env::var("MAI_RUST_ENABLE_TERMINAL")
-            .is_ok_and(|v|matches!(v.to_ascii_lowercase().as_str(),"0"|"false"|"off")),
+            .is_ok_and(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off")),
     };
     let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
