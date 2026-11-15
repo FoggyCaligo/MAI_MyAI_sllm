@@ -9,6 +9,8 @@ use axum::{
 };
 use mai_runtime::{
     llamacpp::{LlamaConfig, LlamaCpp},
+    native_tools::register_basics,
+    supervisor::{ModelSupervisor, PhysicalRam, Policy},
     Engine, Event, Message, Registry, Role,
 };
 use serde::Deserialize;
@@ -87,13 +89,18 @@ struct Data {
 }
 #[derive(Clone)]
 struct App {
+    supervisor: Arc<ModelSupervisor>,
     config: Arc<Config>,
     users: Arc<Vec<User>>,
     data: Arc<Mutex<Data>>,
 }
 impl App {
-    fn new(config: Config, users: Vec<User>) -> Self {
-        Self {
+    fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
+        let supervisor = Arc::new(ModelSupervisor::new(
+            Policy::new(config.llama_url.clone()), Arc::new(PhysicalRam),
+        )?);
+        Ok(Self {
+            supervisor,
             config: Arc::new(config),
             users: Arc::new(users),
             data: Arc::new(Mutex::new(Data {
@@ -102,7 +109,7 @@ impl App {
                 jobs: HashMap::new(),
                 history: HashMap::new(),
             })),
-        }
+        })
     }
     async fn auth(&self, headers: &HeaderMap) -> Result<String, Reply> {
         let header = headers
@@ -442,8 +449,11 @@ async fn run_job(
     };
     let (tx, mut rx) = mpsc::channel(128);
     let task = async {
+        let _model_guard = app.supervisor.acquire(&app.config.model, &cancel).await?;
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
-        let mut engine = Engine::new(model, Registry::new(), Duration::from_secs(500))
+        let mut tools = Registry::new();
+        register_basics(&mut tools)?;
+        let mut engine = Engine::new(model, tools, Duration::from_secs(500))
             .map_err(|err| err.to_string())?;
         engine
             .run_with_history(&message, &previous, &cancel, &tx)
@@ -614,7 +624,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         llama_url: env::var("LLAMACPP_HOST").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         ui_dir: ui,
     };
-    let state = App::new(config, users);
+    let state = App::new(config, users)
+        .map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     eprintln!("MAI Rust preview listening only on http://127.0.0.1:{port} (not production-ready)");
     axum::serve(listener, router(state)).await?;
@@ -642,7 +653,7 @@ mod tests {
                 user_pw: "secret".into(),
                 db_id: "unit".into(),
             }],
-        ))
+        ).expect("valid test supervisor"))
     }
     #[tokio::test]
     async fn private_chat_job_cannot_be_submitted_without_login() {
