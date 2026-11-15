@@ -23,7 +23,7 @@ struct Session {
     connected: bool,
     last_seen: Instant,
     tx: mpsc::Sender<Value>,
-    rx: Option<mpsc::Receiver<Value>>,
+    rx: Arc<Mutex<mpsc::Receiver<Value>>>,
     pending: HashMap<String, oneshot::Sender<Result<Value, String>>>,
 }
 #[derive(Default)]
@@ -50,7 +50,7 @@ impl RemoteHub {
                 connected: false,
                 last_seen: Instant::now(),
                 tx,
-                rx: Some(rx),
+                rx: Arc::new(Mutex::new(rx)),
                 pending: HashMap::new(),
             },
         );
@@ -61,19 +61,21 @@ impl RemoteHub {
         all.get(id).is_some_and(|s| s.owner == owner)
     }
     pub async fn poll(&self, id: &str, secret: &str) -> Result<Value, String> {
-        let mut rx = {
+        let rx = {
             let mut all = self.sessions.lock().await;
             let s = authenticate(&mut all, id, secret)?;
             s.connected = true;
             s.last_seen = Instant::now();
-            s.rx.take()
-                .ok_or("concurrent worker polls are not supported")?
+            s.rx.clone()
         };
-        let received = tokio::time::timeout(POLL_WAIT, rx.recv()).await;
+        // Dropping a poll request must not remove the receiver from the hub.
+        let received = {
+            let mut receiver = rx.lock().await;
+            tokio::time::timeout(POLL_WAIT, receiver.recv()).await
+        };
         let mut all = self.sessions.lock().await;
         let s = authenticate(&mut all, id, secret)?;
         s.last_seen = Instant::now();
-        s.rx = Some(rx);
         Ok(json!({"request":match received{Ok(Some(value))=>Some(value),_=>None}}))
     }
     pub async fn resolve(&self, id: &str, secret: &str, payload: Value) -> Result<(), String> {
@@ -172,10 +174,10 @@ impl RemoteTransport for RemoteHub {
             let (tx, request_id) = sender;
             // Sending into bounded queue must not wait unboundedly if worker stalls.
             let request = json!({"request_id":request_id,"operation":operation,"arguments":args});
-            if tokio::time::timeout(Duration::from_secs(5), tx.send(request))
-                .await
-                .is_err()
-            {
+            if !matches!(
+                tokio::time::timeout(Duration::from_secs(5), tx.send(request)).await,
+                Ok(Ok(()))
+            ) {
                 self.sessions
                     .lock()
                     .await
