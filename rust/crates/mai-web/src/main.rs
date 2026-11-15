@@ -365,10 +365,12 @@ async fn submit_job(
         {
             job.cancel.cancel();
         }
-        let previous = data.history
+        let previous = data
+            .history
             .get(&(user.clone(), input.session_id.clone()))
             .map(|stored| {
-                stored[stored.len().saturating_sub(16)..].iter()
+                stored[stored.len().saturating_sub(16)..]
+                    .iter()
                     .filter_map(|item| {
                         let role = match item.get("role").and_then(Value::as_str) {
                             Some("user") => Role::User,
@@ -381,7 +383,8 @@ async fn submit_job(
                         })
                     })
                     .collect::<Vec<_>>()
-            }).unwrap_or_default();
+            })
+            .unwrap_or_default();
         data.history
             .entry((user.clone(), input.session_id.clone()))
             .or_default()
