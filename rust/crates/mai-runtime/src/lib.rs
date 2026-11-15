@@ -6,6 +6,7 @@ pub mod file_mutations;
 pub mod llamacpp;
 pub mod native_tools;
 pub mod supervisor;
+pub mod terminal;
 pub mod workspace_tools;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
