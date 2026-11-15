@@ -197,3 +197,15 @@
 - [ ] 원격 Client 2세션과 Host 2세션을 통합한 4세션 감독·Host/Client 대상 전환.
 - [ ] PowerShell/CMD 지속 세션과 Windows Job Object·로컬 실제 호스트 E2E 테스트.
 - [ ] 장기 실행 프로세스·하위 프로세스 종료의 OS 강제 보장, 사용자별 ACL·컨테이너 보호 경계.
+
+## Turn 09 — Host/Client Native 원격 워커 1차 (2026-11-15)
+- [x] `mai-runtime::workspace_route`로 기본 host/수동 client 전환, 기존 대상 재선택 no-op, 연결 확인 실패 시 atomic refusal, 한 작업 동안 동일 위치 유지, 다른 위치로 조용히 fallback 금지.
+- [x] 네이티브 도구의 기존 `ToolSchema`를 재사용해 file/code/terminal을 원격 `native.invoke`에 라우팅. 모델에게는 원래 결과값을 제공.
+- [x] Rust Web의 Owner 인증 원격 세션 생성·폐기와 Python 호환 polling/result JSON 통신. 워커 서명은 `X-MAI-Agent-Secret`, owner/session 매칭 검증, 180초 poll lease.
+- [x] 실험적 `mai-worker` Rust Client CLI: HTTPS outbound, 파일·코드·지속 Bash(최대 2) 실행과 작업별 `native.cleanup` 및 임시파일 보호.
+- [x] Rust Web Host 지속 Bash 최대 2개 + Client Rust 워커 최대 2개, 작업별 4세션 구조. Python 기존 worker와 직접 프로토콜 연결은 가능하지만 Python worker terminal은 단발 실행.
+- [x] 원격 run_id를 기존 Python 워커의 32자 lowercase hex 규칙에 맞춤. 원격 cleanup ACK 필수 및 실패 시 작업 오류 반영. 연결 상실 시 로컬 재시도 금지.
+- [x] Host/Client 대상 전환·소유권·결과 봉투·cleanup 실패·원격 세션 폐기·Client Bash 상태·Client tmp 정리 테스트 추가.
+- [ ] 실제 Windows 노트북/서버 간 TLS 터널 설정과 end-to-end 도구 호출 및 인증 UI 이식.
+- [ ] 원격 실행 중 취소 신호를 즉시 전달하는 별도 dispatch, 워커 재연결·요청 중복 방지·장시간 세션 만료.
+- [ ] 클라이언트 PowerShell/CMD 지속 세션, Windows Job Object 기반 하위 프로세스 수명 관리, 메모리/문서/web 도구 parity.
