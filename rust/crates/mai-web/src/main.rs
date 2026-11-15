@@ -12,6 +12,7 @@ use mai_runtime::{
     llamacpp::{LlamaConfig, LlamaCpp},
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
+    terminal::register_terminal,
     workspace_tools::{register_workspace_reads, Workspace},
     Engine, Event, Message, Registry, Role,
 };
@@ -58,6 +59,7 @@ struct Config {
     llama_url: String,
     ui_dir: PathBuf,
     workspace_root: Option<PathBuf>,
+    enable_terminal: bool,
 }
 struct PreAuth {
     until: Instant,
@@ -101,6 +103,9 @@ struct App {
 }
 impl App {
     fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
+        if config.enable_terminal && config.workspace_root.is_none() {
+            return Err("terminal requires a configured workspace root".into());
+        }
         let workspace = config
             .workspace_root
             .as_ref()
@@ -491,6 +496,11 @@ async fn run_job(request: RunJob) {
         }
         if let Some(scope) = &tools_scope {
             register_run_file_tools(&mut tools, scope)?;
+            if app.config.enable_terminal {
+                if let Some(workspace) = &app.workspace {
+                    register_terminal(&mut tools, scope.clone(), cancel.clone(), workspace.root().to_path_buf())?;
+                }
+            }
         }
         let mut engine =
             Engine::new(model, tools, Duration::from_secs(500)).map_err(|err| err.to_string())?;
@@ -680,6 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         llama_url: env::var("LLAMACPP_HOST").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         ui_dir: ui,
         workspace_root: env::var_os("MAI_RUST_WORKSPACE_ROOT").map(PathBuf::from),
+        enable_terminal: env::var("MAI_RUST_ENABLE_TERMINAL").is_ok_and(|v| v == "1"),
     };
     let state = App::new(config, users).map_err(std::io::Error::other)?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
@@ -705,6 +716,7 @@ mod tests {
                     ui_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("../../../python/mai/app/static"),
                     workspace_root: None,
+                    enable_terminal: false,
                 },
                 vec![User {
                     user_id: "owner".into(),
