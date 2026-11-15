@@ -95,7 +95,7 @@ impl ModelSupervisor {
         }
         Ok(())
     }
-    async fn catalog(&self) -> Result<Vec<Value>, String> {
+    pub async fn catalog(&self) -> Result<Vec<Value>, String> {
         let r = self
             .client
             .get(format!("{}/models", self.host))
