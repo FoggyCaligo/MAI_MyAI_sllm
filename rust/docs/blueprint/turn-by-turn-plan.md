@@ -94,7 +94,7 @@
 | 00 | 완료(원격 Git 트리 구조 변경, 로컬 검증 별도) | 이 문서 생성 및 전체 파일 이동 |
 | 01 | 정적 감사 작성 / 실기검증 대기 | 376파일 인벤토리, 핵심 코드·대표 테스트, 3개 보고서 |
 | 02 | 비동기 Core 초기 구현 완료 / 통합 대기 | cargo fmt/test/clippy CI 성공, 실제 UI·llama.cpp 미연결 |
-| 03–14 | 미착수 | 기존 UI API/스트리밍 및 실제 llama.cpp 연결 미완료 |
+| 03 | 진행 중 | llama.cpp HTTP 연결과 로컬 API 미리보기, 전체 parity 미검증 |\n| 04–14 | 미착수 | 모델 로드 자원 정책 등은 이후 이식 |
 
 ## 특별 주의
 - `python/`은 기존 프로젝트 전체의 경로 변경이므로 그 내부 launcher, workflow, 상대 경로는 즉시 실행 가능하다고 가정하지 않는다.
@@ -117,3 +117,15 @@
 - [ ] `mai-core`/ `mai-runtime` 상태 머신 중복 통합, 완전 JSON schema 호환, active tool guard, 요청 전체 lifecycle/finalization, 실행 위치/원격 워커.
 - [ ] 실제 llama.cpp / 웹서버 / UI 통합 및 PC Windows E2E.
 - 다음 작업: 단일 정식 비동기 Core로 통합하고, 실제 HTTP API / UI 계약을 기존 코드와 비교해 구현.
+
+## Turn 03 진행 기록 (2026-11-15)
+- [x] 중복된 동기식 `mai-core` crate 제거, `mai-runtime` 단일 Agent FSM으로 통합.
+- [x] `LlamaCpp` 실제 HTTP adapter: messages/tools, tool-call ID-결과 대응, 비정상/절단 응답 거부, fake TCP HTTP 서버 계약 테스트.
+- [x] 새 `mai-web` crate: 기존 UI 정적 파일 *무변경* 제공, 로컬 전용 인증·chat job·history 기본 API 경로.
+- [x] 이전 user/assistant 메시지의 최대 16개를 새 모델 요청에 첨부하도록 보완. 임의 tool-role 이력 삽입 거부.
+- [x] `Cargo.lock`을 빌드 의존성 잠금으로 생성.
+- [ ] User-visible API payload·음성·로그인/권한/영속 데이터의 전체 parity 확인 및 Windows E2E. 현재 `mai-web`은 보안·운영 기능이 완성되지 않은 로컬 미리보기.
+- [ ] 실 모델 로딩/전환을 보장하는 Rust ModelSupervisor와 shared gateway 통합.
+- [ ] 실제 Native Tools, remote worker, memory/Sentence_Breaker, benchmark 이식.
+- [ ] 토큰 스트리밍과 실시간 thinking 이벤트, tool 결과 인자·에러형식 완전 보존.
+- [ ] 기존 browser UI로 직접 로그인→대화→새로고침→취소까지 실행해 테스트.
