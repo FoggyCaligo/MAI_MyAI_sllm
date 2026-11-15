@@ -185,3 +185,15 @@
 - [x] Windows Bash/CMD/PowerShell 직접 실행 계약 테스트 추가.
 - [ ] 지속 셸 세션·Host/Client당 2개 세션 제한·실행 종료 시 모든 세션 강제 종료.
 - [ ] Windows Job Object 및 다른 프로세스와 공유되는 호스트 자원 보호.
+
+## Turn 08 — Owner 기본 활성 터미널 / 연속 세션 (2026-11-15)
+- [x] `OWNER_USERS` 계정에 터미널 기본 활성화; `MAI_RUST_ENABLE_TERMINAL=0/false/off` 명시적 비활성화.
+- [x] 별도 루트 미설정 시 OS 프로세스의 cwd를 초기 workspace로 사용.
+- [x] 실행당 최대 2개 Host Bash 지속 세션, 선택적 `session_id`, 기본 `default`.
+- [x] Bash 프로세스 재사용으로 `cd`·환경변수 등 쉘 내부 상태가 **같은 Agent run의 툴 호출 사이**에 지속.
+- [x] `exit` 세션 종료 및 슬롯 재사용, 실패한 쉘 명령에서 세션 유지.
+- [x] 작업 종료 / 취소 시 세션 선행 종료 후 임시파일 정리; 취소 시 Shell 프로세스 트리 종료 시도.
+- [x] 정상 호출 상태 유지·명령 실패 이후 상태 유지·세션 2개 제한·세션 종료·취소 관련 테스트 추가.
+- [ ] 원격 Client 2세션과 Host 2세션을 통합한 4세션 감독·Host/Client 대상 전환.
+- [ ] PowerShell/CMD 지속 세션과 Windows Job Object·로컬 실제 호스트 E2E 테스트.
+- [ ] 장기 실행 프로세스·하위 프로세스 종료의 OS 강제 보장, 사용자별 ACL·컨테이너 보호 경계.
