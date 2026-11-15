@@ -92,3 +92,20 @@ cargo run -p mai-web
 - 설계는 기존 **Python 원본/웹 UI 무변경**, 개발용 로컬 `mai-web` 옵션 `MAI_RUST_WORKSPACE_ROOT`를 유지한다.
 
 **남은 제한:** 운영용 동시 파일 수정 감지, 강제 프로세스 종료 시 보장되는 정리, 실행 간 공용 저장소 ACL, NTFS/ACL/하드링크·심볼릭 링크를 포함한 모든 TOCTOU, 교차 파일시스템 이동·디렉터리 복사, 원격 워커 cleanup 통신, 실제 llama.cpp·UI E2E는 아직 검증하지 않았다. `spawn_blocking` 작업이 이미 시작된 후 취소되면 해당 작업이 마무리된 뒤 정리가 이루어지며, **이미 완료된 영구 파일 변경을 자동으로 롤백하지 않는다.**
+
+## Turn 07 — 선택적 Native Terminal 첫 구현 (2026-11-15)
+
+- `mai-runtime::terminal`에 `terminal_run`을 구현했다. **Bash가 기본**이며, Windows에서는 `shell=cmd`, `shell=powershell`도 선택할 수 있다. Bash는 실행 PC PATH에서 `bash`를 찾아 실행한다(Git Bash 설치 및 PATH 필요).
+- `mai-web`에서는 `MAI_RUST_ENABLE_TERMINAL=1` **및** `MAI_RUST_WORKSPACE_ROOT`를 둘 다 명시해야 도구를 등록한다. 미설정 상태에서는 **터미널이 활성화되지 않는다.** Rust 서버 자체는 loopback(127.0.0.1) 전용으로 유지된다.
+- 명령어·cwd·shell·temporary_outputs JSON 인자를 사용하고 stdout/stderr/종료 코드를 분리해 반환한다. 성공하지 않은 종료 코드는 도구 오류로 보고한다. 합산 출력 기본 한도 1 MiB, 명령 타임아웃 기본 180초. 시간 초과·출력 초과·취소 시 프로세스 트리 종료를 시도한다.
+- Unix는 별도 프로세스 그룹을 만들고 그룹 종료 시그널을 전달한다. Windows는 `taskkill.exe /PID ... /T /F`와 부모 프로세스 강제 종료를 조합한다. 둘 다 **best effort**이며, 권한 분리·데몬화된 자식이나 OS에서 별도 작업 그룹으로 분리된 프로세스까지 종료된다는 보장은 없다. Windows Job Object 전환을 운영 전 검토해야 한다.
+- PowerShell은 사용자 스크립트를 별도 `*.ps1`로 만들어 자식 PowerShell에 `-ExecutionPolicy Bypass -File`로 전달한다. 기존 Python의 UTF-16LE EncodedCommand와 구현 방식이 다르므로 실제 Windows 인코딩·인자 전달 및 CP949 등 레거시 출력 디코딩 parity는 미완성이다.
+- `temporary_outputs`는 현재 실행의 scratch 경로를 cwd로 선택한 경우에만 허용하며, 기존 파일·중복 파일·경로 이탈을 거부한다. 실행별 `RunFiles` 정리 시 현재 작업의 파일만 제거한다. 터미널은 **샌드박스가 아니며** 쉘 안에서 별도의 절대 경로로 이동·쓰기 등을 수행할 수 있으므로, 신뢰하는 소유자만 사용하는 로컬 개발 환경 외에는 활성화하면 안 된다.
+- 남은 작업: Windows 프로세스 트리/Job Object·Windows 로케일·중첩 PowerShell 계약 완전 parity, 셸 권한 샌드박싱, remote Host/Client dispatch, 테스트 시 실제 프로젝트 및 데이터 보호. 검증 환경에서 사용하더라도 실데이터가 아닌 테스트 workspace를 사용할 것.
+
+예시(기본 비활성 상태에서 명시적으로 켤 때만):
+```bash
+export MAI_RUST_WORKSPACE_ROOT="/path/to/disposable-test-workspace"
+export MAI_RUST_ENABLE_TERMINAL=1
+cargo run -p mai-web
+```
