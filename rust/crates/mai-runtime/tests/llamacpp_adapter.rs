@@ -130,19 +130,30 @@ async fn rejects_invalid_tool_call_arguments() {
     task.await.unwrap();
 }
 
-
 #[tokio::test]
 async fn model_receives_bounded_prior_user_assistant_history() {
     let (host,task)=serve(vec![json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"continued"}}]})]).await;
-    let mut model=LlamaCpp::new(config(host)).unwrap();
-    let history=vec![
-        Message{role:Role::User,content:"earlier question".into()},
-        Message{role:Role::Assistant,content:"earlier answer".into()},
-        Message{role:Role::User,content:"followup".into()},
+    let mut model = LlamaCpp::new(config(host)).unwrap();
+    let history = vec![
+        Message {
+            role: Role::User,
+            content: "earlier question".into(),
+        },
+        Message {
+            role: Role::Assistant,
+            content: "earlier answer".into(),
+        },
+        Message {
+            role: Role::User,
+            content: "followup".into(),
+        },
     ];
-    assert_eq!(model.next(&history,&manual()).await.unwrap(),ModelStep::Final("continued".into()));
-    let requests=task.await.unwrap();
-    assert_eq!(requests[0]["messages"][0]["role"],"user");
-    assert_eq!(requests[0]["messages"][1]["role"],"assistant");
-    assert_eq!(requests[0]["messages"][2]["content"],"followup");
+    assert_eq!(
+        model.next(&history, &manual()).await.unwrap(),
+        ModelStep::Final("continued".into())
+    );
+    let requests = task.await.unwrap();
+    assert_eq!(requests[0]["messages"][0]["role"], "user");
+    assert_eq!(requests[0]["messages"][1]["role"], "assistant");
+    assert_eq!(requests[0]["messages"][2]["content"], "followup");
 }
