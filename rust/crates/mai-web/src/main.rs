@@ -498,7 +498,12 @@ async fn run_job(request: RunJob) {
             register_run_file_tools(&mut tools, scope)?;
             if app.config.enable_terminal {
                 if let Some(workspace) = &app.workspace {
-                    register_terminal(&mut tools, scope.clone(), cancel.clone(), workspace.root().to_path_buf())?;
+                    register_terminal(
+                        &mut tools,
+                        scope.clone(),
+                        cancel.clone(),
+                        workspace.root().to_path_buf(),
+                    )?;
                 }
             }
         }
