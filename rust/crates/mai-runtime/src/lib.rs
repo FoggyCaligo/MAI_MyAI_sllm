@@ -3,7 +3,13 @@
 //! It is an isolated foundation, not a production-ready replacement for MAI.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::{collections::{BTreeMap, BTreeSet}, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{sync::mpsc, time::timeout};
 use tokio_util::sync::CancellationToken;
 
@@ -12,7 +18,11 @@ pub type ToolFn = Arc<dyn Fn(Value) -> BoxFuture<'static, Result<Value, String>>
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Role { User, Assistant, Tool }
+pub enum Role {
+    User,
+    Assistant,
+    Tool,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Message {
@@ -41,7 +51,9 @@ pub struct ToolSchema {
 
 pub trait Model: Send {
     fn next<'a>(
-        &'a mut self, history: &'a [Message], available: &'a [ToolSchema],
+        &'a mut self,
+        history: &'a [Message],
+        available: &'a [ToolSchema],
     ) -> BoxFuture<'a, Result<ModelStep, String>>;
 }
 
@@ -57,7 +69,9 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn register(&mut self, tool: Tool) -> Result<(), String> {
         let name = tool.schema.name.clone();
@@ -81,10 +95,21 @@ impl Registry {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
     Started,
-    Round { number: usize, callable: Vec<String> },
-    Tool { name: String, ok: bool, result: Value },
-    Final { answer: String },
-    Failed { error: String },
+    Round {
+        number: usize,
+        callable: Vec<String>,
+    },
+    Tool {
+        name: String,
+        ok: bool,
+        result: Value,
+    },
+    Final {
+        answer: String,
+    },
+    Failed {
+        error: String,
+    },
     Cancelled,
 }
 
@@ -115,7 +140,11 @@ impl<M: Model> Engine<M> {
         if model_timeout.is_zero() {
             return Err("model timeout must be positive".into());
         }
-        Ok(Self { model, registry, model_timeout })
+        Ok(Self {
+            model,
+            registry,
+            model_timeout,
+        })
     }
 
     pub async fn run(
@@ -127,7 +156,10 @@ impl<M: Model> Engine<M> {
         if prompt.trim().is_empty() {
             return self.finish_error(RunError::InvalidInput, events).await;
         }
-        let mut messages = vec![Message { role: Role::User, content: prompt.into() }];
+        let mut messages = vec![Message {
+            role: Role::User,
+            content: prompt.into(),
+        }];
         let mut enabled = BTreeSet::new();
         let mut rounds = 0;
         emit(events, Event::Started).await;
@@ -137,11 +169,19 @@ impl<M: Model> Engine<M> {
             }
             rounds += 1;
             let mut schemas = vec![manual_schema(&self.registry)];
-            schemas.extend(enabled.iter().filter_map(|name| self.registry.tools.get(name).map(|t| t.schema.clone())));
-            emit(events, Event::Round {
-                number: rounds,
-                callable: schemas.iter().map(|t| t.name.clone()).collect(),
-            }).await;
+            schemas.extend(
+                enabled
+                    .iter()
+                    .filter_map(|name| self.registry.tools.get(name).map(|t| t.schema.clone())),
+            );
+            emit(
+                events,
+                Event::Round {
+                    number: rounds,
+                    callable: schemas.iter().map(|t| t.name.clone()).collect(),
+                },
+            )
+            .await;
 
             let step = tokio::select! {
                 biased;
@@ -164,15 +204,32 @@ impl<M: Model> Engine<M> {
             match step {
                 ModelStep::Final(answer) => {
                     if answer.trim().is_empty() {
-                        return self.finish_error(RunError::InvalidModelResponse, events).await;
+                        return self
+                            .finish_error(RunError::InvalidModelResponse, events)
+                            .await;
                     }
-                    messages.push(Message { role: Role::Assistant, content: answer.clone() });
-                    emit(events, Event::Final { answer: answer.clone() }).await;
-                    return Ok(Outcome { answer, rounds, messages });
+                    messages.push(Message {
+                        role: Role::Assistant,
+                        content: answer.clone(),
+                    });
+                    emit(
+                        events,
+                        Event::Final {
+                            answer: answer.clone(),
+                        },
+                    )
+                    .await;
+                    return Ok(Outcome {
+                        answer,
+                        rounds,
+                        messages,
+                    });
                 }
                 ModelStep::Calls(calls) => {
                     if calls.is_empty() {
-                        return self.finish_error(RunError::InvalidModelResponse, events).await;
+                        return self
+                            .finish_error(RunError::InvalidModelResponse, events)
+                            .await;
                     }
                     for call in calls {
                         if cancellation.is_cancelled() {
@@ -212,7 +269,15 @@ impl<M: Model> Engine<M> {
                             role: Role::Tool,
                             content: json!({"name":name,"ok":ok,"result":value}).to_string(),
                         });
-                        emit(events, Event::Tool { name, ok, result: value }).await;
+                        emit(
+                            events,
+                            Event::Tool {
+                                name,
+                                ok,
+                                result: value,
+                            },
+                        )
+                        .await;
                     }
                 }
             }
@@ -220,11 +285,21 @@ impl<M: Model> Engine<M> {
     }
 
     async fn finish_error<T>(
-        &self, error: RunError, events: &mpsc::Sender<Event>,
+        &self,
+        error: RunError,
+        events: &mpsc::Sender<Event>,
     ) -> Result<T, RunError> {
         match &error {
             RunError::Cancelled => emit(events, Event::Cancelled).await,
-            other => emit(events, Event::Failed { error: format!("{other:?}") }).await,
+            other => {
+                emit(
+                    events,
+                    Event::Failed {
+                        error: format!("{other:?}"),
+                    },
+                )
+                .await
+            }
         }
         Err(error)
     }
@@ -249,16 +324,24 @@ fn manual_schema(registry: &Registry) -> ToolSchema {
 }
 
 fn activate(
-    registry: &Registry, enabled: &mut BTreeSet<String>, args: &Value,
+    registry: &Registry,
+    enabled: &mut BTreeSet<String>,
+    args: &Value,
 ) -> Result<Value, String> {
     let schema = manual_schema(registry);
     validate_arguments(&schema.parameters, args)?;
-    let selected = args.get("tools").and_then(Value::as_array).ok_or("tools must be an array")?;
+    let selected = args
+        .get("tools")
+        .and_then(Value::as_array)
+        .ok_or("tools must be an array")?;
     if selected.is_empty() {
         return Err("at least one tool is required".into());
     }
     let names: Vec<&str> = selected.iter().map(|v| v.as_str().unwrap_or("")).collect();
-    if let Some(name) = names.iter().find(|name| !registry.tools.contains_key(**name)) {
+    if let Some(name) = names
+        .iter()
+        .find(|name| !registry.tools.contains_key(**name))
+    {
         return Err(format!("unknown tool: {name}"));
     }
     enabled.extend(names.into_iter().map(str::to_string));
@@ -280,12 +363,19 @@ fn validate_schema(schema: &Value) -> Result<(), String> {
 
 pub fn validate_arguments(schema: &Value, args: &Value) -> Result<(), String> {
     validate_schema(schema)?;
-    let obj = args.as_object().ok_or("tool arguments must be a JSON object")?;
-    let props = schema.get("properties").and_then(Value::as_object).ok_or("properties missing")?;
+    let obj = args
+        .as_object()
+        .ok_or("tool arguments must be a JSON object")?;
+    let props = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or("properties missing")?;
     if let Some(required) = schema.get("required").and_then(Value::as_array) {
         for field in required {
             let name = field.as_str().ok_or("invalid required entry")?;
-            if !obj.contains_key(name) { return Err(format!("missing field: {name}")); }
+            if !obj.contains_key(name) {
+                return Err(format!("missing field: {name}"));
+            }
         }
     }
     for (name, value) in obj {
@@ -312,9 +402,13 @@ fn validate_value(rule: &Value, value: &Value, field: &str) -> Result<(), String
         Some(_) => return Err(format!("unsupported schema type for {field}")),
         None => return Err(format!("missing schema type for {field}")),
     };
-    if !valid { return Err(format!("invalid type for {field}")); }
+    if !valid {
+        return Err(format!("invalid type for {field}"));
+    }
     if let Some(options) = rule.get("enum").and_then(Value::as_array) {
-        if !options.contains(value) { return Err(format!("invalid enum for {field}")); }
+        if !options.contains(value) {
+            return Err(format!("invalid enum for {field}"));
+        }
     }
     if let Some(items) = value.as_array() {
         if let Some(item_rule) = rule.get("items") {
@@ -332,13 +426,17 @@ fn validate_value(rule: &Value, value: &Value, field: &str) -> Result<(), String
 }
 
 fn validate_nested(
-    rule: &Value, obj: &Map<String, Value>,
-    properties: &Map<String, Value>, path: &str,
+    rule: &Value,
+    obj: &Map<String, Value>,
+    properties: &Map<String, Value>,
+    path: &str,
 ) -> Result<(), String> {
     if let Some(required) = rule.get("required").and_then(Value::as_array) {
         for entry in required {
             let name = entry.as_str().ok_or("invalid nested required entry")?;
-            if !obj.contains_key(name) { return Err(format!("missing field: {path}.{name}")); }
+            if !obj.contains_key(name) {
+                return Err(format!("missing field: {path}.{name}"));
+            }
         }
     }
     for (key, value) in obj {
