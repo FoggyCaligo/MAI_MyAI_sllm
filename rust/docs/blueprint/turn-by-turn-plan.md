@@ -209,3 +209,13 @@
 - [ ] 실제 Windows 노트북/서버 간 TLS 터널 설정과 end-to-end 도구 호출 및 인증 UI 이식.
 - [ ] 원격 실행 중 취소 신호를 즉시 전달하는 별도 dispatch, 워커 재연결·요청 중복 방지·장시간 세션 만료.
 - [ ] 클라이언트 PowerShell/CMD 지속 세션, Windows Job Object 기반 하위 프로세스 수명 관리, 메모리/문서/web 도구 parity.
+
+## Turn 10 — 원격 작업 중 취소 및 연결 종료 대응 (2026-11-16)
+- [x] Rust 서버의 `WorkspaceRoute::cancel_remote`과 `native.cancel` 프로토콜 도입. 취소 확인의 별도 12초 타임아웃.
+- [x] Rust Client polling과 도구 실행을 분리하여 이미 실행 중인 `native.invoke`가 있어도 `native.cancel` 요청 수신.
+- [x] 워커 실행별 `CancellationToken`, 직렬 실행 잠금, 정리 후 run ID 재사용 거절.
+- [x] 원격 연결 종료·Owner 세션 폐기·HTTP 결과 송신 실패·Ctrl+C 시 활성 실행 취소 및 작업별 `tmp` 정리 경로 추가.
+- [x] 실행 중 터미널 취소·임시파일 보존/정리·Hub 동시 제어 메시지 전송·라우팅 취소→정리 순서 테스트.
+- [ ] 실제 두 대의 Windows PC + HTTPS 터널에서 네트워크 단절과 취소 검증, OS 프로세스 그룹/Job Object 완전 보장.
+- [ ] 연결 단절 후 요청 전달·중복 결과·cleanup 오류 재시도·worker 강제 종료 시 orphan tmp 재정리.
+- [ ] 기존 Python worker의 `native.cancel` 지원 및 인증 자동설치/연결 UI는 별도 이식 필요.
