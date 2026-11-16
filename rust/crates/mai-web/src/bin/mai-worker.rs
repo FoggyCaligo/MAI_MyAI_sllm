@@ -124,6 +124,23 @@ impl Worker {
         }
     }
 }
+async fn deliver_result(client: Client, url: String, secret: String, worker: Arc<Worker>,
+    item: Value)->Result<(),String>{
+    let id=item.get("request_id").and_then(Value::as_str).ok_or("invalid worker request ID")?;
+    let operation=item.get("operation").and_then(Value::as_str).ok_or("invalid operation")?;
+    let args=item.get("arguments").cloned().ok_or("missing worker arguments")?;
+    let response=match worker.handle(operation,args).await{
+        Ok(value)=>json!({"request_id":id,"ok":true,"result":{"value":value}}),
+        Err(error)=>json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":error}),
+    };
+    let confirmed=client.post(format!("{url}/result"))
+        .header("X-MAI-Agent-Secret",&secret).json(&response).send().await
+        .map_err(|e|format!("worker result delivery: {e}"))?;
+    if !confirmed.status().is_success(){
+        return Err(format!("remote result delivery refused: {}",confirmed.status()));
+    }
+    Ok(())
+}
 async fn run_worker() -> Result<(), String> {
     let base = env::var("MAI_REMOTE_SERVER").map_err(|_| "MAI_REMOTE_SERVER required")?;
     if !base.to_ascii_lowercase().starts_with("https://") {
@@ -137,70 +154,56 @@ async fn run_worker() -> Result<(), String> {
     let root = env::var("MAI_CLIENT_WORKSPACE_ROOT")
         .map(PathBuf::from)
         .map_err(|_| "MAI_CLIENT_WORKSPACE_ROOT required")?;
-    let mut worker = Worker::new(root)?;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(40))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| e.to_string())?;
-    let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
-    let outcome = async {
+    let worker=Arc::new(Worker::new(root)?);
+    let client=Client::builder().timeout(Duration::from_secs(40))
+        .redirect(reqwest::redirect::Policy::none()).build().map_err(|e|e.to_string())?;
+    let url=format!("{}/remote/agent/{}",base.trim_end_matches('/'),session);
+    let mut tasks=tokio::task::JoinSet::<Result<(),String>>::new();
+    let outcome=async {
         loop {
-            let polled = client
-                .post(format!("{url}/poll"))
-                .header("X-MAI-Agent-Secret", &secret)
-                .send()
-                .await
-                .map_err(|e| format!("worker poll: {e}"))?;
-            if polled.status() != StatusCode::OK {
-                return Err(format!("worker poll rejected: {}", polled.status()));
+            // Completed tool responses must reach the server. Any failed
+            // delivery indicates a disconnected/revoked session: fail closed.
+            while let Some(joined)=tasks.try_join_next(){
+                joined.map_err(|e|format!("remote worker operation task: {e}"))??;
             }
-            let message: Value = polled.json().await.map_err(|e| e.to_string())?;
-            let Some(item) = message.get("request").filter(|v| !v.is_null()) else {
-                continue;
-            };
-            let id = item
-                .get("request_id")
-                .and_then(Value::as_str)
-                .ok_or("invalid worker request ID")?;
-            let operation = item
-                .get("operation")
-                .and_then(Value::as_str)
-                .ok_or("invalid operation")?;
-            let args = item
-                .get("arguments")
-                .cloned()
-                .ok_or("missing worker arguments")?;
-            let response = match worker.handle(operation, args).await {
-                Ok(value) => json!({"request_id":id,"ok":true,"result":{"value":value}}),
-                Err(e) => {
-                    json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":e})
-                }
-            };
-            let confirmed = client
-                .post(format!("{url}/result"))
-                .header("X-MAI-Agent-Secret", &secret)
-                .json(&response)
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !confirmed.status().is_success() {
-                return Err(format!(
-                    "remote result delivery refused: {}",
-                    confirmed.status()
-                ));
+            // Polling continues even while an earlier native.invoke is
+            // executing, so native.cancel can reach the same worker promptly.
+            let polled=client.post(format!("{url}/poll"))
+                .header("X-MAI-Agent-Secret",&secret).send().await
+                .map_err(|e|format!("worker poll: {e}"))?;
+            if polled.status()!=StatusCode::OK{
+                return Err(format!("worker poll rejected: {}",polled.status()));
             }
+            let message:Value=polled.json().await.map_err(|e|e.to_string())?;
+            let Some(item)=message.get("request").filter(|v|!v.is_null()) else {continue};
+            let operation=item.get("operation").and_then(Value::as_str).ok_or("invalid operation")?;
+            let args=item.get("arguments").ok_or("missing worker arguments")?;
+            if operation=="native.invoke"{
+                let run_id=args.get("run_id").and_then(Value::as_str).ok_or("missing run ID")?;
+                // Pre-create the run in dispatch order before spawning.
+                // Later cleanup cannot overtake the initial run creation.
+                worker.create_run(run_id)?;
+            }
+            tasks.spawn(deliver_result(client.clone(),url.clone(),secret.clone(),
+                worker.clone(),item.clone()));
         }
         #[allow(unreachable_code)]
-        Ok::<(), String>(())
+        Ok::<(),String>(())
+    }.await;
+    // Disconnect/revocation: cancel first, so running terminal tools observe
+    // cancellation even before their ordinary result can be delivered.
+    worker.cancel_all();
+    let drained=tokio::time::timeout(Duration::from_secs(20),async{
+        while let Some(done)=tasks.join_next().await{
+            let _=done;
+        }
+    }).await;
+    if drained.is_err(){
+        tasks.abort_all();
+        while tasks.join_next().await.is_some(){}
     }
-    .await;
     worker.close_all().await;
-    let _ = client
-        .delete(url)
-        .header("X-MAI-Agent-Secret", &secret)
-        .send()
-        .await;
+    let _=client.delete(url).header("X-MAI-Agent-Secret",&secret).send().await;
     outcome
 }
 #[tokio::main]
@@ -221,7 +224,7 @@ mod tests {
     #[tokio::test]
     async fn client_persistent_bash_and_cleanup() {
         let dir = tempfile::tempdir().unwrap();
-        let mut worker = Worker::new(dir.path().to_path_buf()).unwrap();
+        let worker = Worker::new(dir.path().to_path_buf()).unwrap();
         let run_id = "0123456789abcdef0123456789abcdef";
         let result = worker
             .handle(
@@ -246,13 +249,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cleaned["cleaned"], true);
-        assert!(worker.runs.is_empty());
+        assert!(worker.lock_state().unwrap().runs.is_empty());
     }
     #[tokio::test]
     async fn client_temporary_files_cleanup_without_touching_persistent_files() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("existing.txt"), "user-content").unwrap();
-        let mut worker = Worker::new(dir.path().to_path_buf()).unwrap();
+        let worker = Worker::new(dir.path().to_path_buf()).unwrap();
         let run_id = "0123456789abcdef0123456789abcdef";
         let created = worker
             .handle(
