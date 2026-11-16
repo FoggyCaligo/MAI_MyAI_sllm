@@ -197,10 +197,10 @@ impl RemoteTransport for RemoteHub {
                     .map(|s| s.pending.remove(&request_id));
                 return Err("remote worker queue backpressure".into());
             }
-            let deadline = if operation == "native.cleanup" {
-                CLEANUP_TIMEOUT
-            } else {
-                REQUEST_TIMEOUT
+            let deadline = match operation {
+                "native.cleanup" => CLEANUP_TIMEOUT,
+                "native.cancel" => Duration::from_secs(12),
+                _ => REQUEST_TIMEOUT,
             };
             let outcome = tokio::time::timeout(deadline, rx).await;
             if !matches!(outcome, Ok(Ok(_))) {
