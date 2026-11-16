@@ -154,9 +154,13 @@ impl Worker {
                     run.terminals.close_all().await;
                     let files = run.files.clone();
                     let cleanup = tokio::task::spawn_blocking(move || files.cleanup())
-                        .await.map_err(|e| e.to_string()).and_then(|result|result);
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|result| result);
                     if let Err(error) = cleanup {
-                        self.lock_state()?.cleanup_errors.insert(id.to_string(),error.clone());
+                        self.lock_state()?
+                            .cleanup_errors
+                            .insert(id.to_string(), error.clone());
                         return Err(format!("scratch cleanup failed: {error}"));
                     }
                 }
@@ -172,7 +176,7 @@ impl Worker {
             Err(_) => return,
         };
         for id in ids {
-            if let Err(error) = self.handle("native.cleanup",json!({"run_id":id})).await {
+            if let Err(error) = self.handle("native.cleanup", json!({"run_id":id})).await {
                 eprintln!("remote worker scratch cleanup failed for run {id}: {error}");
             }
         }
