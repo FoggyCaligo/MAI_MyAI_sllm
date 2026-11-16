@@ -34,11 +34,13 @@ impl Workspace {
     /// Protect other jobs' scratch paths from read/search/list tools.
     pub fn scoped_to_run(&self, scratch: &Path) -> Result<Self, String> {
         let allowed = self.path(&scratch.to_string_lossy())?;
-        let tmp=self.root.join("tmp");
-        let permitted_parent=allowed.parent()==Some(tmp.as_path())
-            || allowed.parent()==Some(tmp.join("client-worker").as_path());
+        let tmp = self.root.join("tmp");
+        let permitted_parent = allowed.parent() == Some(tmp.as_path())
+            || allowed.parent() == Some(tmp.join("client-worker").as_path());
         if !permitted_parent || !allowed.is_dir() {
-            return Err("run scratch must belong to an approved workspace scratch directory".into());
+            return Err(
+                "run scratch must belong to an approved workspace scratch directory".into(),
+            );
         }
         Ok(Self {
             root: self.root.clone(),

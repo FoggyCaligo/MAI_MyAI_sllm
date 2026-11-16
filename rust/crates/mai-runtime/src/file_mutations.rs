@@ -34,13 +34,14 @@ impl RunFiles {
     fn new_in(workspace: Workspace, relative: &str) -> Result<Self, String> {
         let base = workspace.root().join(relative);
         if relative == "tmp/client-worker" {
-            let parent=workspace.root().join("tmp");
+            let parent = workspace.root().join("tmp");
             match fs::symlink_metadata(&parent) {
-                Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {},
+                Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
                 Ok(_) => return Err("workspace tmp is not an ordinary directory".into()),
-                Err(e) if e.kind()==std::io::ErrorKind::NotFound =>
-                    fs::create_dir(&parent).map_err(|e|e.to_string())?,
-                Err(e)=>return Err(e.to_string()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    fs::create_dir(&parent).map_err(|e| e.to_string())?
+                }
+                Err(e) => return Err(e.to_string()),
             }
         }
         match fs::symlink_metadata(&base) {

@@ -39,15 +39,15 @@ fn valid_run_id(s: &str) -> bool {
 }
 impl Worker {
     fn new(path: PathBuf) -> Result<Self, String> {
-        let root=Workspace::new(path)?;
-        let guard=ClientScratchGuard::acquire(&root)?;
+        let root = Workspace::new(path)?;
+        let guard = ClientScratchGuard::acquire(&root)?;
         // No other cooperating Client worker can own this scratch while
         // recovery runs; never touch the Host's regular tmp/run-* entries.
         guard.recover_orphans()?;
         Ok(Self {
             root,
             state: std::sync::Mutex::new(WorkerState::default()),
-            _scratch_guard:guard,
+            _scratch_guard: guard,
         })
     }
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, WorkerState>, String> {
@@ -194,41 +194,49 @@ impl Worker {
 /// A modified payload under an existing request ID is rejected instead of
 /// executing an unexpected command. Results are retained for this session.
 #[derive(Default)]
-struct RequestLedger{
-    entries:tokio::sync::Mutex<HashMap<String,(String,Arc<tokio::sync::OnceCell<Value>>)>>,
+struct RequestLedger {
+    entries: tokio::sync::Mutex<HashMap<String, (String, Arc<tokio::sync::OnceCell<Value>>)>>,
 }
-impl RequestLedger{
-    async fn execute(&self,worker:&Worker,item:&Value)->Result<Value,String>{
-        let request_id=item.get("request_id").and_then(Value::as_str).ok_or("invalid request ID")?;
-        if request_id.is_empty()||request_id.len()>128{return Err("invalid request ID length".into());}
-        let signature=serde_json::to_string(&(
-            item.get("operation"),item.get("arguments"),
-        )).map_err(|e|e.to_string())?;
-        let cell={
-            let mut entries=self.entries.lock().await;
-            if let Some((previous,cell))=entries.get(request_id){
-                if previous!=&signature{
+impl RequestLedger {
+    async fn execute(&self, worker: &Worker, item: &Value) -> Result<Value, String> {
+        let request_id = item
+            .get("request_id")
+            .and_then(Value::as_str)
+            .ok_or("invalid request ID")?;
+        if request_id.is_empty() || request_id.len() > 128 {
+            return Err("invalid request ID length".into());
+        }
+        let signature = serde_json::to_string(&(item.get("operation"), item.get("arguments")))
+            .map_err(|e| e.to_string())?;
+        let cell = {
+            let mut entries = self.entries.lock().await;
+            if let Some((previous, cell)) = entries.get(request_id) {
+                if previous != &signature {
                     return Err("conflicting request ID replay rejected".into());
                 }
                 cell.clone()
-            }else{
-                if entries.len()>=4096 {
+            } else {
+                if entries.len() >= 4096 {
                     return Err("worker request ledger full; restart after cleanup".into());
                 }
-                let cell=Arc::new(tokio::sync::OnceCell::new());
-                entries.insert(request_id.to_string(),(signature,cell.clone()));
+                let cell = Arc::new(tokio::sync::OnceCell::new());
+                entries.insert(request_id.to_string(), (signature, cell.clone()));
                 cell
             }
         };
-        let response=cell.get_or_init(|| async {
-            let operation=item.get("operation").and_then(Value::as_str).unwrap_or("");
-            let args=item.get("arguments").cloned().unwrap_or(Value::Null);
-            match worker.handle(operation,args).await {
-                Ok(value)=>json!({"request_id":request_id,"ok":true,"result":{"value":value}}),
-                Err(error)=>json!({"request_id":request_id,"ok":false,
+        let response = cell
+            .get_or_init(|| async {
+                let operation = item.get("operation").and_then(Value::as_str).unwrap_or("");
+                let args = item.get("arguments").cloned().unwrap_or(Value::Null);
+                match worker.handle(operation, args).await {
+                    Ok(value) => {
+                        json!({"request_id":request_id,"ok":true,"result":{"value":value}})
+                    }
+                    Err(error) => json!({"request_id":request_id,"ok":false,
                     "error_type":"NativeToolError","error":error}),
-            }
-        }).await;
+                }
+            })
+            .await;
         Ok(response.clone())
     }
 }
@@ -240,13 +248,19 @@ async fn deliver_result(
     ledger: Arc<RequestLedger>,
     item: Value,
 ) -> Result<(), String> {
-    let response=ledger.execute(&worker,&item).await?;
-    let confirmed=client.post(format!("{url}/result"))
-        .header("X-MAI-Agent-Secret",&secret)
-        .json(&response).send().await
-        .map_err(|e|format!("worker result delivery: {e}"))?;
-    if !confirmed.status().is_success(){
-        return Err(format!("remote result delivery refused: {}",confirmed.status()));
+    let response = ledger.execute(&worker, &item).await?;
+    let confirmed = client
+        .post(format!("{url}/result"))
+        .header("X-MAI-Agent-Secret", &secret)
+        .json(&response)
+        .send()
+        .await
+        .map_err(|e| format!("worker result delivery: {e}"))?;
+    if !confirmed.status().is_success() {
+        return Err(format!(
+            "remote result delivery refused: {}",
+            confirmed.status()
+        ));
     }
     Ok(())
 }
@@ -254,28 +268,41 @@ async fn deliver_result(
 /// Reconnect is safe only when no tool execution is in flight and no
 /// unfinished run owns files or shells. Never retry an ambiguous invocation.
 async fn poll_with_idle_reconnect(
-    client:&Client,url:&str,secret:&str,worker:&Worker,has_inflight:bool,
-)->Result<Value,String>{
-    for attempt in 0..4u64{
-        let response=client.post(format!("{url}/poll"))
-            .header("X-MAI-Agent-Secret",secret).send().await;
-        let message=match response{
-            Ok(reply) if reply.status()==StatusCode::OK=>{
-                return reply.json::<Value>().await.map_err(|e|e.to_string());
+    client: &Client,
+    url: &str,
+    secret: &str,
+    worker: &Worker,
+    has_inflight: bool,
+) -> Result<Value, String> {
+    for attempt in 0..4u64 {
+        let response = client
+            .post(format!("{url}/poll"))
+            .header("X-MAI-Agent-Secret", secret)
+            .send()
+            .await;
+        let message = match response {
+            Ok(reply) if reply.status() == StatusCode::OK => {
+                return reply.json::<Value>().await.map_err(|e| e.to_string());
             }
-            Ok(reply) if reply.status()==StatusCode::UNAUTHORIZED
-                || reply.status()==StatusCode::FORBIDDEN=>{
-                return Err(format!("remote session revoked: {}",reply.status()));
+            Ok(reply)
+                if reply.status() == StatusCode::UNAUTHORIZED
+                    || reply.status() == StatusCode::FORBIDDEN =>
+            {
+                return Err(format!("remote session revoked: {}", reply.status()));
             }
-            Ok(reply)=>format!("worker poll server error: {}",reply.status()),
-            Err(error)=>format!("worker poll transport error: {error}"),
+            Ok(reply) => format!("worker poll server error: {}", reply.status()),
+            Err(error) => format!("worker poll transport error: {error}"),
         };
-        let safe=worker.lock_state()?.runs.is_empty()&&!has_inflight;
+        let safe = worker.lock_state()?.runs.is_empty() && !has_inflight;
         if !safe {
-            return Err(format!("{message}; active run cancelled to avoid ambiguous replay"));
+            return Err(format!(
+                "{message}; active run cancelled to avoid ambiguous replay"
+            ));
         }
-        if attempt==3{return Err(format!("{message}; reconnect attempts exhausted"));}
-        tokio::time::sleep(Duration::from_millis(200*(1<<attempt))).await;
+        if attempt == 3 {
+            return Err(format!("{message}; reconnect attempts exhausted"));
+        }
+        tokio::time::sleep(Duration::from_millis(200 * (1 << attempt))).await;
     }
     Err("remote session reconnect exhausted".into())
 }
@@ -300,7 +327,7 @@ async fn run_worker() -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
-    let ledger=Arc::new(RequestLedger::default());
+    let ledger = Arc::new(RequestLedger::default());
     let mut tasks = tokio::task::JoinSet::<Result<(), String>>::new();
     let outcome = tokio::select! {
         result = async {
@@ -385,62 +412,72 @@ mod tests {
         assert!(!valid_run_id("0123456789ABCDEF0123456789abcdef"));
     }
     #[tokio::test]
-    async fn repeated_request_id_never_repeats_file_mutation(){
-        let dir=tempfile::tempdir().unwrap();
-        let worker=Worker::new(dir.path().to_path_buf()).unwrap();
-        let ledger=RequestLedger::default();
-        let run_id="0123456789abcdef0123456789abcdef";
-        let item=json!({"request_id":"fixed-1","operation":"native.invoke",
+    async fn repeated_request_id_never_repeats_file_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = Worker::new(dir.path().to_path_buf()).unwrap();
+        let ledger = RequestLedger::default();
+        let run_id = "0123456789abcdef0123456789abcdef";
+        let item = json!({"request_id":"fixed-1","operation":"native.invoke",
             "arguments":{"run_id":run_id,"name":"file_write",
                 "arguments":{"path":"once.txt","content":"first","lifecycle":"persistent"}}});
-        let first=ledger.execute(&worker,&item).await.unwrap();
-        assert_eq!(first["ok"],true);
-        let second=ledger.execute(&worker,&item).await.unwrap();
-        assert_eq!(first,second);
-        assert_eq!(std::fs::read_to_string(dir.path().join("once.txt")).unwrap(),"first");
-        let conflicting=json!({"request_id":"fixed-1","operation":"native.invoke",
+        let first = ledger.execute(&worker, &item).await.unwrap();
+        assert_eq!(first["ok"], true);
+        let second = ledger.execute(&worker, &item).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("once.txt")).unwrap(),
+            "first"
+        );
+        let conflicting = json!({"request_id":"fixed-1","operation":"native.invoke",
             "arguments":{"run_id":run_id,"name":"file_write",
                 "arguments":{"path":"once.txt","content":"changed","lifecycle":"persistent"}}});
-        assert!(ledger.execute(&worker,&conflicting).await.unwrap_err().contains("conflicting"));
-        assert_eq!(std::fs::read_to_string(dir.path().join("once.txt")).unwrap(),"first");
+        assert!(ledger
+            .execute(&worker, &conflicting)
+            .await
+            .unwrap_err()
+            .contains("conflicting"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("once.txt")).unwrap(),
+            "first"
+        );
         worker.close_all().await;
     }
     #[tokio::test]
-    async fn concurrent_same_request_id_coalesces_into_one_run(){
-        let dir=tempfile::tempdir().unwrap();
-        let worker=Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
-        let ledger=Arc::new(RequestLedger::default());
-        let run_id="0123456789abcdef0123456789abcdef";
-        let item=json!({"request_id":"same-2","operation":"native.invoke",
+    async fn concurrent_same_request_id_coalesces_into_one_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
+        let ledger = Arc::new(RequestLedger::default());
+        let run_id = "0123456789abcdef0123456789abcdef";
+        let item = json!({"request_id":"same-2","operation":"native.invoke",
             "arguments":{"run_id":run_id,"name":"file_write",
                 "arguments":{"path":"only-once.txt","content":"success","lifecycle":"persistent"}}});
-        let a=ledger.execute(&worker,&item);
-        let b=ledger.execute(&worker,&item);
-        let (one,two)=tokio::join!(a,b);
-        assert_eq!(one.unwrap(),two.unwrap());
-        assert_eq!(ledger.entries.lock().await.len(),1);
+        let a = ledger.execute(&worker, &item);
+        let b = ledger.execute(&worker, &item);
+        let (one, two) = tokio::join!(a, b);
+        assert_eq!(one.unwrap(), two.unwrap());
+        assert_eq!(ledger.entries.lock().await.len(), 1);
         worker.close_all().await;
     }
     #[test]
-    fn unfinished_run_prevents_reconnect_even_if_it_has_no_active_tool(){
-        let dir=tempfile::tempdir().unwrap();
-        let worker=Worker::new(dir.path().to_path_buf()).unwrap();
-        let id="0123456789abcdef0123456789abcdef";
+    fn unfinished_run_prevents_reconnect_even_if_it_has_no_active_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = Worker::new(dir.path().to_path_buf()).unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
         assert!(worker.lock_state().unwrap().runs.is_empty());
         worker.create_run(id).unwrap();
         assert!(!worker.lock_state().unwrap().runs.is_empty());
     }
     #[test]
-    fn worker_restart_reclaims_orphans_without_touching_host_scratch(){
-        let dir=tempfile::tempdir().unwrap();
-        let root=dir.path();
-        let host=root.join("tmp/run-HOST12");
+    fn worker_restart_reclaims_orphans_without_touching_host_scratch() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let host = root.join("tmp/run-HOST12");
         std::fs::create_dir_all(&host).unwrap();
-        std::fs::write(host.join("keep.txt"),"host").unwrap();
-        let abandoned=root.join("tmp/client-worker/run-ZY1234");
+        std::fs::write(host.join("keep.txt"), "host").unwrap();
+        let abandoned = root.join("tmp/client-worker/run-ZY1234");
         std::fs::create_dir_all(&abandoned).unwrap();
-        std::fs::write(abandoned.join("leftover.txt"),"old").unwrap();
-        let first=Worker::new(root.to_path_buf()).unwrap();
+        std::fs::write(abandoned.join("leftover.txt"), "old").unwrap();
+        let first = Worker::new(root.to_path_buf()).unwrap();
         assert!(!abandoned.exists());
         assert!(host.join("keep.txt").exists());
         assert!(Worker::new(root.to_path_buf()).is_err());
