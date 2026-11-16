@@ -162,3 +162,12 @@ cargo run -p mai-web
 - 요청 기록 파일이 잘렸거나 손상된 경우 워커는 실행을 거절한다. 기록은 최대 100,000개 이전 ID까지 관리하고, 문제 발생 시 해당 파일의 상태를 확인한 후 수동으로 조치해야 한다. 임의 삭제하면 과거 요청의 재실행 방어 기록이 사라진다.
 - 파일 정리는 실행별 임시 디렉터리만 대상으로 하며, 이전에 완료된 **영구 파일 변경이나 이미 실행된 외부 명령의 부작용은 롤백하지 않는다.** 전원 강제 차단·OS crash 후 남은 자식 프로세스 종료, Windows Job Object, 실제 HTTPS PC-to-PC E2E, 부팅 중 symlink 교체 경쟁 조건 등은 추가 검증이 필요하다.
 - *참고:* 이 단계는 Rust Client 워커에 구현한 복구 로직이다. Python 원격 워커의 자동 정리 정책이나 Web UI는 변경하지 않았다.
+
+
+## Turn 12 — 기존 Memory SQLite 읽기 전용 검색 (2026-11-17)
+
+- Rust Web에서 `MAI_RUST_MEMORY_DB_PATH`가 설정된 경우에만 기존 Python의 `MAI_MEMORY/memory.sqlite3` 파일을 **읽기 전용으로 연다**. DB가 없거나 스키마가 다르면 오류가 발생하며 생성·마이그레이션·수정하지 않는다.
+- Native `memory_search`를 인증된 Owner의 **로그인 user_id**에만 묶어서 등록한다. `query` 또는 `keyword`(동시에 사용 불가)로 `AND / OR / NOT`, `& | !`, 괄호, 인용구를 검색한다. `node_id`는 해당 사용자의 Fact/Utterance 또는 자신의 anchor만 확장한다. `limit` 단독 호출은 최근 기억의 제한된 개요를 제공한다.
+- **범위의 한계**: 이번 1차 구현은 저장된 Concept의 **정확 일치 검색만** 지원한다. 기존 Python의 FTS5 후보 랭킹, Concept 주변의 전체 경로 병합, 추출·저장·작업 중 Working Graph, 최종답변 후 사실 저장은 이식 전이다. 검색 결과가 없다고 저장된 기억이 없다는 결론을 내리면 안 된다.
+- Owner DB 식별자가 로그인 `user_id`와 다른 설치에서는 별도의 ID 매핑이 필요하다. 다른 사용자의 Fact, Concept node_id는 직접 조회할 수 없다.
+- 환경변수 설정 예: `MAI_RUST_MEMORY_DB_PATH=./MAI_MEMORY/memory.sqlite3` (서버의 실행 작업 디렉터리 기준). 실제 SQLite 파일을 사용하므로 **개인 DB 파일은 공개 Git 저장소에 절대 커밋하지 않는다**.
