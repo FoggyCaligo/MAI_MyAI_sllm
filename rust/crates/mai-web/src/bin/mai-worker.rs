@@ -207,6 +207,9 @@ struct RequestLedger {
     journal: std::sync::Mutex<std::fs::File>,
 }
 impl RequestLedger {
+    async fn already_seen(&self, id:&str)->bool{
+        self.historical.contains(id)||self.entries.lock().await.contains_key(id)
+    }
     fn open(worker: &Worker) -> Result<Self, String> {
         let path = worker._scratch_guard.root().join(".request-ids");
         let previous = match std::fs::read_to_string(&path) {
@@ -315,7 +318,15 @@ async fn deliver_result(
     ledger: Arc<RequestLedger>,
     item: Value,
 ) -> Result<(), String> {
-    let response = ledger.execute(&worker, &item).await?;
+    let response = match ledger.execute(&worker, &item).await {
+        Ok(reply)=>reply,
+        Err(error)=>{
+            let request_id=item.get("request_id").and_then(Value::as_str)
+                .ok_or("invalid request ID")?;
+            json!({"request_id":request_id,"ok":false,
+                "error_type":"ReplayRejected","error":error})
+        }
+    };
     let confirmed = client
         .post(format!("{url}/result"))
         .header("X-MAI-Agent-Secret", &secret)
@@ -424,7 +435,11 @@ async fn run_worker() -> Result<(), String> {
                     .ok_or("missing run ID")?;
                 // Pre-create the run in dispatch order before spawning.
                 // Later cleanup cannot overtake the initial run creation.
-                worker.create_run(run_id)?;
+                let request_id=item.get("request_id").and_then(Value::as_str)
+                    .ok_or("invalid request ID")?;
+                if !ledger.already_seen(request_id).await {
+                    worker.create_run(run_id)?;
+                }
             }
             tasks.spawn(deliver_result(
                 client.clone(),
