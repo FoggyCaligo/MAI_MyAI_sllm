@@ -454,6 +454,17 @@ mod tests {
             .is_err());
     }
     #[tokio::test]
+    async fn failed_cleanup_never_gets_a_false_success_ack() {
+        let tmp=tempfile::tempdir().unwrap();
+        let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
+        let id="0123456789abcdef0123456789abcdef";
+        worker.lock_state().unwrap().cleanup_errors.insert(
+            id.into(),"simulated filesystem refusal".into());
+        let result=worker.handle("native.cleanup",json!({"run_id":id}))
+            .await.unwrap_err();
+        assert!(result.contains("prior scratch cleanup failed"));
+    }
+    #[tokio::test]
     async fn disconnect_cancels_all_runs_and_preserves_other_files() {
         let dir = tempfile::tempdir().unwrap();
         let worker = Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
