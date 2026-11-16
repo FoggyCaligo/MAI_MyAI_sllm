@@ -193,7 +193,6 @@ impl Worker {
 /// Per-process at-most-once dispatch for repeated identical request IDs.
 /// A modified payload under an existing request ID is rejected instead of
 /// executing an unexpected command. Results are retained for this session.
-#[derive(Default)]
 fn valid_request_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
