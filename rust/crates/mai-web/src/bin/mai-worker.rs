@@ -213,7 +213,7 @@ impl RequestLedger {
             Err(error) if error.kind()==std::io::ErrorKind::NotFound=>String::new(),
             Err(error)=>return Err(format!("request journal read: {error}")),
         };
-        if !previous.is_empty()&&!previous.ends_with('\\n'){
+        if !previous.is_empty()&&!previous.ends_with('\n'){
             return Err("incomplete request journal; refusing unsafe restart".into());
         }
         let mut historical=std::collections::HashSet::new();
