@@ -194,9 +194,11 @@ impl Worker {
 /// A modified payload under an existing request ID is rejected instead of
 /// executing an unexpected command. Results are retained for this session.
 #[derive(Default)]
-fn valid_request_id(s:&str)->bool{
-    !s.is_empty() && s.len()<=128
-        && s.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-'||c==b'_')
+fn valid_request_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 type SharedResult = Arc<tokio::sync::OnceCell<Value>>;
 type RequestRecord = (String, SharedResult);
@@ -206,32 +208,35 @@ struct RequestLedger {
     journal: std::sync::Mutex<std::fs::File>,
 }
 impl RequestLedger {
-    fn open(worker:&Worker)->Result<Self,String>{
-        let path=worker._scratch_guard.root().join(".request-ids");
-        let previous=match std::fs::read_to_string(&path){
-            Ok(text)=>text,
-            Err(error) if error.kind()==std::io::ErrorKind::NotFound=>String::new(),
-            Err(error)=>return Err(format!("request journal read: {error}")),
+    fn open(worker: &Worker) -> Result<Self, String> {
+        let path = worker._scratch_guard.root().join(".request-ids");
+        let previous = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(format!("request journal read: {error}")),
         };
-        if !previous.is_empty()&&!previous.ends_with('\n'){
+        if !previous.is_empty() && !previous.ends_with('\n') {
             return Err("incomplete request journal; refusing unsafe restart".into());
         }
-        let mut historical=std::collections::HashSet::new();
-        for line in previous.lines(){
-            if !valid_request_id(line){
+        let mut historical = std::collections::HashSet::new();
+        for line in previous.lines() {
+            if !valid_request_id(line) {
                 return Err("invalid request journal entry; refusing unsafe restart".into());
             }
             historical.insert(line.to_string());
         }
-        if historical.len()>=100_000 {
+        if historical.len() >= 100_000 {
             return Err("request journal exhausted; rotate after manual inspection".into());
         }
-        let journal=std::fs::OpenOptions::new().create(true).append(true)
-            .open(path).map_err(|e|format!("request journal open: {e}"))?;
-        Ok(Self{
-            entries:tokio::sync::Mutex::new(HashMap::new()),
+        let journal = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("request journal open: {e}"))?;
+        Ok(Self {
+            entries: tokio::sync::Mutex::new(HashMap::new()),
             historical,
-            journal:std::sync::Mutex::new(journal),
+            journal: std::sync::Mutex::new(journal),
         })
     }
     async fn execute(&self, worker: &Worker, item: &Value) -> Result<Value, String> {
@@ -239,7 +244,7 @@ impl RequestLedger {
             .get("request_id")
             .and_then(Value::as_str)
             .ok_or("invalid request ID")?;
-        if !valid_request_id(request_id){
+        if !valid_request_id(request_id) {
             return Err("invalid request ID syntax".into());
         }
         let signature = serde_json::to_string(&(item.get("operation"), item.get("arguments")))
@@ -255,22 +260,27 @@ impl RequestLedger {
                 if entries.len() >= 4096 {
                     return Err("worker request ledger full; restart after cleanup".into());
                 }
-                if self.historical.contains(request_id){
-                    return Err("request ID existed before worker restart; refusing re-execution".into());
+                if self.historical.contains(request_id) {
+                    return Err(
+                        "request ID existed before worker restart; refusing re-execution".into(),
+                    );
                 }
-                if self.historical.len()+entries.len()>=100_000{
+                if self.historical.len() + entries.len() >= 100_000 {
                     return Err("worker persistent request ledger limit reached".into());
                 }
                 // Write-ahead record: a crash after this point can NEVER
                 // cause an unknown prior command to execute again.
                 {
                     use std::io::Write;
-                    let mut journal=self.journal.lock()
-                        .map_err(|_|"request journal lock poisoned")?;
-                    writeln!(journal,"{request_id}")
-                        .map_err(|e|format!("request journal write: {e}"))?;
-                    journal.sync_data()
-                        .map_err(|e|format!("request journal sync: {e}"))?;
+                    let mut journal = self
+                        .journal
+                        .lock()
+                        .map_err(|_| "request journal lock poisoned")?;
+                    writeln!(journal, "{request_id}")
+                        .map_err(|e| format!("request journal write: {e}"))?;
+                    journal
+                        .sync_data()
+                        .map_err(|e| format!("request journal sync: {e}"))?;
                 }
                 let cell = Arc::new(tokio::sync::OnceCell::new());
                 entries.insert(request_id.to_string(), (signature, cell.clone()));
@@ -521,32 +531,38 @@ mod tests {
         assert!(!worker.lock_state().unwrap().runs.is_empty());
     }
     #[tokio::test]
-    async fn durable_journal_refuses_replay_after_worker_restart(){
-        let tmp=tempfile::tempdir().unwrap();
-        let id="0123456789abcdef0123456789abcdef";
-        let item=json!({"request_id":"replay-guard-001","operation":"native.invoke",
+    async fn durable_journal_refuses_replay_after_worker_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        let item = json!({"request_id":"replay-guard-001","operation":"native.invoke",
             "arguments":{"run_id":id,"name":"file_write",
                 "arguments":{"path":"persistent.txt","content":"first","lifecycle":"persistent"}}});
         {
-            let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
-            let ledger=RequestLedger::open(&worker).unwrap();
-            assert_eq!(ledger.execute(&worker,&item).await.unwrap()["ok"],true);
+            let worker = Worker::new(tmp.path().to_path_buf()).unwrap();
+            let ledger = RequestLedger::open(&worker).unwrap();
+            assert_eq!(ledger.execute(&worker, &item).await.unwrap()["ok"], true);
             worker.close_all().await;
         }
         {
-            let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
-            let ledger=RequestLedger::open(&worker).unwrap();
-            let error=ledger.execute(&worker,&item).await.unwrap_err();
-            assert!(error.contains("before worker restart"),"{error}");
-            assert_eq!(std::fs::read_to_string(tmp.path().join("persistent.txt")).unwrap(),"first");
+            let worker = Worker::new(tmp.path().to_path_buf()).unwrap();
+            let ledger = RequestLedger::open(&worker).unwrap();
+            let error = ledger.execute(&worker, &item).await.unwrap_err();
+            assert!(error.contains("before worker restart"), "{error}");
+            assert_eq!(
+                std::fs::read_to_string(tmp.path().join("persistent.txt")).unwrap(),
+                "first"
+            );
         }
     }
     #[test]
-    fn incomplete_journal_blocks_unsafe_automatic_recovery(){
-        let tmp=tempfile::tempdir().unwrap();
-        let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
-        std::fs::write(worker._scratch_guard.root().join(".request-ids"),"not-flushed")
-            .unwrap();
+    fn incomplete_journal_blocks_unsafe_automatic_recovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worker = Worker::new(tmp.path().to_path_buf()).unwrap();
+        std::fs::write(
+            worker._scratch_guard.root().join(".request-ids"),
+            "not-flushed",
+        )
+        .unwrap();
         assert!(RequestLedger::open(&worker).is_err());
     }
     #[test]
