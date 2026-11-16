@@ -363,6 +363,60 @@ mod tests {
         assert!(!valid_run_id("0123456789ABCDEF0123456789abcdef"));
     }
     #[tokio::test]
+    async fn repeated_request_id_never_repeats_file_mutation(){
+        let dir=tempfile::tempdir().unwrap();
+        let worker=Worker::new(dir.path().to_path_buf()).unwrap();
+        let ledger=RequestLedger::default();
+        let run_id="0123456789abcdef0123456789abcdef";
+        let item=json!({"request_id":"fixed-1","operation":"native.invoke",
+            "arguments":{"run_id":run_id,"name":"file_write",
+                "arguments":{"path":"once.txt","content":"first","lifecycle":"persistent"}}});
+        let first=ledger.execute(&worker,&item).await.unwrap();
+        assert_eq!(first["ok"],true);
+        let second=ledger.execute(&worker,&item).await.unwrap();
+        assert_eq!(first,second);
+        assert_eq!(std::fs::read_to_string(dir.path().join("once.txt")).unwrap(),"first");
+        let conflicting=json!({"request_id":"fixed-1","operation":"native.invoke",
+            "arguments":{"run_id":run_id,"name":"file_write",
+                "arguments":{"path":"once.txt","content":"changed","lifecycle":"persistent"}}});
+        assert!(ledger.execute(&worker,&conflicting).await.unwrap_err().contains("conflicting"));
+        assert_eq!(std::fs::read_to_string(dir.path().join("once.txt")).unwrap(),"first");
+        worker.close_all().await;
+    }
+    #[tokio::test]
+    async fn concurrent_same_request_id_coalesces_into_one_run(){
+        let dir=tempfile::tempdir().unwrap();
+        let worker=Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
+        let ledger=Arc::new(RequestLedger::default());
+        let run_id="0123456789abcdef0123456789abcdef";
+        let item=json!({"request_id":"same-2","operation":"native.invoke",
+            "arguments":{"run_id":run_id,"name":"file_write",
+                "arguments":{"path":"only-once.txt","content":"success","lifecycle":"persistent"}}});
+        let a=ledger.execute(&worker,&item);
+        let b=ledger.execute(&worker,&item);
+        let (one,two)=tokio::join!(a,b);
+        assert_eq!(one.unwrap(),two.unwrap());
+        assert_eq!(ledger.entries.lock().await.len(),1);
+        worker.close_all().await;
+    }
+    #[test]
+    fn worker_restart_reclaims_orphans_without_touching_host_scratch(){
+        let dir=tempfile::tempdir().unwrap();
+        let root=dir.path();
+        let host=root.join("tmp/run-HOST12");
+        std::fs::create_dir_all(&host).unwrap();
+        std::fs::write(host.join("keep.txt"),"host").unwrap();
+        let abandoned=root.join("tmp/client-worker/run-ZY1234");
+        std::fs::create_dir_all(&abandoned).unwrap();
+        std::fs::write(abandoned.join("leftover.txt"),"old").unwrap();
+        let first=Worker::new(root.to_path_buf()).unwrap();
+        assert!(!abandoned.exists());
+        assert!(host.join("keep.txt").exists());
+        assert!(Worker::new(root.to_path_buf()).is_err());
+        drop(first);
+        assert!(Worker::new(root.to_path_buf()).is_ok());
+    }
+    #[tokio::test]
     async fn client_persistent_bash_and_cleanup() {
         let dir = tempfile::tempdir().unwrap();
         let worker = Worker::new(dir.path().to_path_buf()).unwrap();
