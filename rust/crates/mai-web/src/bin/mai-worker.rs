@@ -23,6 +23,7 @@ struct WorkerRun {
 struct WorkerState {
     runs: HashMap<String, Arc<WorkerRun>>,
     finished: std::collections::HashSet<String>,
+    cleanup_errors: HashMap<String, String>,
 }
 struct Worker {
     root: Workspace,
@@ -140,6 +141,9 @@ impl Worker {
                 }
                 let existing = {
                     let mut state = self.lock_state()?;
+                    if let Some(previous) = state.cleanup_errors.get(id) {
+                        return Err(format!("prior scratch cleanup failed: {previous}"));
+                    }
                     state.finished.insert(id.to_string());
                     state.runs.remove(id)
                 };
@@ -149,9 +153,12 @@ impl Worker {
                     let _guard = run.execution.lock().await;
                     run.terminals.close_all().await;
                     let files = run.files.clone();
-                    tokio::task::spawn_blocking(move || files.cleanup())
-                        .await
-                        .map_err(|e| e.to_string())??;
+                    let cleanup = tokio::task::spawn_blocking(move || files.cleanup())
+                        .await.map_err(|e| e.to_string()).and_then(|result|result);
+                    if let Err(error) = cleanup {
+                        self.lock_state()?.cleanup_errors.insert(id.to_string(),error.clone());
+                        return Err(format!("scratch cleanup failed: {error}"));
+                    }
                 }
                 Ok(json!({"cleaned":true}))
             }
@@ -165,7 +172,9 @@ impl Worker {
             Err(_) => return,
         };
         for id in ids {
-            let _ = self.handle("native.cleanup", json!({"run_id":id})).await;
+            if let Err(error) = self.handle("native.cleanup",json!({"run_id":id})).await {
+                eprintln!("remote worker scratch cleanup failed for run {id}: {error}");
+            }
         }
     }
 }
