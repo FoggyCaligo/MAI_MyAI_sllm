@@ -1,6 +1,7 @@
 //! Experimental Rust remote native worker. Connects outward to an HTTPS MAI
 //! server, never exposes an inbound listener. Credentials from environment only.
 use mai_runtime::{
+    client_scratch::ClientScratchGuard,
     file_mutations::{register_run_file_tools, RunFiles},
     terminal_sessions::{register_terminal_sessions, TerminalSessions},
     validate_arguments,
@@ -28,6 +29,7 @@ struct WorkerState {
 struct Worker {
     root: Workspace,
     state: std::sync::Mutex<WorkerState>,
+    _scratch_guard: ClientScratchGuard,
 }
 fn valid_run_id(s: &str) -> bool {
     s.len() == 32
@@ -37,9 +39,15 @@ fn valid_run_id(s: &str) -> bool {
 }
 impl Worker {
     fn new(path: PathBuf) -> Result<Self, String> {
+        let root=Workspace::new(path)?;
+        let guard=ClientScratchGuard::acquire(&root)?;
+        // No other cooperating Client worker can own this scratch while
+        // recovery runs; never touch the Host's regular tmp/run-* entries.
+        guard.recover_orphans()?;
         Ok(Self {
-            root: Workspace::new(path)?,
+            root,
             state: std::sync::Mutex::new(WorkerState::default()),
+            _scratch_guard:guard,
         })
     }
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, WorkerState>, String> {
@@ -61,7 +69,7 @@ impl Worker {
         if state.runs.len() >= 16 {
             return Err("worker active run limit reached".into());
         }
-        let files = Arc::new(RunFiles::new(self.root.clone())?);
+        let files = Arc::new(RunFiles::new_client(self.root.clone())?);
         let terminals = Arc::new(TerminalSessions::new(
             files.clone(),
             self.root.root().to_path_buf(),
