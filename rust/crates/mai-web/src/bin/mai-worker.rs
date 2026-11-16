@@ -227,7 +227,7 @@ impl RequestLedger {
         if historical.len() >= 100_000 {
             return Err("request journal exhausted; rotate after manual inspection".into());
         }
-        if let Ok(metadata)=std::fs::symlink_metadata(&path) {
+        if let Ok(metadata) = std::fs::symlink_metadata(&path) {
             if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
                 return Err("worker request journal must be an ordinary file".into());
             }
