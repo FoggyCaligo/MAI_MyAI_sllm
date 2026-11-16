@@ -288,6 +288,7 @@ mod tests {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 match operation {
                     "native.invoke" => Ok(json!({"value":{"location":"client","args":args}})),
+                    "native.cancel" => Ok(json!({"value":{"cancelled":true}})),
                     "native.cleanup" => {
                         Ok(json!({"value":{"cleaned":self.cleanup_ok.load(Ordering::SeqCst)}}))
                     }
@@ -355,6 +356,16 @@ mod tests {
         assert_eq!(counter.load(Ordering::SeqCst), 2);
         route.cleanup().await.unwrap();
         assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+    }
+    #[tokio::test]
+    async fn cancelled_client_signal_precedes_cleanup_and_no_host_fallback(){
+        let (transport,route,counter)=fixture();
+        route.switch("client").await.unwrap();
+        route.cancel_remote().await.unwrap();
+        assert_eq!(counter.load(Ordering::SeqCst),0);
+        assert_eq!(transport.calls.load(Ordering::SeqCst),1);
+        route.cleanup().await.unwrap();
+        assert_eq!(transport.calls.load(Ordering::SeqCst),2);
     }
     #[tokio::test]
     async fn disconnected_worker_never_falls_back_to_host() {
