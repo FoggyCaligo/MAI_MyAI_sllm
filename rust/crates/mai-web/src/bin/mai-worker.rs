@@ -525,6 +525,23 @@ mod tests {
         worker.close_all().await;
     }
     #[tokio::test]
+    async fn repeated_request_after_cleanup_does_not_recreate_scratch(){
+        let dir=tempfile::tempdir().unwrap();
+        let worker=Worker::new(dir.path().to_path_buf()).unwrap();
+        let ledger=RequestLedger::open(&worker).unwrap();
+        let run_id="0123456789abcdef0123456789abcdef";
+        let item=json!({"request_id":"duplicate-after-cleanup",
+            "operation":"native.invoke","arguments":{"run_id":run_id,
+                "name":"file_write","arguments":{"path":"once.txt",
+                "content":"only-once","lifecycle":"persistent"}}});
+        let original=ledger.execute(&worker,&item).await.unwrap();
+        worker.handle("native.cleanup",json!({"run_id":run_id})).await.unwrap();
+        assert!(ledger.already_seen("duplicate-after-cleanup").await);
+        let cached=ledger.execute(&worker,&item).await.unwrap();
+        assert_eq!(original,cached);
+        assert!(worker.get_run(run_id).unwrap().is_none());
+    }
+    #[tokio::test]
     async fn concurrent_same_request_id_coalesces_into_one_run() {
         let dir = tempfile::tempdir().unwrap();
         let worker = Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
