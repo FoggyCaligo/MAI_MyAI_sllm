@@ -152,17 +152,31 @@ impl WorkspaceRoute {
         };
         let mut failures = Vec::new();
         for session_id in used {
-            match self.transport.request(
-                &self.owner, &session_id, "native.cancel",
-                json!({"run_id":self.run_id}),
-            ).await {
-                Ok(reply) if reply.get("value").and_then(|v|v.get("cancelled")) == Some(&Value::Bool(true)) => {},
+            match self
+                .transport
+                .request(
+                    &self.owner,
+                    &session_id,
+                    "native.cancel",
+                    json!({"run_id":self.run_id}),
+                )
+                .await
+            {
+                Ok(reply)
+                    if reply.get("value").and_then(|v| v.get("cancelled"))
+                        == Some(&Value::Bool(true)) => {}
                 Ok(_) => failures.push(format!("{session_id}: invalid cancellation ack")),
                 Err(error) => failures.push(format!("{session_id}: {error}")),
             }
         }
-        if failures.is_empty() { Ok(()) }
-        else { Err(format!("Remote cancellation not confirmed: {}",failures.join("; "))) }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Remote cancellation not confirmed: {}",
+                failures.join("; ")
+            ))
+        }
     }
     /// Must be called after all tool invocations have completed and before reporting
     /// a successful final answer. Remote cleanup failure must be surfaced to caller.

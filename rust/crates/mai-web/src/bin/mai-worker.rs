@@ -29,115 +29,183 @@ struct Worker {
     state: std::sync::Mutex<WorkerState>,
 }
 fn valid_run_id(s: &str) -> bool {
-    s.len() == 32 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    s.len() == 32
+        && s.as_bytes()
+            .iter()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 impl Worker {
     fn new(path: PathBuf) -> Result<Self, String> {
-        Ok(Self { root: Workspace::new(path)?, state: std::sync::Mutex::new(WorkerState::default()) })
+        Ok(Self {
+            root: Workspace::new(path)?,
+            state: std::sync::Mutex::new(WorkerState::default()),
+        })
     }
-    fn lock_state(&self)->Result<std::sync::MutexGuard<'_, WorkerState>,String>{
-        self.state.lock().map_err(|_|"worker run state lock poisoned".into())
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, WorkerState>, String> {
+        self.state
+            .lock()
+            .map_err(|_| "worker run state lock poisoned".into())
     }
-    fn create_run(&self,id:&str)->Result<Arc<WorkerRun>,String>{
-        if !valid_run_id(id){return Err("run ID must be 32 lowercase hex characters".into());}
-        let mut state=self.lock_state()?;
-        if state.finished.contains(id){return Err("run is already finished; cannot recreate scratch".into());}
-        if let Some(run)=state.runs.get(id){return Ok(run.clone());}
-        if state.runs.len()>=16{return Err("worker active run limit reached".into());}
-        let files=Arc::new(RunFiles::new(self.root.clone())?);
-        let terminals=Arc::new(TerminalSessions::new(files.clone(),self.root.root().to_path_buf()));
-        let run=Arc::new(WorkerRun{
-            files,terminals,cancel:CancellationToken::new(),
-            execution:tokio::sync::Mutex::new(()),
-            closed:std::sync::atomic::AtomicBool::new(false),
+    fn create_run(&self, id: &str) -> Result<Arc<WorkerRun>, String> {
+        if !valid_run_id(id) {
+            return Err("run ID must be 32 lowercase hex characters".into());
+        }
+        let mut state = self.lock_state()?;
+        if state.finished.contains(id) {
+            return Err("run is already finished; cannot recreate scratch".into());
+        }
+        if let Some(run) = state.runs.get(id) {
+            return Ok(run.clone());
+        }
+        if state.runs.len() >= 16 {
+            return Err("worker active run limit reached".into());
+        }
+        let files = Arc::new(RunFiles::new(self.root.clone())?);
+        let terminals = Arc::new(TerminalSessions::new(
+            files.clone(),
+            self.root.root().to_path_buf(),
+        ));
+        let run = Arc::new(WorkerRun {
+            files,
+            terminals,
+            cancel: CancellationToken::new(),
+            execution: tokio::sync::Mutex::new(()),
+            closed: std::sync::atomic::AtomicBool::new(false),
         });
-        state.runs.insert(id.to_string(),run.clone());
+        state.runs.insert(id.to_string(), run.clone());
         Ok(run)
     }
-    fn get_run(&self,id:&str)->Result<Option<Arc<WorkerRun>>,String>{
+    fn get_run(&self, id: &str) -> Result<Option<Arc<WorkerRun>>, String> {
         Ok(self.lock_state()?.runs.get(id).cloned())
     }
-    fn cancel_run(&self,id:&str)->Result<Value,String>{
-        let found=self.get_run(id)?;
-        if let Some(run)=&found{run.cancel.cancel();}
+    fn cancel_run(&self, id: &str) -> Result<Value, String> {
+        let found = self.get_run(id)?;
+        if let Some(run) = &found {
+            run.cancel.cancel();
+        }
         Ok(json!({"cancelled":true,"already_finished":found.is_none()}))
     }
-    fn cancel_all(&self){
-        if let Ok(state)=self.lock_state(){
-            for run in state.runs.values(){run.cancel.cancel();}
+    fn cancel_all(&self) {
+        if let Ok(state) = self.lock_state() {
+            for run in state.runs.values() {
+                run.cancel.cancel();
+            }
         }
     }
-    async fn handle(&self,operation:&str,args:Value)->Result<Value,String>{
-        let id=args.get("run_id").and_then(Value::as_str).ok_or("missing run_id")?;
-        if !valid_run_id(id){return Err("invalid remote worker run ID".into());}
-        match operation{
-            "native.invoke"=>{
-                let name=args.get("name").and_then(Value::as_str).ok_or("missing native name")?;
-                if name=="switch_workspace"{return Err("switch_workspace executes only on host".into());}
-                let params=args.get("arguments").ok_or("missing arguments")?;
-                if !params.is_object(){return Err("native arguments must be a JSON object".into());}
-                let run=self.create_run(id)?;
+    async fn handle(&self, operation: &str, args: Value) -> Result<Value, String> {
+        let id = args
+            .get("run_id")
+            .and_then(Value::as_str)
+            .ok_or("missing run_id")?;
+        if !valid_run_id(id) {
+            return Err("invalid remote worker run ID".into());
+        }
+        match operation {
+            "native.invoke" => {
+                let name = args
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or("missing native name")?;
+                if name == "switch_workspace" {
+                    return Err("switch_workspace executes only on host".into());
+                }
+                let params = args.get("arguments").ok_or("missing arguments")?;
+                if !params.is_object() {
+                    return Err("native arguments must be a JSON object".into());
+                }
+                let run = self.create_run(id)?;
                 // Serialize operations per run; cleanup waits for the in-flight
                 // operation. The cancel control never waits on this mutex.
-                let _guard=run.execution.lock().await;
-                if run.closed.load(std::sync::atomic::Ordering::Acquire) || run.cancel.is_cancelled(){
+                let _guard = run.execution.lock().await;
+                if run.closed.load(std::sync::atomic::Ordering::Acquire)
+                    || run.cancel.is_cancelled()
+                {
                     return Err("worker run cancelled or closed".into());
                 }
-                let scoped=self.root.scoped_to_run(&run.files.scratch_path()?)?;
-                let mut tools=Registry::new();
-                register_workspace_reads(&mut tools,&scoped)?;
-                register_run_file_tools(&mut tools,&run.files)?;
-                register_terminal_sessions(&mut tools,run.terminals.clone(),run.cancel.clone())?;
-                let tool=tools.take(name).ok_or_else(||format!("unsupported remote tool: {name}"))?;
-                validate_arguments(&tool.schema.parameters,params)?;
+                let scoped = self.root.scoped_to_run(&run.files.scratch_path()?)?;
+                let mut tools = Registry::new();
+                register_workspace_reads(&mut tools, &scoped)?;
+                register_run_file_tools(&mut tools, &run.files)?;
+                register_terminal_sessions(&mut tools, run.terminals.clone(), run.cancel.clone())?;
+                let tool = tools
+                    .take(name)
+                    .ok_or_else(|| format!("unsupported remote tool: {name}"))?;
+                validate_arguments(&tool.schema.parameters, params)?;
                 (tool.invoke)(params.clone()).await
             }
-            "native.cancel"=>self.cancel_run(id),
-            "native.cleanup"=>{
-                if args.as_object().is_none_or(|o|o.len()!=1){
+            "native.cancel" => self.cancel_run(id),
+            "native.cleanup" => {
+                if args.as_object().is_none_or(|o| o.len() != 1) {
                     return Err("cleanup accepts only run_id".into());
                 }
-                let existing={
-                    let mut state=self.lock_state()?;
+                let existing = {
+                    let mut state = self.lock_state()?;
                     state.finished.insert(id.to_string());
                     state.runs.remove(id)
                 };
-                if let Some(run)=existing{
-                    run.closed.store(true,std::sync::atomic::Ordering::Release);
+                if let Some(run) = existing {
+                    run.closed.store(true, std::sync::atomic::Ordering::Release);
                     run.cancel.cancel();
-                    let _guard=run.execution.lock().await;
+                    let _guard = run.execution.lock().await;
                     run.terminals.close_all().await;
-                    let files=run.files.clone();
-                    tokio::task::spawn_blocking(move||files.cleanup())
-                        .await.map_err(|e|e.to_string())??;
+                    let files = run.files.clone();
+                    tokio::task::spawn_blocking(move || files.cleanup())
+                        .await
+                        .map_err(|e| e.to_string())??;
                 }
                 Ok(json!({"cleaned":true}))
             }
-            _=>Err("unsupported native worker operation".into())
+            _ => Err("unsupported native worker operation".into()),
         }
     }
-    async fn close_all(&self){
+    async fn close_all(&self) {
         self.cancel_all();
-        let ids=match self.lock_state(){Ok(state)=>state.runs.keys().cloned().collect::<Vec<_>>(),Err(_)=>return};
-        for id in ids{
-            let _=self.handle("native.cleanup",json!({"run_id":id})).await;
+        let ids = match self.lock_state() {
+            Ok(state) => state.runs.keys().cloned().collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+        for id in ids {
+            let _ = self.handle("native.cleanup", json!({"run_id":id})).await;
         }
     }
 }
-async fn deliver_result(client: Client, url: String, secret: String, worker: Arc<Worker>,
-    item: Value)->Result<(),String>{
-    let id=item.get("request_id").and_then(Value::as_str).ok_or("invalid worker request ID")?;
-    let operation=item.get("operation").and_then(Value::as_str).ok_or("invalid operation")?;
-    let args=item.get("arguments").cloned().ok_or("missing worker arguments")?;
-    let response=match worker.handle(operation,args).await{
-        Ok(value)=>json!({"request_id":id,"ok":true,"result":{"value":value}}),
-        Err(error)=>json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":error}),
+async fn deliver_result(
+    client: Client,
+    url: String,
+    secret: String,
+    worker: Arc<Worker>,
+    item: Value,
+) -> Result<(), String> {
+    let id = item
+        .get("request_id")
+        .and_then(Value::as_str)
+        .ok_or("invalid worker request ID")?;
+    let operation = item
+        .get("operation")
+        .and_then(Value::as_str)
+        .ok_or("invalid operation")?;
+    let args = item
+        .get("arguments")
+        .cloned()
+        .ok_or("missing worker arguments")?;
+    let response = match worker.handle(operation, args).await {
+        Ok(value) => json!({"request_id":id,"ok":true,"result":{"value":value}}),
+        Err(error) => {
+            json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":error})
+        }
     };
-    let confirmed=client.post(format!("{url}/result"))
-        .header("X-MAI-Agent-Secret",&secret).json(&response).send().await
-        .map_err(|e|format!("worker result delivery: {e}"))?;
-    if !confirmed.status().is_success(){
-        return Err(format!("remote result delivery refused: {}",confirmed.status()));
+    let confirmed = client
+        .post(format!("{url}/result"))
+        .header("X-MAI-Agent-Secret", &secret)
+        .json(&response)
+        .send()
+        .await
+        .map_err(|e| format!("worker result delivery: {e}"))?;
+    if !confirmed.status().is_success() {
+        return Err(format!(
+            "remote result delivery refused: {}",
+            confirmed.status()
+        ));
     }
     Ok(())
 }
@@ -154,56 +222,81 @@ async fn run_worker() -> Result<(), String> {
     let root = env::var("MAI_CLIENT_WORKSPACE_ROOT")
         .map(PathBuf::from)
         .map_err(|_| "MAI_CLIENT_WORKSPACE_ROOT required")?;
-    let worker=Arc::new(Worker::new(root)?);
-    let client=Client::builder().timeout(Duration::from_secs(40))
-        .redirect(reqwest::redirect::Policy::none()).build().map_err(|e|e.to_string())?;
-    let url=format!("{}/remote/agent/{}",base.trim_end_matches('/'),session);
-    let mut tasks=tokio::task::JoinSet::<Result<(),String>>::new();
-    let outcome=async {
+    let worker = Arc::new(Worker::new(root)?);
+    let client = Client::builder()
+        .timeout(Duration::from_secs(40))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())?;
+    let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
+    let mut tasks = tokio::task::JoinSet::<Result<(), String>>::new();
+    let outcome = async {
         loop {
             // Completed tool responses must reach the server. Any failed
             // delivery indicates a disconnected/revoked session: fail closed.
-            while let Some(joined)=tasks.try_join_next(){
-                joined.map_err(|e|format!("remote worker operation task: {e}"))??;
+            while let Some(joined) = tasks.try_join_next() {
+                joined.map_err(|e| format!("remote worker operation task: {e}"))??;
             }
             // Polling continues even while an earlier native.invoke is
             // executing, so native.cancel can reach the same worker promptly.
-            let polled=client.post(format!("{url}/poll"))
-                .header("X-MAI-Agent-Secret",&secret).send().await
-                .map_err(|e|format!("worker poll: {e}"))?;
-            if polled.status()!=StatusCode::OK{
-                return Err(format!("worker poll rejected: {}",polled.status()));
+            let polled = client
+                .post(format!("{url}/poll"))
+                .header("X-MAI-Agent-Secret", &secret)
+                .send()
+                .await
+                .map_err(|e| format!("worker poll: {e}"))?;
+            if polled.status() != StatusCode::OK {
+                return Err(format!("worker poll rejected: {}", polled.status()));
             }
-            let message:Value=polled.json().await.map_err(|e|e.to_string())?;
-            let Some(item)=message.get("request").filter(|v|!v.is_null()) else {continue};
-            let operation=item.get("operation").and_then(Value::as_str).ok_or("invalid operation")?;
-            let args=item.get("arguments").ok_or("missing worker arguments")?;
-            if operation=="native.invoke"{
-                let run_id=args.get("run_id").and_then(Value::as_str).ok_or("missing run ID")?;
+            let message: Value = polled.json().await.map_err(|e| e.to_string())?;
+            let Some(item) = message.get("request").filter(|v| !v.is_null()) else {
+                continue;
+            };
+            let operation = item
+                .get("operation")
+                .and_then(Value::as_str)
+                .ok_or("invalid operation")?;
+            let args = item.get("arguments").ok_or("missing worker arguments")?;
+            if operation == "native.invoke" {
+                let run_id = args
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or("missing run ID")?;
                 // Pre-create the run in dispatch order before spawning.
                 // Later cleanup cannot overtake the initial run creation.
                 worker.create_run(run_id)?;
             }
-            tasks.spawn(deliver_result(client.clone(),url.clone(),secret.clone(),
-                worker.clone(),item.clone()));
+            tasks.spawn(deliver_result(
+                client.clone(),
+                url.clone(),
+                secret.clone(),
+                worker.clone(),
+                item.clone(),
+            ));
         }
         #[allow(unreachable_code)]
-        Ok::<(),String>(())
-    }.await;
+        Ok::<(), String>(())
+    }
+    .await;
     // Disconnect/revocation: cancel first, so running terminal tools observe
     // cancellation even before their ordinary result can be delivered.
     worker.cancel_all();
-    let drained=tokio::time::timeout(Duration::from_secs(20),async{
-        while let Some(done)=tasks.join_next().await{
-            let _=done;
+    let drained = tokio::time::timeout(Duration::from_secs(20), async {
+        while let Some(done) = tasks.join_next().await {
+            let _ = done;
         }
-    }).await;
-    if drained.is_err(){
+    })
+    .await;
+    if drained.is_err() {
         tasks.abort_all();
-        while tasks.join_next().await.is_some(){}
+        while tasks.join_next().await.is_some() {}
     }
     worker.close_all().await;
-    let _=client.delete(url).header("X-MAI-Agent-Secret",&secret).send().await;
+    let _ = client
+        .delete(url)
+        .header("X-MAI-Agent-Secret", &secret)
+        .send()
+        .await;
     outcome
 }
 #[tokio::main]
@@ -294,46 +387,77 @@ mod tests {
     }
     #[tokio::test]
     async fn cancellation_control_interrupts_active_client_terminal() {
-        let dir=tempfile::tempdir().unwrap();
-        let worker=Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
-        let id="0123456789abcdef0123456789abcdef";
-        let active=worker.clone();
-        let task=tokio::spawn(async move {
-            active.handle("native.invoke",json!({"run_id":id,"name":"terminal_run",
-                "arguments":{"command":"sleep 8"}})).await
+        let dir = tempfile::tempdir().unwrap();
+        let worker = Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
+        let id = "0123456789abcdef0123456789abcdef";
+        let active = worker.clone();
+        let task = tokio::spawn(async move {
+            active
+                .handle(
+                    "native.invoke",
+                    json!({"run_id":id,"name":"terminal_run",
+                "arguments":{"command":"sleep 8"}}),
+                )
+                .await
         });
         // Wait for the initial run to exist without assuming command timings.
         for _ in 0..100 {
-            if worker.get_run(id).unwrap().is_some(){break;}
+            if worker.get_run(id).unwrap().is_some() {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(worker.get_run(id).unwrap().is_some());
-        let cancelled=tokio::time::timeout(Duration::from_millis(800),
-            worker.handle("native.cancel",json!({"run_id":id}))).await.unwrap().unwrap();
-        assert_eq!(cancelled["cancelled"],true);
-        assert!(tokio::time::timeout(Duration::from_secs(4),task)
-            .await.expect("cancel must interrupt active command").unwrap().is_err());
-        let finished=worker.handle("native.cleanup",json!({"run_id":id})).await.unwrap();
-        assert_eq!(finished["cleaned"],true);
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(800),
+            worker.handle("native.cancel", json!({"run_id":id})),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(cancelled["cancelled"], true);
+        assert!(tokio::time::timeout(Duration::from_secs(4), task)
+            .await
+            .expect("cancel must interrupt active command")
+            .unwrap()
+            .is_err());
+        let finished = worker
+            .handle("native.cleanup", json!({"run_id":id}))
+            .await
+            .unwrap();
+        assert_eq!(finished["cleaned"], true);
         assert!(worker.get_run(id).unwrap().is_none());
-        assert!(worker.handle("native.invoke",json!({"run_id":id,"name":"terminal_run",
-            "arguments":{"command":"echo should-not-run"}})).await.is_err());
+        assert!(worker
+            .handle(
+                "native.invoke",
+                json!({"run_id":id,"name":"terminal_run",
+            "arguments":{"command":"echo should-not-run"}})
+            )
+            .await
+            .is_err());
     }
     #[tokio::test]
-    async fn disconnect_cancels_all_runs_and_preserves_other_files(){
-        let dir=tempfile::tempdir().unwrap();
-        let worker=Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
-        std::fs::write(dir.path().join("user.txt"),"preserved").unwrap();
-        let id="0123456789abcdef0123456789abcdef";
-        let made=worker.handle("native.invoke",json!({"run_id":id,"name":"file_write",
-            "arguments":{"path":"artifact.txt","content":"scratch","lifecycle":"temporary"}}))
-            .await.unwrap();
-        let path=PathBuf::from(made["path"].as_str().unwrap());
+    async fn disconnect_cancels_all_runs_and_preserves_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let worker = Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
+        std::fs::write(dir.path().join("user.txt"), "preserved").unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        let made = worker
+            .handle(
+                "native.invoke",
+                json!({"run_id":id,"name":"file_write",
+            "arguments":{"path":"artifact.txt","content":"scratch","lifecycle":"temporary"}}),
+            )
+            .await
+            .unwrap();
+        let path = PathBuf::from(made["path"].as_str().unwrap());
         assert!(path.exists());
         worker.cancel_all();
         worker.close_all().await;
         assert!(!path.exists());
-        assert_eq!(std::fs::read_to_string(dir.path().join("user.txt")).unwrap(),"preserved");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("user.txt")).unwrap(),
+            "preserved"
+        );
     }
-
 }
