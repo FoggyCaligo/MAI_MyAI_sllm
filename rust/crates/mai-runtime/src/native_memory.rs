@@ -426,10 +426,12 @@ fn universe(db: &Connection, owner: &str) -> Result<BTreeSet<i64>, String> {
         AND json_extract(payload_json,'$.user_id')=?1",
         )
         .map_err(|e| e.to_string())?;
-    stmt.query_map(params![owner], |r| r.get::<_, i64>(0))
+    let matches = stmt
+        .query_map(params![owner], |r| r.get::<_, i64>(0))
         .map_err(|e| e.to_string())?
         .collect::<Result<BTreeSet<_>, _>>()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(matches)
 }
 fn term_matches(db: &Connection, owner: &str, term: &str) -> Result<BTreeSet<i64>, String> {
     // Existing Python uses exact concept matches and FTS5 phrase fallback.
