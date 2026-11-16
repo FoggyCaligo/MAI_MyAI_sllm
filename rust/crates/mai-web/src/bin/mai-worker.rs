@@ -194,8 +194,10 @@ impl Worker {
 /// A modified payload under an existing request ID is rejected instead of
 /// executing an unexpected command. Results are retained for this session.
 #[derive(Default)]
+type SharedResult = Arc<tokio::sync::OnceCell<Value>>;
+type RequestRecord = (String, SharedResult);
 struct RequestLedger {
-    entries: tokio::sync::Mutex<HashMap<String, (String, Arc<tokio::sync::OnceCell<Value>>)>>,
+    entries: tokio::sync::Mutex<HashMap<String, RequestRecord>>,
 }
 impl RequestLedger {
     async fn execute(&self, worker: &Worker, item: &Value) -> Result<Value, String> {
