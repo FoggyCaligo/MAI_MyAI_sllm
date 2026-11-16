@@ -25,6 +25,7 @@ struct Session {
     tx: mpsc::Sender<Value>,
     rx: Arc<Mutex<mpsc::Receiver<Value>>>,
     pending: HashMap<String, oneshot::Sender<Result<Value, String>>>,
+    accepted_results: HashMap<String, String>,
 }
 #[derive(Default)]
 pub struct RemoteHub {
@@ -52,6 +53,7 @@ impl RemoteHub {
                 tx,
                 rx: Arc::new(Mutex::new(rx)),
                 pending: HashMap::new(),
+                accepted_results: HashMap::new(),
             },
         );
         Ok(json!({"session_id":id,"secret":secret}))
@@ -103,6 +105,22 @@ impl RemoteHub {
         let mut all = self.sessions.lock().await;
         let session = authenticate(&mut all, id, secret)?;
         session.last_seen = Instant::now();
+        let fingerprint=serde_json::to_string(&payload).map_err(|e|e.to_string())?;
+        if let Some(previous)=session.accepted_results.get(request_id){
+            return if previous==&fingerprint{Ok(())}
+                else{Err("conflicting result for acknowledged request ID".into())};
+        }
+        if session.accepted_results.len()>=4096 {
+            return Err("remote result acknowledgement ledger full".into());
+        }
+        // Validate the entire envelope before removing its pending sender.
+        if ok {
+            let object=payload.get("result").and_then(Value::as_object)
+                .ok_or("successful result missing envelope")?;
+            if object.len()!=1 || !object.contains_key("value"){
+                return Err("invalid native tool response envelope".into());
+            }
+        }
         let sender = session
             .pending
             .remove(request_id)
@@ -123,6 +141,7 @@ impl RemoteHub {
                 .unwrap_or("unknown worker error");
             Err(format!("remote worker error: {error}"))
         };
+        session.accepted_results.insert(request_id.to_string(),fingerprint);
         let _ = sender.send(response);
         Ok(())
     }
@@ -293,6 +312,35 @@ mod tests {
         .await
         .unwrap();
         assert!(invoke.await.unwrap().unwrap_err().contains("cancelled"));
+    }
+    #[tokio::test]
+    async fn duplicate_success_response_is_acknowledged_without_second_delivery(){
+        let hub=RemoteHub::new();
+        let issued=hub.create("owner").await.unwrap();
+        let id=issued["session_id"].as_str().unwrap().to_string();
+        let secret=issued["secret"].as_str().unwrap().to_string();
+        let h=hub.clone();
+        let a=id.clone();
+        let b=secret.clone();
+        let poll=tokio::spawn(async move{h.poll(&a,&b).await.unwrap()});
+        for _ in 0..100{
+            if hub.connected("owner",&id).await.unwrap(){break;}
+            tokio::task::yield_now().await;
+        }
+        let h=hub.clone();let a=id.clone();
+        let caller=tokio::spawn(async move{
+            h.request("owner",&a,"native.invoke",json!({"run_id":"abc"})).await
+        });
+        let request=poll.await.unwrap();
+        let request_id=request["request"]["request_id"].as_str().unwrap();
+        let data=json!({"request_id":request_id,"ok":true,
+            "result":{"value":{"done":true}}});
+        hub.resolve(&id,&secret,data.clone()).await.unwrap();
+        assert!(hub.resolve(&id,&secret,data.clone()).await.is_ok());
+        let modified=json!({"request_id":request_id,"ok":true,
+            "result":{"value":{"done":false}}});
+        assert!(hub.resolve(&id,&secret,modified).await.is_err());
+        assert_eq!(caller.await.unwrap().unwrap()["value"]["done"],true);
     }
     #[tokio::test]
     async fn owner_can_revoke_stale_session_and_create_replacement() {
