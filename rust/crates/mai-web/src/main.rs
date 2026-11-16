@@ -593,6 +593,7 @@ async fn run_job(request: RunJob) {
         max_output_tokens: 32768,
     };
     let (tx, mut rx) = mpsc::channel(128);
+    let memory_user = user.clone();
     let task = async {
         let _model_guard = app.supervisor.acquire(&selected, &cancel).await?;
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
@@ -603,7 +604,7 @@ async fn run_job(request: RunJob) {
         // every result and node expansion.
         if let Ok(path) = env::var("MAI_RUST_MEMORY_DB_PATH") {
             if !path.trim().is_empty() {
-                let memory = NativeMemory::new(path, user.clone())?;
+                let memory = NativeMemory::new(path, memory_user.clone())?;
                 register_memory_search(&mut tools, memory)?;
             }
         }
