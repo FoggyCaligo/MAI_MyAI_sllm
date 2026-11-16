@@ -232,3 +232,13 @@
 - [ ] 실시간 원격 워커→Host 인증 경로의 실제 PC-to-PC E2E.
 - [ ] Windows Job Object 하위 프로세스 생명주기 완전 보장, journal 안전한 순환·사용자 승인 복구 UI, 재시작 후 결과 재조회.
 - [ ] 잔여 프로세스 감지와 정리, 네트워크 분할/중복 전달의 장시간 스트레스 테스트.
+
+
+## Turn 12 — Native Memory 검색 1차
+- [x] 기존 MAI SQLite 그래프/Concept 인덱스를 읽기 전용으로 검사하는 Rust 어댑터 추가.
+- [x] `memory_search` query/keyword, Boolean 연산, node_id 소유권 확인, 최근 개요 등록.
+- [x] 작업 중 인증된 user_id로 검색 결과 제한, 다른 사용자 Fact와 Concept ID 직접 확장 거부.
+- [x] 쿼리 구문/상한/파라미터 검증, 없는 DB 생성 금지, read-only SQLite 회귀 테스트.
+- [ ] Python FTS5 유사어가 아닌 어휘 후보/랭킹의 정확 parity 및 전체 그래프 Working Graph.
+- [ ] 비동기 사실 추출/증거 수집/SQLite Transaction/저장 정책의 Rust 전면 이식.
+- [ ] 로그인 user_id와 Python memory_user_id 불일치 시 실제 배포 경로 ID 매핑과 E2E.
