@@ -224,42 +224,74 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn cancel_control_is_delivered_while_invoke_response_is_still_pending() {
-        let hub=RemoteHub::new();
-        let issued=hub.create("owner").await.unwrap();
-        let sid=issued["session_id"].as_str().unwrap().to_string();
-        let key=issued["secret"].as_str().unwrap().to_string();
+        let hub = RemoteHub::new();
+        let issued = hub.create("owner").await.unwrap();
+        let sid = issued["session_id"].as_str().unwrap().to_string();
+        let key = issued["secret"].as_str().unwrap().to_string();
         // Authenticate the long-polling client before queuing requests.
-        let h=hub.clone();
-        let id=sid.clone();
-        let secret=key.clone();
-        let first=tokio::spawn(async move {h.poll(&id,&secret).await.unwrap()});
-        for _ in 0..50{
-            if hub.connected("owner",&sid).await.unwrap(){break;}
+        let h = hub.clone();
+        let id = sid.clone();
+        let secret = key.clone();
+        let first = tokio::spawn(async move { h.poll(&id, &secret).await.unwrap() });
+        for _ in 0..50 {
+            if hub.connected("owner", &sid).await.unwrap() {
+                break;
+            }
             tokio::task::yield_now().await;
         }
-        assert!(hub.connected("owner",&sid).await.unwrap());
-        let h=hub.clone();
-        let id=sid.clone();
-        let invoke=tokio::spawn(async move {
-            h.request("owner",&id,"native.invoke",json!({"run_id":"0123456789abcdef0123456789abcdef"})).await
+        assert!(hub.connected("owner", &sid).await.unwrap());
+        let h = hub.clone();
+        let id = sid.clone();
+        let invoke = tokio::spawn(async move {
+            h.request(
+                "owner",
+                &id,
+                "native.invoke",
+                json!({"run_id":"0123456789abcdef0123456789abcdef"}),
+            )
+            .await
         });
-        let initial=tokio::time::timeout(Duration::from_secs(5),first).await.unwrap().unwrap();
-        assert_eq!(initial["request"]["operation"],"native.invoke");
+        let initial = tokio::time::timeout(Duration::from_secs(5), first)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(initial["request"]["operation"], "native.invoke");
         // Deliberately leave native.invoke unresolved.
-        let h=hub.clone();
-        let id=sid.clone();
-        let cancel=tokio::spawn(async move {
-            h.request("owner",&id,"native.cancel",json!({"run_id":"0123456789abcdef0123456789abcdef"})).await
+        let h = hub.clone();
+        let id = sid.clone();
+        let cancel = tokio::spawn(async move {
+            h.request(
+                "owner",
+                &id,
+                "native.cancel",
+                json!({"run_id":"0123456789abcdef0123456789abcdef"}),
+            )
+            .await
         });
-        let control=tokio::time::timeout(Duration::from_secs(5),hub.poll(&sid,&key)).await.unwrap().unwrap();
-        assert_eq!(control["request"]["operation"],"native.cancel");
-        let control_id=control["request"]["request_id"].as_str().unwrap();
-        hub.resolve(&sid,&key,json!({"request_id":control_id,"ok":true,
-            "result":{"value":{"cancelled":true}}})).await.unwrap();
-        assert_eq!(cancel.await.unwrap().unwrap()["value"]["cancelled"],true);
-        let original=initial["request"]["request_id"].as_str().unwrap();
-        hub.resolve(&sid,&key,json!({"request_id":original,"ok":false,
-            "error":"command cancelled"})).await.unwrap();
+        let control = tokio::time::timeout(Duration::from_secs(5), hub.poll(&sid, &key))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(control["request"]["operation"], "native.cancel");
+        let control_id = control["request"]["request_id"].as_str().unwrap();
+        hub.resolve(
+            &sid,
+            &key,
+            json!({"request_id":control_id,"ok":true,
+            "result":{"value":{"cancelled":true}}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cancel.await.unwrap().unwrap()["value"]["cancelled"], true);
+        let original = initial["request"]["request_id"].as_str().unwrap();
+        hub.resolve(
+            &sid,
+            &key,
+            json!({"request_id":original,"ok":false,
+            "error":"command cancelled"}),
+        )
+        .await
+        .unwrap();
         assert!(invoke.await.unwrap().unwrap_err().contains("cancelled"));
     }
     #[tokio::test]

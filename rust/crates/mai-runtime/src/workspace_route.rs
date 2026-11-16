@@ -358,14 +358,14 @@ mod tests {
         assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
     }
     #[tokio::test]
-    async fn cancelled_client_signal_precedes_cleanup_and_no_host_fallback(){
-        let (transport,route,counter)=fixture();
+    async fn cancelled_client_signal_precedes_cleanup_and_no_host_fallback() {
+        let (transport, route, counter) = fixture();
         route.switch("client").await.unwrap();
         route.cancel_remote().await.unwrap();
-        assert_eq!(counter.load(Ordering::SeqCst),0);
-        assert_eq!(transport.calls.load(Ordering::SeqCst),1);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
         route.cleanup().await.unwrap();
-        assert_eq!(transport.calls.load(Ordering::SeqCst),2);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
     }
     #[tokio::test]
     async fn disconnected_worker_never_falls_back_to_host() {
