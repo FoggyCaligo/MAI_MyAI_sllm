@@ -219,3 +219,16 @@
 - [ ] 실제 두 대의 Windows PC + HTTPS 터널에서 네트워크 단절과 취소 검증, OS 프로세스 그룹/Job Object 완전 보장.
 - [ ] 연결 단절 후 요청 전달·중복 결과·cleanup 오류 재시도·worker 강제 종료 시 orphan tmp 재정리.
 - [ ] 기존 Python worker의 `native.cancel` 지원 및 인증 자동설치/연결 UI는 별도 이식 필요.
+
+
+## Turn 11 — Client 복구·중복 실행 차단 (2026-11-16)
+- [x] Host `tmp/run-*`와 분리한 Client `tmp/client-worker/run-*` 사용 및 검사.
+- [x] OS 배타 파일 잠금으로 동시에 같은 Client 루트를 소유하는 두 워커 차단.
+- [x] 재시작 시 정확한 `run-XXXXXX` 이름의 잔여 디렉터리만 정리; 사용자 파일 및 Host scratch 보존.
+- [x] 동일 원격 request_id 중복 합류·결과 재사용과 변경된 payload 거부, Host 응답 ACK 중복 처리.
+- [x] 요청 실행 전 디스크 journal 작성 및 fsync, 재시작 후 기존 요청 ID의 재실행 거부.
+- [x] 결과가 불명확한 실행이 있는 동안 자동 재연결 거부; idle-only bounded reconnect.
+- [x] 잠금 경쟁·중복 요청·디스크 journal·복구 디렉터리 격리·실제 HTTP 재연결 회귀 테스트.
+- [ ] 실시간 원격 워커→Host 인증 경로의 실제 PC-to-PC E2E.
+- [ ] Windows Job Object 하위 프로세스 생명주기 완전 보장, journal 안전한 순환·사용자 승인 복구 UI, 재시작 후 결과 재조회.
+- [ ] 잔여 프로세스 감지와 정리, 네트워크 분할/중복 전달의 장시간 스트레스 테스트.
