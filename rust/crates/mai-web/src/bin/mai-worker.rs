@@ -190,46 +190,67 @@ impl Worker {
         }
     }
 }
+/// Per-process at-most-once dispatch for repeated identical request IDs.
+/// A modified payload under an existing request ID is rejected instead of
+/// executing an unexpected command. Results are retained for this session.
+#[derive(Default)]
+struct RequestLedger{
+    entries:tokio::sync::Mutex<HashMap<String,(String,Arc<tokio::sync::OnceCell<Value>>)>>,
+}
+impl RequestLedger{
+    async fn execute(&self,worker:&Worker,item:&Value)->Result<Value,String>{
+        let request_id=item.get("request_id").and_then(Value::as_str).ok_or("invalid request ID")?;
+        if request_id.is_empty()||request_id.len()>128{return Err("invalid request ID length".into());}
+        let signature=serde_json::to_string(&(
+            item.get("operation"),item.get("arguments"),
+        )).map_err(|e|e.to_string())?;
+        let cell={
+            let mut entries=self.entries.lock().await;
+            if let Some((previous,cell))=entries.get(request_id){
+                if previous!=&signature{
+                    return Err("conflicting request ID replay rejected".into());
+                }
+                cell.clone()
+            }else{
+                if entries.len()>=4096 {
+                    return Err("worker request ledger full; restart after cleanup".into());
+                }
+                let cell=Arc::new(tokio::sync::OnceCell::new());
+                entries.insert(request_id.to_string(),(signature,cell.clone()));
+                cell
+            }
+        };
+        let response=cell.get_or_init(|| async {
+            let operation=item.get("operation").and_then(Value::as_str).unwrap_or("");
+            let args=item.get("arguments").cloned().unwrap_or(Value::Null);
+            match worker.handle(operation,args).await {
+                Ok(value)=>json!({"request_id":request_id,"ok":true,"result":{"value":value}}),
+                Err(error)=>json!({"request_id":request_id,"ok":false,
+                    "error_type":"NativeToolError","error":error}),
+            }
+        }).await;
+        Ok(response.clone())
+    }
+}
 async fn deliver_result(
     client: Client,
     url: String,
     secret: String,
     worker: Arc<Worker>,
+    ledger: Arc<RequestLedger>,
     item: Value,
 ) -> Result<(), String> {
-    let id = item
-        .get("request_id")
-        .and_then(Value::as_str)
-        .ok_or("invalid worker request ID")?;
-    let operation = item
-        .get("operation")
-        .and_then(Value::as_str)
-        .ok_or("invalid operation")?;
-    let args = item
-        .get("arguments")
-        .cloned()
-        .ok_or("missing worker arguments")?;
-    let response = match worker.handle(operation, args).await {
-        Ok(value) => json!({"request_id":id,"ok":true,"result":{"value":value}}),
-        Err(error) => {
-            json!({"request_id":id,"ok":false,"error_type":"NativeToolError","error":error})
-        }
-    };
-    let confirmed = client
-        .post(format!("{url}/result"))
-        .header("X-MAI-Agent-Secret", &secret)
-        .json(&response)
-        .send()
-        .await
-        .map_err(|e| format!("worker result delivery: {e}"))?;
-    if !confirmed.status().is_success() {
-        return Err(format!(
-            "remote result delivery refused: {}",
-            confirmed.status()
-        ));
+    let response=ledger.execute(&worker,&item).await?;
+    let confirmed=client.post(format!("{url}/result"))
+        .header("X-MAI-Agent-Secret",&secret)
+        .json(&response).send().await
+        .map_err(|e|format!("worker result delivery: {e}"))?;
+    if !confirmed.status().is_success(){
+        return Err(format!("remote result delivery refused: {}",confirmed.status()));
     }
     Ok(())
 }
+
 async fn run_worker() -> Result<(), String> {
     let base = env::var("MAI_REMOTE_SERVER").map_err(|_| "MAI_REMOTE_SERVER required")?;
     if !base.to_ascii_lowercase().starts_with("https://") {
@@ -250,6 +271,7 @@ async fn run_worker() -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
+    let ledger=Arc::new(RequestLedger::default());
     let mut tasks = tokio::task::JoinSet::<Result<(), String>>::new();
     let outcome = tokio::select! {
         result = async {
@@ -293,6 +315,7 @@ async fn run_worker() -> Result<(), String> {
                 url.clone(),
                 secret.clone(),
                 worker.clone(),
+                ledger.clone(),
                 item.clone(),
             ));
         }
