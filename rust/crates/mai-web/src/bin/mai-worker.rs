@@ -230,7 +230,8 @@ async fn run_worker() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
     let mut tasks = tokio::task::JoinSet::<Result<(), String>>::new();
-    let outcome = async {
+    let outcome = tokio::select! {
+        result = async {
         loop {
             // Completed tool responses must reach the server. Any failed
             // delivery indicates a disconnected/revoked session: fail closed.
@@ -276,8 +277,11 @@ async fn run_worker() -> Result<(), String> {
         }
         #[allow(unreachable_code)]
         Ok::<(), String>(())
-    }
-    .await;
+        } => result,
+        signal = tokio::signal::ctrl_c() => {
+            signal.map_err(|e|format!("worker interrupt handler: {e}"))
+        },
+    };
     // Disconnect/revocation: cancel first, so running terminal tools observe
     // cancellation even before their ordinary result can be delivered.
     worker.cancel_all();
