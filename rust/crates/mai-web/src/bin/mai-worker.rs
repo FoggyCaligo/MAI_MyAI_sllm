@@ -194,19 +194,53 @@ impl Worker {
 /// A modified payload under an existing request ID is rejected instead of
 /// executing an unexpected command. Results are retained for this session.
 #[derive(Default)]
+fn valid_request_id(s:&str)->bool{
+    !s.is_empty() && s.len()<=128
+        && s.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-'||c==b'_')
+}
 type SharedResult = Arc<tokio::sync::OnceCell<Value>>;
 type RequestRecord = (String, SharedResult);
 struct RequestLedger {
     entries: tokio::sync::Mutex<HashMap<String, RequestRecord>>,
+    historical: std::collections::HashSet<String>,
+    journal: std::sync::Mutex<std::fs::File>,
 }
 impl RequestLedger {
+    fn open(worker:&Worker)->Result<Self,String>{
+        let path=worker._scratch_guard.root().join(".request-ids");
+        let previous=match std::fs::read_to_string(&path){
+            Ok(text)=>text,
+            Err(error) if error.kind()==std::io::ErrorKind::NotFound=>String::new(),
+            Err(error)=>return Err(format!("request journal read: {error}")),
+        };
+        if !previous.is_empty()&&!previous.ends_with('\\n'){
+            return Err("incomplete request journal; refusing unsafe restart".into());
+        }
+        let mut historical=std::collections::HashSet::new();
+        for line in previous.lines(){
+            if !valid_request_id(line){
+                return Err("invalid request journal entry; refusing unsafe restart".into());
+            }
+            historical.insert(line.to_string());
+        }
+        if historical.len()>=100_000 {
+            return Err("request journal exhausted; rotate after manual inspection".into());
+        }
+        let journal=std::fs::OpenOptions::new().create(true).append(true)
+            .open(path).map_err(|e|format!("request journal open: {e}"))?;
+        Ok(Self{
+            entries:tokio::sync::Mutex::new(HashMap::new()),
+            historical,
+            journal:std::sync::Mutex::new(journal),
+        })
+    }
     async fn execute(&self, worker: &Worker, item: &Value) -> Result<Value, String> {
         let request_id = item
             .get("request_id")
             .and_then(Value::as_str)
             .ok_or("invalid request ID")?;
-        if request_id.is_empty() || request_id.len() > 128 {
-            return Err("invalid request ID length".into());
+        if !valid_request_id(request_id){
+            return Err("invalid request ID syntax".into());
         }
         let signature = serde_json::to_string(&(item.get("operation"), item.get("arguments")))
             .map_err(|e| e.to_string())?;
@@ -220,6 +254,23 @@ impl RequestLedger {
             } else {
                 if entries.len() >= 4096 {
                     return Err("worker request ledger full; restart after cleanup".into());
+                }
+                if self.historical.contains(request_id){
+                    return Err("request ID existed before worker restart; refusing re-execution".into());
+                }
+                if self.historical.len()+entries.len()>=100_000{
+                    return Err("worker persistent request ledger limit reached".into());
+                }
+                // Write-ahead record: a crash after this point can NEVER
+                // cause an unknown prior command to execute again.
+                {
+                    use std::io::Write;
+                    let mut journal=self.journal.lock()
+                        .map_err(|_|"request journal lock poisoned")?;
+                    writeln!(journal,"{request_id}")
+                        .map_err(|e|format!("request journal write: {e}"))?;
+                    journal.sync_data()
+                        .map_err(|e|format!("request journal sync: {e}"))?;
                 }
                 let cell = Arc::new(tokio::sync::OnceCell::new());
                 entries.insert(request_id.to_string(), (signature, cell.clone()));
@@ -329,7 +380,7 @@ async fn run_worker() -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!("{}/remote/agent/{}", base.trim_end_matches('/'), session);
-    let ledger = Arc::new(RequestLedger::default());
+    let ledger = Arc::new(RequestLedger::open(&worker)?);
     let mut tasks = tokio::task::JoinSet::<Result<(), String>>::new();
     let outcome = tokio::select! {
         result = async {
@@ -417,7 +468,7 @@ mod tests {
     async fn repeated_request_id_never_repeats_file_mutation() {
         let dir = tempfile::tempdir().unwrap();
         let worker = Worker::new(dir.path().to_path_buf()).unwrap();
-        let ledger = RequestLedger::default();
+        let ledger = RequestLedger::open(&worker).unwrap();
         let run_id = "0123456789abcdef0123456789abcdef";
         let item = json!({"request_id":"fixed-1","operation":"native.invoke",
             "arguments":{"run_id":run_id,"name":"file_write",
@@ -448,7 +499,7 @@ mod tests {
     async fn concurrent_same_request_id_coalesces_into_one_run() {
         let dir = tempfile::tempdir().unwrap();
         let worker = Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
-        let ledger = Arc::new(RequestLedger::default());
+        let ledger = Arc::new(RequestLedger::open(&worker).unwrap());
         let run_id = "0123456789abcdef0123456789abcdef";
         let item = json!({"request_id":"same-2","operation":"native.invoke",
             "arguments":{"run_id":run_id,"name":"file_write",
