@@ -292,4 +292,48 @@ mod tests {
             "saved"
         );
     }
+    #[tokio::test]
+    async fn cancellation_control_interrupts_active_client_terminal() {
+        let dir=tempfile::tempdir().unwrap();
+        let worker=Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
+        let id="0123456789abcdef0123456789abcdef";
+        let active=worker.clone();
+        let task=tokio::spawn(async move {
+            active.handle("native.invoke",json!({"run_id":id,"name":"terminal_run",
+                "arguments":{"command":"sleep 8"}})).await
+        });
+        // Wait for the initial run to exist without assuming command timings.
+        for _ in 0..100 {
+            if worker.get_run(id).unwrap().is_some(){break;}
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(worker.get_run(id).unwrap().is_some());
+        let cancelled=tokio::time::timeout(Duration::from_millis(800),
+            worker.handle("native.cancel",json!({"run_id":id}))).await.unwrap().unwrap();
+        assert_eq!(cancelled["cancelled"],true);
+        assert!(tokio::time::timeout(Duration::from_secs(4),task)
+            .await.expect("cancel must interrupt active command").unwrap().is_err());
+        let finished=worker.handle("native.cleanup",json!({"run_id":id})).await.unwrap();
+        assert_eq!(finished["cleaned"],true);
+        assert!(worker.get_run(id).unwrap().is_none());
+        assert!(worker.handle("native.invoke",json!({"run_id":id,"name":"terminal_run",
+            "arguments":{"command":"echo should-not-run"}})).await.is_err());
+    }
+    #[tokio::test]
+    async fn disconnect_cancels_all_runs_and_preserves_other_files(){
+        let dir=tempfile::tempdir().unwrap();
+        let worker=Arc::new(Worker::new(dir.path().to_path_buf()).unwrap());
+        std::fs::write(dir.path().join("user.txt"),"preserved").unwrap();
+        let id="0123456789abcdef0123456789abcdef";
+        let made=worker.handle("native.invoke",json!({"run_id":id,"name":"file_write",
+            "arguments":{"path":"artifact.txt","content":"scratch","lifecycle":"temporary"}}))
+            .await.unwrap();
+        let path=PathBuf::from(made["path"].as_str().unwrap());
+        assert!(path.exists());
+        worker.cancel_all();
+        worker.close_all().await;
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_to_string(dir.path().join("user.txt")).unwrap(),"preserved");
+    }
+
 }
