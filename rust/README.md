@@ -132,7 +132,7 @@ cargo run -p mai-web
 - 워커는 파일·코드 및 터미널 Native 도구를 실행하며 작업별 `RunFiles`와 `TerminalSessions`를 생성한다. Host Bash 최대 2세션 + Rust Client Bash 최대 2세션으로 작업별 4세션 구조다. 양측 모두 `exit`과 최종 cleanup에서 세션을 종료한다. 원격 run_id는 기존 Python 워커 규칙과 같은 32자리 소문자 16진수다.
 - Client로 한 번이라도 전환한 작업은 종료 시 `native.cleanup` 확인이 필수다. 워커의 `cleaned=true`가 확인되지 않으면 정상 완료로 처리하지 않는다. 작업별 임시 파일만 정리하고 영구 파일은 보존한다.
 - **운영 제한**: Rust Web은 계속 `127.0.0.1`에만 수신하므로 외부 워커 연결에는 별도의 안전한 HTTPS 리버스 프록시 또는 터널이 필요하다. Python의 원격 연결 설치 UI를 Rust에 아직 이식하지 않았으며, 세션 생성은 Owner 인증 API를 통한 수동 절차다.
-- **취소 제한**: Rust 원격 워커는 요청을 순차 처리한다. 네트워크 장애·호스트 취소 중 실행 중인 Client 명령의 즉시 중단은 아직 보장하지 않으며, cleanup ACK가 오지 않으면 타임아웃 후 오류로 표시한다. 원격 취소의 즉시 전달, Windows Job Object, 장시간 유휴 세션 자동 만료, 실기기 E2E는 남은 작업이다.
+- **Turn 09 기준 취소 제한(과거 기록)**: 당시 워커는 요청을 순차 처리해 실행 중인 명령을 취소할 수 없었다. Turn 10에서 `native.cancel`을 분리된 제어 요청으로 처리하도록 변경했다. 여전히 Windows Job Object, 오프라인 상태의 강제 종료 보장, 실기기 E2E는 남아 있다.
 
 ### 실험적 수동 연결
 
@@ -140,3 +140,13 @@ cargo run -p mai-web
 2. 별도 Client PC에서 위 네 환경변수를 설정한 뒤 `cargo run -p mai-web --bin mai-worker`를 실행한다. `MAI_REMOTE_SERVER`는 인증서가 검증되는 HTTPS 주소여야 한다.
 3. 작업 제출 시 `/chat/jobs`의 `remote_session_id`에 세션 ID를 넣고 모델이 Native `switch_workspace(target="client")`로 전환하면 파일·코드·터미널 도구가 Client에서 실행된다.
 4. 세션이 끊겼거나 재발급해야 하면 Owner 인증으로 `DELETE /remote/session/{id}`를 호출한다.
+
+## Turn 10 — 원격 실행 중 취소와 연결 종료 정리 (2026-11-16)
+
+- Rust Host는 사용자 작업이 취소되면 `native.cancel` 신호를 **`native.cleanup`보다 먼저** Client로 보낸다. 원격 취소 ACK는 12초 이내에 받아야 하며, 확인되지 않으면 작업의 오류 메시지에 표시한다.
+- Rust Client는 긴 `native.invoke`를 실행하는 동안에도 다른 HTTP 폴링을 계속 처리한다. `native.cancel`은 실행별 `CancellationToken`을 즉시 취소하여 지속 Bash 명령의 취소 경로를 작동시킨다. 동일 run의 파일·코드 명령은 직렬화되어, 실행 중인 블로킹 파일 작업이 완료된 뒤에 cleanup이 진행된다.
+- `native.cleanup`은 실행 중인 작업과 동기화해 해당 실행의 Bash 세션과 `tmp/run-*` 디렉터리를 정리한다. 정리 후 도착한 동일 run의 명령은 거부한다.
+- 워커 폴링 연결 오류, 세션 폐기, 결과 송신 실패, Ctrl+C 발생 시 활성 실행에 취소 신호를 보내고 자식 셸을 종료한 후 작업별 임시 디렉터리를 정리하도록 했다.
+- 원격 결과 중단과 취소 요청은 서로 독립된 요청으로 전달한다. 연결이 끊긴 경우 서버가 즉시 취소 성공을 **보장하지 않고** ACK 부재를 오류로 보고한다. Client가 네트워크 장애를 감지한 후 자체 정리하는 것은 best-effort이며, 강제 종료(SIGKILL/전원 차단/OS crash)는 Rust 코드가 보장할 수 없다.
+- 파일 변경은 취소 시 롤백되지 않는다. Windows 프로세스 트리 종료 방식은 현재 `taskkill /T /F` 기반의 best-effort이며, Job Object 기반 강제 종료 보증과 서버·노트북 간 실환경 E2E는 남아 있다.
+- 신규 테스트: 원격 실행 대기 중 독립 취소 전달, Client 장시간 명령 취소, 연결 종료 정리, 영구 사용자 파일 보존, 원격 라우트의 취소→정리 순서.
