@@ -663,6 +663,13 @@ async fn run_job(request: RunJob) {
     if let Some(sessions) = terminal_sessions {
         sessions.close_all().await;
     }
+    // Notify the worker immediately on user cancellation, even while
+    // a previous native.invoke is still executing remotely.
+    let remote_cancel_error = if cancel.is_cancelled() {
+        route.cancel_remote().await.err()
+    } else {
+        None
+    };
     let remote_cleanup_error = route.cleanup().await.err();
     let cleanup_error = if let Some(scope) = run_files {
         match tokio::task::spawn_blocking(move || scope.cleanup()).await {
@@ -672,6 +679,11 @@ async fn run_job(request: RunJob) {
         }
     } else {
         None
+    };
+    let remote_cleanup_error = match (remote_cancel_error, remote_cleanup_error) {
+        (None, None) => None,
+        (Some(error), None) | (None, Some(error)) => Some(error),
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
     };
     let cleanup_error = match (cleanup_error, remote_cleanup_error) {
         (None, None) => None,
