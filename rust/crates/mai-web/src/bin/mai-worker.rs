@@ -522,40 +522,52 @@ mod tests {
         worker.close_all().await;
     }
     #[tokio::test]
-    async fn transient_poll_failure_reconnects_only_when_worker_is_idle(){
-        use axum::{routing::post,Json,Router};
-        use std::sync::atomic::{AtomicUsize,Ordering};
-        let hits=Arc::new(AtomicUsize::new(0));
-        let count=hits.clone();
-        let router=Router::new().route("/poll",post(move ||{
-            let count=count.clone();
-            async move{
-                let attempt=count.fetch_add(1,Ordering::SeqCst);
-                if attempt<2{
-                    (axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                     Json(json!({"error":"transient"})))
-                }else{
-                    (axum::http::StatusCode::OK,Json(json!({"request":null})))
+    async fn transient_poll_failure_reconnects_only_when_worker_is_idle() {
+        use axum::{routing::post, Json, Router};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let count = hits.clone();
+        let router = Router::new().route(
+            "/poll",
+            post(move || {
+                let count = count.clone();
+                async move {
+                    let attempt = count.fetch_add(1, Ordering::SeqCst);
+                    if attempt < 2 {
+                        (
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"error":"transient"})),
+                        )
+                    } else {
+                        (axum::http::StatusCode::OK, Json(json!({"request":null})))
+                    }
                 }
-            }
-        }));
-        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr=listener.local_addr().unwrap();
-        let server=tokio::spawn(async move{
-            axum::serve(listener,router).await.unwrap();
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
         });
-        let tmp=tempfile::tempdir().unwrap();
-        let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
-        let client=Client::builder().timeout(Duration::from_secs(3)).build().unwrap();
-        let url=format!("http://{addr}");
-        let result=poll_with_idle_reconnect(&client,&url,"test-key",&worker,false)
-            .await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let worker = Worker::new(tmp.path().to_path_buf()).unwrap();
+        let client = Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let url = format!("http://{addr}");
+        let result = poll_with_idle_reconnect(&client, &url, "test-key", &worker, false)
+            .await
+            .unwrap();
         assert!(result["request"].is_null());
-        assert_eq!(hits.load(Ordering::SeqCst),3);
-        worker.create_run("0123456789abcdef0123456789abcdef").unwrap();
-        let denied=poll_with_idle_reconnect(&client,"http://127.0.0.1:1","key",&worker,false)
-            .await.unwrap_err();
-        assert!(denied.contains("active run cancelled"),"{denied}");
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        worker
+            .create_run("0123456789abcdef0123456789abcdef")
+            .unwrap();
+        let denied = poll_with_idle_reconnect(&client, "http://127.0.0.1:1", "key", &worker, false)
+            .await
+            .unwrap_err();
+        assert!(denied.contains("active run cancelled"), "{denied}");
         worker.close_all().await;
         server.abort();
     }
