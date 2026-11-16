@@ -4,7 +4,7 @@
 use crate::{Registry, Tool, ToolSchema};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{json, Value};
-use std::{collections::{BTreeMap,BTreeSet}, path::{Path,PathBuf},sync::Arc,time::Duration};
+use std::{collections::BTreeSet, path::{Path,PathBuf},sync::Arc,time::Duration};
 
 #[derive(Clone)]
 pub struct NativeMemory {
