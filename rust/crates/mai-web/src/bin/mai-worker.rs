@@ -251,6 +251,35 @@ async fn deliver_result(
     Ok(())
 }
 
+/// Reconnect is safe only when no tool execution is in flight and no
+/// unfinished run owns files or shells. Never retry an ambiguous invocation.
+async fn poll_with_idle_reconnect(
+    client:&Client,url:&str,secret:&str,worker:&Worker,has_inflight:bool,
+)->Result<Value,String>{
+    for attempt in 0..4u64{
+        let response=client.post(format!("{url}/poll"))
+            .header("X-MAI-Agent-Secret",secret).send().await;
+        let message=match response{
+            Ok(reply) if reply.status()==StatusCode::OK=>{
+                return reply.json::<Value>().await.map_err(|e|e.to_string());
+            }
+            Ok(reply) if reply.status()==StatusCode::UNAUTHORIZED
+                || reply.status()==StatusCode::FORBIDDEN=>{
+                return Err(format!("remote session revoked: {}",reply.status()));
+            }
+            Ok(reply)=>format!("worker poll server error: {}",reply.status()),
+            Err(error)=>format!("worker poll transport error: {error}"),
+        };
+        let safe=worker.lock_state()?.runs.is_empty()&&!has_inflight;
+        if !safe {
+            return Err(format!("{message}; active run cancelled to avoid ambiguous replay"));
+        }
+        if attempt==3{return Err(format!("{message}; reconnect attempts exhausted"));}
+        tokio::time::sleep(Duration::from_millis(200*(1<<attempt))).await;
+    }
+    Err("remote session reconnect exhausted".into())
+}
+
 async fn run_worker() -> Result<(), String> {
     let base = env::var("MAI_REMOTE_SERVER").map_err(|_| "MAI_REMOTE_SERVER required")?;
     if !base.to_ascii_lowercase().starts_with("https://") {
@@ -283,16 +312,9 @@ async fn run_worker() -> Result<(), String> {
             }
             // Polling continues even while an earlier native.invoke is
             // executing, so native.cancel can reach the same worker promptly.
-            let polled = client
-                .post(format!("{url}/poll"))
-                .header("X-MAI-Agent-Secret", &secret)
-                .send()
-                .await
-                .map_err(|e| format!("worker poll: {e}"))?;
-            if polled.status() != StatusCode::OK {
-                return Err(format!("worker poll rejected: {}", polled.status()));
-            }
-            let message: Value = polled.json().await.map_err(|e| e.to_string())?;
+            let message=poll_with_idle_reconnect(
+                &client,&url,&secret,&worker,!tasks.is_empty()
+            ).await?;
             let Some(item) = message.get("request").filter(|v| !v.is_null()) else {
                 continue;
             };
@@ -398,6 +420,15 @@ mod tests {
         assert_eq!(one.unwrap(),two.unwrap());
         assert_eq!(ledger.entries.lock().await.len(),1);
         worker.close_all().await;
+    }
+    #[test]
+    fn unfinished_run_prevents_reconnect_even_if_it_has_no_active_tool(){
+        let dir=tempfile::tempdir().unwrap();
+        let worker=Worker::new(dir.path().to_path_buf()).unwrap();
+        let id="0123456789abcdef0123456789abcdef";
+        assert!(worker.lock_state().unwrap().runs.is_empty());
+        worker.create_run(id).unwrap();
+        assert!(!worker.lock_state().unwrap().runs.is_empty());
     }
     #[test]
     fn worker_restart_reclaims_orphans_without_touching_host_scratch(){
