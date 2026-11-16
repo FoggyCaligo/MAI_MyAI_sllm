@@ -16,102 +16,111 @@ struct WorkerRun {
     files: Arc<RunFiles>,
     terminals: Arc<TerminalSessions>,
     cancel: CancellationToken,
+    execution: tokio::sync::Mutex<()>,
+    closed: std::sync::atomic::AtomicBool,
+}
+#[derive(Default)]
+struct WorkerState {
+    runs: HashMap<String, Arc<WorkerRun>>,
+    finished: std::collections::HashSet<String>,
 }
 struct Worker {
     root: Workspace,
-    runs: HashMap<String, WorkerRun>,
+    state: std::sync::Mutex<WorkerState>,
 }
 fn valid_run_id(s: &str) -> bool {
-    s.len() == 32
-        && s.as_bytes()
-            .iter()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    s.len() == 32 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 impl Worker {
     fn new(path: PathBuf) -> Result<Self, String> {
-        Ok(Self {
-            root: Workspace::new(path)?,
-            runs: HashMap::new(),
-        })
+        Ok(Self { root: Workspace::new(path)?, state: std::sync::Mutex::new(WorkerState::default()) })
     }
-    fn create_run(&mut self, id: &str) -> Result<(), String> {
-        if !valid_run_id(id) {
-            return Err("run ID must be 32 lowercase hex characters".into());
-        }
-        if self.runs.contains_key(id) {
-            return Ok(());
-        }
-        let files = Arc::new(RunFiles::new(self.root.clone())?);
-        let terminals = Arc::new(TerminalSessions::new(
-            files.clone(),
-            self.root.root().to_path_buf(),
-        ));
-        self.runs.insert(
-            id.into(),
-            WorkerRun {
-                files,
-                terminals,
-                cancel: CancellationToken::new(),
-            },
-        );
-        Ok(())
+    fn lock_state(&self)->Result<std::sync::MutexGuard<'_, WorkerState>,String>{
+        self.state.lock().map_err(|_|"worker run state lock poisoned".into())
     }
-    async fn handle(&mut self, operation: &str, args: Value) -> Result<Value, String> {
-        let id = args
-            .get("run_id")
-            .and_then(Value::as_str)
-            .ok_or("missing run_id")?
-            .to_string();
-        if !valid_run_id(&id) {
-            return Err("invalid remote worker run ID".into());
+    fn create_run(&self,id:&str)->Result<Arc<WorkerRun>,String>{
+        if !valid_run_id(id){return Err("run ID must be 32 lowercase hex characters".into());}
+        let mut state=self.lock_state()?;
+        if state.finished.contains(id){return Err("run is already finished; cannot recreate scratch".into());}
+        if let Some(run)=state.runs.get(id){return Ok(run.clone());}
+        if state.runs.len()>=16{return Err("worker active run limit reached".into());}
+        let files=Arc::new(RunFiles::new(self.root.clone())?);
+        let terminals=Arc::new(TerminalSessions::new(files.clone(),self.root.root().to_path_buf()));
+        let run=Arc::new(WorkerRun{
+            files,terminals,cancel:CancellationToken::new(),
+            execution:tokio::sync::Mutex::new(()),
+            closed:std::sync::atomic::AtomicBool::new(false),
+        });
+        state.runs.insert(id.to_string(),run.clone());
+        Ok(run)
+    }
+    fn get_run(&self,id:&str)->Result<Option<Arc<WorkerRun>>,String>{
+        Ok(self.lock_state()?.runs.get(id).cloned())
+    }
+    fn cancel_run(&self,id:&str)->Result<Value,String>{
+        let found=self.get_run(id)?;
+        if let Some(run)=&found{run.cancel.cancel();}
+        Ok(json!({"cancelled":true,"already_finished":found.is_none()}))
+    }
+    fn cancel_all(&self){
+        if let Ok(state)=self.lock_state(){
+            for run in state.runs.values(){run.cancel.cancel();}
         }
-        match operation {
-            "native.invoke" => {
-                let name = args
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or("missing native name")?;
-                if name == "switch_workspace" {
-                    return Err("switch_workspace executes only on host".into());
+    }
+    async fn handle(&self,operation:&str,args:Value)->Result<Value,String>{
+        let id=args.get("run_id").and_then(Value::as_str).ok_or("missing run_id")?;
+        if !valid_run_id(id){return Err("invalid remote worker run ID".into());}
+        match operation{
+            "native.invoke"=>{
+                let name=args.get("name").and_then(Value::as_str).ok_or("missing native name")?;
+                if name=="switch_workspace"{return Err("switch_workspace executes only on host".into());}
+                let params=args.get("arguments").ok_or("missing arguments")?;
+                if !params.is_object(){return Err("native arguments must be a JSON object".into());}
+                let run=self.create_run(id)?;
+                // Serialize operations per run; cleanup waits for the in-flight
+                // operation. The cancel control never waits on this mutex.
+                let _guard=run.execution.lock().await;
+                if run.closed.load(std::sync::atomic::Ordering::Acquire) || run.cancel.is_cancelled(){
+                    return Err("worker run cancelled or closed".into());
                 }
-                let params = args.get("arguments").ok_or("missing arguments")?;
-                if !params.is_object() {
-                    return Err("native arguments must be a JSON object".into());
-                }
-                self.create_run(&id)?;
-                let run = self.runs.get(&id).ok_or("run vanished")?;
-                let scoped = self.root.scoped_to_run(&run.files.scratch_path()?)?;
-                let mut tools = Registry::new();
-                register_workspace_reads(&mut tools, &scoped)?;
-                register_run_file_tools(&mut tools, &run.files)?;
-                register_terminal_sessions(&mut tools, run.terminals.clone(), run.cancel.clone())?;
-                let tool = tools
-                    .take(name)
-                    .ok_or_else(|| format!("unsupported remote tool: {name}"))?;
-                validate_arguments(&tool.schema.parameters, params)?;
+                let scoped=self.root.scoped_to_run(&run.files.scratch_path()?)?;
+                let mut tools=Registry::new();
+                register_workspace_reads(&mut tools,&scoped)?;
+                register_run_file_tools(&mut tools,&run.files)?;
+                register_terminal_sessions(&mut tools,run.terminals.clone(),run.cancel.clone())?;
+                let tool=tools.take(name).ok_or_else(||format!("unsupported remote tool: {name}"))?;
+                validate_arguments(&tool.schema.parameters,params)?;
                 (tool.invoke)(params.clone()).await
             }
-            "native.cleanup" => {
-                if args.as_object().is_none_or(|o| o.len() != 1) {
+            "native.cancel"=>self.cancel_run(id),
+            "native.cleanup"=>{
+                if args.as_object().is_none_or(|o|o.len()!=1){
                     return Err("cleanup accepts only run_id".into());
                 }
-                if let Some(run) = self.runs.remove(&id) {
+                let existing={
+                    let mut state=self.lock_state()?;
+                    state.finished.insert(id.to_string());
+                    state.runs.remove(id)
+                };
+                if let Some(run)=existing{
+                    run.closed.store(true,std::sync::atomic::Ordering::Release);
                     run.cancel.cancel();
+                    let _guard=run.execution.lock().await;
                     run.terminals.close_all().await;
-                    let files = run.files;
-                    tokio::task::spawn_blocking(move || files.cleanup())
-                        .await
-                        .map_err(|e| e.to_string())??;
+                    let files=run.files.clone();
+                    tokio::task::spawn_blocking(move||files.cleanup())
+                        .await.map_err(|e|e.to_string())??;
                 }
                 Ok(json!({"cleaned":true}))
             }
-            _ => Err("unsupported native worker operation".into()),
+            _=>Err("unsupported native worker operation".into())
         }
     }
-    async fn close_all(&mut self) {
-        let ids = self.runs.keys().cloned().collect::<Vec<_>>();
-        for id in ids {
-            let _ = self.handle("native.cleanup", json!({"run_id":id})).await;
+    async fn close_all(&self){
+        self.cancel_all();
+        let ids=match self.lock_state(){Ok(state)=>state.runs.keys().cloned().collect::<Vec<_>>(),Err(_)=>return};
+        for id in ids{
+            let _=self.handle("native.cleanup",json!({"run_id":id})).await;
         }
     }
 }
