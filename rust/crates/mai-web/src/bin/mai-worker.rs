@@ -520,6 +520,35 @@ mod tests {
         worker.create_run(id).unwrap();
         assert!(!worker.lock_state().unwrap().runs.is_empty());
     }
+    #[tokio::test]
+    async fn durable_journal_refuses_replay_after_worker_restart(){
+        let tmp=tempfile::tempdir().unwrap();
+        let id="0123456789abcdef0123456789abcdef";
+        let item=json!({"request_id":"replay-guard-001","operation":"native.invoke",
+            "arguments":{"run_id":id,"name":"file_write",
+                "arguments":{"path":"persistent.txt","content":"first","lifecycle":"persistent"}}});
+        {
+            let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
+            let ledger=RequestLedger::open(&worker).unwrap();
+            assert_eq!(ledger.execute(&worker,&item).await.unwrap()["ok"],true);
+            worker.close_all().await;
+        }
+        {
+            let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
+            let ledger=RequestLedger::open(&worker).unwrap();
+            let error=ledger.execute(&worker,&item).await.unwrap_err();
+            assert!(error.contains("before worker restart"),"{error}");
+            assert_eq!(std::fs::read_to_string(tmp.path().join("persistent.txt")).unwrap(),"first");
+        }
+    }
+    #[test]
+    fn incomplete_journal_blocks_unsafe_automatic_recovery(){
+        let tmp=tempfile::tempdir().unwrap();
+        let worker=Worker::new(tmp.path().to_path_buf()).unwrap();
+        std::fs::write(worker._scratch_guard.root().join(".request-ids"),"not-flushed")
+            .unwrap();
+        assert!(RequestLedger::open(&worker).is_err());
+    }
     #[test]
     fn worker_restart_reclaims_orphans_without_touching_host_scratch() {
         let dir = tempfile::tempdir().unwrap();
