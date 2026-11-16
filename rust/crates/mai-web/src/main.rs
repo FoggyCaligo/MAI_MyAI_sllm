@@ -11,8 +11,8 @@ use axum::{
 use mai_runtime::{
     file_mutations::{register_run_file_tools, RunFiles},
     llamacpp::{LlamaConfig, LlamaCpp},
-    native_tools::register_basics,
     native_memory::{register_memory_search, NativeMemory},
+    native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
     terminal_sessions::{register_terminal_sessions, TerminalSessions},
     workspace_route::{register_switch, route_tool, WorkspaceRoute},
@@ -601,10 +601,10 @@ async fn run_job(request: RunJob) {
         // Existing Python memory.sqlite3 stays the source of truth. Never
         // create or write a DB from the Rust preview; Owner user ID scopes
         // every result and node expansion.
-        if let Ok(path)=env::var("MAI_RUST_MEMORY_DB_PATH") {
+        if let Ok(path) = env::var("MAI_RUST_MEMORY_DB_PATH") {
             if !path.trim().is_empty() {
-                let memory=NativeMemory::new(path,user.clone())?;
-                register_memory_search(&mut tools,memory)?;
+                let memory = NativeMemory::new(path, user.clone())?;
+                register_memory_search(&mut tools, memory)?;
             }
         }
         if let (Some(workspace), Some(scope)) = (&app.workspace, &tools_scope) {
