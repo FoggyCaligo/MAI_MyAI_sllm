@@ -223,36 +223,54 @@ mod tests {
         let id = writer.save_fact("사과 좋아함", &concept).unwrap();
         assert_eq!(id, writer.save_fact("사과 좋아함", &concept).unwrap());
         let db = &writer.db;
-        let count: i64 = db.query_row(
-            "SELECT occurrence_count FROM nodes WHERE id=?1", [id], |r| r.get(0),
-        ).unwrap();
+        let count: i64 = db
+            .query_row(
+                "SELECT occurrence_count FROM nodes WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 2);
         let links: i64 = db.query_row(
             "SELECT count(*) FROM edges WHERE to_node_id=?1 AND from_node_id=1 AND relation='asserted_fact'",
             [id], |r| r.get(0),
         ).unwrap();
         assert_eq!(links, 1);
-        let found: i64 = db.query_row(
-            "SELECT count(*) FROM memory_concept_fts WHERE memory_concept_fts MATCH '\"사과\"'",
-            [], |r| r.get(0),
-        ).unwrap();
+        let found: i64 = db
+            .query_row(
+                "SELECT count(*) FROM memory_concept_fts WHERE memory_concept_fts MATCH '\"사과\"'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(found, 1);
-        let bob: i64 = db.query_row(
-            "SELECT count(*) FROM edges WHERE from_node_id=2", [], |r| r.get(0),
-        ).unwrap();
+        let bob: i64 = db
+            .query_row("SELECT count(*) FROM edges WHERE from_node_id=2", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(bob, 0);
     }
 
     #[test]
     fn failed_index_update_rolls_back_all_changes() {
         let (_dir, mut writer) = fixture();
-        writer.db.execute(
-            "INSERT INTO memory_concept_exact(node_id,canonical_text) VALUES (999,'사과')", [],
-        ).unwrap();
+        writer
+            .db
+            .execute(
+                "INSERT INTO memory_concept_exact(node_id,canonical_text) VALUES (999,'사과')",
+                [],
+            )
+            .unwrap();
         assert!(writer.save_fact("사과 좋아함", &["사과".into()]).is_err());
-        let count: i64 = writer.db.query_row(
-            "SELECT count(*) FROM nodes WHERE node_type='fact'", [], |r| r.get(0),
-        ).unwrap();
+        let count: i64 = writer
+            .db
+            .query_row(
+                "SELECT count(*) FROM nodes WHERE node_type='fact'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0);
     }
 
