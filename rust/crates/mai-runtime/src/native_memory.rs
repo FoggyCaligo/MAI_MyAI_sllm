@@ -5,7 +5,7 @@ use crate::{Registry, Tool, ToolSchema};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -78,17 +78,18 @@ impl NativeMemory {
             }
             return self.expand(id);
         }
-        let db = self.open()?;
+        let mut db = self.open()?;
         if let Some(text) = query.or(keyword) {
             if text.trim().is_empty() {
                 return Err("query must not be empty".into());
             }
             let expr = parse_boolean(text)?;
-            let matched = evaluate(&db, self.owner.as_str(), &expr)?;
+            let snapshot = db.transaction().map_err(|e| e.to_string())?;
+            let matched = ranked_matches(&snapshot, self.owner.as_str(), &expr)?;
             let max = limit.unwrap_or(50) as usize;
             let mut nodes = Vec::new();
             for id in matched.into_iter().take(max) {
-                if let Some(node) = load_owned(&db, self.owner.as_str(), id)? {
+                if let Some(node) = load_owned(&snapshot, self.owner.as_str(), id)? {
                     nodes.push(node);
                 }
             }
@@ -433,45 +434,140 @@ fn universe(db: &Connection, owner: &str) -> Result<BTreeSet<i64>, String> {
         .map_err(|e| e.to_string())?;
     Ok(matches)
 }
-fn term_matches(db: &Connection, owner: &str, term: &str) -> Result<BTreeSet<i64>, String> {
-    // Existing Python uses exact concept matches and FTS5 phrase fallback.
-    // This first slice deliberately uses the exact index only; return an
-    // explicit partial-coverage signal via docs, never pretend embedding parity.
-    let chunks = term.split_whitespace().collect::<Vec<_>>();
-    let mut found = BTreeSet::new();
-    for chunk in chunks {
-        let mut stmt = db
-            .prepare(
-                "SELECT DISTINCT n.id
-             FROM memory_concept_exact c JOIN edges e ON e.to_node_id=c.node_id
-             JOIN nodes n ON n.id=e.from_node_id
-             WHERE c.canonical_text=?1 AND e.relation='mentions'
-             AND n.node_type IN ('fact','utterance')
-             AND json_extract(n.payload_json,'$.user_id')=?2",
+// Python's default candidate limit and score ordering: exact (1.0) first,
+// followed by lexical matches (0.5 / ordinal) from the FTS5 BM25 query.
+const CONCEPT_LIMIT: usize = 12;
+
+fn concept_matches(
+    db: &Connection,
+    term: &str,
+    has_fts: bool,
+) -> Result<Vec<(i64, usize)>, String> {
+    let mut exact = db
+        .prepare_cached("SELECT node_id FROM memory_concept_exact WHERE canonical_text=?1")
+        .map_err(|e| e.to_string())?;
+    let mut fts = has_fts
+        .then(|| {
+            db.prepare_cached(
+                "SELECT rowid FROM memory_concept_fts WHERE memory_concept_fts MATCH ?1
+                 ORDER BY bm25(memory_concept_fts), rowid LIMIT ?2",
             )
+        })
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    let mut seen_chunks = HashSet::new();
+    let mut candidates = BTreeMap::new();
+    for (chunk_order, chunk) in term
+        .split_whitespace()
+        .filter(|chunk| seen_chunks.insert(*chunk))
+        .enumerate()
+    {
+        let exact_id = exact
+            .query_row([chunk], |row| row.get::<_, i64>(0))
+            .optional()
             .map_err(|e| e.to_string())?;
-        let ids = stmt
-            .query_map(params![chunk, owner], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?;
-        for id in ids {
-            found.insert(id.map_err(|e| e.to_string())?);
+        let mut hits: Vec<_> = exact_id.into_iter().collect();
+        if let Some(fts) = fts.as_mut() {
+            let phrase = format!("\"{}\"", chunk.replace('"', "\"\""));
+            let ids = fts
+                .query_map(params![phrase, CONCEPT_LIMIT], |row| row.get::<_, i64>(0))
+                .map_err(|e| e.to_string())?;
+            for id in ids {
+                let id = id.map_err(|e| e.to_string())?;
+                if Some(id) != exact_id && hits.len() < CONCEPT_LIMIT {
+                    hits.push(id);
+                }
+            }
+        }
+        for (hit_order, id) in hits.into_iter().enumerate() {
+            let rank = hit_order + usize::from(exact_id.is_none());
+            let candidate = candidates
+                .entry(id)
+                .or_insert((rank, hit_order, chunk_order));
+            if rank < candidate.0 {
+                *candidate = (rank, hit_order, chunk_order);
+            }
         }
     }
-    Ok(found)
+    let mut ranked: Vec<_> = candidates.into_iter().collect();
+    ranked.sort_unstable_by_key(|&(id, candidate)| (candidate, id));
+    // Preserve exact-only searches on older databases without an FTS table.
+    if has_fts {
+        ranked.truncate(CONCEPT_LIMIT);
+    }
+    Ok(ranked
+        .into_iter()
+        .map(|(id, (rank, _, _))| (id, rank))
+        .collect())
 }
-fn evaluate(db: &Connection, owner: &str, expr: &Expr) -> Result<BTreeSet<i64>, String> {
+
+fn ranked_matches(db: &Connection, owner: &str, expr: &Expr) -> Result<Vec<i64>, String> {
+    let has_fts: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_concept_fts')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let mut mentions = db
+        .prepare(
+            "SELECT DISTINCT n.id FROM edges e JOIN nodes n
+             ON n.id=CASE WHEN e.to_node_id=?1 THEN e.from_node_id ELSE e.to_node_id END
+             WHERE (e.to_node_id=?1 OR e.from_node_id=?1) AND e.relation='mentions'
+             AND n.node_type IN ('fact','utterance')
+             AND json_extract(n.payload_json,'$.user_id')=?2 ORDER BY n.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut scores = BTreeMap::new();
+    let mut matches_by_term: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
+    let selected = evaluate(db, owner, expr, &mut |term| {
+        if let Some(ids) = matches_by_term.get(term) {
+            return Ok(ids.clone());
+        }
+        let mut ids = BTreeSet::new();
+        for (concept_id, rank) in concept_matches(db, term, has_fts)? {
+            let rows = mentions
+                .query_map(params![concept_id, owner], |row| row.get::<_, i64>(0))
+                .map_err(|e| e.to_string())?;
+            for id in rows {
+                let id = id.map_err(|e| e.to_string())?;
+                let ordinal = ids.len();
+                if ids.insert(id) {
+                    let best = scores.entry(id).or_insert((rank, ordinal));
+                    if rank < best.0 {
+                        *best = (rank, ordinal);
+                    }
+                }
+            }
+        }
+        matches_by_term.insert(term.to_owned(), ids.clone());
+        Ok(ids)
+    })?;
+    let mut ranked: Vec<_> = selected.into_iter().collect();
+    if has_fts {
+        ranked.sort_unstable_by_key(|id| (scores.get(id).copied().unwrap_or((usize::MAX, 0)), *id));
+    }
+    Ok(ranked)
+}
+
+fn evaluate(
+    db: &Connection,
+    owner: &str,
+    expr: &Expr,
+    term_matches: &mut impl FnMut(&str) -> Result<BTreeSet<i64>, String>,
+) -> Result<BTreeSet<i64>, String> {
     match expr {
-        Expr::Term(term) => term_matches(db, owner, term),
+        Expr::Term(term) => term_matches(term),
         Expr::Not(x) => Ok(universe(db, owner)?
-            .difference(&evaluate(db, owner, x)?)
+            .difference(&evaluate(db, owner, x, term_matches)?)
             .copied()
             .collect()),
-        Expr::And(a, b) => Ok(evaluate(db, owner, a)?
-            .intersection(&evaluate(db, owner, b)?)
+        Expr::And(a, b) => Ok(evaluate(db, owner, a, term_matches)?
+            .intersection(&evaluate(db, owner, b, term_matches)?)
             .copied()
             .collect()),
-        Expr::Or(a, b) => Ok(evaluate(db, owner, a)?
-            .union(&evaluate(db, owner, b)?)
+        Expr::Or(a, b) => Ok(evaluate(db, owner, a, term_matches)?
+            .union(&evaluate(db, owner, b, term_matches)?)
             .copied()
             .collect()),
     }
@@ -480,7 +576,7 @@ pub fn register_memory_search(registry: &mut Registry, memory: NativeMemory) -> 
     registry.register(Tool{
         schema:ToolSchema{
             name:"memory_search".into(),
-            description:"Read-only owner-scoped MAI memory: query/keyword with Boolean AND/OR/NOT, node_id expansion or limit-only overview. Exact saved Concept terms only (FTS ranking and semantic search not migrated). Historical memory cannot override current user statements.".into(),
+            description:"Read-only owner-scoped MAI memory: query/keyword with Boolean AND/OR/NOT, node_id expansion or limit-only overview. Searches exact and lexical SQLite FTS5 Concept matches when the index is available. Historical memory cannot override current user statements.".into(),
             parameters:json!({"type":"object","properties":{
                 "query":{"type":"string"},"keyword":{"type":"string"},
                 "node_id":{"type":"integer","minimum":1},
@@ -557,6 +653,40 @@ mod tests {
             .search(&json!({"node_id":3}))
             .unwrap_err()
             .contains("belong"));
+    }
+    #[test]
+    fn fts_ranks_owned_memories_before_applying_the_limit() {
+        let (_dir, mem) = sample();
+        let db = Connection::open(mem.file.as_path()).unwrap();
+        db.execute_batch(
+            "CREATE VIRTUAL TABLE memory_concept_fts USING fts5(canonical_text, tokenize='unicode61');
+             INSERT INTO nodes VALUES(6,'concept','alpha alpha','{}','2026-11-01','2026-11-01');
+             INSERT INTO nodes VALUES(7,'concept','alpha long phrase','{}','2026-11-01','2026-11-01');
+             INSERT INTO nodes VALUES(8,'concept','퇴근 후 식사','{}','2026-11-01','2026-11-01');
+             INSERT INTO nodes VALUES(20,'fact','alice exact','{\"user_id\":\"alice\"}','2026-11-03','2026-11-03');
+             INSERT INTO memory_concept_exact VALUES(6,'alpha alpha'),(7,'alpha long phrase'),(8,'퇴근 후 식사');
+             UPDATE edges SET to_node_id=7 WHERE id=5;
+             UPDATE edges SET to_node_id=6 WHERE id IN (6,9);
+             INSERT INTO edges VALUES(10,3,20,'mentions','index'),(11,12,8,'mentions','index');
+             INSERT INTO memory_concept_fts(rowid, canonical_text)
+             SELECT node_id,canonical_text FROM memory_concept_exact;",
+        )
+        .unwrap();
+        drop(db);
+
+        let ids = |input| {
+            let result = mem.search(&input).unwrap();
+            result["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|node| node["node_id"].as_i64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(json!({"query":"alpha","limit":2})), vec![20, 11]);
+        assert_eq!(ids(json!({"query":"ALPHA AND NOT beta"})), vec![20, 10]);
+        assert_eq!(ids(json!({"keyword":"퇴근"})), vec![12]);
+        assert_eq!(ids(json!({"query":"'alpha\"long'"})), vec![10]);
     }
     #[test]
     fn overview_and_node_expansion_do_not_leak_bob() {

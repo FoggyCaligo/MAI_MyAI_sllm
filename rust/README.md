@@ -168,6 +168,7 @@ cargo run -p mai-web
 
 - Rust Web에서 `MAI_RUST_MEMORY_DB_PATH`가 설정된 경우에만 기존 Python의 `MAI_MEMORY/memory.sqlite3` 파일을 **읽기 전용으로 연다**. DB가 없거나 스키마가 다르면 오류가 발생하며 생성·마이그레이션·수정하지 않는다.
 - Native `memory_search`를 인증된 Owner의 **로그인 user_id**에만 묶어서 등록한다. `query` 또는 `keyword`(동시에 사용 불가)로 `AND / OR / NOT`, `& | !`, 괄호, 인용구를 검색한다. `node_id`는 해당 사용자의 Fact/Utterance 또는 자신의 anchor만 확장한다. `limit` 단독 호출은 최근 기억의 제한된 개요를 제공한다.
-- **범위의 한계**: 이번 1차 구현은 저장된 Concept의 **정확 일치 검색만** 지원한다. 기존 Python의 FTS5 후보 랭킹, Concept 주변의 전체 경로 병합, 추출·저장·작업 중 Working Graph, 최종답변 후 사실 저장은 이식 전이다. 검색 결과가 없다고 저장된 기억이 없다는 결론을 내리면 안 된다.
+- Concept 정확 일치와 기존 SQLite FTS5 인덱스의 어휘 검색을 지원한다. 정확 일치가 먼저이며, FTS5 후보는 BM25와 Concept ID로 순위를 정한다. 검색은 Boolean 조건과 계정 소유권을 적용한 뒤 결과 개수 제한을 적용한다. FTS5 테이블이 없는 이전 DB에서는 정확 일치 검색을 사용한다.
+- Concept 주변의 전체 경로 병합, 추출·저장·작업 중 Working Graph, 최종답변 후 사실 저장은 이식 전이다.
 - Owner DB 식별자가 로그인 `user_id`와 다른 설치에서는 별도의 ID 매핑이 필요하다. 다른 사용자의 Fact, Concept node_id는 직접 조회할 수 없다.
 - 환경변수 설정 예: `MAI_RUST_MEMORY_DB_PATH=./MAI_MEMORY/memory.sqlite3` (서버의 실행 작업 디렉터리 기준). 실제 SQLite 파일을 사용하므로 **개인 DB 파일은 공개 Git 저장소에 절대 커밋하지 않는다**.

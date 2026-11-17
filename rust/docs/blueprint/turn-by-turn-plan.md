@@ -239,6 +239,7 @@
 - [x] `memory_search` query/keyword, Boolean 연산, node_id 소유권 확인, 최근 개요 등록.
 - [x] 작업 중 인증된 user_id로 검색 결과 제한, 다른 사용자 Fact와 Concept ID 직접 확장 거부.
 - [x] 쿼리 구문/상한/파라미터 검증, 없는 DB 생성 금지, read-only SQLite 회귀 테스트.
-- [ ] Python FTS5 유사어가 아닌 어휘 후보/랭킹의 정확 parity 및 전체 그래프 Working Graph.
+- [x] Python의 정확 일치 우선·FTS5 BM25 어휘 후보 순위 구현. SQLite 테스트에서 Boolean 조건, 소유권, 결과 개수 제한, 한글 및 인용부호 입력을 검증.
+- [ ] 기존 Python의 anchor 경로 병합과 작업별 Working Graph 연동 및 전체 검색 결과 동등성 검증.
 - [ ] 비동기 사실 추출/증거 수집/SQLite Transaction/저장 정책의 Rust 전면 이식.
 - [ ] 로그인 user_id와 Python memory_user_id 불일치 시 실제 배포 경로 ID 매핑과 E2E.
