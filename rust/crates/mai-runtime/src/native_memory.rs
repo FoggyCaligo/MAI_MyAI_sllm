@@ -191,6 +191,28 @@ impl NativeMemory {
             }
         }
         let mut nodes = Vec::new();
+        if id == anchor {
+            // The authenticated user's anchor is a valid expansion target,
+            // but load_owned deliberately filters out anchor nodes. Return
+            // only the anchor linked by user_anchors, never an arbitrary one.
+            let anchor_node: (String, String, String) = db
+                .query_row(
+                    "SELECT n.canonical_text,n.payload_json,n.created_at
+                     FROM user_anchors a JOIN nodes n ON n.id=a.node_id
+                     WHERE a.user_id=?1 AND n.id=?2 AND n.node_type='anchor'",
+                    params![self.owner.as_str(), anchor],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(|e| e.to_string())?;
+            let payload = parse_payload(&anchor_node.1)?;
+            if payload.get("user_id").and_then(Value::as_str) != Some(self.owner.as_str()) {
+                return Err("memory anchor owner mismatch".into());
+            }
+            nodes.push(json!({
+                "node_id":anchor,"node_type":"anchor","data":anchor_node.0,
+                "created_at":anchor_node.2,"provenance":[],"evidence_id":null
+            }));
+        }
         for node_id in ids {
             if let Some(node) = load_owned(&db, self.owner.as_str(), node_id)? {
                 nodes.push(node);
@@ -696,11 +718,15 @@ mod tests {
         let node = mem.search(&json!({"node_id":10})).unwrap();
         assert_eq!(node["nodes"][0]["node_id"], 10);
         let anchor = mem.search(&json!({"node_id":1})).unwrap();
-        assert!(anchor["nodes"]
-            .as_array()
-            .unwrap()
+        let expanded = anchor["nodes"].as_array().unwrap();
+        assert_eq!(expanded[0]["node_id"], 1);
+        assert_eq!(expanded[0]["node_type"], "anchor");
+        assert_eq!(expanded[0]["data"], "user_anchor::alice");
+        assert_eq!(expanded.len(), 4);
+        assert!(expanded
             .iter()
-            .all(|n| n["node_id"] != 13 && n["node_id"] != 3));
+            .all(|n| n["node_id"] != 13 && n["node_id"] != 3 && n["node_id"] != 2));
+        assert!(mem.search(&json!({"node_id":2})).is_err());
         assert_eq!(ov["user_anchor"]["id"], 1);
     }
     #[test]
