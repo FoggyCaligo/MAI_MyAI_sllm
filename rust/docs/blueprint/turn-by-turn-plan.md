@@ -243,3 +243,15 @@
 - [ ] 기존 Python의 anchor 경로 병합과 작업별 Working Graph 연동 및 전체 검색 결과 동등성 검증.
 - [ ] 비동기 사실 추출/증거 수집/SQLite Transaction/저장 정책의 Rust 전면 이식.
 - [ ] 로그인 user_id와 Python memory_user_id 불일치 시 실제 배포 경로 ID 매핑과 E2E.
+
+## Turn 13 — 메모리 턴 단위 원자 저장 (2026-11-21)
+
+- [x] 이전 독립 Fact writer를 재사용해 승인된 원문 Evidence와 여러 Fact를 단일 트랜잭션으로 저장하는 `save_turn` 추가.
+- [x] 동일 턴 Fact 중복 제거, 사용자별 Fact 격리, 공유 Concept 재사용 및 기존 `created_at` 보존.
+- [x] Python JSON 공백·한글 이스케이프와 무관한 소유권 검사, 정확 인덱스의 ID/문자열 양방향 충돌 거부.
+- [x] Python 원본 그래프 스키마를 사용하는 테스트로 저장 후 검색·계정 격리·실패 시 전체 롤백 검증.
+- 검증: Linux `cargo test --workspace --locked` 99개 통과(저장 어댑터 12개 포함), `cargo fmt --all -- --check` 및 `cargo clippy --workspace --all-targets --locked -- -D warnings` 통과. 실기 Windows 검증은 별도 필요.
+- [ ] 비동기 사실 추출과 승인 정책 이식: 회상 결과를 새 사실의 근거로 재사용하지 않고, 새 사실 없는 회상 턴은 저장 제외, 추출 실패 시 원문 보존.
+- [ ] Sentence_Breaker Rust 이식 후 분절 계약 검증. 임의 문자열 분할로 대체하지 않음.
+- [ ] 계정 memory_user_id 매핑과 승인·분절·저장 경로를 Web 작업 완료 후처리에 연결. 이 단계까지 Web의 기존 DB 접근은 읽기 전용 유지.
+- [ ] 실제 Windows 및 Python/Rust 동시 사용 시 SQLite 잠금·인덱스 캐시 동기화·통합 검증.

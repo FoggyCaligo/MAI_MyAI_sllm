@@ -172,3 +172,12 @@ cargo run -p mai-web
 - Concept 주변의 전체 경로 병합, 추출·저장·작업 중 Working Graph, 최종답변 후 사실 저장은 이식 전이다.
 - Owner DB 식별자가 로그인 `user_id`와 다른 설치에서는 별도의 ID 매핑이 필요하다. 다른 사용자의 Fact, Concept node_id는 직접 조회할 수 없다.
 - 환경변수 설정 예: `MAI_RUST_MEMORY_DB_PATH=./MAI_MEMORY/memory.sqlite3` (서버의 실행 작업 디렉터리 기준). 실제 SQLite 파일을 사용하므로 **개인 DB 파일은 공개 Git 저장소에 절대 커밋하지 않는다**.
+
+## Turn 13 — 메모리 턴 단위 저장 어댑터 (2026-11-21)
+
+- `native_memory_write::FactWriter::save_turn`은 이미 저장이 승인된 사용자 원문과 `AdmittedFact` 목록을 받아 Evidence, Fact, Concept, 관계 및 정확/FTS5 인덱스를 **하나의 SQLite 트랜잭션**으로 저장한다. 후속 Fact 저장이 실패하면 원문 증거와 앞서 변경한 기존 노드의 출현 횟수까지 롤백한다.
+- Python의 실제 `_postprocess_memory` / `finish_turn` 흐름을 기준으로 한다. 원문은 `user_utterance` Evidence에 그대로 보존하고, 현재 Python에서 생성하지 않는 Utterance 그래프 노드는 추가하지 않는다. 같은 턴의 동일 Fact는 한 번만 반영하고 다른 사용자의 동일 Fact는 별도 노드로 유지한다. 공유 Concept은 재사용한다.
+- Fact가 없는 승인된 턴도 원문 증거를 보존할 수 있다. **새 Fact가 없는 회상 전용 턴의 제외 여부는 호출자가 판단해야 한다.** 이 어댑터는 사실 추출·승인 정책을 대신하지 않는다.
+- 기존 Python JSON의 공백·한글 이스케이프에 관계없이 사용자 소유권을 비교한다. 기존 Fact의 `created_at` 및 payload를 보존하고 정확 인덱스의 ID/문자열 충돌을 양방향으로 검사한다. DB 생성·마이그레이션·사용자 anchor 자동 생성은 하지 않는다.
+- 테스트는 Python 원본의 그래프 스키마를 직접 읽어 CHECK·외래키가 적용된 임시 DB를 사용한다. 여러 Fact 저장 후 검색, 사용자 격리, 원문 보존, 중복 방지 및 전체 롤백을 검증한다.
+- **아직 독립 어댑터 단계다.** Web의 `MAI_RUST_MEMORY_DB_PATH`는 계속 읽기 전용이고 자동 저장이나 모델의 `memory_save` 도구는 등록하지 않는다. Sentence_Breaker, 비동기 사실 추출, 승인 정책, 계정 ID 매핑 및 Web 작업 완료 경로 연동은 다음 단계다. 원본 Python 코드와 Web UI는 변경하지 않았다.
