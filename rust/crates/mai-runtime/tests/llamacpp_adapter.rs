@@ -157,3 +157,61 @@ async fn model_receives_bounded_prior_user_assistant_history() {
     assert_eq!(requests[0]["messages"][1]["role"], "assistant");
     assert_eq!(requests[0]["messages"][2]["content"], "followup");
 }
+
+fn completed_turn() -> mai_runtime::memory_postprocess::CompletedTurn {
+    let outcome = mai_runtime::Outcome {
+        answer: "new final".into(),
+        rounds: 1,
+        messages: vec![],
+    };
+    mai_runtime::memory_postprocess::CompletedTurn::from_outcome(
+        "latest user",
+        &[Message {
+            role: Role::Assistant,
+            content: "previous topic".into(),
+        }],
+        &outcome,
+    )
+    .unwrap()
+}
+#[tokio::test]
+async fn fact_extractor_uses_separate_strict_json_request_without_tools() {
+    use mai_runtime::memory_postprocess::{FactExtractor, LlamaFactExtractor};
+    let (host,task)=serve(vec![json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"facts\":[\" 새 사실 \",\"새 사실\"]}"}}]})]).await;
+    let mut extractor = LlamaFactExtractor::new(config(host)).unwrap();
+    assert_eq!(
+        extractor.extract(&completed_turn()).await.unwrap(),
+        vec!["새 사실"]
+    );
+    let requests = task.await.unwrap();
+    assert_eq!(requests[0]["tools"], json!([]));
+    assert_eq!(
+        requests[0]["response_format"]["json_schema"]["strict"],
+        true
+    );
+    let payload: Value =
+        serde_json::from_str(requests[0]["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(payload["previous_assistant_message"], "previous topic");
+    assert_eq!(payload["assistant_final_answer"], "new final");
+}
+#[tokio::test]
+async fn fact_extractor_rejects_malformed_schema_truncation_and_tool_calls() {
+    use mai_runtime::memory_postprocess::{FactExtractor, LlamaFactExtractor};
+    let invalid = [
+        json!({"facts":[1]}),
+        json!({"facts":[" "]}),
+        json!({"facts":[],"extra":true}),
+        json!({"facts":"wrong"}),
+        json!({}),
+    ];
+    let mut responses:Vec<_>=invalid.iter().map(|body|json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":body.to_string()}}]})).collect();
+    responses.push(json!({"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"{\"facts\":[]}"}}]}));
+    responses.push(json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"facts\":[]}","tool_calls":[{}]}}]}));
+    let count = responses.len();
+    let (host, task) = serve(responses).await;
+    let mut extractor = LlamaFactExtractor::new(config(host)).unwrap();
+    for _ in 0..count {
+        assert!(extractor.extract(&completed_turn()).await.is_err());
+    }
+    task.await.unwrap();
+}

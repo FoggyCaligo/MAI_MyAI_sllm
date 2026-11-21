@@ -5,9 +5,11 @@
 pub mod client_scratch;
 pub mod file_mutations;
 pub mod llamacpp;
+pub mod memory_postprocess;
 pub mod native_memory;
 pub mod native_memory_write;
 pub mod native_tools;
+mod sentence_breaker;
 pub mod supervisor;
 pub mod terminal;
 pub mod terminal_sessions;

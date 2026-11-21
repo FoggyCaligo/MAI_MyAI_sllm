@@ -10,6 +10,7 @@ use std::path::Path;
 pub struct FactWriter {
     db: Connection,
     owner: String,
+    segments_attached: bool,
 }
 
 /// A fact already accepted by the caller's admission policy. Concepts must be
@@ -36,7 +37,9 @@ impl FactWriter {
         }
         let db = Connection::open_with_flags(
             path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_URI,
         )
         .map_err(|e| e.to_string())?;
         db.busy_timeout(std::time::Duration::from_secs(3))
@@ -77,6 +80,89 @@ impl FactWriter {
         Ok(Self {
             db,
             owner: owner.to_string(),
+            segments_attached: false,
+        })
+    }
+
+    pub fn with_sentence_breaker(mut self, path: impl AsRef<Path>) -> Result<Self, String> {
+        let path = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+        let main: String = self
+            .db
+            .query_row(
+                "SELECT file FROM pragma_database_list WHERE name='main'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if path == std::fs::canonicalize(main).map_err(|e| e.to_string())? {
+            return Err("memory and Sentence_Breaker databases must be separate files".into());
+        }
+        crate::sentence_breaker::attach(&self.db, &path)?;
+        self.segments_attached = true;
+        Ok(self)
+    }
+
+    /// Complete the admitted turn using the original Sentence_Breaker algorithm.
+    /// Learning, evidence, facts and indexes share one attached-DB transaction.
+    /// Ordinary errors/cancellation roll back both DBs. Crash atomicity across
+    /// databases in WAL mode is not guaranteed by SQLite.
+    pub fn save_extracted_turn(
+        &mut self,
+        user_text: &str,
+        facts: &[String],
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<SavedTurn, String> {
+        if user_text.trim().is_empty() || facts.len() > 128 {
+            return Err("invalid completed memory turn".into());
+        }
+        if !facts.is_empty() && !self.segments_attached {
+            return Err("Sentence_Breaker graph is required for extracted facts".into());
+        }
+        let mut clean = Vec::new();
+        for fact in facts {
+            let fact = fact.trim();
+            if fact.is_empty() || fact.chars().count() > 8192 {
+                return Err("invalid fact length".into());
+            }
+            if !clean.contains(&fact) {
+                clean.push(fact);
+            }
+        }
+        let tx = self
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        let anchor = owner_anchor(&tx, &self.owner)?;
+        let now = timestamp();
+        if cancel.is_cancelled() {
+            return Err("memory update cancelled".into());
+        }
+        tx.execute(
+            "INSERT INTO evidence(kind,content,created_at) VALUES ('user_utterance',?1,?2)",
+            params![user_text, now],
+        )
+        .map_err(|e| e.to_string())?;
+        let evidence_id = tx.last_insert_rowid();
+        let mut fact_ids = Vec::new();
+        for fact in clean {
+            if cancel.is_cancelled() {
+                return Err("memory update cancelled".into());
+            }
+            let segments = crate::sentence_breaker::segment_and_ingest(&tx, fact)?;
+            let segments: Vec<_> = segments
+                .into_iter()
+                .filter(|s| !s.trim().is_empty())
+                .collect();
+            let (fact, concepts) = validate_fact(fact, &segments)?;
+            fact_ids.push(save_fact(&tx, &self.owner, anchor, fact, &concepts, &now)?);
+        }
+        if cancel.is_cancelled() {
+            return Err("memory update cancelled".into());
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(SavedTurn {
+            evidence_id,
+            fact_ids,
         })
     }
 
@@ -177,9 +263,9 @@ fn validate_fact<'a>(
         if segment.is_empty() || segment.chars().count() > 512 {
             return Err("invalid concept segment".into());
         }
-        if !clean.contains(&segment) {
-            clean.push(segment);
-        }
+        // Python counts every segment occurrence, including repeated characters
+        // before the language graph has learned a longer supported path.
+        clean.push(segment);
     }
     Ok((fact, clean))
 }
@@ -310,7 +396,7 @@ mod tests {
     use super::*;
     use crate::native_memory::NativeMemory;
 
-    fn fixture() -> (tempfile::TempDir, FactWriter) {
+    pub(super) fn fixture() -> (tempfile::TempDir, FactWriter) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("memory.sqlite3");
         let db = Connection::open(&path).unwrap();
@@ -346,7 +432,7 @@ mod tests {
         }
     }
 
-    fn snapshot(db: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+    pub(super) fn snapshot(db: &Connection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
         [
             "nodes",
             "edges",
@@ -665,5 +751,104 @@ mod tests {
         let (_dir, mut writer) = fixture();
         writer.owner = "charlie".into();
         assert!(writer.save_fact("fact", &["concept".into()]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod segmented_tests {
+    use super::tests::fixture;
+    use super::*;
+    use tokio_util::sync::CancellationToken;
+
+    fn graph(dir: &Path) -> std::path::PathBuf {
+        let path = dir.join("segments.sqlite3");
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(include_str!(
+                "../tests/fixtures/sentence-breaker-schema.sql"
+            ))
+            .unwrap();
+        path
+    }
+    #[test]
+    fn segmentation_learns_only_after_successful_commit() {
+        let (dir, writer) = fixture();
+        let path = graph(dir.path());
+        let mut writer = writer.with_sentence_breaker(&path).unwrap();
+        let cancel = CancellationToken::new();
+        let first = writer
+            .save_extracted_turn("엄마", &["엄마".into()], &cancel)
+            .unwrap();
+        let second = writer
+            .save_extracted_turn("엄마", &["엄마".into()], &cancel)
+            .unwrap();
+        assert_eq!(first.fact_ids, second.fact_ids);
+        let concepts: Vec<String> = writer
+            .db
+            .prepare("SELECT canonical_text FROM nodes WHERE node_type='concept' ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(concepts, vec!["엄", "마", "엄마"]);
+        let layers: i64 = Connection::open(path)
+            .unwrap()
+            .query_row("SELECT count(*) FROM sentence_layers", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(layers, 2);
+    }
+    #[test]
+    fn memory_index_failure_rolls_back_sentence_learning_too() {
+        let (dir, writer) = fixture();
+        let path = graph(dir.path());
+        let mut writer = writer.with_sentence_breaker(&path).unwrap();
+        writer
+            .db
+            .execute("INSERT INTO memory_concept_exact VALUES (999,'마')", [])
+            .unwrap();
+        let before = super::tests::snapshot(&writer.db);
+        assert!(writer
+            .save_extracted_turn("엄마", &["엄마".into()], &CancellationToken::new())
+            .is_err());
+        assert_eq!(super::tests::snapshot(&writer.db), before);
+        let db = Connection::open(path).unwrap();
+        for table in ["alph_nodes", "sentence_layers", "alph_links"] {
+            let count: i64 = db
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 0);
+        }
+    }
+    #[test]
+    fn cancelled_turn_does_not_write_or_learn() {
+        let (dir, writer) = fixture();
+        let path = graph(dir.path());
+        let mut writer = writer.with_sentence_breaker(path).unwrap();
+        let before = super::tests::snapshot(&writer.db);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(writer
+            .save_extracted_turn("엄마", &["엄마".into()], &cancel)
+            .is_err());
+        assert_eq!(super::tests::snapshot(&writer.db), before);
+    }
+
+    #[test]
+    fn repeated_segments_keep_python_occurrence_counts() {
+        let (dir, writer) = fixture();
+        let mut writer = writer.with_sentence_breaker(graph(dir.path())).unwrap();
+        writer
+            .save_extracted_turn("aaaa", &["aaaa".into()], &CancellationToken::new())
+            .unwrap();
+        let count: i64 = writer
+            .db
+            .query_row(
+                "SELECT occurrence_count FROM nodes WHERE identity_key='concept:a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 4);
     }
 }

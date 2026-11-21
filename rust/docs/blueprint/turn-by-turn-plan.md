@@ -241,8 +241,8 @@
 - [x] 쿼리 구문/상한/파라미터 검증, 없는 DB 생성 금지, read-only SQLite 회귀 테스트.
 - [x] Python의 정확 일치 우선·FTS5 BM25 어휘 후보 순위 구현. SQLite 테스트에서 Boolean 조건, 소유권, 결과 개수 제한, 한글 및 인용부호 입력을 검증.
 - [ ] 기존 Python의 anchor 경로 병합과 작업별 Working Graph 연동 및 전체 검색 결과 동등성 검증.
-- [ ] 비동기 사실 추출/증거 수집/SQLite Transaction/저장 정책의 Rust 전면 이식.
-- [ ] 로그인 user_id와 Python memory_user_id 불일치 시 실제 배포 경로 ID 매핑과 E2E.
+- [x] 비동기 사실 추출/증거 수집/SQLite Transaction/저장 정책의 Rust 이식 (Turn 14 개발용 자동 저장 경로).
+- [x] Python과 같은 안정적인 db_id로 메모리 소유권 매핑 (Turn 14). 실제 배포 DB의 E2E는 별도 필요.
 
 ## Turn 13 — 메모리 턴 단위 원자 저장 (2026-11-21)
 
@@ -251,7 +251,22 @@
 - [x] Python JSON 공백·한글 이스케이프와 무관한 소유권 검사, 정확 인덱스의 ID/문자열 양방향 충돌 거부.
 - [x] Python 원본 그래프 스키마를 사용하는 테스트로 저장 후 검색·계정 격리·실패 시 전체 롤백 검증.
 - 검증: Linux `cargo test --workspace --locked` 99개 통과(저장 어댑터 12개 포함), `cargo fmt --all -- --check` 및 `cargo clippy --workspace --all-targets --locked -- -D warnings` 통과. 실기 Windows 검증은 별도 필요.
-- [ ] 비동기 사실 추출과 승인 정책 이식: 회상 결과를 새 사실의 근거로 재사용하지 않고, 새 사실 없는 회상 턴은 저장 제외, 추출 실패 시 원문 보존.
-- [ ] Sentence_Breaker Rust 이식 후 분절 계약 검증. 임의 문자열 분할로 대체하지 않음.
-- [ ] 계정 memory_user_id 매핑과 승인·분절·저장 경로를 Web 작업 완료 후처리에 연결. 이 단계까지 Web의 기존 DB 접근은 읽기 전용 유지.
+- [x] 비동기 사실 추출과 승인 정책 이식 (Turn 14): 회상 결과를 새 사실의 근거로 재사용하지 않고, 새 사실 없는 회상 턴은 저장 제외, 추출 실패 시 원문 보존.
+- [x] Sentence_Breaker Rust 이식 및 원본 순차 입력 131건 분절 계약 검증 (Turn 14).
+- [x] 계정 db_id 매핑과 승인·분절·저장 경로를 Web 작업 완료 후처리에 연결 (Turn 14). 기본값은 읽기 전용 유지.
 - [ ] 실제 Windows 및 Python/Rust 동시 사용 시 SQLite 잠금·인덱스 캐시 동기화·통합 검증.
+
+
+## Turn 14 — 추출·승인·분절·Web 후처리 연결 (2026-11-21)
+
+- [x] Python의 사실 추출 프롬프트·엄격 JSON 계약과 비회상 성공 결과만 전달하는 증거 규칙 이식.
+- [x] 새 사실 없는 회상 턴 제외, 혼합 업데이트 유지, 추출 오류/시간 초과 시 원문 보존 및 오류 표시.
+- [x] Sentence_Breaker `663dde2b`의 경로 생존·점수·동점 규칙 이식. 원본 Python 생성 순차 입력 131건과 분절 결과 대조.
+- [x] ATTACH 트랜잭션으로 분절 학습·메모리 저장의 일반 오류 롤백 통합. WAL 강제 종료 원자성은 별도 과제로 명시.
+- [x] 기본 읽기 전용 유지, 명시적인 개발용 쓰기 설정 검증, 답변 공개 후 후처리 및 같은 계정의 다음 요청 대기.
+- [x] ModelSupervisor로 후처리 모델 사용 직렬화. 실제 Outcome의 도구 결과를 사용해 UI 이벤트 누락과 분리.
+- [x] Python과 같은 `db_id` 소유권 매핑 및 계정 식별자 충돌 검사.
+- [ ] 실제 모델 추출 품질/설치 DB/Windows 실기 E2E 및 전체 Working Graph·자동 회상 동등성.
+- [ ] 동일 DB의 Python/Rust 동시 사용, WAL 강제 종료 후 복구 및 성능·메모리 benchmark.
+
+- 검증: Linux `cargo test --workspace --locked` 117개 통과(원본 분절 입력 131건 비교 포함). `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` 통과.

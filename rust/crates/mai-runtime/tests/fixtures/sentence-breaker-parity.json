@@ -1,0 +1,1134 @@
+{
+  "upstream": "663dde2be708f4b44b2942d14baccff8330d37dd",
+  "sequences": [
+    [
+      {
+        "text": "엄마는 밥을 먹는다",
+        "segments": [
+          "엄",
+          "마",
+          "는",
+          " ",
+          "밥",
+          "을",
+          " ",
+          "먹",
+          "는",
+          "다"
+        ]
+      },
+      {
+        "text": "엄마는 집에 간다",
+        "segments": [
+          "엄마는 ",
+          "집",
+          "에",
+          " ",
+          "간",
+          "다"
+        ]
+      },
+      {
+        "text": "엄마는 밥을 먹는다",
+        "segments": [
+          "엄마는 ",
+          "밥을 먹는다"
+        ]
+      },
+      {
+        "text": "엄청난 일이야",
+        "segments": [
+          "엄",
+          "청",
+          "난",
+          " ",
+          "일",
+          "이",
+          "야"
+        ]
+      },
+      {
+        "text": "엄마",
+        "segments": [
+          "엄마"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "abab",
+        "segments": [
+          "a",
+          "b",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "text": "baba",
+        "segments": [
+          "ba",
+          "ba"
+        ]
+      },
+      {
+        "text": "ababab",
+        "segments": [
+          "ab",
+          "ab",
+          "ab"
+        ]
+      },
+      {
+        "text": "aba",
+        "segments": [
+          "aba"
+        ]
+      },
+      {
+        "text": "ab",
+        "segments": [
+          "ab"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "가😀나",
+        "segments": [
+          "가",
+          "😀",
+          "나"
+        ]
+      },
+      {
+        "text": "가😀다",
+        "segments": [
+          "가😀",
+          "다"
+        ]
+      },
+      {
+        "text": "가😀나",
+        "segments": [
+          "가😀",
+          "나"
+        ]
+      },
+      {
+        "text": "😀",
+        "segments": [
+          "😀"
+        ]
+      },
+      {
+        "text": "가😀",
+        "segments": [
+          "가😀"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "éx",
+        "segments": [
+          "e",
+          "́",
+          "x"
+        ]
+      },
+      {
+        "text": "éy",
+        "segments": [
+          "é",
+          "y"
+        ]
+      },
+      {
+        "text": "éx",
+        "segments": [
+          "é",
+          "x"
+        ]
+      }
+    ],
+    [
+      {
+        "text": " a\tb\n",
+        "segments": [
+          " ",
+          "a",
+          "\t",
+          "b",
+          "\n"
+        ]
+      },
+      {
+        "text": "a b",
+        "segments": [
+          "a",
+          " ",
+          "b"
+        ]
+      },
+      {
+        "text": " a\tb\n",
+        "segments": [
+          " a\tb\n"
+        ]
+      },
+      {
+        "text": "\n",
+        "segments": [
+          "\n"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "aaaa",
+        "segments": [
+          "a",
+          "a",
+          "a",
+          "a"
+        ]
+      },
+      {
+        "text": "aaa",
+        "segments": [
+          "aaa"
+        ]
+      },
+      {
+        "text": "aaaaa",
+        "segments": [
+          "aa",
+          "aa",
+          "a"
+        ]
+      },
+      {
+        "text": "aa",
+        "segments": [
+          "aa"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "abbcabaaa",
+        "segments": [
+          "a",
+          "b",
+          "b",
+          "c",
+          "a",
+          "b",
+          "a",
+          "a",
+          "a"
+        ]
+      },
+      {
+        "text": "bba",
+        "segments": [
+          "bb",
+          "a"
+        ]
+      },
+      {
+        "text": "cbb",
+        "segments": [
+          "c",
+          "bb"
+        ]
+      },
+      {
+        "text": "bcaaba",
+        "segments": [
+          "bc",
+          "aa",
+          "ba"
+        ]
+      },
+      {
+        "text": "abaaacab",
+        "segments": [
+          "aba",
+          "aa",
+          "c",
+          "ab"
+        ]
+      },
+      {
+        "text": "b",
+        "segments": [
+          "b"
+        ]
+      },
+      {
+        "text": "cbaaacaab",
+        "segments": [
+          "c",
+          "ba",
+          "aa",
+          "ca",
+          "ab"
+        ]
+      },
+      {
+        "text": "ccbbbbccbb",
+        "segments": [
+          "c",
+          "cb",
+          "bb",
+          "bc",
+          "c",
+          "bb"
+        ]
+      },
+      {
+        "text": "caacc",
+        "segments": [
+          "c",
+          "aa",
+          "cc"
+        ]
+      },
+      {
+        "text": "bccb",
+        "segments": [
+          "bc",
+          "cb"
+        ]
+      },
+      {
+        "text": "bbacbcc",
+        "segments": [
+          "bb",
+          "a",
+          "cb",
+          "cc"
+        ]
+      },
+      {
+        "text": "cababb",
+        "segments": [
+          "ca",
+          "ba",
+          "bb"
+        ]
+      },
+      {
+        "text": "aabab",
+        "segments": [
+          "aa",
+          "b",
+          "ab"
+        ]
+      },
+      {
+        "text": "c",
+        "segments": [
+          "c"
+        ]
+      },
+      {
+        "text": "bbcbbab",
+        "segments": [
+          "bb",
+          "c",
+          "bb",
+          "ab"
+        ]
+      },
+      {
+        "text": "cabccccaccc",
+        "segments": [
+          "c",
+          "ab",
+          "cc",
+          "cc",
+          "ac",
+          "cc"
+        ]
+      },
+      {
+        "text": "cbabababb",
+        "segments": [
+          "cb",
+          "ab",
+          "ab",
+          "ab",
+          "b"
+        ]
+      },
+      {
+        "text": "ccbc",
+        "segments": [
+          "cc",
+          "bc"
+        ]
+      },
+      {
+        "text": "a",
+        "segments": [
+          "a"
+        ]
+      },
+      {
+        "text": "aacccbccca",
+        "segments": [
+          "aa",
+          "cc",
+          "cb",
+          "cc",
+          "ca"
+        ]
+      },
+      {
+        "text": "cbcccbcc",
+        "segments": [
+          "cb",
+          "cc",
+          "cb",
+          "cc"
+        ]
+      },
+      {
+        "text": "acbba",
+        "segments": [
+          "a",
+          "cb",
+          "ba"
+        ]
+      },
+      {
+        "text": "b",
+        "segments": [
+          "b"
+        ]
+      },
+      {
+        "text": "ccacaaccaaaa",
+        "segments": [
+          "cc",
+          "ac",
+          "aa",
+          "cc",
+          "aa",
+          "aa"
+        ]
+      },
+      {
+        "text": "aaacccc",
+        "segments": [
+          "aa",
+          "a",
+          "cc",
+          "cc"
+        ]
+      },
+      {
+        "text": "bbb",
+        "segments": [
+          "bb",
+          "b"
+        ]
+      },
+      {
+        "text": "cca",
+        "segments": [
+          "cc",
+          "a"
+        ]
+      },
+      {
+        "text": "acccbbbac",
+        "segments": [
+          "ac",
+          "cc",
+          "bb",
+          "ba",
+          "c"
+        ]
+      },
+      {
+        "text": "caacbbac",
+        "segments": [
+          "ca",
+          "ac",
+          "bb",
+          "ac"
+        ]
+      },
+      {
+        "text": "aacaababba",
+        "segments": [
+          "aa",
+          "ca",
+          "ab",
+          "ab",
+          "ba"
+        ]
+      },
+      {
+        "text": "bbacaacabc",
+        "segments": [
+          "bb",
+          "ac",
+          "aa",
+          "ca",
+          "bc"
+        ]
+      },
+      {
+        "text": "cccbba",
+        "segments": [
+          "cc",
+          "cb",
+          "ba"
+        ]
+      },
+      {
+        "text": "baccbbbac",
+        "segments": [
+          "ba",
+          "cc",
+          "bb",
+          "ba",
+          "c"
+        ]
+      },
+      {
+        "text": "cb",
+        "segments": [
+          "cb"
+        ]
+      },
+      {
+        "text": "babbcbbcaab",
+        "segments": [
+          "ba",
+          "bb",
+          "c",
+          "bb",
+          "ca",
+          "ab"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "가다다",
+        "segments": [
+          "가",
+          "다",
+          "다"
+        ]
+      },
+      {
+        "text": "나가가나나가다다다가다",
+        "segments": [
+          "나",
+          "가",
+          "가",
+          "나",
+          "나",
+          "가다",
+          "다다",
+          "가다"
+        ]
+      },
+      {
+        "text": "나가나가다나나",
+        "segments": [
+          "나가",
+          "나",
+          "가다",
+          "나나"
+        ]
+      },
+      {
+        "text": "가나다가나나나가다나가",
+        "segments": [
+          "가나",
+          "다",
+          "가나",
+          "나나",
+          "가다",
+          "나가"
+        ]
+      },
+      {
+        "text": "나나나나다나나나가가",
+        "segments": [
+          "나나",
+          "나나",
+          "다",
+          "나나",
+          "나가",
+          "가"
+        ]
+      },
+      {
+        "text": "다나나가가나",
+        "segments": [
+          "다나",
+          "나가",
+          "가나"
+        ]
+      },
+      {
+        "text": "다나가다가가가가",
+        "segments": [
+          "다나",
+          "가다",
+          "가가",
+          "가가"
+        ]
+      },
+      {
+        "text": "다나나다가나다다다나나",
+        "segments": [
+          "다",
+          "나나",
+          "다가",
+          "나다",
+          "다다",
+          "나나"
+        ]
+      },
+      {
+        "text": "나가",
+        "segments": [
+          "나가"
+        ]
+      },
+      {
+        "text": "다가나",
+        "segments": [
+          "다",
+          "가나"
+        ]
+      },
+      {
+        "text": "가나가",
+        "segments": [
+          "가",
+          "나가"
+        ]
+      },
+      {
+        "text": "다가나다나나",
+        "segments": [
+          "다가",
+          "나다",
+          "나나"
+        ]
+      },
+      {
+        "text": "가가다나",
+        "segments": [
+          "가가",
+          "다나"
+        ]
+      },
+      {
+        "text": "나나가나가",
+        "segments": [
+          "나나",
+          "가",
+          "나가"
+        ]
+      },
+      {
+        "text": "가나나나다다가",
+        "segments": [
+          "가나",
+          "나나",
+          "다",
+          "다가"
+        ]
+      },
+      {
+        "text": "가가다다가다다나",
+        "segments": [
+          "가가",
+          "다다",
+          "가다",
+          "다나"
+        ]
+      },
+      {
+        "text": "가나가나다",
+        "segments": [
+          "가나",
+          "가나",
+          "다"
+        ]
+      },
+      {
+        "text": "나가",
+        "segments": [
+          "나가"
+        ]
+      },
+      {
+        "text": "다가다다가가나다",
+        "segments": [
+          "다가",
+          "다다",
+          "가가",
+          "나다"
+        ]
+      },
+      {
+        "text": "나나다나다다가가가다",
+        "segments": [
+          "나나",
+          "다나",
+          "다다",
+          "가가",
+          "가다"
+        ]
+      },
+      {
+        "text": "나",
+        "segments": [
+          "나"
+        ]
+      },
+      {
+        "text": "나가나나가",
+        "segments": [
+          "나가",
+          "나나",
+          "가"
+        ]
+      },
+      {
+        "text": "다다나가가가가",
+        "segments": [
+          "다다",
+          "나가",
+          "가가",
+          "가"
+        ]
+      },
+      {
+        "text": "나나나가가가",
+        "segments": [
+          "나나",
+          "나가",
+          "가가"
+        ]
+      },
+      {
+        "text": "가나다나가가가나가다가가",
+        "segments": [
+          "가나",
+          "다나",
+          "가가",
+          "가나",
+          "가다",
+          "가가"
+        ]
+      },
+      {
+        "text": "나나",
+        "segments": [
+          "나나"
+        ]
+      },
+      {
+        "text": "나가다다가다나다가다나",
+        "segments": [
+          "나가",
+          "다",
+          "다가",
+          "다나",
+          "다가",
+          "다나"
+        ]
+      },
+      {
+        "text": "가가",
+        "segments": [
+          "가가"
+        ]
+      },
+      {
+        "text": "나다다나나",
+        "segments": [
+          "나다",
+          "다",
+          "나나"
+        ]
+      },
+      {
+        "text": "가다가나나나나나나다다",
+        "segments": [
+          "가다",
+          "가",
+          "나나",
+          "나나",
+          "나나",
+          "다다"
+        ]
+      },
+      {
+        "text": "다",
+        "segments": [
+          "다"
+        ]
+      },
+      {
+        "text": "나가가다다나다가",
+        "segments": [
+          "나가",
+          "가다",
+          "다나",
+          "다가"
+        ]
+      },
+      {
+        "text": "다나나다가가나가다",
+        "segments": [
+          "다",
+          "나나",
+          "다가",
+          "가나",
+          "가다"
+        ]
+      },
+      {
+        "text": "다나다나다",
+        "segments": [
+          "다나",
+          "다나",
+          "다"
+        ]
+      },
+      {
+        "text": "가가가나다가",
+        "segments": [
+          "가가",
+          "가나",
+          "다가"
+        ]
+      }
+    ],
+    [
+      {
+        "text": "😀aaa 😀a나😀a😀",
+        "segments": [
+          "😀",
+          "a",
+          "a",
+          "a",
+          " ",
+          "😀",
+          "a",
+          "나",
+          "😀",
+          "a",
+          "😀"
+        ]
+      },
+      {
+        "text": "나  나나나😀a a",
+        "segments": [
+          "나",
+          " ",
+          " ",
+          "나",
+          "나",
+          "나",
+          "😀a",
+          " ",
+          "a"
+        ]
+      },
+      {
+        "text": "😀",
+        "segments": [
+          "😀"
+        ]
+      },
+      {
+        "text": "나 a😀aa😀 😀",
+        "segments": [
+          "나 ",
+          "a",
+          "😀a",
+          "a😀",
+          " 😀"
+        ]
+      },
+      {
+        "text": "나😀😀a나 a나 a",
+        "segments": [
+          "나😀",
+          "😀a",
+          "나 ",
+          "a나",
+          " a"
+        ]
+      },
+      {
+        "text": "나",
+        "segments": [
+          "나"
+        ]
+      },
+      {
+        "text": "  😀 a나",
+        "segments": [
+          " ",
+          " 😀",
+          " a",
+          "나"
+        ]
+      },
+      {
+        "text": "나 a나",
+        "segments": [
+          "나 ",
+          "a나"
+        ]
+      },
+      {
+        "text": " a",
+        "segments": [
+          " a"
+        ]
+      },
+      {
+        "text": "😀 나😀😀a😀",
+        "segments": [
+          "😀 ",
+          "나😀",
+          "😀a",
+          "😀"
+        ]
+      },
+      {
+        "text": " a     나나 ",
+        "segments": [
+          " a",
+          "  ",
+          "  ",
+          " 나",
+          "나 "
+        ]
+      },
+      {
+        "text": " 나",
+        "segments": [
+          " 나"
+        ]
+      },
+      {
+        "text": " aa나😀😀a😀😀나",
+        "segments": [
+          " a",
+          "a나",
+          "😀",
+          "😀a",
+          "😀😀",
+          "나"
+        ]
+      },
+      {
+        "text": " 나나  나",
+        "segments": [
+          " 나",
+          "나 ",
+          " 나"
+        ]
+      },
+      {
+        "text": " a😀a😀aa",
+        "segments": [
+          " a",
+          "😀a",
+          "😀a",
+          "a"
+        ]
+      },
+      {
+        "text": "나 😀나 😀 나😀",
+        "segments": [
+          "나 ",
+          "😀",
+          "나 ",
+          "😀 ",
+          "나😀"
+        ]
+      },
+      {
+        "text": "a나a ",
+        "segments": [
+          "a나",
+          "a "
+        ]
+      },
+      {
+        "text": "  나a   ",
+        "segments": [
+          "  ",
+          "나",
+          "a ",
+          "  "
+        ]
+      },
+      {
+        "text": "a 나 😀😀 ",
+        "segments": [
+          "a ",
+          "나 ",
+          "😀😀",
+          " "
+        ]
+      },
+      {
+        "text": "😀aaa😀😀😀😀나나",
+        "segments": [
+          "😀a",
+          "aa",
+          "😀😀",
+          "😀😀",
+          "나나"
+        ]
+      },
+      {
+        "text": " 나  a a 나😀나",
+        "segments": [
+          " ",
+          "나 ",
+          " a",
+          " a",
+          " 나",
+          "😀나"
+        ]
+      },
+      {
+        "text": "😀나😀",
+        "segments": [
+          "😀",
+          "나😀"
+        ]
+      },
+      {
+        "text": "나 😀aa😀a나",
+        "segments": [
+          "나 ",
+          "😀a",
+          "a😀",
+          "a나"
+        ]
+      },
+      {
+        "text": "  a",
+        "segments": [
+          " ",
+          " a"
+        ]
+      },
+      {
+        "text": "나a나a나 ",
+        "segments": [
+          "나",
+          "a나",
+          "a",
+          "나 "
+        ]
+      },
+      {
+        "text": "a aa😀😀  😀",
+        "segments": [
+          "a ",
+          "aa",
+          "😀😀",
+          "  ",
+          "😀"
+        ]
+      },
+      {
+        "text": "😀a ",
+        "segments": [
+          "😀a",
+          " "
+        ]
+      },
+      {
+        "text": "나 ",
+        "segments": [
+          "나 "
+        ]
+      },
+      {
+        "text": "   나 a나aa",
+        "segments": [
+          "  ",
+          " 나",
+          " a",
+          "나",
+          "aa"
+        ]
+      },
+      {
+        "text": "😀나 나나나 ",
+        "segments": [
+          "😀",
+          "나 ",
+          "나나",
+          "나 "
+        ]
+      },
+      {
+        "text": "a나 a😀😀 ",
+        "segments": [
+          "a나",
+          " a",
+          "😀😀",
+          " "
+        ]
+      },
+      {
+        "text": "       나나",
+        "segments": [
+          "  ",
+          "  ",
+          "  ",
+          " 나",
+          "나"
+        ]
+      },
+      {
+        "text": " 나aa나😀😀 나",
+        "segments": [
+          " 나",
+          "a",
+          "a나",
+          "😀😀",
+          " 나"
+        ]
+      },
+      {
+        "text": "  ",
+        "segments": [
+          "  "
+        ]
+      },
+      {
+        "text": "😀나",
+        "segments": [
+          "😀나"
+        ]
+      }
+    ]
+  ]
+}

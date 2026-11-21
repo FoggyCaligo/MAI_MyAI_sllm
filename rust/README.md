@@ -41,11 +41,11 @@ cargo run -p mai-web
 
 - llama.cpp 모델 자동 다운로드와 llama.cpp 프로세스 실행/갱신은 미구현. 단일 상주/모델 선택과 RAM/VRAM 사전 검증은 Rust ModelSupervisor에 첫 구현이 있지만, 공유 게이트웨이 및 실제 GPU 검증은 아직 완료되지 않았습니다.
 - Host/Client 원격 워커, 전체 Native Tools 및 tool_manual 카탈로그, 반복 도구 실패 가드, 임시파일 및 작업별 cleanup.
-- 기존 DB에 저장된 채팅/장기기억, trial 계정, 로그인 보안 정책 전체, 업로드/이미지, 다운로드 링크, STT/TTS·음성 API, cloud model providers.
+- 기존 DB의 채팅 이력, 장기기억의 전체 Working Graph/경로 병합, trial 계정, 로그인 보안 정책 전체, 업로드/이미지, 다운로드 링크, STT/TTS·음성 API, cloud model providers.
 - 전체 실시간 토큰 스트리밍·thinking 진행·API payload 동등성. 현재의 작업 진행 이벤트는 부분 호환입니다.
-- Windows 실제 환경 통합시험 및 benchmark, Sentence_Breaker Rust 이식.
+- Windows 실제 환경 통합시험 및 benchmark. Sentence_Breaker 분절·학습은 Turn 14에서 Rust로 이식했으며 실제 설치 DB를 사용한 검증은 남아 있다.
 
-이 버전의 `mai-web`은 **메모리 내 세션/채팅/작업 상태**만 유지합니다. 서버를 재시작하면 사라지며, 원본 Python SQLite 데이터는 접근하지 않습니다. 프로덕션 대체 전 데이터·인증·자원 보호를 완성해야 합니다.
+이 버전의 `mai-web`은 **메모리 내 세션/채팅/작업 상태**를 유지하므로 서버를 재시작하면 해당 상태가 사라집니다. 장기기억 SQLite 접근은 명시적인 경로 설정이 필요하며 기본은 읽기 전용입니다. Turn 14의 개발용 쓰기 설정을 켜면 장기기억 후처리를 수행합니다. 프로덕션 대체 전 데이터·인증·자원 보호를 완성해야 합니다.
 
 공식 구현 기준선: `docs/blueprint/behavior-test-spec.md`, `docs/blueprint/core-unification.md`.
 
@@ -180,4 +180,29 @@ cargo run -p mai-web
 - Fact가 없는 승인된 턴도 원문 증거를 보존할 수 있다. **새 Fact가 없는 회상 전용 턴의 제외 여부는 호출자가 판단해야 한다.** 이 어댑터는 사실 추출·승인 정책을 대신하지 않는다.
 - 기존 Python JSON의 공백·한글 이스케이프에 관계없이 사용자 소유권을 비교한다. 기존 Fact의 `created_at` 및 payload를 보존하고 정확 인덱스의 ID/문자열 충돌을 양방향으로 검사한다. DB 생성·마이그레이션·사용자 anchor 자동 생성은 하지 않는다.
 - 테스트는 Python 원본의 그래프 스키마를 직접 읽어 CHECK·외래키가 적용된 임시 DB를 사용한다. 여러 Fact 저장 후 검색, 사용자 격리, 원문 보존, 중복 방지 및 전체 롤백을 검증한다.
-- **아직 독립 어댑터 단계다.** Web의 `MAI_RUST_MEMORY_DB_PATH`는 계속 읽기 전용이고 자동 저장이나 모델의 `memory_save` 도구는 등록하지 않는다. Sentence_Breaker, 비동기 사실 추출, 승인 정책, 계정 ID 매핑 및 Web 작업 완료 경로 연동은 다음 단계다. 원본 Python 코드와 Web UI는 변경하지 않았다.
+- **Turn 13 당시에는 독립 어댑터 단계였다.** 당시 Web의 `MAI_RUST_MEMORY_DB_PATH`는 계속 읽기 전용이고 자동 저장이나 모델의 `memory_save` 도구는 등록하지 않는다. Sentence_Breaker, 비동기 사실 추출, 승인 정책, 계정 ID 매핑 및 Web 작업 완료 경로 연동은 다음 단계다. 원본 Python 코드와 Web UI는 변경하지 않았다.
+
+
+## Turn 14 — 사실 추출·Sentence_Breaker·답변 후 저장 연결 (2026-11-21)
+
+- Python과 같은 추출 프롬프트로 별도 llama.cpp 구조화 JSON 요청을 보낸다. 현재 사용자 메시지, 이전 assistant 메시지, 최종답변의 역할을 구분하고 **성공한 비회상 도구의 실제 모델 노출 결과**만 새 증거로 전달한다. 추출기는 도구를 실행하지 않는다. 잘못된 JSON·추가 필드·빈 사실·절단 응답을 거부한다.
+- 성공한 `memory_search`가 있고 새 사실이 없으면 해당 턴을 저장하지 않는다. 새 사실이 있는 혼합 턴은 저장한다. 추출 실패/90초 시간 초과는 원문 Evidence를 보존하며 `memory_update.extraction_error`에 드러낸다. 취소는 원문 저장 승인으로 바꾸지 않는다.
+- Sentence_Breaker의 문자 경로·레이어 생존 수·동적계획법과 동점 규칙을 Rust로 옮겼다. 원본 `663dde2b`에서 생성한 **131개 순차 입력**과 결과가 일치한다. 별도 DB의 기존 스키마를 사용하며 사전/공백 휴리스틱으로 대체하지 않는다. 원본 출처와 라이선스는 `third_party/README.md`에 기록했다.
+- 명시적으로 저장을 켠 경우에만 답변과 작업 완료 상태를 먼저 공개하고 메모리 후처리를 진행한다. 같은 계정의 다음 추론은 이전 저장 완료를 기다린다. 추출도 ModelSupervisor 잠금을 사용한다. 후처리 실패는 이미 생성한 답변을 실패로 바꾸지 않고 작업 조회의 `memory_update`에 표시한다.
+- 검색·저장의 소유권은 로그인 이름인 `user_id`가 아니라 **Python과 같은 안정적인 `db_id`**다. 사용자 ID 중복, DB ID 중복 및 다른 계정과의 식별자 충돌을 시작 시 거부한다. 기존 이름을 추측하거나 자동 이관하지 않는다.
+
+### 개발용 자동 저장 설정
+
+기본값은 계속 읽기 전용이다. 자동 저장을 시험하려면 기존 DB의 테스트용 복사본을 준비하고 아래 세 값을 명시한다. 각 `OWNER_USERS.db_id`의 anchor가 복사한 메모리 DB에 있어야 한다. DB 생성·스키마 마이그레이션·anchor 자동 생성은 하지 않는다.
+
+```bash
+export MAI_RUST_MEMORY_DB_PATH='/path/to/test-memory.sqlite3'
+export MAI_RUST_SEGMENT_DB_PATH='/path/to/test-sentence_breaker.sqlite3'
+export MAI_RUST_MEMORY_WRITE=1
+```
+
+기존 Sentence_Breaker DB를 지정하며 원본 학습 DB를 이 저장소에 추가하지 않는다. 저장 플래그가 없거나 `0`/`false`/`off`이면 추출 요청 및 저장을 수행하지 않는다. 잘못된 플래그 값이나 저장에 필요한 경로 누락은 시작 오류다.
+
+**트랜잭션 범위:** 메모리 DB에 분절 DB를 `ATTACH`하고 원문, 사실, 인덱스, 문자 경로 학습을 함께 커밋한다. 일반 오류·감지된 취소는 두 DB 모두 롤백한다. SQLite의 제약상 WAL 모드에서 전원 차단/OS crash 시 두 파일의 동시 원자 커밋까지 보장하지는 않는다. 기존 Python 프로세스가 동일 DB를 열어 둔 상태의 인덱스 캐시 동기화도 미검증이므로 이 단계는 분리한 테스트 복사본을 대상으로 한다.
+
+**남은 검증:** 실제 모델의 사실 추출 품질, 실제 Windows/학습 DB 통합, 전체 Working Graph/자동 회상 동등성, 강제 종료 중 복구 및 성능 측정. 기존 Python 실행 코드와 Web UI는 수정하지 않았다.

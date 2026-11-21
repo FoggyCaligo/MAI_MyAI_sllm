@@ -783,6 +783,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "uuid",
  "walkdir",
 ]
 
@@ -793,6 +794,7 @@ dependencies = [
  "axum",
  "mai-runtime",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

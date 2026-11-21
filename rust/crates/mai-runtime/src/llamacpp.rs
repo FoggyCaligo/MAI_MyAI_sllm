@@ -54,6 +54,67 @@ impl LlamaCpp {
         })
     }
 
+    async fn send(&self, body: &Value) -> Result<Value, String> {
+        let response = self
+            .client
+            .post(self.url.clone())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("llama.cpp HTTP request: {e}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "llama.cpp HTTP {status}: {}",
+                body.chars().take(512).collect::<String>()
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|e| format!("llama.cpp JSON response: {e}"))
+    }
+
+    /// Independent structured judgment request; does not mutate the chat wire
+    /// history and never advertises or executes tools.
+    pub(crate) async fn structured(
+        &self,
+        system: &str,
+        payload: Value,
+        schema: Value,
+    ) -> Result<String, String> {
+        let data=self.send(&json!({
+            "model":self.config.model,
+            "messages":[{"role":"system","content":system},{"role":"user","content":payload.to_string()}],
+            "tools":[],"stream":false,"cache_prompt":true,"max_tokens":self.config.max_output_tokens,
+            "response_format":{"type":"json_schema","json_schema":{"name":"mai_response","strict":true,"schema":schema}}
+        })).await?;
+        let choice = data
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|x| x.first())
+            .ok_or("llama.cpp missing choices")?;
+        if choice.get("finish_reason").and_then(Value::as_str) != Some("stop") {
+            return Err("structured extraction did not finish normally".into());
+        }
+        let message = choice.get("message").ok_or("llama.cpp missing message")?;
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            return Err("invalid structured response role".into());
+        }
+        match message.get("tool_calls") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(calls)) if calls.is_empty() => {}
+            _ => return Err("structured extraction must not call tools".into()),
+        }
+        message
+            .get("content")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| "empty structured extraction response".into())
+    }
+
     fn accept_history(&mut self, history: &[Message]) -> Result<(), String> {
         if history.len() < self.consumed {
             return Err("history was truncated while model had pending calls".into());
@@ -131,25 +192,7 @@ impl LlamaCpp {
             "cache_prompt":true,
             "max_tokens":self.config.max_output_tokens
         });
-        let response = self
-            .client
-            .post(self.url.clone())
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("llama.cpp HTTP request: {e}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!(
-                "llama.cpp HTTP {status}: {}",
-                body.chars().take(512).collect::<String>()
-            ));
-        }
-        let data: Value = response
-            .json()
-            .await
-            .map_err(|e| format!("llama.cpp JSON response: {e}"))?;
+        let data = self.send(&body).await?;
         let choice = data
             .get("choices")
             .and_then(Value::as_array)

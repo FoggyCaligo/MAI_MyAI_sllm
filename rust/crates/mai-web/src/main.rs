@@ -1,5 +1,7 @@
 //! MAI Web API PREVIEW. Loopback only; not a production MAI replacement.
 //! Existing HTML/JS is served unchanged from the preserved python/ tree.
+#[cfg(test)]
+mod memory_tests;
 mod remote_hub;
 use axum::{
     extract::{Path, State},
@@ -11,19 +13,23 @@ use axum::{
 use mai_runtime::{
     file_mutations::{register_run_file_tools, RunFiles},
     llamacpp::{LlamaConfig, LlamaCpp},
+    memory_postprocess::{
+        CompletedTurn, FactExtractor, LlamaFactExtractor, MemoryPipeline, MemoryUpdate,
+    },
     native_memory::{register_memory_search, NativeMemory},
+    native_memory_write::FactWriter,
     native_tools::register_basics,
     supervisor::{ModelSupervisor, PhysicalRam, Policy},
     terminal_sessions::{register_terminal_sessions, TerminalSessions},
     workspace_route::{register_switch, route_tool, WorkspaceRoute},
     workspace_tools::{register_workspace_reads, Workspace},
-    Engine, Event, Message, Registry, Role,
+    BoxFuture, Engine, Event, Message, Registry, Role,
 };
 use remote_hub::RemoteHub;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     path::PathBuf,
     sync::Arc,
@@ -51,6 +57,14 @@ fn owner_terminal_enabled(setting: Option<&str>) -> bool {
     !setting.is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "off"))
 }
 
+fn memory_write_enabled(setting: Option<&str>) -> Result<bool, String> {
+    match setting.map(str::to_ascii_lowercase).as_deref() {
+        None | Some("0" | "false" | "off") => Ok(false),
+        Some("1" | "true" | "on") => Ok(true),
+        _ => Err("MAI_RUST_MEMORY_WRITE must be 1/true/on or 0/false/off".into()),
+    }
+}
+
 fn new_token() -> String {
     Uuid::new_v4().to_string()
 }
@@ -68,6 +82,9 @@ struct Config {
     ui_dir: PathBuf,
     workspace_root: Option<PathBuf>,
     enable_terminal: bool,
+    memory_db: Option<PathBuf>,
+    segment_db: Option<PathBuf>,
+    memory_write: bool,
 }
 struct PreAuth {
     until: Instant,
@@ -82,6 +99,7 @@ struct Job {
     error: Option<String>,
     tools: Vec<Value>,
     round: Option<usize>,
+    memory_update: Option<Value>,
     cancel: CancellationToken,
 }
 impl Job {
@@ -90,6 +108,7 @@ impl Job {
             "job_id":id,"status":self.status,"created_at":self.created,"updated_at":self.updated,
             "response":self.response,"error":self.error,"tools":self.tools,
             "model_round":self.round,"thinking":null,"stream_progress":null,
+            "memory_update":self.memory_update,
             "verification_rejections":[]
         })
     }
@@ -106,12 +125,49 @@ struct App {
     remote: Arc<RemoteHub>,
     workspace: Option<Workspace>,
     selected_model: Arc<Mutex<String>>,
+    memory_gates: Arc<HashMap<String, Arc<Mutex<()>>>>,
     config: Arc<Config>,
     users: Arc<Vec<User>>,
     data: Arc<Mutex<Data>>,
 }
 impl App {
     fn new(config: Config, users: Vec<User>) -> Result<Self, String> {
+        let logins: HashSet<_> = users.iter().map(|u| u.user_id.as_str()).collect();
+        let ids: HashSet<_> = users.iter().map(|u| u.db_id.as_str()).collect();
+        if logins.len() != users.len()
+            || ids.len() != users.len()
+            || users.iter().any(|u| {
+                u.user_id.is_empty()
+                    || u.user_id != u.user_id.trim()
+                    || u.db_id.is_empty()
+                    || u.db_id != u.db_id.trim()
+                    || u.user_pw.is_empty()
+                    || (u.db_id != u.user_id && logins.contains(u.db_id.as_str()))
+            })
+        {
+            return Err("invalid or colliding OWNER_USERS user_id/db_id".into());
+        }
+        if config.memory_write {
+            let owner = users
+                .first()
+                .ok_or("memory writes require configured owners")?;
+            let memory = config
+                .memory_db
+                .as_ref()
+                .ok_or("MAI_RUST_MEMORY_DB_PATH required for memory writes")?;
+            let segments = config
+                .segment_db
+                .as_ref()
+                .ok_or("MAI_RUST_SEGMENT_DB_PATH required for memory writes")?;
+            // Validate existing schemas; never auto-create data or anchors.
+            FactWriter::open(memory, &owner.db_id)?.with_sentence_breaker(segments)?;
+        }
+        let memory_gates = Arc::new(
+            users
+                .iter()
+                .map(|u| (u.db_id.clone(), Arc::new(Mutex::new(()))))
+                .collect(),
+        );
         // OWNER_USERS is currently the only authenticated user class. Owner
         // terminal defaults to enabled, with the process cwd as workspace root
         // unless MAI_RUST_WORKSPACE_ROOT provides an explicit alternative.
@@ -132,6 +188,7 @@ impl App {
             remote: RemoteHub::new(),
             workspace,
             selected_model: Arc::new(Mutex::new(config.model.clone())),
+            memory_gates,
             config: Arc::new(config),
             users: Arc::new(users),
             data: Arc::new(Mutex::new(Data {
@@ -141,6 +198,13 @@ impl App {
                 history: HashMap::new(),
             })),
         })
+    }
+    fn memory_user(&self, login: &str) -> Result<String, String> {
+        self.users
+            .iter()
+            .find(|u| u.user_id == login)
+            .map(|u| u.db_id.clone())
+            .ok_or_else(|| "unknown authenticated memory owner".into())
     }
     async fn auth(&self, headers: &HeaderMap) -> Result<String, Reply> {
         let header = headers
@@ -497,6 +561,7 @@ async fn submit_job(
                 error: None,
                 tools: vec![],
                 round: None,
+                memory_update: None,
                 cancel: cancel.clone(),
             },
         );
@@ -541,6 +606,35 @@ async fn run_job(request: RunJob) {
         remote_session_id,
         cancel,
     } = request;
+    let memory_user = match app.memory_user(&user) {
+        Ok(owner) => owner,
+        Err(error) => {
+            if let Some(job) = app.data.lock().await.jobs.get_mut(&id) {
+                job.status = "failed".into();
+                job.error = Some(error);
+            }
+            return;
+        }
+    };
+    // Keep this owner's next inference behind its previous memory update.
+    // The answer is published before postprocessing while this guard remains.
+    let _memory_gate = if app.config.memory_write {
+        let gate = app
+            .memory_gates
+            .get(&memory_user)
+            .expect("validated configured owner")
+            .clone();
+        Some(tokio::select! {
+            biased;
+            _=cancel.cancelled()=>{
+                if let Some(job)=app.data.lock().await.jobs.get_mut(&id) { job.status="cancelled".into();job.updated=now(); }
+                return;
+            }
+            guard=gate.lock_owned()=>guard,
+        })
+    } else {
+        None
+    };
     {
         let mut data = app.data.lock().await;
         if let Some(job) = data.jobs.get_mut(&id) {
@@ -593,20 +687,18 @@ async fn run_job(request: RunJob) {
         max_output_tokens: 32768,
     };
     let (tx, mut rx) = mpsc::channel(128);
-    let memory_user = user.clone();
+    let memory_model = config.clone();
     let task = async {
         let _model_guard = app.supervisor.acquire(&selected, &cancel).await?;
         let model = LlamaCpp::new(config).map_err(|err| err.to_string())?;
         let mut tools = Registry::new();
         register_basics(&mut tools)?;
-        // Existing Python memory.sqlite3 stays the source of truth. Never
-        // create or write a DB from the Rust preview; Owner user ID scopes
-        // every result and node expansion.
-        if let Ok(path) = env::var("MAI_RUST_MEMORY_DB_PATH") {
-            if !path.trim().is_empty() {
-                let memory = NativeMemory::new(path, memory_user.clone())?;
-                register_memory_search(&mut tools, memory)?;
-            }
+        // The stable Python db_id is the memory owner, not the login name.
+        // Search always opens a read-only connection, even when postprocessing
+        // writes are explicitly enabled via a separate configuration flag.
+        if let Some(path) = &app.config.memory_db {
+            let memory = NativeMemory::new(path, memory_user.clone())?;
+            register_memory_search(&mut tools, memory)?;
         }
         if let (Some(workspace), Some(scope)) = (&app.workspace, &tools_scope) {
             let limited = workspace.scoped_to_run(&scope.scratch_path()?)?;
@@ -706,6 +798,7 @@ async fn run_job(request: RunJob) {
         return;
     };
     job.updated = now();
+    let mut pending_memory = None;
     if cancel.is_cancelled() {
         job.status = "cancelled".into();
         job.error = Some(match cleanup_error {
@@ -716,6 +809,15 @@ async fn run_job(request: RunJob) {
         job.status = "failed".into();
         job.error = Some(format!("scratch cleanup failed: {err}"));
     } else if let Ok(result) = outcome {
+        if app.config.memory_write {
+            match CompletedTurn::from_outcome(&message, &previous, &result) {
+                Ok(turn) => {
+                    pending_memory = Some(turn);
+                    job.memory_update = Some(json!({"status":"pending"}));
+                }
+                Err(error) => job.memory_update = Some(json!({"status":"failed","error":error})),
+            }
+        }
         job.status = "completed".into();
         job.response = Some(json!({
             "answer":result.answer,"model":selected,"model_rounds":result.rounds,
@@ -733,6 +835,65 @@ async fn run_job(request: RunJob) {
                 .unwrap_or_else(|| "runtime finished without result".into()),
         );
     }
+    drop(data);
+    if let Some(turn) = pending_memory {
+        let result = update_memory(&app, memory_user.clone(), turn, memory_model, &cancel).await;
+        if let Some(job) = app.data.lock().await.jobs.get_mut(&id) {
+            job.memory_update = Some(match result {
+                Ok(update) => json!(update),
+                Err(error) => json!({"status":"failed","error":error}),
+            });
+            job.updated = now();
+        }
+    }
+}
+
+struct SupervisedExtractor {
+    inner: LlamaFactExtractor,
+    supervisor: Arc<ModelSupervisor>,
+    model: String,
+    cancel: CancellationToken,
+}
+impl FactExtractor for SupervisedExtractor {
+    fn extract<'a>(
+        &'a mut self,
+        turn: &'a CompletedTurn,
+    ) -> BoxFuture<'a, Result<Vec<String>, String>> {
+        Box::pin(async move {
+            let _guard = self.supervisor.acquire(&self.model, &self.cancel).await?;
+            self.inner.extract(turn).await
+        })
+    }
+}
+async fn update_memory(
+    app: &App,
+    owner: String,
+    turn: CompletedTurn,
+    model: LlamaConfig,
+    cancel: &CancellationToken,
+) -> Result<MemoryUpdate, String> {
+    let mut extractor = SupervisedExtractor {
+        inner: LlamaFactExtractor::new(model.clone())?,
+        supervisor: app.supervisor.clone(),
+        model: model.model,
+        cancel: cancel.clone(),
+    };
+    MemoryPipeline {
+        memory_db: app
+            .config
+            .memory_db
+            .clone()
+            .ok_or("memory database is not configured")?,
+        segment_db: app
+            .config
+            .segment_db
+            .clone()
+            .ok_or("Sentence_Breaker database is not configured")?,
+        owner,
+        extraction_timeout: Duration::from_secs(90),
+    }
+    .process(turn, &mut extractor, cancel)
+    .await
 }
 async fn active_jobs(State(app): State<App>, headers: HeaderMap) -> Reply {
     let user = match app.auth(&headers).await {
@@ -857,6 +1018,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         llama_url: env::var("LLAMACPP_HOST").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
         ui_dir: ui,
         workspace_root: env::var_os("MAI_RUST_WORKSPACE_ROOT").map(PathBuf::from),
+        memory_db: env::var_os("MAI_RUST_MEMORY_DB_PATH").map(PathBuf::from),
+        segment_db: env::var_os("MAI_RUST_SEGMENT_DB_PATH").map(PathBuf::from),
+        memory_write: memory_write_enabled(env::var("MAI_RUST_MEMORY_WRITE").ok().as_deref())?,
         // All accounts accepted by this preview are OWNER_USERS owners.
         // Default on; 0/false/off explicitly disables terminal execution.
         enable_terminal: owner_terminal_enabled(
@@ -888,6 +1052,9 @@ mod tests {
                         .join("../../../python/mai/app/static"),
                     workspace_root: None,
                     enable_terminal: false,
+                    memory_db: None,
+                    segment_db: None,
+                    memory_write: false,
                 },
                 vec![User {
                     user_id: "owner".into(),
@@ -914,6 +1081,9 @@ mod tests {
             ui_dir: PathBuf::from("."),
             workspace_root: None,
             enable_terminal: true,
+            memory_db: None,
+            segment_db: None,
+            memory_write: false,
         };
         let app = App::new(config, vec![]).expect("owner workspace fallback");
         assert!(app.workspace.is_some());
